@@ -34,7 +34,16 @@ def upload_temporary_file(file_path):
     # The API returns the viewing URL, but InfiniteTalk needs the DIRECT download link.
     # tmpfiles.org direct link pattern: https://tmpfiles.org/dl/12345/filename
     viewing_url = data["data"]["url"]
-    direct_url = viewing_url.replace("https://tmpfiles.org/", "https://tmpfiles.org/dl/")
+    
+    # Robust protocol-agnostic replacement
+    if "tmpfiles.org/" in viewing_url and "/dl/" not in viewing_url:
+        direct_url = viewing_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
+    else:
+        direct_url = viewing_url
+        
+    # Force HTTPS for safety and better API compatibility
+    if direct_url.startswith("http://"):
+        direct_url = direct_url.replace("http://", "https://", 1)
     
     print(f"      🔗 Public URL: {direct_url}")
     return direct_url
