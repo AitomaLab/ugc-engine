@@ -1,0 +1,61 @@
+services:
+  # 1. The FastAPI Backend (Web)
+  - type: web
+    name: ugc-engine-api
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: PYTHONPATH=. uvicorn app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ugc-db
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          type: redis
+          name: ugc-redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          type: redis
+          name: ugc-redis
+          property: connectionString
+      - key: KIE_API_KEY
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+
+  # 2. The Celery Worker (Background)
+  - type: worker
+    name: ugc-engine-worker
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: PYTHONPATH=. celery -A ugc_worker.tasks worker --loglevel=info
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ugc-db
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          type: redis
+          name: ugc-redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          type: redis
+          name: ugc-redis
+          property: connectionString
+      - key: KIE_API_KEY
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+
+# 3. Managed Redis for the Task Queue
+databases:
+  - name: ugc-db
+    plan: free
+
+redis:
+  - name: ugc-redis
+    plan: free
