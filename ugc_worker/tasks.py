@@ -33,9 +33,36 @@ def generate_ugc_video(self, job_id, influencer, app_clip, fields):
     print(f"🎬 Starting industrial video generation for Job {job_id}...")
     
     def status_callback(msg):
-        # Update Celery task state
+        # 1. Update Celery task state (internal)
         self.update_state(state='PROGRESS', meta={'status': msg})
         print(f"      [Job {job_id}] Progress: {msg}")
+        
+        # 2. Update Production Database (for Frontend UI)
+        try:
+            from ugc_db.db_manager import SessionLocal, VideoJob
+            db = SessionLocal()
+            job = db.query(VideoJob).filter(VideoJob.id == job_id).first()
+            if job:
+                job.status = "processing"
+                # Map message to roughly approximate percentage
+                progress_map = {
+                    "Building scenes": 5,
+                    "Generating scenes": 10,
+                    "Gen: Hook": 20,
+                    "Gen: Reaction": 40,
+                    "Gen: App Demo": 60,
+                    "Gen: Cta": 80,
+                    "Subtitling": 90,
+                    "Assembling": 95
+                }
+                for key, val in progress_map.items():
+                    if key in msg:
+                        job.progress_percent = val
+                        break
+                db.commit()
+            db.close()
+        except Exception as db_err:
+            print(f"      ⚠️ Progress DB sync warning: {db_err}")
 
     try:
         project_name = f"saas_job_{job_id}_{influencer['name'].lower()}"
