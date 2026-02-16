@@ -1,4 +1,8 @@
 import os
+from dotenv import load_dotenv
+
+# Load SaaS production environment if present
+load_dotenv(".env.saas")
 import datetime
 from sqlalchemy import create_engine, Column, String, Integer, TIMESTAMP, JSON, Float, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID

@@ -5,7 +5,7 @@ from pathlib import Path
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from database.db_manager import SessionLocal, Influencer, AppClip, init_db
+from ugc_db.db_manager import SessionLocal, Influencer, AppClip, init_db
 import airtable_client
 
 def migrate_data():

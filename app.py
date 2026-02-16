@@ -1,4 +1,8 @@
 import os
+from dotenv import load_dotenv
+
+# Load SaaS production environment if present
+load_dotenv(".env.saas")
 import sys
 from pathlib import Path
 
