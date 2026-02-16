@@ -11,11 +11,13 @@ services:
           name: ugc-db
           property: connectionString
       - key: CELERY_BROKER_URL
-        fromRedis:
+        fromService:
+          type: redis
           name: ugc-redis
           property: connectionString
       - key: CELERY_RESULT_BACKEND
-        fromRedis:
+        fromService:
+          type: redis
           name: ugc-redis
           property: connectionString
       - key: KIE_API_KEY
@@ -35,11 +37,13 @@ services:
           name: ugc-db
           property: connectionString
       - key: CELERY_BROKER_URL
-        fromRedis:
+        fromService:
+          type: redis
           name: ugc-redis
           property: connectionString
       - key: CELERY_RESULT_BACKEND
-        fromRedis:
+        fromService:
+          type: redis
           name: ugc-redis
           property: connectionString
       - key: KIE_API_KEY
@@ -47,11 +51,13 @@ services:
       - key: ELEVENLABS_API_KEY
         sync: false
 
-# 3. Managed Resources
+  # 3. Redis Instance (as a service)
+  - type: redis
+    name: ugc-redis
+    plan: free
+    ipAllowList: [] # Required for free plan connections
+
+# 4. Managed Databases
 databases:
   - name: ugc-db
-    plan: free
-
-redis:
-  - name: ugc-redis
     plan: free
