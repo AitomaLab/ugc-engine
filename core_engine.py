@@ -65,7 +65,8 @@ def run_generation_pipeline(
                 # 🎬 Lip-Synced video via InfiniteTalk
                 video_url = generate_scenes.generate_lipsync_video(
                     image_url=scene["reference_image_url"],
-                    audio_url=audio_url
+                    audio_url=audio_url,
+                    prompt=scene["prompt"]
                 )
                 
                 # 📥 Download final clip

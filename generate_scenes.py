@@ -146,11 +146,12 @@ def generate_video(prompt, reference_image_url=None):
     raise RuntimeError(f"{model_display} generation timed out after 10 minutes")
 
 
-def generate_lipsync_video(image_url, audio_url):
+def generate_lipsync_video(image_url, audio_url, prompt="Lip-syncing video"):
     """
     Generate a lip-synced video using Kie.ai InfiniteTalk.
     image_url: Public URL to the influencer reference image.
     audio_url: Public URL to the ElevenLabs generated audio.
+    prompt: Optional prompt (now required by some Kie.ai models).
     """
     endpoints = MODEL_ENDPOINTS["lipsync"]
     model_api = config.LIPSYNC_MODEL
@@ -161,6 +162,7 @@ def generate_lipsync_video(image_url, audio_url):
             "image_url": image_url,  # Kie.ai InfiniteTalk specific
             "input_urls": [image_url], # Backward compatibility
             "audio_url": audio_url,
+            "prompt": prompt,      # New requirement
             "resolution": config.LIPSYNC_QUALITY # 720p or 480p
         },
         "callBackUrl": "https://example.com/callback",
