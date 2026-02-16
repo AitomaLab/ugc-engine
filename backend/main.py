@@ -1,16 +1,12 @@
 from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List, Optional
-import os
 from fastapi.middleware.cors import CORSMiddleware
+import os
 import uuid
 from sqlalchemy.orm import Session
 
-# Import our local modules
-import sys
-from pathlib import Path
-sys.path.append(str(Path(__file__).parent.parent))
-
+# Absolute imports from root
 from database.db_manager import get_db, init_db, Influencer, AppClip, VideoJob
 from worker.tasks import generate_ugc_video
 
