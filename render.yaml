@@ -1,9 +1,9 @@
 services:
-  # 1. The FastAPI Backend (Web) - FORCED TO FREE PLAN
+  # 1. The FastAPI Backend (Web) - FREE PLAN ($0)
   - type: web
     name: ugc-engine-api
     env: python
-    plan: free # Explicitly setting to free to avoid the $7 charge
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: PYTHONPATH=. uvicorn app:app --host 0.0.0.0 --port $PORT
     envVars:
@@ -26,42 +26,13 @@ services:
       - key: ELEVENLABS_API_KEY
         sync: false
 
-  # 2. The Celery Worker (Background)
-  # NOTE: Render does not have a "Free" tier for background workers. 
-  # To keep your costs at $0, you can DELETE this section and run your local worker instead.
-  - type: worker
-    name: ugc-engine-worker
-    env: python
-    plan: starter # This is the lowest paid tier for workers ($7)
-    buildCommand: pip install -r requirements.txt
-    startCommand: PYTHONPATH=. celery -A ugc_worker.tasks worker --loglevel=info
-    envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: ugc-db
-          property: connectionString
-      - key: CELERY_BROKER_URL
-        fromService:
-          type: redis
-          name: ugc-redis
-          property: connectionString
-      - key: CELERY_RESULT_BACKEND
-        fromService:
-          type: redis
-          name: ugc-redis
-          property: connectionString
-      - key: KIE_API_KEY
-        sync: false
-      - key: ELEVENLABS_API_KEY
-        sync: false
-
-  # 3. Redis Instance
+  # 2. Redis Instance - FREE PLAN ($0)
   - type: redis
     name: ugc-redis
     plan: free
-    ipAllowList: []
+    ipAllowList: [] # Required for connections
 
-# 4. Managed Databases
+# 3. Managed Databases - FREE PLAN ($0)
 databases:
   - name: ugc-db
     plan: free
