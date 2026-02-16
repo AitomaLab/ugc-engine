@@ -11,6 +11,8 @@ interface Job {
     final_video_url?: string;
 }
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 export default function HistoryPage() {
     const [jobs, setJobs] = useState<Job[]>([]);
     const [loading, setLoading] = useState(true);
@@ -18,11 +20,7 @@ export default function HistoryPage() {
     useEffect(() => {
         async function fetchJobs() {
             try {
-                const resp = await fetch("http://localhost:8000/jobs/query"); // I might need a list endpoint
-                // For now, let's assume /jobs returns a list as well if no ID is passed, 
-                // OR I'll add a list endpoint. Let's use a simpler approach for now.
-                const listResp = await fetch("http://localhost:8000/jobs");
-                // Wait, I only have /jobs/{job_id}. I'll add a list endpoint.
+                const listResp = await fetch(`${API_URL}/jobs`);
                 if (listResp.ok) setJobs(await listResp.json());
             } catch (err) {
                 console.error("Failed to fetch jobs", err);
@@ -70,8 +68,8 @@ export default function HistoryPage() {
                                     </td>
                                     <td className="p-6">
                                         <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${job.status === 'success' ? 'bg-green-500/10 text-green-400 border border-green-500/20' :
-                                                job.status === 'failed' ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
-                                                    'bg-blue-500/10 text-blue-400 border border-blue-500/20 animate-pulse'
+                                            job.status === 'failed' ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
+                                                'bg-blue-500/10 text-blue-400 border border-blue-500/20 animate-pulse'
                                             }`}>
                                             {job.status}
                                         </span>

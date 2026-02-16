@@ -42,6 +42,10 @@ export default function RootLayout({
                 <span className="opacity-70 group-hover:opacity-100 italic transition-opacity">📜</span>
                 <span className="font-medium">Job History</span>
               </Link>
+              <Link href="/manage" className="flex items-center space-x-3 p-3 rounded-lg hover:bg-slate-800/50 transition-all text-slate-300 hover:text-white group">
+                <span className="opacity-70 group-hover:opacity-100 italic transition-opacity">📦</span>
+                <span className="font-medium">Assets Management</span>
+              </Link>
             </nav>
 
             <div className="p-6 border-t border-slate-800">

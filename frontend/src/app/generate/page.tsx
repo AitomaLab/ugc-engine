@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 interface Influencer {
     id: string;
     name: string;
@@ -33,8 +35,8 @@ export default function GeneratePage() {
     useEffect(() => {
         async function fetchData() {
             try {
-                const infResp = await fetch("http://localhost:8000/influencers");
-                const clipResp = await fetch("http://localhost:8000/app_clips");
+                const infResp = await fetch(`${API_URL}/influencers`);
+                const clipResp = await fetch(`${API_URL}/app_clips`);
 
                 if (infResp.ok) setInfluencers(await infResp.json());
                 if (clipResp.ok) setClips(await clipResp.json());
@@ -51,7 +53,7 @@ export default function GeneratePage() {
         if (!selectedInfluencer || !hook) return;
 
         try {
-            const resp = await fetch("http://localhost:8000/jobs", {
+            const resp = await fetch(`${API_URL}/jobs`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({

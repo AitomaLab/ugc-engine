@@ -17,10 +17,13 @@ def migrate_data():
         # 1. Migrate Influencers
         print("👤 Migrating Influencers...")
         airtable_influencers = airtable_client.get_records("Influencers")
+        print(f"   Found {len(airtable_influencers)} influencers in Airtable.")
         for record in airtable_influencers:
             fields = record["fields"]
             name = fields.get("Name")
-            if not name: continue
+            if not name: 
+                print(f"   ⚠️ Skipping record with no Name: {record.get('id')}")
+                continue
             
             # Check if exists
             existing = db.query(Influencer).filter(Influencer.name == name).first()
@@ -41,6 +44,8 @@ def migrate_data():
                 )
                 db.add(db_inf)
                 print(f"   ✅ Added: {name}")
+            else:
+                print(f"   ℹ️ Influencer already exists: {name}")
 
         # 2. Migrate App Clips
         print("\n📱 Migrating App Clips...")

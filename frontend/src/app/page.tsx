@@ -1,4 +1,32 @@
+"use client";
+
+import { useState, useEffect } from "react";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 export default function Home() {
+  const [metrics, setMetrics] = useState({
+    videos_generated: 0,
+    credits_spent: 0,
+    status: "Offline"
+  });
+
+  useEffect(() => {
+    async function fetchMetrics() {
+      try {
+        const resp = await fetch(`${API_URL}/metrics`);
+        if (resp.ok) {
+          setMetrics(await resp.json());
+        }
+      } catch (err) {
+        console.error("Failed to fetch metrics", err);
+      }
+    }
+    fetchMetrics();
+    const interval = setInterval(fetchMetrics, 30000); // Update every 30s
+    return () => clearInterval(interval);
+  }, []);
+
   return (
     <div className="space-y-12">
       {/* Header Section */}
@@ -16,7 +44,7 @@ export default function Home() {
             <span className="text-blue-400 text-2xl">📹</span>
             <span className="text-xs font-bold text-slate-500 uppercase tracking-tighter">Usage</span>
           </div>
-          <p className="text-3xl font-bold">142</p>
+          <p className="text-3xl font-bold">{metrics.videos_generated}</p>
           <p className="text-sm text-slate-400 mt-1">Videos generated this month</p>
         </div>
 
@@ -25,7 +53,7 @@ export default function Home() {
             <span className="text-purple-400 text-2xl">💎</span>
             <span className="text-xs font-bold text-slate-500 uppercase tracking-tighter">Budget</span>
           </div>
-          <p className="text-3xl font-bold">42.50</p>
+          <p className="text-3xl font-bold">${metrics.credits_spent}</p>
           <p className="text-sm text-slate-400 mt-1">Total API credits spent ($)</p>
         </div>
 
@@ -34,7 +62,7 @@ export default function Home() {
             <span className="text-green-400 text-2xl">⚡</span>
             <span className="text-xs font-bold text-slate-500 uppercase tracking-tighter">Status</span>
           </div>
-          <p className="text-3xl font-bold">Online</p>
+          <p className="text-3xl font-bold">{metrics.status}</p>
           <p className="text-sm text-slate-400 mt-1">Kie.ai & ElevenLabs healthy</p>
         </div>
       </div>

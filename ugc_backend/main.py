@@ -34,6 +34,22 @@ class JobCreate(BaseModel):
     length: str = "15s"
     user_id: uuid.UUID # In production, this would come from Auth token
 
+class InfluencerCreate(BaseModel):
+    name: str
+    gender: str
+    accent: str
+    tone: str
+    visual_description: str
+    reference_image_url: Optional[str] = None
+    elevenlabs_voice_id: Optional[str] = None
+    category: str
+
+class AppClipCreate(BaseModel):
+    name: str
+    category: str
+    video_url: str
+    duration: float = 4.0
+
 @app.get("/")
 async def root():
     return {"message": "Welcome to the UGC Engine SaaS API"}
@@ -46,9 +62,40 @@ async def health_check():
 async def list_influencers(db: Session = Depends(get_db)):
     return db.query(Influencer).all()
 
+@app.post("/influencers")
+async def create_influencer(inf: InfluencerCreate, db: Session = Depends(get_db)):
+    db_inf = Influencer(
+        id=uuid.uuid4(),
+        **inf.dict()
+    )
+    db.add(db_inf)
+    db.commit()
+    return db_inf
+
 @app.get("/app_clips")
 async def list_app_clips(db: Session = Depends(get_db)):
     return db.query(AppClip).all()
+
+@app.post("/app_clips")
+async def create_app_clip(clip: AppClipCreate, db: Session = Depends(get_db)):
+    db_clip = AppClip(
+        id=uuid.uuid4(),
+        **clip.dict()
+    )
+    db.add(db_clip)
+    db.commit()
+    return db_clip
+
+@app.get("/metrics")
+async def get_metrics(db: Session = Depends(get_db)):
+    total_jobs = db.query(VideoJob).count()
+    # Mocking cost: $0.30 per job as an average
+    total_cost = total_jobs * 0.30
+    return {
+        "videos_generated": total_jobs,
+        "credits_spent": round(total_cost, 2),
+        "status": "Online"
+    }
 
 @app.post("/jobs")
 async def create_job(job_data: JobCreate, db: Session = Depends(get_db)):
