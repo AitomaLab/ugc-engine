@@ -104,10 +104,18 @@ SEEDANCE_AUDIO = True                                       # Always generate au
 
 # ElevenLabs Settings
 ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2")
-# Default voices for influencers (can be overridden in Airtable later)
+# Default voices for influencers (using guaranteed public voices)
 VOICE_MAP = {
-    "Meg": "EXAVIT9mxAsUOO0S9K0P",  # Example female voice (Bella)
-    "Max": "N2lVS9A4Gu98qLvjTWLI",  # Example male voice (Adam)
+    "Meg": "21m00Tcm4TlvDq8ikWAM",  # Rachel (Guaranteed public)
+    "Max": "pNInz6obpg8ndclK7m3j",  # Josh (Guaranteed public)
+}
+
+# Celery Transport Options for Redis Stability (Render Free Tier)
+CELERY_TRANSPORT_OPTIONS = {
+    'socket_timeout': 30,
+    'socket_connect_timeout': 30,
+    'socket_keepalive': True,
+    'visibility_timeout': 3600,
 }
 
 # Lip-Sync Model

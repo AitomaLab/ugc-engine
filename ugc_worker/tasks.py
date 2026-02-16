@@ -12,12 +12,18 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 import core_engine
 
+import config
+
 # Create Celery instance
 celery = Celery(
     "ugc_engine",
     broker=os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0"),
     backend=os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
 )
+
+# Apply stability settings
+celery.conf.broker_transport_options = config.CELERY_TRANSPORT_OPTIONS
+celery.conf.broker_connection_retry_on_startup = True
 
 @celery.task(name="generate_ugc_video", bind=True)
 def generate_ugc_video(self, job_id, influencer, app_clip, fields):
