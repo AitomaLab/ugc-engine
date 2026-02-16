@@ -104,10 +104,10 @@ SEEDANCE_AUDIO = True                                       # Always generate au
 
 # ElevenLabs Settings
 ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2")
-# Default voices for influencers (using user-provided IDs)
+# Default voices for influencers (using premade IDs for Free Tier compatibility)
 VOICE_MAP = {
-    "Meg": "h3l1RP4XfcWsPwoRp9G6",
-    "Max": "iJQjCIhyynnZMKT6NN3H",
+    "Meg": "hpp4J3VqNfWAUOO0d1Us",  # Bella (Premade)
+    "Max": "pNInz6obpgDQGcFmaJgB",  # Adam (Premade)
 }
 
 # Celery Transport Options for Redis Stability (Render Free Tier)
