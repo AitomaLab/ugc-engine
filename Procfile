@@ -1,2 +1,2 @@
-web: cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT
-worker: cd worker && celery -A tasks worker --loglevel=info
+web: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+worker: celery -A worker.tasks worker --loglevel=info
