@@ -7,8 +7,8 @@ import uuid
 from sqlalchemy.orm import Session
 
 # Absolute imports from root
-from database.db_manager import get_db, init_db, Influencer, AppClip, VideoJob
-from worker.tasks import generate_ugc_video
+from ugc_db.db_manager import get_db, init_db, Influencer, AppClip, VideoJob
+from ugc_worker.tasks import generate_ugc_video
 
 app = FastAPI(title="UGC Engine SaaS API")
 
