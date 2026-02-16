@@ -158,7 +158,8 @@ def generate_lipsync_video(image_url, audio_url):
     payload = {
         "model": model_api,
         "input": {
-            "input_urls": [image_url],
+            "image_url": image_url,  # Kie.ai InfiniteTalk specific
+            "input_urls": [image_url], # Backward compatibility
             "audio_url": audio_url,
             "resolution": config.LIPSYNC_QUALITY # 720p or 480p
         },
