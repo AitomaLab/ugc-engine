@@ -1,0 +1,23 @@
+[Script Info]
+Title: Naiara UGC Subtitles
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 0
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Hormozi,Impact,140,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,1,0,1,8,5,5,40,40,0,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:00.80,Hormozi,,0,0,0,,¡No te lo
+Dialogue: 0,0:00:00.80,0:00:01.60,Hormozi,,0,0,0,,vas a creer!
+Dialogue: 0,0:00:01.60,0:00:02.40,Hormozi,,0,0,0,,¡Tío, no te
+Dialogue: 0,0:00:02.40,0:00:03.20,Hormozi,,0,0,0,,lo vas a
+Dialogue: 0,0:00:03.20,0:00:04.00,Hormozi,,0,0,0,,creer! He encontrado
+Dialogue: 0,0:00:04.00,0:00:04.79,Hormozi,,0,0,0,,la manera más
+Dialogue: 0,0:00:04.79,0:00:05.59,Hormozi,,0,0,0,,BARATA de viajar
+Dialogue: 0,0:00:05.59,0:00:06.39,Hormozi,,0,0,0,,este año.. ¡Es
+Dialogue: 0,0:00:06.39,0:00:07.19,Hormozi,,0,0,0,,BRUTAL! Tienes que
+Dialogue: 0,0:00:07.19,0:00:07.99,Hormozi,,0,0,0,,probarla.

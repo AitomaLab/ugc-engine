@@ -1,0 +1,8 @@
+file 'C:/Users/dedam/.antigravity/Creative Cloner/creative-cloner/temp_clips/scene_1_trimmed.mp4'
+file 'C:/Users/dedam/.antigravity/Creative Cloner/creative-cloner/temp_clips/scene_2_trimmed.mp4'
+file 'C:/Users/dedam/.antigravity/Creative Cloner/creative-cloner/temp_clips/scene_3_trimmed.mp4'
+file 'C:/Users/dedam/.antigravity/Creative Cloner/creative-cloner/temp_clips/scene_4_trimmed.mp4'
+file 'C:/Users/dedam/.antigravity/Creative Cloner/creative-cloner/temp_clips/scene_5_trimmed.mp4'
+file 'C:/Users/dedam/.antigravity/Creative Cloner/creative-cloner/temp_clips/scene_6_trimmed.mp4'
+file 'C:/Users/dedam/.antigravity/Creative Cloner/creative-cloner/temp_clips/scene_7_trimmed.mp4'
+file 'C:/Users/dedam/.antigravity/Creative Cloner/creative-cloner/temp_clips/scene_8_trimmed.mp4'

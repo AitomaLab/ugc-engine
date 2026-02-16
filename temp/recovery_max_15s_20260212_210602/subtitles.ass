@@ -1,0 +1,37 @@
+[Script Info]
+Title: Naiara UGC Subtitles
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 0
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Hormozi,Impact,140,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,1,0,1,8,5,5,40,40,0,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:01.14,Hormozi,,0,0,0,,¡Tío, PARA TODO!
+Dialogue: 0,0:00:01.14,0:00:02.28,Hormozi,,0,0,0,,This app {\c&H00FFFFFF\fscx130\fscy130}literally{\c&H0000FFFF\fscx100\fscy100}
+Dialogue: 0,0:00:02.28,0:00:03.42,Hormozi,,0,0,0,,found me the
+Dialogue: 0,0:00:03.42,0:00:04.57,Hormozi,,0,0,0,,{\c&H00FFFFFF\fscx130\fscy130}best{\c&H0000FFFF\fscx100\fscy100} deal on
+Dialogue: 0,0:00:04.57,0:00:05.71,Hormozi,,0,0,0,,sneakers in 10
+Dialogue: 0,0:00:05.71,0:00:06.85,Hormozi,,0,0,0,,{\c&H00FFFFFF\fscx130\fscy130}seconds.{\c&H0000FFFF\fscx100\fscy100} ¡Es BRUTAL!
+Dialogue: 0,0:00:06.85,0:00:07.99,Hormozi,,0,0,0,,Tienes que probarla.
+Dialogue: 0,0:00:15.99,0:00:17.00,Hormozi,,0,0,0,,¡O sea, FLIPANTE!
+Dialogue: 0,0:00:17.00,0:00:18.00,Hormozi,,0,0,0,,¡Me ha encontrado
+Dialogue: 0,0:00:18.00,0:00:19.00,Hormozi,,0,0,0,,unos precios que
+Dialogue: 0,0:00:19.00,0:00:20.00,Hormozi,,0,0,0,,son una LOCURA!
+Dialogue: 0,0:00:20.00,0:00:21.00,Hormozi,,0,0,0,,De verdad, flipante..
+Dialogue: 0,0:00:21.00,0:00:22.00,Hormozi,,0,0,0,,De verdad, me
+Dialogue: 0,0:00:22.00,0:00:23.00,Hormozi,,0,0,0,,ha cambiado la
+Dialogue: 0,0:00:23.00,0:00:24.00,Hormozi,,0,0,0,,vida.
+Dialogue: 0,0:00:24.00,0:00:24.88,Hormozi,,0,0,0,,En serio, no
+Dialogue: 0,0:00:24.88,0:00:25.77,Hormozi,,0,0,0,,te lo pienses.
+Dialogue: 0,0:00:25.77,0:00:26.66,Hormozi,,0,0,0,,Naiara's shopping assistant
+Dialogue: 0,0:00:26.66,0:00:27.55,Hormozi,,0,0,0,,{\c&H00FFFFFF\fscx130\fscy130}just{\c&H0000FFFF\fscx100\fscy100} {\c&H00FFFFFF\fscx130\fscy130}changed{\c&H0000FFFF\fscx100\fscy100} the
+Dialogue: 0,0:00:27.55,0:00:28.44,Hormozi,,0,0,0,,way I buy
+Dialogue: 0,0:00:28.44,0:00:29.33,Hormozi,,0,0,0,,things online. ¡Descárgala
+Dialogue: 0,0:00:29.33,0:00:30.22,Hormozi,,0,0,0,,YA, el link
+Dialogue: 0,0:00:30.22,0:00:31.11,Hormozi,,0,0,0,,está en mi
+Dialogue: 0,0:00:31.11,0:00:32.00,Hormozi,,0,0,0,,bio!

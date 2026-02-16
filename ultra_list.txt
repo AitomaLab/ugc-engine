@@ -1,0 +1,16 @@
+﻿ID                   | Influencer | Len  | Status     | Hook
+------------------------------------------------------------------------------------------------------------------------
+rec4MvLuJv6rJoLaB    | Meg        | 15s  | Review     | íTφo, no te lo vas a creer! He encontrado la manera mßs BARATA de viajar este a±o.
+      Path: C:\Users\dedam\.antigravity\UGC Engine\outputs\meg_15s_20260212_212700_v212914.mp4
+recIA0Moua76fMooq    | Max        | 30s  | Review     | íOye, PARA TODO! Si compras online habitualmente, tienes que ver esto.
+      Path: C:\Users\dedam\.antigravity\UGC Engine\outputs\max_30s_20260212_212923_v213727.mp4
+recIpNEkzmyew2NLz    | Max        | 15s  | Review     | íOye, PARA TODO! Si compras online habitualmente, tienes que ver esto.
+      Path: C:\Users\dedam\.antigravity\UGC Engine\outputs\max_15s_20260212_213747_v214021.mp4
+recOQQIXtqArRpc2k    | Max        | 15s  | Review     | íOye, PARA TODO! Si compras online habitualmente, tienes que ver esto.
+      Path: C:\Users\dedam\.antigravity\UGC Engine\outputs\max_15s_20260212_214349_v214645.mp4
+recOl2u5l0dE5nrLS    | Max        | 15s  | Review     | íOye, PARA TODO! Si compras online habitualmente, tienes que ver esto.
+      Path: C:\Users\dedam\.antigravity\UGC Engine\outputs\max_15s_20260212_214655_v215104.mp4
+rectLftf8zTWmo8zY    | Max        | 15s  | Review     | íOye, PARA TODO! Si compras online habitualmente, tienes que ver esto.
+      Path: C:\Users\dedam\.antigravity\UGC Engine\outputs\max_15s_20260212_220355_v220804.mp4
+recx1Ah0yclfzKMlJ    | Max        | 30s  | Review     | íOye, PARA TODO! Si compras online habitualmente, tienes que ver esto.
+      Path: C:\Users\dedam\.antigravity\UGC Engine\outputs\max_30s_20260212_220814_v222549.mp4
