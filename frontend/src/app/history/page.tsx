@@ -77,8 +77,8 @@ export default function HistoryPage() {
                                     <td className="p-6">
                                         <div className="w-40 bg-slate-800 h-2 rounded-full overflow-hidden">
                                             <div
-                                                className="bg-blue-500 h-full transition-all duration-500"
-                                                style={{ width: `${job.status === 'success' ? 100 : job.progress_percent}%` }}
+                                                className={`h-full transition-all duration-500 ${job.status === 'success' ? 'bg-green-500' : 'bg-blue-500'}`}
+                                                style={{ width: `${job.status === 'success' ? 100 : (job.status === 'failed' ? 100 : job.progress_percent)}%` }}
                                             ></div>
                                         </div>
                                     </td>

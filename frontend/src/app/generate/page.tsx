@@ -20,6 +20,12 @@ interface AppClip {
     video_url: string;
 }
 
+interface Script {
+    id: string;
+    text: string;
+    category: string;
+}
+
 export default function GeneratePage() {
     const router = useRouter();
     const [step, setStep] = useState(1);
@@ -29,17 +35,23 @@ export default function GeneratePage() {
 
     const [selectedInfluencer, setSelectedInfluencer] = useState<string | null>(null);
     const [selectedClip, setSelectedClip] = useState<string | null>(null);
+    const [scripts, setScripts] = useState<Script[]>([]);
+    const [selectedScriptId, setSelectedScriptId] = useState<string | null>(null);
     const [hook, setHook] = useState("");
     const [duration, setDuration] = useState("15s");
+    const [modelApi, setModelApi] = useState("infinitalk-audio");
+    const [genLoading, setGenLoading] = useState(false);
 
     useEffect(() => {
         async function fetchData() {
             try {
                 const infResp = await fetch(`${API_URL}/influencers`);
                 const clipResp = await fetch(`${API_URL}/app_clips`);
+                const scriptResp = await fetch(`${API_URL}/scripts`);
 
                 if (infResp.ok) setInfluencers(await infResp.json());
                 if (clipResp.ok) setClips(await clipResp.json());
+                if (scriptResp.ok) setScripts(await scriptResp.json());
             } catch (err) {
                 console.error("Failed to fetch data", err);
             } finally {
@@ -49,8 +61,28 @@ export default function GeneratePage() {
         fetchData();
     }, []);
 
+    const handleGenerateHook = async () => {
+        if (!selectedInfluencer) return;
+        setGenLoading(true);
+        try {
+            const influencer = influencers.find(i => i.id === selectedInfluencer);
+            const resp = await fetch(`${API_URL}/scripts/generate?influencer_id=${selectedInfluencer}&category=${influencer?.category || 'General'}`, {
+                method: "POST"
+            });
+            if (resp.ok) {
+                const data = await resp.json();
+                setHook(data.text);
+                setSelectedScriptId(null);
+            }
+        } catch (err) {
+            console.error("Failed to generate hook", err);
+        } finally {
+            setGenLoading(false);
+        }
+    };
+
     const handleSubmit = async () => {
-        if (!selectedInfluencer || !hook) return;
+        if (!selectedInfluencer) return;
 
         try {
             const resp = await fetch(`${API_URL}/jobs`, {
@@ -59,8 +91,10 @@ export default function GeneratePage() {
                 body: JSON.stringify({
                     influencer_id: selectedInfluencer,
                     app_clip_id: selectedClip,
+                    script_id: selectedScriptId,
                     hook: hook,
-                    assistant_type: "Travel", // Default for now
+                    model_api: modelApi,
+                    assistant_type: influencers.find(i => i.id === selectedInfluencer)?.category || "Travel",
                     length: duration,
                     user_id: "00000000-0000-0000-0000-000000000000" // Mock user
                 }),
@@ -135,17 +169,62 @@ export default function GeneratePage() {
             {/* Step 2: Content & Assets */}
             {step === 2 && (
                 <section className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                    <div className="space-y-4">
-                        <h3 className="text-xl font-bold">🎬 Video Logic</h3>
-                        <div className="space-y-2">
-                            <label className="text-sm font-bold text-slate-500 uppercase tracking-widest pl-1">Hook / Script</label>
-                            <textarea
-                                value={hook}
-                                onChange={(e) => setHook(e.target.value)}
-                                placeholder="Ex: No vas a creer el precio de este viaje a Bali..."
-                                className="w-full h-32 bg-slate-900 border border-slate-800 rounded-2xl p-4 focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder:text-slate-700"
-                            />
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        <div className="space-y-4">
+                            <h3 className="text-xl font-bold">🛠️ Model Selection</h3>
+                            <select
+                                value={modelApi}
+                                onChange={(e) => setModelApi(e.target.value)}
+                                className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3 outline-none focus:ring-2 focus:ring-blue-500"
+                            >
+                                <option value="infinitalk-audio">InfiniteTalk + ElevenLabs (High Fidelity)</option>
+                                <option value="seedance-1.5-pro">Seedance 1.5 Pro (Ultra Realistic)</option>
+                                <option value="kling-2.6">Kling 2.6 (Cinematic)</option>
+                                <option value="veo-3.1">Google Veo 3.1 (Experimental)</option>
+                            </select>
                         </div>
+                        <div className="space-y-4">
+                            <h3 className="text-xl font-bold">📜 Script Library</h3>
+                            <select
+                                value={selectedScriptId || ""}
+                                onChange={(e) => {
+                                    const id = e.target.value;
+                                    setSelectedScriptId(id || null);
+                                    if (id) {
+                                        const s = scripts.find(scr => scr.id === id);
+                                        if (s) setHook(s.text);
+                                    }
+                                }}
+                                className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3 outline-none focus:ring-2 focus:ring-blue-500"
+                            >
+                                <option value="">-- Random / Custom Hook --</option>
+                                {scripts.map(s => (
+                                    <option key={s.id} value={s.id}>{s.text.substring(0, 40)}...</option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                            <h3 className="text-xl font-bold">🎬 Video Hook</h3>
+                            <button
+                                onClick={handleGenerateHook}
+                                disabled={genLoading}
+                                className="text-xs bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 px-3 py-1 rounded-full border border-blue-500/30 transition-all"
+                            >
+                                {genLoading ? "✨ Generating..." : "✨ AI Generate Hook"}
+                            </button>
+                        </div>
+                        <textarea
+                            value={hook}
+                            onChange={(e) => {
+                                setHook(e.target.value);
+                                setSelectedScriptId(null);
+                            }}
+                            placeholder="Type your script or use AI to generate one..."
+                            className="w-full h-32 bg-slate-900 border border-slate-800 rounded-2xl p-4 focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder:text-slate-700"
+                        />
                         <div className="flex space-x-4">
                             {["15s", "30s"].map((l) => (
                                 <button
@@ -211,14 +290,18 @@ export default function GeneratePage() {
                                 </div>
                                 <div className="col-span-2 space-y-1">
                                     <p className="text-xs uppercase font-bold text-slate-500 tracking-widest">Script Snippet</p>
-                                    <p className="text-slate-300 italic">"{hook}"</p>
+                                    <p className="text-slate-300 italic">"{hook || "Auto-Selected Unique Script"}"</p>
+                                </div>
+                                <div className="space-y-1">
+                                    <p className="text-xs uppercase font-bold text-slate-500 tracking-widest">AI Engine</p>
+                                    <p className="text-xl text-blue-400 font-mono text-sm">{modelApi}</p>
                                 </div>
                             </div>
 
                             <div className="bg-blue-500/5 border border-blue-500/20 p-4 rounded-xl flex items-center space-x-4">
-                                <span className="text-2xl text-blue-400">💡</span>
+                                <span className="text-2xl text-blue-400">🛡️</span>
                                 <p className="text-sm text-blue-200/70 leading-relaxed">
-                                    The production engine will generate 4-8 scenes using <strong>Kling 2.6</strong> or <strong>InfiniteTalk</strong> depending on available credits. Estimated time: 2-4 minutes.
+                                    <strong>Anti-Fatigue Filter Active</strong>: The system will automatically select a unique combination of hook and app clip to ensure your content remains fresh for social algorithms.
                                 </p>
                             </div>
 

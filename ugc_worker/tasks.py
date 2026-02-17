@@ -67,6 +67,9 @@ def generate_ugc_video(self, job_id, influencer, app_clip, fields):
     try:
         project_name = f"saas_job_{job_id}_{influencer['name'].lower()}"
         
+        # Extract model preference if provided
+        model_api = fields.get("model_api", "infinitalk-audio")
+        
         final_video_path = core_engine.run_generation_pipeline(
             project_name=project_name,
             influencer=influencer,
@@ -76,6 +79,20 @@ def generate_ugc_video(self, job_id, influencer, app_clip, fields):
             skip_music=False
         )
         
+        # 3. Mark as SUCCESS in DB
+        try:
+            from ugc_db.db_manager import SessionLocal, VideoJob
+            db = SessionLocal()
+            job = db.query(VideoJob).filter(VideoJob.id == job_id).first()
+            if job:
+                job.status = "success"
+                job.progress_percent = 100
+                job.final_video_url = f"file:///{final_video_path}" # In prod, this would be an S3/Cloudinary URL
+                db.commit()
+            db.close()
+        except Exception as db_err:
+            print(f"      ⚠️ Final DB sync warning: {db_err}")
+
         print(f"✅ Job {job_id} complete! Result: {final_video_path}")
         return {
             "status": "success", 
@@ -86,4 +103,16 @@ def generate_ugc_video(self, job_id, influencer, app_clip, fields):
     except Exception as e:
         print(f"❌ Job {job_id} failed: {e}")
         self.update_state(state='FAILURE', meta={'error': str(e)})
+        
+        # Mark as FAILED in DB
+        try:
+            from ugc_db.db_manager import SessionLocal, VideoJob
+            db = SessionLocal()
+            job = db.query(VideoJob).filter(VideoJob.id == job_id).first()
+            if job:
+                job.status = "failed"
+                db.commit()
+            db.close()
+        except: pass
+        
         raise e

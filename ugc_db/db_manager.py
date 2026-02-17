@@ -43,6 +43,22 @@ class AppClip(Base):
     video_url = Column(String)
     duration = Column(Float)
 
+class ScriptLibrary(Base):
+    __tablename__ = "script_library"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    influencer_id = Column(UUID(as_uuid=True), ForeignKey("influencers.id"), nullable=True)
+    category = Column(String, nullable=True)
+    text = Column(String)
+    created_at = Column(TIMESTAMP, default=datetime.datetime.utcnow)
+
+class UsedCombination(Base):
+    __tablename__ = "used_combinations"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    influencer_id = Column(UUID(as_uuid=True), ForeignKey("influencers.id"))
+    script_id = Column(UUID(as_uuid=True), ForeignKey("script_library.id"))
+    app_clip_id = Column(UUID(as_uuid=True), ForeignKey("app_clips.id"))
+    created_at = Column(TIMESTAMP, default=datetime.datetime.utcnow)
+
 class VideoJob(Base):
     __tablename__ = "video_jobs"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -53,6 +69,7 @@ class VideoJob(Base):
     status = Column(String, default="pending")
     progress_percent = Column(Integer, default=0)
     final_video_url = Column(String, nullable=True)
+    model_api = Column(String, default="infinitalk-audio") # new: user choice
     metadata_json = Column(JSON, nullable=True)
     created_at = Column(TIMESTAMP, default=datetime.datetime.utcnow)
     updated_at = Column(TIMESTAMP, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)

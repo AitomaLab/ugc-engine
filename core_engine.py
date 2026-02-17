@@ -36,13 +36,16 @@ def run_generation_pipeline(
     
     scenes = scene_builder.build_scenes(fields, influencer, app_clip)
     
-    # 2. Generate all scene videos (ElevenLabs + InfiniteTalk)
+    # 2. Generate all scene videos (Multi-API Support)
     if status_callback:
         status_callback("Generating scenes")
         
     video_paths = []
     output_dir = config.TEMP_DIR / project_name
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Extract model preference
+    model_api = fields.get("model_api", "infinitalk-audio")
 
     for i, scene in enumerate(scenes, 1):
         if status_callback:
@@ -52,24 +55,29 @@ def run_generation_pipeline(
 
         try:
             if scene["type"] == "veo":
-                # 🎙️ ElevenLabs Audio
-                audio_file = elevenlabs_client.generate_voiceover(
-                    text=scene["subtitle_text"],
-                    voice_id=scene.get("voice_id", config.VOICE_MAP.get(influencer['name'], config.VOICE_MAP["Meg"])),
-                    filename=f"audio_{i}_{scene['name']}.mp3"
-                )
+                if "infinitalk" in model_api:
+                    # 🎙️ ElevenLabs Audio + Lip-Sync
+                    audio_file = elevenlabs_client.generate_voiceover(
+                        text=scene["subtitle_text"],
+                        voice_id=scene.get("voice_id", config.VOICE_MAP.get(influencer['name'], config.VOICE_MAP["Meg"])),
+                        filename=f"audio_{i}_{scene['name']}.mp3"
+                    )
+                    
+                    audio_url = storage_helper.upload_temporary_file(audio_file)
+                    
+                    video_url = generate_scenes.generate_lipsync_video(
+                        image_url=scene["reference_image_url"],
+                        audio_url=audio_url,
+                        prompt=scene["prompt"]
+                    )
+                else:
+                    # 🎭 Pure AI Model generation (Seedance, Kling, etc.)
+                    # We use the provided model_api preference
+                    video_url = generate_scenes.generate_video(
+                        prompt=scene["prompt"],
+                        model_api=model_api # Pass specific model
+                    )
                 
-                # ☁️ Temporary Storage
-                audio_url = storage_helper.upload_temporary_file(audio_file)
-                
-                # 🎬 Lip-Synced video via InfiniteTalk
-                video_url = generate_scenes.generate_lipsync_video(
-                    image_url=scene["reference_image_url"],
-                    audio_url=audio_url,
-                    prompt=scene["prompt"]
-                )
-                
-                # 📥 Download final clip
                 generate_scenes.download_video(video_url, output_path)
 
             elif scene["type"] == "clip":
