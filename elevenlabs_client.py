@@ -39,6 +39,13 @@ def generate_voiceover(text, voice_id, filename="voiceover.mp3"):
 
     resp = requests.post(url, headers=headers, json=payload)
     
+    if resp.status_code == 402:
+        print(f"   ⚠️ ElevenLabs Payment Required (402). Falling back to standard voice...")
+        fallback_voice = "pNInz6obpgDQGcFmaJgB" # Adam (Standard/High Quality)
+        if voice_id == fallback_voice:
+             raise RuntimeError(f"ElevenLabs error ({resp.status_code}): {resp.text[:500]}")
+        return generate_voiceover(text, fallback_voice, filename)
+
     if resp.status_code != 200:
         raise RuntimeError(f"ElevenLabs error ({resp.status_code}): {resp.text[:500]}")
 

@@ -7,9 +7,14 @@ the CLI, the SaaS worker, or any other interface.
 """
 import os
 import time
+import subprocess
+import shutil
 from datetime import datetime
 from pathlib import Path
 
+import requests
+from PIL import Image
+import io
 import config
 import scene_builder
 import generate_scenes
@@ -51,6 +56,8 @@ def run_generation_pipeline(
         if status_callback:
             status_callback(f"Gen: {scene['name'].title()} ({i}/{len(scenes)})")
 
+        print(f"      Scene Dict: {scene}")  # DEBUG LOG
+
         output_path = output_dir / f"scene_{i}_{scene['name']}.mp4"
 
         try:
@@ -65,20 +72,110 @@ def run_generation_pipeline(
                     
                     audio_url = storage_helper.upload_temporary_file(audio_file)
                     
+                    # 🖼️ Asset Mirroring Strategy (Robust Fix)
+                    # 1. Try to download the image (using proxy if needed)
+                    # 2. Re-upload to tmpfiles.org to get a clean, public URL for Kie.ai
+                    raw_ref_url = scene["reference_image_url"]
+                    print(f"      🪞 Mirroring asset: {raw_ref_url}")
+                    
+                    try:
+                        # Determine download URL (proxy or direct)
+                        if "cloudflarestorage.com" in raw_ref_url or "r2.dev" in raw_ref_url:
+                            clean_url = raw_ref_url.replace("https://", "")
+                            download_url = f"https://images.weserv.nl/?url={clean_url}"
+                        else:
+                            download_url = raw_ref_url
+
+                        # Download to temp
+                        img_resp = requests.get(download_url, timeout=10)
+                        if img_resp.status_code == 200:
+                            # Convert to standard JPEG to satisfy Kie.ai strictness
+                            try:
+                                img_content = img_resp.content
+                                with Image.open(io.BytesIO(img_content)) as pil_img:
+                                    pil_img = pil_img.convert("RGB")
+                                    temp_img_path = output_dir / f"mirror_{i}_{int(time.time())}.jpg"
+                                    pil_img.save(temp_img_path, format="JPEG", quality=95)
+                            except Exception as e:
+                                print(f"      ⚠️ Image conversion failed: {e}, falling back to raw write")
+                                temp_img_path = output_dir / f"mirror_{i}_{int(time.time())}.jpg"
+                                with open(temp_img_path, "wb") as f:
+                                    f.write(img_resp.content)
+                            
+                            # Upload to tmpfiles.org
+                            image_url = storage_helper.upload_temporary_file(temp_img_path)
+                            print(f"      ✅ Asset mirrored successfully: {image_url}")
+                            
+                            # Cleanup temp mirror file
+                            try:
+                                os.remove(temp_img_path)
+                            except:
+                                pass
+                        else:
+                            print(f"      ⚠️ Mirror download failed ({img_resp.status_code}), reverting to raw URL")
+                            image_url = raw_ref_url
+                    except Exception as e:
+                        print(f"      ⚠️ Mirroring failed: {e}, reverting to raw URL")
+                        image_url = raw_ref_url
+
+                    # ⏳ Propagation Delay: Give audio storage time to broadcast
+                    print(f"      ⏳ Waiting 10s for propagation: {audio_url}")
+                    time.sleep(10)
+                    
                     video_url = generate_scenes.generate_lipsync_video(
-                        image_url=scene["reference_image_url"],
+                        image_url=image_url,
                         audio_url=audio_url,
                         prompt=scene["prompt"]
                     )
                 else:
-                    # 🎭 Pure AI Model generation (Seedance, Kling, etc.)
-                    # We use the provided model_api preference
+                    # 🎭 Pure AI Model generation (Seedance, Kling, Veo, etc.)
                     video_url = generate_scenes.generate_video(
                         prompt=scene["prompt"],
-                        model_api=model_api # Pass specific model
+                        reference_image_url=scene.get("reference_image_url"),
+                        model_api=model_api
                     )
                 
                 generate_scenes.download_video(video_url, output_path)
+
+                # 🔊 Post-generation voiceover for silent models
+                # Models like Kling produce silent video — we need to add
+                # ElevenLabs voiceover and overlay it onto the video.
+                SILENT_MODELS = {"kling"}  # Add model families that produce silent video
+                model_family = model_api.split("-")[0] if "-" in model_api else model_api
+                is_silent = any(s in model_api.lower() for s in SILENT_MODELS)
+                
+                if is_silent and scene.get("subtitle_text"):
+                    if status_callback:
+                        status_callback(f"Voiceover: {scene['name'].title()} ({i}/{len(scenes)})")
+                    print(f"      🎙️ Silent model detected — generating ElevenLabs voiceover...")
+                    
+                    voice_id = scene.get("voice_id", config.VOICE_MAP.get(
+                        influencer['name'], config.VOICE_MAP.get("Meg", "pNInz6obpgDQGcFmaJgB")
+                    ))
+                    audio_file = elevenlabs_client.generate_voiceover(
+                        text=scene["subtitle_text"],
+                        voice_id=voice_id,
+                        filename=f"vo_{i}_{scene['name']}.mp3"
+                    )
+                    
+                    # Overlay voiceover onto the silent video using FFmpeg
+                    video_with_vo = output_dir / f"scene_{i}_{scene['name']}_vo.mp4"
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-i", str(output_path),
+                        "-i", str(audio_file),
+                        "-c:v", "copy",
+                        "-c:a", "aac",
+                        "-map", "0:v",
+                        "-map", "1:a",
+                        "-shortest",
+                        str(video_with_vo),
+                    ]
+                    subprocess.run(cmd, capture_output=True, check=True)
+                    
+                    # Replace the silent video with the voiced version
+                    shutil.move(str(video_with_vo), str(output_path))
+                    print(f"      ✅ Voiceover added to scene {i}")
 
             elif scene["type"] == "clip":
                 # 📱 App Clip

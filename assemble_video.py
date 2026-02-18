@@ -191,24 +191,61 @@ def assemble_video(video_paths, subtitle_path=None, music_path=None,
         final_dur = get_video_duration(current_input)
         fade_start = max(0, final_dur - 2)  # 2-second fade-out
 
-        with_music = work_dir / "with_music.mp4"
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", current_input,
-            "-i", str(music_path),
-            "-filter_complex", (
-                f"[1:a]atrim=0:{final_dur},"
-                f"afade=t=out:st={fade_start}:d=2,"
-                f"volume=0.15[bg];"
-                f"[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2[a]"
-            ),
-            "-map", "0:v",
-            "-map", "[a]",
-            "-c:v", "copy",
-            "-c:a", "aac",
-            "-shortest",
-            str(with_music),
+        # Probe if the video has an audio stream
+        probe_cmd = [
+            "ffprobe", "-v", "quiet",
+            "-select_streams", "a",
+            "-show_entries", "stream=codec_type",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            current_input,
         ]
+        try:
+            probe_result = subprocess.run(probe_cmd, capture_output=True, text=True, check=True)
+            has_audio = bool(probe_result.stdout.strip())
+        except subprocess.CalledProcessError:
+            has_audio = False
+
+        with_music = work_dir / "with_music.mp4"
+
+        if has_audio:
+            # Video HAS audio → mix video audio + background music
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", current_input,
+                "-i", str(music_path),
+                "-filter_complex", (
+                    f"[1:a]atrim=0:{final_dur},"
+                    f"afade=t=out:st={fade_start}:d=2,"
+                    f"volume=0.15[bg];"
+                    f"[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2[a]"
+                ),
+                "-map", "0:v",
+                "-map", "[a]",
+                "-c:v", "copy",
+                "-c:a", "aac",
+                "-shortest",
+                str(with_music),
+            ]
+        else:
+            # Video has NO audio → just overlay music as the only audio track
+            print("      ℹ️ Video has no audio stream, adding music as sole audio track")
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", current_input,
+                "-i", str(music_path),
+                "-filter_complex", (
+                    f"[1:a]atrim=0:{final_dur},"
+                    f"afade=t=out:st={fade_start}:d=2,"
+                    f"volume=0.25[a]"
+                ),
+                "-map", "0:v",
+                "-map", "[a]",
+                "-c:v", "copy",
+                "-c:a", "aac",
+                "-shortest",
+                str(with_music),
+            ]
+
         subprocess.run(cmd, capture_output=True, check=True)
         current_input = str(with_music)
 

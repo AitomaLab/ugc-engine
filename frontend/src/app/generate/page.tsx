@@ -2,15 +2,16 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { getApiUrl } from "@/lib/utils";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = getApiUrl();
 
 interface Influencer {
     id: string;
     name: string;
-    visual_description: string;
-    reference_image_url: string;
-    category: string;
+    description?: string;
+    personality?: string;
+    image_url?: string;
 }
 
 interface AppClip {
@@ -39,14 +40,14 @@ export default function GeneratePage() {
     const [selectedScriptId, setSelectedScriptId] = useState<string | null>(null);
     const [hook, setHook] = useState("");
     const [duration, setDuration] = useState("15s");
-    const [modelApi, setModelApi] = useState("infinitalk-audio");
+    const [modelApi, setModelApi] = useState("seedance-1.5-pro");
     const [genLoading, setGenLoading] = useState(false);
 
     useEffect(() => {
         async function fetchData() {
             try {
                 const infResp = await fetch(`${API_URL}/influencers`);
-                const clipResp = await fetch(`${API_URL}/app_clips`);
+                const clipResp = await fetch(`${API_URL}/app-clips`);
                 const scriptResp = await fetch(`${API_URL}/scripts`);
 
                 if (infResp.ok) setInfluencers(await infResp.json());
@@ -66,7 +67,7 @@ export default function GeneratePage() {
         setGenLoading(true);
         try {
             const influencer = influencers.find(i => i.id === selectedInfluencer);
-            const resp = await fetch(`${API_URL}/scripts/generate?influencer_id=${selectedInfluencer}&category=${influencer?.category || 'General'}`, {
+            const resp = await fetch(`${API_URL}/scripts/generate?influencer_id=${selectedInfluencer}&category=${influencer?.personality || 'General'}`, {
                 method: "POST"
             });
             if (resp.ok) {
@@ -94,8 +95,8 @@ export default function GeneratePage() {
                     script_id: selectedScriptId,
                     hook: hook,
                     model_api: modelApi,
-                    assistant_type: influencers.find(i => i.id === selectedInfluencer)?.category || "Travel",
-                    length: duration,
+                    assistant_type: influencers.find(i => i.id === selectedInfluencer)?.personality || "Travel",
+                    length: parseInt(duration) || 15,
                     user_id: "00000000-0000-0000-0000-000000000000" // Mock user
                 }),
             });
@@ -143,14 +144,14 @@ export default function GeneratePage() {
                                 className={`glass-panel p-4 rounded-2xl text-left transition-all glow-hover ${selectedInfluencer === inf.id ? 'border-blue-500 bg-blue-500/10 ring-2 ring-blue-500/20' : 'border-slate-800 opacity-70 hover:opacity-100'}`}
                             >
                                 <div className="w-full aspect-square bg-slate-800 rounded-xl mb-4 overflow-hidden">
-                                    {inf.reference_image_url ? (
-                                        <img src={inf.reference_image_url} alt={inf.name} className="w-full h-full object-cover" />
+                                    {inf.image_url ? (
+                                        <img src={inf.image_url} alt={inf.name} className="w-full h-full object-cover" />
                                     ) : (
                                         <div className="w-full h-full flex items-center justify-center text-4xl opacity-20">👤</div>
                                     )}
                                 </div>
                                 <p className="font-bold text-lg">{inf.name}</p>
-                                <p className="text-xs font-mono text-blue-400 uppercase tracking-widest mt-1">{inf.category}</p>
+                                <p className="text-xs font-mono text-blue-400 uppercase tracking-widest mt-1">{inf.personality || 'Influencer'}</p>
                             </button>
                         ))}
                     </div>

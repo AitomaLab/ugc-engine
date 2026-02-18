@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { getApiUrl } from "@/lib/utils";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = getApiUrl();
 
 interface Influencer {
     id: string;
     name: string;
-    category: string;
+    personality?: string;
 }
 
 interface AppClip {
@@ -24,12 +25,9 @@ export default function ManagePage() {
 
     const [infForm, setInfForm] = useState({
         name: "",
-        gender: "Female",
-        accent: "Castilian Spanish (Spain)",
-        tone: "Enthusiastic",
-        visual_description: "",
-        reference_image_url: "",
-        category: "Travel"
+        description: "",
+        personality: "Travel",
+        image_url: "",
     });
 
     const [clipForm, setClipForm] = useState({
@@ -43,7 +41,7 @@ export default function ManagePage() {
         setLoading(true);
         try {
             const infResp = await fetch(`${API_URL}/influencers`);
-            const clipResp = await fetch(`${API_URL}/app_clips`);
+            const clipResp = await fetch(`${API_URL}/app-clips`);
             if (infResp.ok) setInfluencers(await infResp.json());
             if (clipResp.ok) setClips(await clipResp.json());
         } catch (err) {
@@ -66,7 +64,7 @@ export default function ManagePage() {
                 body: JSON.stringify(infForm),
             });
             if (resp.ok) {
-                setInfForm({ name: "", gender: "Female", accent: "Castilian Spanish (Spain)", tone: "Enthusiastic", visual_description: "", reference_image_url: "", category: "Travel" });
+                setInfForm({ name: "", description: "", personality: "Travel", image_url: "" });
                 fetchData();
             }
         } catch (err) { console.error(err); }
@@ -75,7 +73,7 @@ export default function ManagePage() {
     const addClip = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
-            const resp = await fetch(`${API_URL}/app_clips`, {
+            const resp = await fetch(`${API_URL}/app-clips`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(clipForm),
@@ -120,31 +118,22 @@ export default function ManagePage() {
                                     <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Name</label>
                                     <input value={infForm.name} onChange={e => setInfForm({ ...infForm, name: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm focus:ring-1 focus:ring-blue-500 outline-none" placeholder="Ex: Maria" required />
                                 </div>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Gender</label>
-                                        <select value={infForm.gender} onChange={e => setInfForm({ ...infForm, gender: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm outline-none">
-                                            <option>Female</option>
-                                            <option>Male</option>
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Category</label>
-                                        <select value={infForm.category} onChange={e => setInfForm({ ...infForm, category: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm outline-none">
-                                            <option>Travel</option>
-                                            <option>Shop</option>
-                                            <option>Product</option>
-                                            <option>App</option>
-                                        </select>
-                                    </div>
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Personality</label>
+                                    <select value={infForm.personality} onChange={e => setInfForm({ ...infForm, personality: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm outline-none">
+                                        <option>Travel</option>
+                                        <option>Shop</option>
+                                        <option>Product</option>
+                                        <option>App</option>
+                                    </select>
                                 </div>
                                 <div>
-                                    <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Visual Description</label>
-                                    <textarea value={infForm.visual_description} onChange={e => setInfForm({ ...infForm, visual_description: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm focus:ring-1 focus:ring-blue-500 outline-none h-24" placeholder="Description for AI prompt..." required />
+                                    <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Description</label>
+                                    <textarea value={infForm.description} onChange={e => setInfForm({ ...infForm, description: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm focus:ring-1 focus:ring-blue-500 outline-none h-24" placeholder="Description for AI prompt..." required />
                                 </div>
                                 <div>
-                                    <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Reference Image URL</label>
-                                    <input value={infForm.reference_image_url} onChange={e => setInfForm({ ...infForm, reference_image_url: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm focus:ring-1 focus:ring-blue-500 outline-none" placeholder="https://..." />
+                                    <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Image URL</label>
+                                    <input value={infForm.image_url} onChange={e => setInfForm({ ...infForm, image_url: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm focus:ring-1 focus:ring-blue-500 outline-none" placeholder="https://..." />
                                 </div>
                                 <button type="submit" className="w-full py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold transition-all active:scale-95 shadow-lg shadow-blue-900/20">Create Influencer</button>
                             </div>
@@ -188,7 +177,7 @@ export default function ManagePage() {
                                     <div key={inf.id} className="glass-panel p-4 rounded-xl border-slate-900 flex items-center justify-between">
                                         <div>
                                             <p className="font-bold">{inf.name}</p>
-                                            <p className="text-xs text-blue-500 font-mono">{inf.category}</p>
+                                            <p className="text-xs text-blue-500 font-mono">{inf.personality || 'Influencer'}</p>
                                         </div>
                                         <div className="w-10 h-10 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-xs opacity-50">API</div>
                                     </div>

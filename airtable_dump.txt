@@ -1,0 +1,44 @@
+INFLUENCERS TABLE:
+============================================================
+
+Record ID: rec6SQr0FBiscwqdS
+  [Accent] = "Castilian Spanish (Spain)"
+  [Age] = "28"
+  [Category] = "Travel"
+  [Description] = "Meg is a grounded, quietly confident travel agent who feels less like a salesperson and more like a ..."
+  [Energy Level] = "High"
+  [Gender] = "Female"
+  [Name] = "Meg"
+  [Personality] = "Grounded, quietly confident travel agent who feels like a knowledgeable friend. She values authentic..."
+  [Reference Image] = [{"id": "attzoYuJaz84XVCD9", "width": 1536, "height": 2688, "url": "https://v5.airtableusercontent.com/v3/u/50/50/1771365600000/kxFrSmzlHbSYkasqSpE9XQ/qf-X4lUGRntKc3OBKqbXjT9WNwWB_3B7nZ-Xpp-7_sMbWGUO4_60eVFRTrjITr2PNtzLMrgMVT9nFNXqHp2VRGOWo5eGnxamIAXfIh7E-BqGUy5rfgqPaIUN4azky34hexUluG1JREnC7XqEQxLr-
+  [Tone] = "Excited"
+  [Visual Description] = "Long wavy brown hair, wearing a stylish but cozy emerald green sweater and subtle gold hoop earrings..."
+
+Record ID: recb8ldhIbnZH2Uzi
+  [Accent] = "Castilian Spanish (Spain)"
+  [Age] = "25"
+  [Category] = "Shop"
+  [Description] = "Max is a tech-forward, precision-driven personal shopping assistant designed to simplify decision-ma..."
+  [Energy Level] = "High"
+  [Gender] = "Male"
+  [Name] = "Max"
+  [Personality] = "Fast-talking, precision-driven personal shopping assistant. He’s the guy who knows every hack to get..."
+  [Reference Image] = [{"id": "attR2Lu6GbECbRtgr", "width": 1024, "height": 1024, "url": "https://v5.airtableusercontent.com/v3/u/50/50/1771365600000/4_aVr__L98qbjJ5njug6xA/waKD9Bd-7yCgp9YjFLMn2o0SUMx2AYPgptk0G3QlftAhey4TiUEu9pxjXTfAwMvmBI9hSab744eQA_9f8hSgIFhfmOT6Yjno7ySTxeDoELGVMxy1sejlEMb_KJcVOGptncWRBst3ul-fOPbnJb9es
+  [Tone] = "Excited"
+  [Visual Description] = "Styled short dark hair with a slight fade, wearing a modern casual red bomber jacket over a gray hoo..."
+
+
+APP CLIPS TABLE:
+============================================================
+
+Record ID: rec8YmtEhEoYrOIrY
+  [AI Assistant] = "Shop"
+  [Clip Name] = "Shop product search"
+  [Duration] = 11
+  [Video] = [{"id": "attNIYYU8whqChxTB", "url": "https://v5.airtableusercontent.com/v3/u/50/50/1771365600000/gjG6m42FKZGYC8wAJ6Zy0g/Rv08-bzosyMbiJlx095wv1PyJtr9nHfGOyHKChSFVRrho3fo-SVSf1wbN7XBNTwqjLa1yu_Ob-wE0Zmww6CtzLBNvOSvnO4QQc2SrIMirtVlnvFpwFJWUKo56HFadRltwF9QeaskO_HQ8NrMWKm7mcd5lYjJCwrww1guZZX6HcQ/LH02jeBe
+
+Record ID: recjThs5HnsO52NHu
+  [AI Assistant] = "Travel"
+  [Clip Name] = "Travel assistant demo"
+  [Duration] = 15
+  [Video] = [{"id": "att9VTkntdd7BjX4h", "url": "https://v5.airtableusercontent.com/v3/u/50/50/1771365600000/sCspVGp10EeO20kJT3Ag1w/ugU4fnISCe--0jEpgGEPRa_HduRSmkKWs8yvetXX6_gO13i-dkFAtNwJhWt_uELX8h6Sd7zWf2kIGpQcTIrpu_AZSIgm-CeUkPv3tJ-_SoBmQg9XixZsVGSrSFR2PJqu3Z6q0-TPocenhgQDeQkR7gOJN_2JdFRTFGwAS75IrUg/N89ho0XN

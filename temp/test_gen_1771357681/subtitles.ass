@@ -1,0 +1,18 @@
+[Script Info]
+Title: Naiara UGC Subtitles
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 0
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Hormozi,Impact,140,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,1,0,1,8,5,5,40,40,0,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:01.60,Hormozi,,0,0,0,,¡Eh, ESCUCHA! ¡No
+Dialogue: 0,0:00:01.60,0:00:03.20,Hormozi,,0,0,0,,me creo que
+Dialogue: 0,0:00:03.20,0:00:04.80,Hormozi,,0,0,0,,esto exista, es
+Dialogue: 0,0:00:04.80,0:00:06.40,Hormozi,,0,0,0,,brutal!. ¡Es BRUTAL!
+Dialogue: 0,0:00:06.40,0:00:08.00,Hormozi,,0,0,0,,Tienes que probarla.

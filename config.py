@@ -88,9 +88,9 @@ def get_scene_durations(length):
 MODEL_REGISTRY = {
     "seedance-1.5-pro": "bytedance/seedance-1.5-pro",      # $0.28/clip 720p+audio, lip-sync, Spanish
     "seedance-2.0":     "seedance-2-0",           # Feb 24 — 2K, faster, better lip-sync
-    "veo-3.1-fast":     "google/veo-3.1-fast",    # $0.30/clip, speech+audio (no lang control)
-    "veo-3.1":          "google/veo-3.1",          # higher quality, slower
-    "kling-2.6":        "kling-2.6",               # silent video only
+    "veo-3.1-fast":     "veo3_fast",              # $0.30/clip, speech+audio (no lang control)
+    "veo-3.1":          "veo3",                    # higher quality, slower
+    "kling-2.6":        "kling-2.6/image-to-video", # silent video only, requires image_urls
 }
 
 # Default: seedance-1.5-pro (native lip-sync + Spanish support)

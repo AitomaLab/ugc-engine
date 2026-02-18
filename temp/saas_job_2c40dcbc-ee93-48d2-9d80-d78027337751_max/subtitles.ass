@@ -1,0 +1,21 @@
+[Script Info]
+Title: Naiara UGC Subtitles
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 0
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Hormozi,Impact,140,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,1,0,1,8,5,5,40,40,0,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:01.00,Hormozi,,0,0,0,,¡Tío, PARA TODO!
+Dialogue: 0,0:00:01.00,0:00:02.00,Hormozi,,0,0,0,,Me ahorré 40
+Dialogue: 0,0:00:02.00,0:00:03.00,Hormozi,,0,0,0,,euros en mi
+Dialogue: 0,0:00:03.00,0:00:04.00,Hormozi,,0,0,0,,última compra gracias
+Dialogue: 0,0:00:04.00,0:00:05.00,Hormozi,,0,0,0,,a esta app
+Dialogue: 0,0:00:05.00,0:00:06.00,Hormozi,,0,0,0,,de IA. ¡Es
+Dialogue: 0,0:00:06.00,0:00:07.00,Hormozi,,0,0,0,,BRUTAL! Tienes que
+Dialogue: 0,0:00:07.00,0:00:08.00,Hormozi,,0,0,0,,probarla.

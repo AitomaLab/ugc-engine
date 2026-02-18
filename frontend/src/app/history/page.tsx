@@ -1,17 +1,18 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { getApiUrl, formatDate } from "@/lib/utils";
 
 interface Job {
     id: string;
     status: string;
-    progress_percent: number;
-    project_name: string;
+    progress: number;
     created_at: string;
     final_video_url?: string;
+    error_message?: string;
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = getApiUrl();
 
 export default function HistoryPage() {
     const [jobs, setJobs] = useState<Job[]>([]);
@@ -63,8 +64,8 @@ export default function HistoryPage() {
                             jobs.map((job) => (
                                 <tr key={job.id} className="hover:bg-slate-800/20 transition-colors">
                                     <td className="p-6">
-                                        <p className="font-bold text-slate-200">{job.project_name}</p>
-                                        <p className="text-xs text-slate-500 font-mono">{job.id.substring(0, 8)}...</p>
+                                        <p className="font-bold text-slate-200">{job.id.substring(0, 8)}...</p>
+                                        <p className="text-xs text-slate-500 font-mono">{formatDate(job.created_at)}</p>
                                     </td>
                                     <td className="p-6">
                                         <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${job.status === 'success' ? 'bg-green-500/10 text-green-400 border border-green-500/20' :
@@ -78,7 +79,7 @@ export default function HistoryPage() {
                                         <div className="w-40 bg-slate-800 h-2 rounded-full overflow-hidden">
                                             <div
                                                 className={`h-full transition-all duration-500 ${job.status === 'success' ? 'bg-green-500' : 'bg-blue-500'}`}
-                                                style={{ width: `${job.status === 'success' ? 100 : (job.status === 'failed' ? 100 : job.progress_percent)}%` }}
+                                                style={{ width: `${job.status === 'success' ? 100 : (job.status === 'failed' ? 100 : job.progress)}%` }}
                                             ></div>
                                         </div>
                                     </td>

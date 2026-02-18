@@ -16,3 +16,4 @@ openai
 Pillow
 numpy
 httpx
+supabase

@@ -25,9 +25,13 @@ MODEL_ENDPOINTS = {
         "generate": f"{config.KIE_API_URL}/api/v1/jobs/createTask",
         "poll": f"{config.KIE_API_URL}/api/v1/jobs/recordInfo",
     },
-    "veo": {
+    "kling": {
         "generate": f"{config.KIE_API_URL}/api/v1/jobs/createTask",
         "poll": f"{config.KIE_API_URL}/api/v1/jobs/recordInfo",
+    },
+    "veo": {
+        "generate": f"{config.KIE_API_URL}/api/v1/veo/generate",
+        "poll": f"{config.KIE_API_URL}/api/v1/veo/record-info",
     },
     "lipsync": {
         "generate": f"{config.KIE_API_URL}/api/v1/jobs/createTask",
@@ -35,25 +39,38 @@ MODEL_ENDPOINTS = {
     }
 }
 
-def _get_model_family():
-    """Determine API family from current VIDEO_MODEL setting."""
-    model = config.VIDEO_MODEL
-    if model.startswith("seedance"):
+def _get_model_family(model_name=None):
+    """Determine API family from provided model name or config."""
+    model = model_name or config.VIDEO_MODEL
+    if "seedance" in model:
         return "seedance"
-    return "veo"  # veo and kling both use veo endpoints on Kie.ai
+    if "kling" in model:
+        return "kling"
+    return "veo"
 
 
-def generate_video(prompt, reference_image_url=None):
+def generate_video(prompt, reference_image_url=None, model_api=None):
     """
-    Generate a video via Kie.ai using the configured model.
+    Generate video using specified AI model API (Seedance/Kie.ai).
 
     Supports Seedance 1.5 Pro (default) and Veo 3.1 as fallback.
     Seedance provides native lip-sync and Spanish speech.
     """
-    family = _get_model_family()
+    print(f"   🎬 generate_video called!")
+    print(f"      Arg reference_image_url: '{reference_image_url}'")
+    print(f"      Arg model_api (raw): '{model_api}'")
+
+    if model_api is None:
+        model_api = config.VIDEO_MODEL_API
+        model_display = config.VIDEO_MODEL
+    else:
+        # Map friendly name (e.g. seedance-1.5-pro) to API ID (bytedance/seedance-1.5-pro)
+        model_display = model_api  # Keep the original name for error messages
+        model_api = config.MODEL_REGISTRY.get(model_api, model_api)
+        
+    print(f"      Resolved model_api: '{model_api}'")
+    family = _get_model_family(model_api)
     endpoints = MODEL_ENDPOINTS[family]
-    model_api = config.VIDEO_MODEL_API
-    model_display = config.VIDEO_MODEL
 
     if family == "seedance":
         # --- Seedance payload (as per official documentation) ---
@@ -70,21 +87,29 @@ def generate_video(prompt, reference_image_url=None):
             },
             "callBackUrl": "https://example.com/callback",
         }
-    else:
-        # --- Veo payload (nested in jobs/createTask) ---
+    elif family == "kling":
+        # --- Kling payload (uses image_urls, no audio) ---
+        # Kling only accepts duration "5" or "10"
+        kling_duration = "5" if config.AI_CLIP_DURATION <= 5 else "10"
         payload = {
             "model": model_api,
             "input": {
                 "prompt": prompt,
-                "aspect_ratio": config.VIDEO_ASPECT_RATIO,
-                "input_urls": [reference_image_url] if reference_image_url else [],
+                "image_urls": [reference_image_url] if reference_image_url else [],
+                "sound": False,
+                "duration": kling_duration,
             }
         }
-
-    mode_str = "image→video" if reference_image_url else "text→video"
-    print(f"   🎬 Submitting to {model_display}...")
-    print(f"      Mode: {mode_str}")
-    print(f"      Prompt: {prompt[:80]}...")
+    else:
+        # --- Veo 3.1 payload (flat format, dedicated /veo/generate endpoint) ---
+        payload = {
+            "prompt": prompt,
+            "model": model_api,
+            "aspect_ratio": config.VIDEO_ASPECT_RATIO,
+        }
+        if reference_image_url:
+            payload["imageUrls"] = [reference_image_url]
+            payload["generationType"] = "FIRST_AND_LAST_FRAMES_2_VIDEO"
 
     resp = requests.post(endpoints["generate"], headers=config.KIE_HEADERS, json=payload)
     
@@ -120,30 +145,58 @@ def generate_video(prompt, reference_image_url=None):
             continue
 
         data = result.get("data", {})
-        state = data.get("state", "processing").lower()
 
-        if state == "success":
-            # Seedance/Kie.ai returns resultJson containing resultUrls
-            result_json_str = data.get("resultJson", "{}")
-            try:
-                result_data = json.loads(result_json_str)
-                video_url = result_data.get("resultUrls", [None])[0]
-                if video_url:
+        if family == "veo":
+            # Veo uses successFlag: 0=generating, 1=success, 2=failed, 3=gen failed
+            flag = data.get("successFlag", 0)
+            if flag == 1:
+                # Veo nests URLs under data.response.resultUrls
+                response_obj = data.get("response") or {}
+                if isinstance(response_obj, str):
+                    try:
+                        response_obj = json.loads(response_obj)
+                    except:
+                        response_obj = {}
+                result_urls = response_obj.get("resultUrls") or data.get("resultUrls") or []
+                if isinstance(result_urls, str):
+                    result_urls = json.loads(result_urls)
+                if result_urls:
                     print(f"      ✨ Generation complete! ({i * 10}s)")
-                    return video_url
-            except Exception as e:
-                print(f"      ⚠️ Error parsing resultJson: {e}")
+                    return result_urls[0]
+                print(f"      ⚠️ Success but no resultUrls ({i * 10}s)")
+                print(f"      DEBUG data keys: {list(data.keys())}")
                 continue
-
-        elif state == "fail":
-            error_msg = data.get("failMsg", "Unknown generation error")
-            raise RuntimeError(f"Generation failed: {error_msg}")
-        elif state == "waiting" or state == "processing":
-            print(f"      ⏳ Generating... ({i * 10}s)")
+            elif flag in (2, 3):
+                error_msg = data.get("failMsg", data.get("statusDescription", "Unknown generation error"))
+                raise RuntimeError(f"Generation failed: {error_msg}")
+            else:
+                status_desc = data.get("statusDescription", "generating")
+                print(f"      ⏳ {status_desc}... ({i * 10}s)")
         else:
-            print(f"      ⚠️ Unknown state: {state} ({i * 10}s)")
+            # Seedance / Kling use state: success/fail/processing
+            state = data.get("state", "processing").lower()
 
-    raise RuntimeError(f"{model_display} generation timed out after 10 minutes")
+            if state == "success":
+                result_json_str = data.get("resultJson", "{}")
+                try:
+                    result_data = json.loads(result_json_str)
+                    video_url = result_data.get("resultUrls", [None])[0]
+                    if video_url:
+                        print(f"      ✨ Generation complete! ({i * 10}s)")
+                        return video_url
+                except Exception as e:
+                    print(f"      ⚠️ Error parsing resultJson: {e}")
+                    continue
+
+            elif state == "fail":
+                error_msg = data.get("failMsg", "Unknown generation error")
+                raise RuntimeError(f"Generation failed: {error_msg}")
+            elif state == "waiting" or state == "processing":
+                print(f"      ⏳ Generating... ({i * 10}s)")
+            else:
+                print(f"      ⚠️ Unknown state: {state} ({i * 10}s)")
+
+    raise RuntimeError(f"{model_display} generation timed out after 20 minutes")
 
 
 def generate_lipsync_video(image_url, audio_url, prompt="Lip-syncing video"):
@@ -159,59 +212,65 @@ def generate_lipsync_video(image_url, audio_url, prompt="Lip-syncing video"):
     payload = {
         "model": model_api,
         "input": {
-            "image_url": image_url,  # Kie.ai InfiniteTalk specific
-            "input_urls": [image_url], # Backward compatibility
+            "image_url": image_url,
             "audio_url": audio_url,
-            "prompt": prompt,      # New requirement
-            "resolution": config.LIPSYNC_QUALITY # 720p or 480p
+            "prompt": prompt or "Lip-syncing video",
+            "resolution": config.LIPSYNC_QUALITY
         },
         "callBackUrl": "https://example.com/callback",
     }
 
     print(f"   👄 Submitting Lip-Sync task (InfiniteTalk)...")
-    print(f"      Image: {image_url[:60]}...")
-    print(f"      Audio: {audio_url[:60]}...")
-
+    print(f"      Payload: {json.dumps(payload, indent=2)}")
+    
     resp = requests.post(endpoints["generate"], headers=config.KIE_HEADERS, json=payload)
     
     if resp.status_code != 200:
         raise RuntimeError(f"Lip-Sync API error ({resp.status_code}): {resp.text[:500]}")
 
     result = resp.json()
+    print(f"      Dbg: Kie.ai Raw Resp: {result}")
     if result.get("code") != 200:
         raise RuntimeError(f"Lip-Sync API error: {result.get('msg', str(result))}")
 
     task_id = result["data"]["taskId"]
-    print(f"      Task: {task_id[:30]}...")
+    print(f"      Task: {task_id}")
 
-    # Poll for completion (similar to video generation)
-    for i in range(60): # 10 minutes max
-        time.sleep(10)
-        resp = requests.get(endpoints["poll"], headers=config.KIE_HEADERS, params={"taskId": task_id})
-        result = resp.json()
+    # Poll for completion with adaptive backoff
+    for i in range(120): # 20 minutes max (InfiniteTalk can be slow)
+        # Adaptive sleep: start frequent, then back off to prevent socket timeouts
+        wait_time = 10 if i < 30 else 20
+        time.sleep(wait_time)
+        
+        try:
+            resp = requests.get(endpoints["poll"], headers=config.KIE_HEADERS, params={"taskId": task_id}, timeout=30)
+            result = resp.json()
+        except Exception as poll_err:
+            print(f"      ⚠️ Poll network warning: {poll_err}")
+            continue
         
         if result.get("code") != 200:
+            print(f"      ⚠️ API warning: {result.get('msg', 'Unknown error')}")
             continue
             
         data = result.get("data", {})
         state = data.get("state", "processing").lower()
 
         if state == "success":
-            result_json_str = data.get("resultJson", "{}")
-            try:
-                result_data = json.loads(result_json_str)
-                video_url = result_data.get("resultUrls", [None])[0]
-                if video_url:
-                    print(f"      ✨ Lip-Sync complete! ({i * 10}s)")
-                    return video_url
-            except:
-                continue
+            video_url = _extract_video_url(data)
+            if video_url:
+                print(f"      ✨ Lip-Sync complete! ({i * 10}s)")
+                return video_url
         elif state == "fail":
-            raise RuntimeError(f"Lip-Sync failed: {data.get('failMsg', 'Unknown error')}")
+            fail_msg = data.get("failMsg", "Unknown error")
+            # Specific hint for common audio issue
+            if "audio file is unavailable" in fail_msg.lower():
+                fail_msg += " (Try verifying the direct download link format)"
+            raise RuntimeError(f"Lip-Sync failed: {fail_msg}")
         
-        print(f"      ⏳ Syncing... ({i * 10}s)")
+        print(f"      ⏳ Syncing... ({i * wait_time}s)")
 
-    raise RuntimeError("Lip-Sync generation timed out")
+    raise RuntimeError("Lip-Sync generation timed out after 20 minutes")
 
 
 def _extract_video_url(data):
