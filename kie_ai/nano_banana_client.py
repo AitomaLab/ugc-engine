@@ -33,7 +33,8 @@ class NanoBananaClient:
         product_image_url: str,
         influencer_image_url: str,
         prompt: str,
-        negative_prompt: str = ""
+        seed: Optional[int] = None,
+        negative_prompt: str = "(deformed, distorted, disfigured:1.3), poorly drawn, bad anatomy, wrong anatomy, extra limb, missing limb, floating limbs, (mutated hands and fingers:1.4), disconnected limbs, mutation, mutated, ugly, disgusting, blurry, amputation, (3rd hand:1.5)"
     ) -> str:
         """
         Generate a composite image of the influencer interacting with the product.
@@ -42,6 +43,7 @@ class NanoBananaClient:
             product_image_url: URL of the product image (transparent BG preferred)
             influencer_image_url: URL of the influencer's reference photo
             prompt: Description of the scene/action
+            seed: Random seed for reproducibility and character consistency
             
         Returns:
             str: Public URL of the generated image
@@ -49,41 +51,82 @@ class NanoBananaClient:
         print(f"🍌 NanoBanana: Generating composite image...")
         print(f"   Product: {product_image_url}")
         print(f"   Influencer: {influencer_image_url}")
+        if seed is not None:
+            print(f"   Seed: {seed}")
+
+        # Enhanced prompt for identity consistency
+        # Explicitly referencing the woman in the image and adding face consistency weight
+        final_prompt = (
+            f"photorealistic, professional UGC, 8k, sharp focus, {prompt}, "
+            f"featuring the specific woman from the reference image, (face consistency:1.5)"
+        )
 
         payload = {
             "model": self.model,
             "input": {
-                "prompt": prompt,
+                "prompt": final_prompt,
                 "negative_prompt": negative_prompt,
                 "product_image_url": product_image_url,
                 "reference_image_url": influencer_image_url,
-                "num_inference_steps": 30,
-                "guidance_scale": 7.5,
+                "num_inference_steps": 60,
+                "guidance_scale": 8.5,
                 "width": 768,   # Standard vertical aspect ratio optimized
                 "height": 1344, 
             },
             "callBackUrl": "https://example.com/callback"
         }
+        
+        if seed is not None:
+            payload["input"]["seed"] = seed
 
-        # 1. Submit Task
-        try:
-            resp = requests.post(
-                f"{self.base_url}/api/v1/jobs/createTask",
-                headers=self.headers,
-                json=payload
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            
-            if data.get("code") != 200:
-                raise RuntimeError(f"NanoBanana API Error: {data.get('msg')}")
+        # 1. Submit Task with Retry Logic for Concurrency Limits
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                resp = requests.post(
+                    f"{self.base_url}/api/v1/jobs/createTask",
+                    headers=self.headers,
+                    json=payload
+                )
                 
-            task_id = data["data"]["taskId"]
-            print(f"   Task ID: {task_id}")
-            
-        except Exception as e:
-            print(f"❌ NanoBanana Submit Failed: {e}")
-            raise
+                # Check for rate limit or specific concurrency error in text before json parse if possible, 
+                # but usually it's in the JSON 200 OK response with a non-200 code, or a 429 status.
+                if resp.status_code == 429:
+                    print(f"   ⚠️ Concurrency Limit Hit (429). Retrying in 30s... ({attempt+1}/{max_retries})")
+                    time.sleep(30)
+                    continue
+
+                resp.raise_for_status()
+                data = resp.json()
+                
+                # specific check for Kie.ai / Nano Banana concurrency msg
+                if data.get("code") != 200:
+                    msg = data.get("msg", "")
+                    if "concurrent" in msg.lower() or "limit" in msg.lower():
+                        print(f"   ⚠️ Concurrency Limit Hit ('{msg}'). Retrying in 30s... ({attempt+1}/{max_retries})")
+                        time.sleep(30)
+                        continue
+                    # Other error
+                    raise RuntimeError(f"NanoBanana API Error: {msg}")
+                    
+                task_id = data["data"]["taskId"]
+                print(f"   Task ID: {task_id}")
+                break # Success
+                
+            except Exception as e:
+                # If it's the last attempt, raise
+                if attempt == max_retries - 1:
+                    print(f"❌ NanoBanana Submit Failed after {max_retries} attempts: {e}")
+                    raise
+                
+                # If it's a network error, maybe wait shorter? 
+                # But for safety let's just wait a bit and retry.
+                if "NanoBanana API Error" in str(e):
+                    # logic handled above for distinct API errors
+                    raise 
+                
+                print(f"   ⚠️ Network/Unknown Error: {e}. Retrying in 5s...")
+                time.sleep(5)
 
         # 2. Poll for Result
         for i in range(120): # 10 mins max

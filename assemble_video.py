@@ -113,38 +113,41 @@ def assemble_video(video_paths, subtitle_path=None, music_path=None,
 
     print("\n🔧 Assembling final video...")
 
-    # Step 1: Trim each scene to target duration
-    print("   ✂️  Trimming scenes...")
-    trimmed_paths = []
-    durations = scene_durations or [config.SCENE_DURATIONS.get(n, 4)
-                                    for n in ["hook", "app_demo", "reaction", "cta"]]
-
-    for i, (scene, dur) in enumerate(zip(video_paths, durations)):
-        # scenes is a list of dicts, but video_paths is just paths. 
-        # Wait, the interface here is a bit mixed. Let's fix it.
-        # Check if we have the full scene objects or just paths
-        mode = "start"
-        if isinstance(scene, dict):
-            path = scene["path"]
-            mode = scene.get("trim_mode", "start")
+    # Step 1: Normalize all clips to same resolution/codec (No Trimming)
+    print("   📐 Normalizing to 9:16...")
+    normalized_paths = []
+    
+    for i, scene_data in enumerate(video_paths):
+        # Extract path from scene dict or use raw path
+        if isinstance(scene_data, dict):
+            path = scene_data["path"]
+            scene_type = scene_data.get("type", "veo")
         else:
-            path = scene
+            path = scene_data
+            scene_type = "veo"
 
-        trimmed = work_dir / f"trimmed_{i}.mp4"
-        trim_video(path, trimmed, dur, mode=mode)
-        trimmed_paths.append(str(trimmed))
-        actual_dur = get_video_duration(trimmed)
-        print(f"      Scene {i+1}: {actual_dur:.1f}s (target {dur}s, mode {mode})")
+        # ✨ FIX: For physical product scenes, use their actual duration and do not trim
+        if scene_type == "physical_product_scene":
+            # For physical scenes, we want the full generated output (usually ~7.5s - 8s)
+            # Trimming it to a default "hook" duration (like 4s) ruins the video.
+            normalized = work_dir / f"normalized_{i}.mp4"
+            normalize_video(path, normalized)
+            normalized_paths.append(str(normalized))
+            
+            actual_dur = get_video_duration(normalized)
+            print(f"      Scene {i+1} ({scene_type}): Using full duration {actual_dur:.1f}s (no trim)")
+            continue
+
+        # Normal trimming logic for digital app videos
+        normalized = work_dir / f"normalized_{i}.mp4"
+        normalize_video(path, normalized)
+        
+        actual_dur = get_video_duration(normalized)
+        print(f"      Scene {i+1}: {actual_dur:.1f}s")
 
     # Step 2: Normalize all clips to same resolution/codec
     print("   📐 Normalizing to 9:16...")
-    normalized_paths = []
-    for i, path in enumerate(trimmed_paths):
-        normalized = work_dir / f"normalized_{i}.mp4"
-        normalize_video(path, normalized)
-        normalized_paths.append(str(normalized))
-
-    # Step 3: Concatenate
+    # Step 2: Concatenate
     print("   🔗 Concatenating scenes...")
     concat_list = work_dir / "concat.txt"
     with open(concat_list, "w") as f:
@@ -167,7 +170,7 @@ def assemble_video(video_paths, subtitle_path=None, music_path=None,
     total_dur = get_video_duration(combined)
     print(f"      Combined: {total_dur:.1f}s")
 
-    # Step 4: Burn subtitles (if provided)
+    # Step 3: Burn subtitles (if provided)
     current_input = str(combined)
     if subtitle_path and Path(subtitle_path).exists():
         print("   🔤 Burning in subtitles...")
@@ -185,7 +188,7 @@ def assemble_video(video_paths, subtitle_path=None, music_path=None,
         subprocess.run(cmd, capture_output=True, check=True)
         current_input = str(subtitled)
 
-    # Step 5: Add background music (if provided)
+    # Step 4: Add background music (if provided)
     if music_path and Path(music_path).exists():
         print("   🎵 Adding background music...")
         final_dur = get_video_duration(current_input)
@@ -249,7 +252,7 @@ def assemble_video(video_paths, subtitle_path=None, music_path=None,
         subprocess.run(cmd, capture_output=True, check=True)
         current_input = str(with_music)
 
-    # Step 6: Enforce max duration and copy to final output
+    # Step 5: Enforce max duration and copy to final output
     print(f"   📦 Finalizing...")
     final_dur = get_video_duration(current_input)
 

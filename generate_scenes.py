@@ -199,6 +199,25 @@ def generate_video(prompt, reference_image_url=None, model_api=None):
     raise RuntimeError(f"{model_display} generation timed out after 20 minutes")
 
 
+def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, max_retries=3):
+    """
+    Generate video with automatic retry on 500/rate limit errors.
+    """
+    for attempt in range(max_retries):
+        try:
+            return generate_video(prompt, reference_image_url, model_api)
+        except RuntimeError as e:
+            # Check for 500 or known transient errors
+            error_str = str(e).lower()
+            if "500" in error_str or "internal error" in error_str or "unknown generation error" in error_str:
+                if attempt < max_retries - 1:
+                    wait_time = (2 ** attempt) * 5
+                    print(f"      ⏳ Veo/API error ('{e}'). Retrying in {wait_time}s... (Attempt {attempt + 2}/{max_retries})")
+                    time.sleep(wait_time)
+                    continue
+            raise
+
+
 def generate_lipsync_video(image_url, audio_url, prompt="Lip-syncing video"):
     """
     Generate a lip-synced video using Kie.ai InfiniteTalk.
@@ -350,7 +369,7 @@ def generate_all_scenes(scenes, project_name="video", record_id=None, status_cal
         try:
             if scene["type"] == "veo":
                 # Generate with AI model (Seedance / Veo / etc.)
-                video_url = generate_video(
+                video_url = generate_video_with_retry(
                     prompt=scene["prompt"],
                     reference_image_url=scene.get("reference_image_url"),
                 )
@@ -483,31 +502,70 @@ def generate_music(prompt="upbeat, trendy, short-form social media background mu
 # Physical Product Generation (Nano Banana + Veo)
 # ---------------------------------------------------------------------------
 
-def generate_composite_image(scene: dict, influencer: dict, product: dict) -> str:
+def generate_composite_image_with_retry(scene: dict, influencer: dict, product: dict, seed: int = None, max_retries: int = 5) -> str:
+    """
+    Generate composite image with automatic retry on rate limit errors.
+    """
+    for attempt in range(max_retries):
+        try:
+            # Call the original function
+            return generate_composite_image(scene, influencer, product, seed)
+        except RuntimeError as e:
+            # Check for the specific rate limit error message
+            if "concurrent requests limit" in str(e).lower() or "429" in str(e):
+                if attempt < max_retries - 1:
+                    # Exponential backoff: 5s, 10s, 20s, 40s
+                    wait_time = (2 ** attempt) * 5
+                    print(f"      ⏳ Nano Banana rate limited. Retrying in {wait_time}s... (Attempt {attempt + 2}/{max_retries})")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    print("      ❌ Max retries reached for Nano Banana. Failing job.")
+                    raise
+            # Re-raise any other exception immediately
+            raise
+
+
+def generate_composite_image(scene: dict, influencer: dict, product: dict, seed: int = None) -> str:
     """
     Calls Nano Banana Pro API to generate a composite image.
     Uses the dedicated prompt from scene builder.
     """
     print("   🖼️ Generating composite image with Nano Banana Pro...")
+    if seed:
+        print(f"      🌱 Using Seed: {seed}")
     
     # Nano Banana Endpoint (assuming generic create task endpoint)
     endpoint = f"{config.KIE_API_URL}/api/v1/jobs/createTask"
+
+    # Get the prompt
+    final_prompt = scene.get("nano_banana_prompt") or scene.get("prompt")
+    
+    # Define a strong negative prompt to prevent anatomical errors
+    negative_prompt = "(deformed, distorted, disfigured:1.3), poorly drawn, bad anatomy, wrong anatomy, extra limb, missing limb, floating limbs, (mutated hands and fingers:1.4), disconnected limbs, mutation, mutated, ugly, disgusting, blurry, amputation, (3rd hand:1.5), multiple people, different person"
     
     payload = {
         "model": "nano-banana-pro",
         "input": {
-            "prompt": scene.get("nano_banana_prompt") or scene.get("prompt"),
+            "prompt": final_prompt,
+            "negative_prompt": negative_prompt,
+            "seed": seed,
             "image_input": [
                 scene["reference_image_url"],
                 scene["product_image_url"]
             ],
             "aspect_ratio": "9:16",
-            "resolution": "1K",
+            "width": 768,
+            "height": 1344,
             # Nano Banana specific params
-            "image_guidance_scale": 7.5,
+            "image_guidance_scale": 8.5,
+            "num_inference_steps": 60,
         },
         "callBackUrl": "https://example.com/callback",
     }
+    
+    # if seed is not None:
+    #    payload["input"]["seed"] = seed
 
     print(f"      Payload: {json.dumps(payload, indent=2)}")
     
@@ -570,7 +628,7 @@ def animate_image(image_url: str, scene: dict) -> str:
     # Use the script part as the prompt for animation
     prompt = scene.get("video_animation_prompt") or scene.get("prompt")
     
-    return generate_video(
+    return generate_video_with_retry(
         prompt=prompt,
         reference_image_url=image_url,
         model_api="veo-3.1-fast"

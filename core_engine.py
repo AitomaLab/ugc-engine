@@ -22,6 +22,7 @@ import subtitle_engine
 import assemble_video
 import elevenlabs_client
 import storage_helper
+import random
 try:
     from kie_ai.nano_banana_client import client as nano_client
 except ImportError:
@@ -65,7 +66,13 @@ def run_generation_pipeline(
         except Exception as e:
             print(f"      ❌ Product analysis error: {e}")
 
-    # 1. Build scene structure
+    # 1. Global Seed for Consistency
+    # Generate a single seed for the entire video to keep characters consistent
+    # across multiple Nano Banana calls.
+    global_seed = random.randint(0, 2**32 - 1)
+    print(f"      🌱 Global Video Seed: {global_seed}")
+
+    # 2. Build scene structure
     if status_callback:
         status_callback("Building scenes")
 
@@ -98,10 +105,11 @@ def run_generation_pipeline(
                 if status_callback: status_callback(f"Gen: Composite Image ({i}/{len(scenes)})")
                 print(f"      🍌 Generating composite product image with prompt: {scene['nano_banana_prompt'][:50]}...")
                 
-                composite_url = generate_scenes.generate_composite_image(
+                composite_url = generate_scenes.generate_composite_image_with_retry(
                     scene=scene,
                     influencer=influencer,
-                    product=product
+                    product=product,
+                    seed=global_seed
                 )
                 print(f"      ✅ Composite Ready: {composite_url}")
 
@@ -117,9 +125,16 @@ def run_generation_pipeline(
                 generate_scenes.download_video(video_url, output_path)
 
                 # Veo is silent, so generates voiceover if needed
-                if scene.get("subtitle_text"):
+                # ✨ FIX: Define models that generate their own audio
+                MODELS_WITH_NATIVE_AUDIO = {"veo-3.1-fast", "veo-3.1", "seedance-1.5-pro", "seedance-2.0"}
+                
+                # For physical product scenes, the model is usually veo-3.1-fast (via animate_image)
+                model_used = "veo-3.1-fast" 
+
+                # Only add a voiceover if the model is NOT in the native audio list
+                if scene.get("subtitle_text") and model_used not in MODELS_WITH_NATIVE_AUDIO:
                     if status_callback: status_callback(f"Voiceover: {scene['name'].title()}")
-                    print(f"      🎙️ Adding Voiceover...")
+                    print(f"      🎙️ Adding Voiceover (model {model_used} has no native audio)...")
                     
                     voice_id = scene.get("voice_id", config.VOICE_MAP.get(influencer['name'], "pNInz6obpgDQGcFmaJgB"))
                     audio_file = elevenlabs_client.generate_voiceover(
@@ -143,9 +158,15 @@ def run_generation_pipeline(
                     ]
                     subprocess.run(cmd, capture_output=True, check=True)
                     shutil.move(str(video_with_vo), str(output_path))
+                else:
+                    print(f"      ✅ Skipping voiceover: Model '{model_used}' has native audio.")
 
 
             elif scene["type"] == "veo":
+                # Models that include native audio/lip-sync
+                MODELS_WITH_NATIVE_AUDIO = {"infinitalk", "seedance", "veo-3.1-fast"}
+                has_native_audio = any(m in model_api.lower() for m in MODELS_WITH_NATIVE_AUDIO)
+
                 if "infinitalk" in model_api:
                     # 🎙️ ElevenLabs Audio + Lip-Sync
                     audio_file = elevenlabs_client.generate_voiceover(
@@ -224,11 +245,9 @@ def run_generation_pipeline(
                 # 🔊 Post-generation voiceover for silent models
                 # Models like Kling produce silent video — we need to add
                 # ElevenLabs voiceover and overlay it onto the video.
-                SILENT_MODELS = {"kling"}  # Add model families that produce silent video
-                model_family = model_api.split("-")[0] if "-" in model_api else model_api
-                is_silent = any(s in model_api.lower() for s in SILENT_MODELS)
+                # UPDATED: Only add if model does NOT have native audio.
                 
-                if is_silent and scene.get("subtitle_text"):
+                if not has_native_audio and scene.get("subtitle_text"):
                     if status_callback:
                         status_callback(f"Voiceover: {scene['name'].title()} ({i}/{len(scenes)})")
                     print(f"      🎙️ Silent model detected — generating ElevenLabs voiceover...")

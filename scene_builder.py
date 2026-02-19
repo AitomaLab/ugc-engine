@@ -101,6 +101,9 @@ def _generate_nano_banana_prompt(influencer_name: str, product_description: str,
 
 def _build_physical_product_scenes(fields, influencer, product, durations, ctx):
     """Builds scenes for a physical product video."""
+    # ✨ NEW: Generate a single seed for character consistency across all scenes
+    consistency_seed = random.randint(1, 1000000)
+
     scenes = []
     script = fields.get("Hook", "Check this out!")
     
@@ -138,31 +141,33 @@ def _build_physical_product_scenes(fields, influencer, product, durations, ctx):
 
     # Generate Scenes
     for i, desc in enumerate(scene_descriptions):
-        # Generate the CORRECT prompt for Nano Banana
-        nano_banana_prompt = _generate_nano_banana_prompt(
-            influencer_name=influencer["name"],
-            product_description=visual_desc_str,
-            scene_description=desc
+        # ✨ FIX: Create a new, stronger prompt that explicitly references the input image
+        nano_banana_prompt = (
+            f"A realistic, high-quality UGC-style photo using the exact person from the reference image. "
+            f"The person is {desc}. "
+            f"They are holding a {visual_desc_str}. "
+            f"The style is a natural, authentic selfie shot in a well-lit, casual environment. "
+            f"The influencer is looking directly at the camera with a positive, {ctx['energy'].lower()} expression. "
+            f"IMPORTANT: Use the exact same person from the reference image, maintaining their facial features, skin tone, and appearance. Do not change the person."
         )
         
-        # Generate Video/Animation prompt (The Script)
-        # We assume the script is the "prompt" for animation in this context (Veo/Haier)
-        # But actually Veo needs a visual prompt too + animation instruction.
-        # Let's use the existing _generate_ultra_prompt logic to get a rich prompt
-        # but simpler for Veo animation of an image.
-        
-        # Actually, let's stick to the plan: pass the script as the prompt?
-        # The guide says: "video_animation_prompt": script
-        # But _generate_ultra_prompt gives a WHOLE structured prompt.
-        # Let's use the script part for now as per instructions.
+        # ✨ FIX: Generate a dedicated VISUAL prompt for Veo animation
+        visual_animation_prompt = (
+            f"A realistic, high-quality video of a {ctx['age']} {ctx['visuals']} "
+            f"{ctx['gender'].lower()} influencer named {ctx['name']}. "
+            f"{ctx['p']['subj']} is {desc}. The style is a natural, authentic, UGC-style shot in a "
+            f"well-lit, casual environment. The influencer is looking directly at the camera with a positive, "
+            f"{ctx['energy'].lower()} expression. Ensure the product is clearly visible and held naturally."
+        )
         
         scene_script = script_parts[i] if i < len(script_parts) else ""
         
         scenes.append({
             "name": f"physical_scene_{i+1}",
             "type": "physical_product_scene", # NEW TYPE
+            "seed": consistency_seed, # ✨ NEW: Add the shared seed
             "nano_banana_prompt": nano_banana_prompt, # CORRECT PROMPT
-            "video_animation_prompt": scene_script, # The script is for the video animation part
+            "video_animation_prompt": visual_animation_prompt, # CORRECT VISUAL PROMPT
             "reference_image_url": influencer["reference_image_url"],
             "product_image_url": product["image_url"],
             "target_duration": 7.5, # Split 15s evenly
