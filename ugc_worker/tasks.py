@@ -138,6 +138,46 @@ def generate_ugc_video(self, job_id: str):
             else:
                 print("      ⚠️ No App Clips available for auto-selection!")
 
+        # Fetch product if linked (Physical Product Flow)
+        product_dict = None
+        if job.get("product_type") == "physical" and job.get("product_id"):
+            prod_id = job["product_id"]
+            print(f"      📦 Fetching Product: {prod_id}")
+            prod_result = sb.table("products").select("*").eq("id", prod_id).execute()
+            if prod_result.data:
+                prod = prod_result.data[0]
+                
+                # Check for visual_description (Auto-Analysis)
+                visual_desc = prod.get("visual_description")
+                if not visual_desc:
+                    print(f"      👁️ Auto-analyzing product {prod_id}...")
+                    try:
+                        from ugc_backend.llm_vision_client import LLMVisionClient
+                        from ugc_db.db_manager import update_product
+
+                        client = LLMVisionClient()
+                        analysis = client.describe_product_image(prod["image_url"])
+                        if analysis:
+                            print(f"      ✅ Analysis success: {analysis.get('brand_name')}")
+                            update_product(prod_id, {"visual_description": analysis})
+                            visual_desc = analysis
+                            # Update local prod object to reflect new state
+                            prod["visual_description"] = analysis
+                    except Exception as e:
+                        print(f"      ⚠️ Auto-analysis failed: {e}")
+
+                product_dict = {
+                    "id": prod["id"],
+                    "name": prod["name"],
+                    "description": prod.get("description", ""),
+                    "image_url": prod["image_url"],
+                    "category": prod.get("category", ""),
+                    "visual_description": visual_desc,
+                }
+                print(f"      ✅ Product found: {prod['name']}")
+            else:
+                 print(f"      ⚠️ Product ID {prod_id} not found!")
+
         print(f"      👤 Influencer Raw Data (ID: {influencer['id']})")
         print(f"         - Name: {influencer.get('name')}")
         print(f"         - Image URL: {influencer.get('image_url')}")
@@ -199,6 +239,8 @@ def generate_ugc_video(self, job_id: str):
             project_name=project_name,
             influencer=influencer_dict,
             app_clip=app_clip_dict,
+            product=product_dict,
+            product_type=job.get("product_type", "digital"),
             fields=fields,
             status_callback=status_callback,
             skip_music=False,

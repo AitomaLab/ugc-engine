@@ -13,7 +13,7 @@ import random
 import config
 
 
-def build_scenes(content_row, influencer, app_clip, app_clip_2=None):
+def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=None, product_type="digital"):
     """
     Build the scene structure from a Content Calendar row.
 
@@ -22,6 +22,8 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None):
         influencer: dict from airtable_client.get_influencer()
         app_clip: dict from airtable_client.get_app_clip()
         app_clip_2: unused (kept for API compat)
+        product: dict from products table (optional, for physical flow)
+        product_type: "digital" or "physical"
 
     Returns:
         List of scene dicts
@@ -35,7 +37,7 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None):
     hook = content_row.get("Hook", "Check this out!")
     assistant = content_row.get("AI Assistant", "Travel")
     theme = content_row.get("Theme", "")
-    caption = content_row.get("Caption", "Download Naiara now!")
+    caption = content_row.get("Caption", "Link in bio!")
 
     person_name = influencer.get("name", "Sofia")
     age = influencer.get("age", "25-year-old")
@@ -74,73 +76,131 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None):
         "caption": caption
     }
 
-    if length == "30s":
+    if product_type == "physical" and product:
+        ctx["product"] = product
+        return _build_physical_product_scenes(content_row, influencer, product, durations, ctx)
+    elif length == "30s":
         return _build_30s(durations, app_clip, ctx)
     else:
         return _build_15s(durations, app_clip, ctx)
 
 
-def _generate_ultra_prompt(scene_type, ctx):
+def _generate_nano_banana_prompt(influencer_name: str, product_description: str, scene_description: str) -> str:
     """
-    Generates a 6-section 'Performance Director' prompt for Seedance/Veo.
-    Uses the user's script text verbatim — no wrapping in hard-coded filler.
+    Generates a simple, descriptive prompt for Nano Banana Pro image composition.
     """
-    p = ctx['p']
-    
-    # Environment based on Assistant
-    env_map = {
-        "Travel": "cozy bedroom with a bookshelf and a travel map on the wall",
-        "Shop": "modern living room with a shopping bag and clothes visible in the background",
-        "Fitness": "bright home gym setting with a yoga mat and weights",
-    }
-    env = env_map.get(ctx['assistant'], "cozy, lived-in apartment")
-
-    # Use the user's script text directly — no hard-coded Spanish wrapping
-    if scene_type == "hook":
-        script = ctx['hook']
-        expressions = "- [0-2s]: Opens with wide eyes and raised eyebrows in disbelief.\n- [2-5s]: Transitions to a huge, genuine smile showing teeth.\n- [5-8s]: Confident nod and knowing smirk."
-        gestures = "- [1s]: Places hand on chest in disbelief.\n- [4s]: Points directly at the viewer.\n- [7s]: Gives an enthusiastic thumbs up."
-    elif scene_type == "reaction":
-        script = ctx.get('reaction_text', ctx.get('caption', 'This is amazing!'))
-        expressions = "- [0-3s]: Look of total amazement, shaking head slightly.\n- [3-6s]: Huge crinkly-eyed smile of joy.\n- [6-8s]: Genuine, warm eye contact."
-        gestures = "- [2s]: Hand to cheek in amazement.\n- [5s]: Both hands palms up in a 'can you believe it?' gesture."
-    else: # cta / b-roll
-        script = ctx.get('caption', 'Check the link in bio!')
-        expressions = "- [0-3s]: Warm, encouraging smile.\n- [3-6s]: Direct, friendly eye contact with a wink.\n- [6-8s]: Enthusiastic final nod."
-        gestures = "- [2s]: Points to the side (towards 'bio').\n- [5s]: Friendly wave or heart gesture."
-
     prompt = (
-        f"## 1. Core Concept\n"
-        f"An authentic, high-energy, handheld smartphone selfie video. {ctx['name']}, a {ctx['age']} {ctx['gender'].lower()} with {ctx['visuals']}, is excitedly sharing an amazing discovery.\n\n"
-        f"## 2. Visual Style\n"
-        f"- **Camera**: Close-up shot, arm's length, slight arm movement and natural handheld shake.\n"
-        f"- **Lighting**: Bright natural light from a window, creating a sparkle in {p['poss'].lower()} eyes.\n"
-        f"- **Environment**: {env}. Slightly blurry background.\n"
-        f"- **Aesthetic**: Raw, genuine TikTok/Reels style. Spontaneous, not polished.\n\n"
-        f"## 3. Performance - Visual\n"
-        f"- **Eye Contact**: CRITICAL: {ctx['name']} MUST maintain direct eye contact with the lens throughout.\n"
-        f"**Expressions**:\n{expressions}\n"
-        f"- **Body**: Leans INTO the camera for emphasis. Highly animated.\n"
-        f"**Gestures**:\n{gestures}\n\n"
-        f"## 4. Performance - Vocal\n"
-        f"- **Language**: Natural, conversational {ctx['accent']}.\n"
-        f"- **Tone**: {ctx['tone']}. Rising pitch on emphasized words.\n"
-        f"- **Pacing**: Fast start, dramatic micro-pauses, punchy ending.\n\n"
-        f"## 5. Script\n"
-        f"\"{script}\"\n\n"
-        f"## 6. Technical Specifications\n"
-        f"Vertical 9:16, handheld (fixed_lens: false), audio enabled."
+        f"A realistic, high-quality photo of a female influencer named {influencer_name} {scene_description}. "
+        f"She is holding a {product_description}. "
+        f"The style is a natural, authentic, UGC-style selfie shot in a well-lit, casual environment. "
+        f"The influencer is looking directly at the camera with a positive expression. "
+        f"Ensure the product is clearly visible and held naturally."
     )
-    return prompt, script
+    return prompt
 
 
-def _get_colloquial_reaction(assistant):
-    reactions = {
-        "Travel": "¡Me ha organizado TODO el viaje en SEGUNDOS! O sea, vuelos... hoteles... ¡brutal!",
-        "Shop": "¡Me ha encontrado unos precios que son una LOCURA! De verdad, flipante.",
-        "Fitness": "¡El plan es INCREÍBLE! Se adapta a lo que necesito, en plan, perfecto.",
-    }
-    return reactions.get(assistant, "¡Esta app es una PASADA! De verdad, me encanta.")
+def _build_physical_product_scenes(fields, influencer, product, durations, ctx):
+    """Builds scenes for a physical product video."""
+    scenes = []
+    script = fields.get("Hook", "Check this out!")
+    
+    # 2 scenes for a 15s video (Hook + Showcase)
+    scene_descriptions = [
+        "holding the product up close to the camera with an excited expression",
+        "demonstrating the product's texture on her hand", 
+    ]
+    
+    # Get visual description safely
+    prod_desc = product.get("visual_description", {})
+    if isinstance(prod_desc, str):
+        # Handle case where it might be a string (legacy)
+        visual_desc_str = prod_desc
+    else:
+        visual_desc_str = prod_desc.get("visual_description", "the product")
+
+    # SPLIT SCRIPT LOGIC
+    # Split the script into 2 parts for the 2 scenes
+    # Simple split by sentence or half words
+    import re
+    sentences = re.split(r'(?<=[.!?])\s+', script)
+    if len(sentences) < 2:
+        # If only 1 sentence, split by words
+        words = script.split()
+        mid = len(words) // 2
+        part1 = " ".join(words[:mid])
+        part2 = " ".join(words[mid:])
+    else:
+        mid = len(sentences) // 2
+        part1 = " ".join(sentences[:mid])
+        part2 = " ".join(sentences[mid:])
+        
+    script_parts = [part1, part2]
+
+    # Generate Scenes
+    for i, desc in enumerate(scene_descriptions):
+        # Generate the CORRECT prompt for Nano Banana
+        nano_banana_prompt = _generate_nano_banana_prompt(
+            influencer_name=influencer["name"],
+            product_description=visual_desc_str,
+            scene_description=desc
+        )
+        
+        # Generate Video/Animation prompt (The Script)
+        # We assume the script is the "prompt" for animation in this context (Veo/Haier)
+        # But actually Veo needs a visual prompt too + animation instruction.
+        # Let's use the existing _generate_ultra_prompt logic to get a rich prompt
+        # but simpler for Veo animation of an image.
+        
+        # Actually, let's stick to the plan: pass the script as the prompt?
+        # The guide says: "video_animation_prompt": script
+        # But _generate_ultra_prompt gives a WHOLE structured prompt.
+        # Let's use the script part for now as per instructions.
+        
+        scene_script = script_parts[i] if i < len(script_parts) else ""
+        
+        scenes.append({
+            "name": f"physical_scene_{i+1}",
+            "type": "physical_product_scene", # NEW TYPE
+            "nano_banana_prompt": nano_banana_prompt, # CORRECT PROMPT
+            "video_animation_prompt": scene_script, # The script is for the video animation part
+            "reference_image_url": influencer["reference_image_url"],
+            "product_image_url": product["image_url"],
+            "target_duration": 7.5, # Split 15s evenly
+            "subtitle_text": scene_script,
+            "voice_id": influencer.get("elevenlabs_voice_id", config.VOICE_MAP.get(influencer["name"], config.VOICE_MAP["Meg"])),
+        })
+        
+    return scenes
+
+
+def _generate_physical_image_prompt(ctx, close_up=False):
+    """
+    Generates the pure image composition prompt for Nano Banana.
+    Uses the YAML visual description if available.
+    """
+    product = ctx.get("product", {})
+    va = product.get("visual_description") or product.get("visual_analysis") or {}
+    
+    # Extract visual details
+    brand = va.get("brand_name", product.get("name", "Product"))
+    desc = va.get("visual_description", "a physical product")
+    colors = ", ".join([c.get("name", "") for c in va.get("color_scheme", [])])
+    
+    # Construct prompt
+    if close_up:
+         return (
+            f"A high-quality close-up macro shot of {brand}, described as {desc}. "
+            f"The product features colors like {colors}. "
+            f"Placed on a clean, modern surface with aesthetic lighting. Professional product photography."
+        )
+    else:
+        return (
+            f"A realistic, casual, handheld smartphone selfie of a {ctx['age']} {ctx['visuals']} {ctx['gender'].lower()} influencer, "
+            f"smiling openly while looking at the camera. {ctx['p']['subj']} is holding a {brand} ({desc}) "
+            f"to the camera. The product features colors like {colors}. "
+            f"The setting is {ctx.get('assistant', 'indoor')} with natural lighting. "
+            f"The style should be very casual and candid, unposed, with an authentic expression."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +208,51 @@ def _get_colloquial_reaction(assistant):
 # ---------------------------------------------------------------------------
 
 def _build_15s(dur, app_clip, ctx):
+    """Simple 2-scene structure with ultra-realistic hook."""
+    scenes = []
+
+    # Scene 1: HOOK
+    prompt, script_text = _generate_ultra_prompt("hook", ctx)
+    scenes.append({
+        "name": "hook",
+        "type": "veo",
+        "prompt": prompt,
+        "reference_image_url": ctx["ref_image"],
+        "video_url": None,
+        "target_duration": dur["hook"],
+        "subtitle_text": script_text,
+        "voice_id": ctx["voice_id"],
+        "trim_mode": "start",
+    })
+
+    # Scene 2: APP DEMO (or Fallback)
+    if app_clip:
+        scenes.append({
+            "name": "app_demo",
+            "type": "clip",
+            "prompt": None,
+            "reference_image_url": None,
+            "video_url": app_clip["video_url"],
+            "target_duration": dur["app_demo"],
+            "subtitle_text": "",
+            "trim_mode": "end",
+        })
+    else:
+        # Fallback: Generic AI Lifestyle Scene if no clip provided
+        prompt_b, _ = _generate_ultra_prompt("b-roll", ctx)
+        scenes.append({
+            "name": "lifestyle_fallback",
+            "type": "veo",
+            "prompt": f"{prompt_b} -- close up of phone screen showing app interface",
+            "reference_image_url": ctx["ref_image"],
+            "video_url": None,
+            "target_duration": dur["app_demo"],
+            "subtitle_text": "Check out the link in bio!",
+            "voice_id": ctx["voice_id"],
+            "trim_mode": "start",
+        })
+
+    return scenes
     """Simple 2-scene structure with ultra-realistic hook."""
     scenes = []
 

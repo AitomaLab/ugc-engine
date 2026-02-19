@@ -478,6 +478,105 @@ def generate_music(prompt="upbeat, trendy, short-form social media background mu
     return None
 
 
+
+# ---------------------------------------------------------------------------
+# Physical Product Generation (Nano Banana + Veo)
+# ---------------------------------------------------------------------------
+
+def generate_composite_image(scene: dict, influencer: dict, product: dict) -> str:
+    """
+    Calls Nano Banana Pro API to generate a composite image.
+    Uses the dedicated prompt from scene builder.
+    """
+    print("   🖼️ Generating composite image with Nano Banana Pro...")
+    
+    # Nano Banana Endpoint (assuming generic create task endpoint)
+    endpoint = f"{config.KIE_API_URL}/api/v1/jobs/createTask"
+    
+    payload = {
+        "model": "nano-banana-pro",
+        "input": {
+            "prompt": scene.get("nano_banana_prompt") or scene.get("prompt"),
+            "image_input": [
+                scene["reference_image_url"],
+                scene["product_image_url"]
+            ],
+            "aspect_ratio": "9:16",
+            "resolution": "1K",
+            # Nano Banana specific params
+            "image_guidance_scale": 7.5,
+        },
+        "callBackUrl": "https://example.com/callback",
+    }
+
+    print(f"      Payload: {json.dumps(payload, indent=2)}")
+    
+    resp = requests.post(endpoint, headers=config.KIE_HEADERS, json=payload)
+    
+    if resp.status_code != 200:
+        raise RuntimeError(f"Nano Banana API error ({resp.status_code}): {resp.text[:500]}")
+
+    result = resp.json()
+    if result.get("code") != 200:
+        raise RuntimeError(f"Nano Banana API error: {result.get('msg', str(result))}")
+
+    task_id = result["data"]["taskId"]
+    print(f"      Task: {task_id}")
+
+    # Poll for completion
+    poll_endpoint = f"{config.KIE_API_URL}/api/v1/jobs/recordInfo"
+    
+    for i in range(60):  # 10 minutes max
+        time.sleep(10)
+        
+        try:
+            resp = requests.get(poll_endpoint, headers=config.KIE_HEADERS, params={"taskId": task_id}, timeout=30)
+            result = resp.json()
+        except Exception as e:
+            print(f"      ⚠️ Poll error: {e}")
+            continue
+
+        if result.get("code") != 200:
+            print(f"      ⚠️ API warning: {result.get('msg', 'Unknown')}")
+            continue
+
+        data = result.get("data", {})
+        state = data.get("state", "processing").lower()
+
+        if state == "success":
+            video_url = _extract_video_url(data) # It usually returns "resultUrls" even for images
+            # If extract_video_url fails for images, check resultJson manually
+            if not video_url:
+                result_json = data.get("resultJson", "{}")
+                if isinstance(result_json, str): result_json = json.loads(result_json)
+                video_url = result_json.get("resultUrls", [None])[0]
+            
+            if video_url:
+                print(f"      ✨ Composite Image ready! ({i * 10}s)")
+                return video_url
+        elif state == "fail":
+            fail_msg = data.get("failMsg", "Unknown error")
+            raise RuntimeError(f"Nano Banana generation failed: {fail_msg}")
+            
+        print(f"      ⏳ Composing... ({i * 10}s)")
+
+    raise RuntimeError("Nano Banana generation timed out")
+
+
+def animate_image(image_url: str, scene: dict) -> str:
+    """Calls Veo 3.1 to animate a composite image."""
+    print("   🎞️ Animating composite image with Veo 3.1...")
+    
+    # Use the script part as the prompt for animation
+    prompt = scene.get("video_animation_prompt") or scene.get("prompt")
+    
+    return generate_video(
+        prompt=prompt,
+        reference_image_url=image_url,
+        model_api="veo-3.1-fast"
+    )
+
+
 if __name__ == "__main__":
     print("This module is imported by pipeline.py")
     print("Functions: generate_veo_video(), generate_all_scenes(), generate_music()")

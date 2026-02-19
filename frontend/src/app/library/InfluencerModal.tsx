@@ -1,3 +1,5 @@
+'use client';
+
 import { useState, useEffect, useRef } from 'react';
 import { Influencer } from '@/lib/types';
 import { apiFetch } from '@/lib/utils';

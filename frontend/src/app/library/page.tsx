@@ -4,8 +4,9 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { apiFetch, formatDate, getApiUrl } from '@/lib/utils';
 import { Influencer, Script, AppClipItem, VideoJob } from '@/lib/types';
 import { InfluencerModal } from './InfluencerModal';
+import { ProductUpload } from './ProductUpload';
 
-type Tab = 'videos' | 'influencers' | 'scripts' | 'clips';
+type Tab = 'videos' | 'influencers' | 'scripts' | 'clips' | 'products';
 
 // ---------------------------------------------------------------------------
 // Main Library Page
@@ -20,62 +21,59 @@ export default function LibraryPage() {
         { key: 'influencers', label: 'Influencers', icon: '👤' },
         { key: 'scripts', label: 'Scripts', icon: '📝' },
         { key: 'clips', label: 'App Clips', icon: '📱' },
+        { key: 'products', label: 'Products', icon: '📦' },
     ];
 
     return (
         <div className="space-y-8 animate-slide-up">
-            <header>
-                <h2 className="text-3xl font-bold tracking-tight">
-                    <span className="gradient-text">Library</span>
-                </h2>
-                <p className="text-slate-400 mt-2 text-sm">
-                    Your complete creative universe — videos, influencers, scripts, and clips.
-                </p>
-            </header>
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                    <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400">
+                        Asset Library
+                    </h2>
+                    <p className="text-slate-400 mt-1">Manage your video assets, influencers, and scripts.</p>
+                </div>
 
-            {/* Global Search */}
-            <div className="relative">
-                <svg
-                    className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500"
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                >
-                    <circle cx="11" cy="11" r="8" />
-                    <path d="M21 21l-4.3-4.3" />
-                </svg>
-                <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search across all assets..."
-                    className="input-field pl-11"
-                    id="library-search"
-                />
+                <div className="relative max-w-md w-full md:w-auto">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">🔍</span>
+                    <input
+                        type="text"
+                        placeholder="Search assets..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="input-field pl-9 w-full"
+                    />
+                </div>
             </div>
 
             {/* Tabs */}
-            <div className="flex gap-1 p-1 bg-slate-900/60 rounded-xl w-fit">
+            <div className="flex overflow-x-auto gap-2 pb-2 scrollbar-none border-b border-white/5">
                 {tabs.map((t) => (
                     <button
                         key={t.key}
                         onClick={() => setTab(t.key)}
-                        className={`tab-button flex items-center gap-2 ${tab === t.key ? 'active' : ''}`}
+                        className={`
+                            flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all whitespace-nowrap
+                            ${tab === t.key
+                                ? 'bg-primary-500 text-white shadow-lg shadow-primary-500/20'
+                                : 'text-slate-400 hover:text-white hover:bg-white/5'
+                            }
+                        `}
                     >
-                        <span className="text-sm">{t.icon}</span>
+                        <span>{t.icon}</span>
                         {t.label}
                     </button>
                 ))}
             </div>
+
+            {/* ... */}
 
             {/* Tab Content */}
             {tab === 'videos' && <VideosTab searchQuery={searchQuery} />}
             {tab === 'influencers' && <InfluencersTab searchQuery={searchQuery} />}
             {tab === 'scripts' && <ScriptsTab searchQuery={searchQuery} />}
             {tab === 'clips' && <ClipsTab searchQuery={searchQuery} />}
+            {tab === 'products' && <ProductsTab searchQuery={searchQuery} />}
         </div>
     );
 }
@@ -646,6 +644,273 @@ function ClipsTab({ searchQuery }: { searchQuery: string }) {
                             <button onClick={() => handleDelete(clip.id)} className="btn-danger">Delete</button>
                         </div>
                     ))
+                )}
+            </div>
+        </div>
+    );
+}
+// ===========================================================================
+// Products Tab
+// ===========================================================================
+
+interface Product {
+    id: string;
+    name: string;
+    description?: string;
+    category?: string;
+    image_url: string;
+    visual_description?: {
+        brand_name?: string;
+        visual_description?: string;
+        color_scheme?: { hex: string; name: string }[];
+        font_style?: string;
+    };
+}
+
+function ProductsTab({ searchQuery }: { searchQuery: string }) {
+    const [products, setProducts] = useState<Product[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [analyzingIds, setAnalyzingIds] = useState<Set<string>>(new Set());
+    const [viewingAnalysis, setViewingAnalysis] = useState<Product | null>(null);
+
+    const fetchData = useCallback(async () => {
+        try {
+            const data = await apiFetch<Product[]>('/api/products');
+            setProducts(Array.isArray(data) ? data : []);
+        } catch (err) {
+            console.error('Products fetch error:', err);
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => { fetchData(); }, [fetchData]);
+
+    async function handleDelete(id: string) {
+        if (!confirm('Delete this product?')) return;
+        try {
+            await apiFetch(`/api/products/${id}`, { method: 'DELETE' });
+            fetchData();
+        } catch (err) { console.error(err); }
+    }
+
+    async function handleAnalyze(product: Product) {
+        setAnalyzingIds(prev => new Set(prev).add(product.id));
+        try {
+            const result = await apiFetch<any>('/api/products/analyze', {
+                method: 'POST',
+                body: JSON.stringify({ product_id: product.id }),
+            });
+            // Update local state immediately
+            setProducts(prev => prev.map(p =>
+                p.id === product.id ? { ...p, visual_description: result } : p
+            ));
+
+            // If we are currently viewing this product, update the modal too
+            if (viewingAnalysis?.id === product.id) {
+                setViewingAnalysis(prev => prev ? { ...prev, visual_description: result } : null);
+            }
+        } catch (err) {
+            console.error('Analysis error:', err);
+            // Don't alert, just log. UI allows retry.
+        } finally {
+            setAnalyzingIds(prev => {
+                const next = new Set(prev);
+                next.delete(product.id);
+                return next;
+            });
+        }
+    }
+
+    let filtered = products;
+    if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        filtered = products.filter((p) => p.name.toLowerCase().includes(q));
+    }
+
+    if (loading) return <div className="text-slate-500 text-sm italic animate-pulse py-12 text-center">Loading products...</div>;
+
+    return (
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+            {/* Upload Area */}
+            <div className="lg:col-span-1">
+                <ProductUpload onUploadSuccess={fetchData} />
+            </div>
+
+            {/* Product Grid */}
+            <div className="lg:col-span-3">
+                {filtered.length === 0 ? (
+                    <div className="text-center py-20 text-slate-500 text-sm italic bg-slate-900/30 rounded-2xl border border-white/5">
+                        No products found. Upload one to get started!
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                        {filtered.map((p) => (
+                            <div key={p.id} className="glass-panel-light p-3 flex flex-col gap-2 relative group hover:bg-white/5 transition-colors">
+                                <div className="aspect-[3/4] rounded-lg overflow-hidden bg-slate-800 relative">
+                                    <img src={p.image_url} alt={p.name} className="w-full h-full object-cover" />
+
+                                    {/* Overlay Actions */}
+                                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2">
+                                        <button
+                                            onClick={() => handleDelete(p.id)}
+                                            className="bg-red-500/80 text-white px-3 py-1 rounded text-xs hover:bg-red-600 w-24"
+                                        >
+                                            Delete
+                                        </button>
+
+                                        {!p.visual_description ? (
+                                            <button
+                                                onClick={() => handleAnalyze(p)}
+                                                disabled={analyzingIds.has(p.id)}
+                                                className="bg-purple-500/80 text-white px-3 py-1 rounded text-xs hover:bg-purple-600 w-24 disabled:opacity-50"
+                                            >
+                                                {analyzingIds.has(p.id) ? 'Analyzing...' : '✨ Analyze'}
+                                            </button>
+                                        ) : (
+                                            <button
+                                                onClick={() => setViewingAnalysis(p)}
+                                                className="bg-slate-500/80 text-white px-3 py-1 rounded text-xs hover:bg-slate-600 w-24"
+                                            >
+                                                View Info
+                                            </button>
+                                        )}
+                                    </div>
+
+                                    {/* Badge for Analyzed */}
+                                    {p.visual_description && (
+                                        <div className="absolute top-1 right-1 bg-green-500/20 text-green-400 p-1 rounded-full border border-green-500/30" title="AI Analyzed">
+                                            ✅
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div>
+                                    <h4 className="font-medium text-slate-200 text-sm truncate" title={p.name}>{p.name}</h4>
+                                    {p.category && <p className="text-xs text-slate-500">{p.category}</p>}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            {/* Analysis Modal */}
+            {viewingAnalysis && (
+                <ProductAnalysisModal
+                    product={viewingAnalysis}
+                    onClose={() => setViewingAnalysis(null)}
+                    onReanalyze={() => handleAnalyze(viewingAnalysis)}
+                    isAnalyzing={analyzingIds.has(viewingAnalysis.id)}
+                />
+            )}
+        </div>
+    );
+}
+
+function ProductAnalysisModal({
+    product,
+    onClose,
+    onReanalyze,
+    isAnalyzing
+}: {
+    product: Product;
+    onClose: () => void;
+    onReanalyze: () => void;
+    isAnalyzing: boolean;
+}) {
+    // Determine if we have valid data or just empty/partial
+    const vd = product.visual_description || {};
+    const hasData = vd.brand_name || vd.visual_description;
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+            {/* Backdrop with blur */}
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity" />
+
+            <div
+                className="bg-[#0f1115] border border-white/10 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl relative animate-in fade-in zoom-in-95 duration-200"
+                onClick={e => e.stopPropagation()}
+            >
+                {/* Header */}
+                <div className="p-5 border-b border-white/5 flex justify-between items-center bg-gradient-to-r from-purple-500/10 to-transparent">
+                    <div className="flex items-center gap-2">
+                        <span className="text-lg">👁️</span>
+                        <h3 className="text-lg font-bold text-white">Visual Analysis</h3>
+                    </div>
+                    <button onClick={onClose} className="text-slate-400 hover:text-white p-1 hover:bg-white/10 rounded-full transition-colors">
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
+                </div>
+
+                <div className="p-6 space-y-6">
+                    {/* Top Section: Image & Brand */}
+                    <div className="flex gap-5">
+                        <div className="w-24 h-24 rounded-xl bg-slate-800 border border-white/10 overflow-hidden flex-shrink-0 shadow-lg">
+                            <img src={product.image_url} className="w-full h-full object-cover" />
+                        </div>
+                        <div className="flex-1 min-w-0 flex flex-col justify-center">
+                            <h4 className="text-xl font-bold text-white truncate">
+                                {vd.brand_name || <span className="text-slate-500 italic">Unknown Brand</span>}
+                            </h4>
+                            <p className="text-slate-400 text-sm truncate opacity-80">{product.name}</p>
+
+                            {/* Re-analyze Button */}
+                            <button
+                                onClick={onReanalyze}
+                                disabled={isAnalyzing}
+                                className="mt-3 text-xs flex items-center gap-1.5 text-purple-400 hover:text-purple-300 transition-colors w-fit disabled:opacity-50"
+                            >
+                                <span className={isAnalyzing ? "animate-spin" : ""}>{isAnalyzing ? '↻' : '✨'}</span>
+                                {isAnalyzing ? 'Analyzing...' : 'Re-analyze Image'}
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Details Grid */}
+                    <div className="space-y-4">
+                        <div className="bg-white/5 p-4 rounded-xl border border-white/5">
+                            <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-2 flex items-center gap-2">
+                                📝 Visual Description
+                            </p>
+                            <div className="max-h-40 overflow-y-auto custom-scrollbar pr-2">
+                                <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">
+                                    {vd.visual_description || "No description generated yet."}
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="bg-white/5 p-4 rounded-xl border border-white/5">
+                                <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-2">Typography</p>
+                                <p className="text-sm text-slate-300 font-medium">{vd.font_style || 'N/A'}</p>
+                            </div>
+                            <div className="bg-white/5 p-4 rounded-xl border border-white/5">
+                                <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-2">Colors</p>
+                                <div className="flex flex-wrap gap-2">
+                                    {vd.color_scheme && vd.color_scheme.length > 0 ? (
+                                        vd.color_scheme.map((c: any, i: number) => (
+                                            <div key={i} className="flex items-center gap-2 bg-black/40 pr-2 pl-1 py-1 rounded-md border border-white/5">
+                                                <div className="w-4 h-4 rounded-full border border-white/10 shadow-sm" style={{ backgroundColor: c.hex }}></div>
+                                                <span className="text-[10px] font-mono text-slate-400">{c.name}</span>
+                                            </div>
+                                        ))
+                                    ) : (
+                                        <span className="text-sm text-slate-500 italic">N/A</span>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Footer hint */}
+                {!hasData && !isAnalyzing && (
+                    <div className="bg-yellow-500/10 border-t border-yellow-500/20 p-3 text-center">
+                        <p className="text-xs text-yellow-200/80">
+                            Analysis incomplete? Try re-analyzing to get better results.
+                        </p>
+                    </div>
                 )}
             </div>
         </div>

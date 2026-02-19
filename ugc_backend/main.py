@@ -18,10 +18,11 @@ from ugc_backend.cost_service import cost_service
 from ugc_db.db_manager import (
     get_supabase,
     list_influencers, get_influencer, create_influencer, update_influencer, delete_influencer,
-    list_scripts, create_script, delete_script,
+    list_scripts, create_script, delete_script, get_script,
     list_app_clips, create_app_clip, delete_app_clip,
     list_jobs, get_job, create_job, update_job,
     get_stats,
+    list_products, create_product, delete_product,
 )
 
 # Lazy Celery import — avoids blocking the backend if Redis isn't running
@@ -126,16 +127,24 @@ class AppClipCreate(BaseModel):
     video_url: str
     duration_seconds: Optional[int] = None
 
+class ProductCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    category: Optional[str] = None
+    image_url: str
+
 class JobCreate(BaseModel):
     influencer_id: str
     script_id: Optional[str] = None
     app_clip_id: Optional[str] = None
-    hook: Optional[str] = None              # Script/hook text for the scene
-    model_api: str = "seedance-1.5-pro"     # kie.ai model to use
-    assistant_type: str = "Travel"          # Travel / Shop / etc.
-    length: int = 15                        # Video duration in seconds
-    user_id: Optional[str] = None           # User ID (multi-tenant)
-    campaign_name: Optional[str] = None     # Campaign grouping name
+    product_id: Optional[str] = None            # NEW for Physical Products
+    product_type: str = "digital"               # 'digital' or 'physical'
+    hook: Optional[str] = None
+    model_api: str = "seedance-1.5-pro"
+    assistant_type: str = "Travel"
+    length: int = 15
+    user_id: Optional[str] = None
+    campaign_name: Optional[str] = None
 
 class BulkJobCreate(BaseModel):
     influencer_id: str
@@ -154,6 +163,208 @@ class CostEstimateRequest(BaseModel):
     script_text: str = ""
     duration: int = 15
     model: str = "seedance-1.5-pro"
+
+
+# ... (existing classes)
+
+# ---------------------------------------------------------------------------
+# Products CRUD
+# ---------------------------------------------------------------------------
+
+@app.get("/api/products")
+def api_list_products(category: Optional[str] = None):
+    try:
+        print(f"DEBUG: api_list_products called with category={category}")
+        return list_products(category)
+    except Exception as e:
+        print(f"ERROR in api_list_products: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/products")
+def api_create_product(data: ProductCreate):
+    try:
+        print(f"DEBUG: api_create_product called with {data}")
+        result = create_product(data.model_dump(exclude_none=True))
+        print(f"DEBUG: create_product result: {result}")
+        return result
+    except Exception as e:
+        print(f"ERROR in api_create_product: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/products/{product_id}")
+def api_delete_product(product_id: str):
+    try:
+        delete_product(product_id)
+        return {"status": "deleted", "id": product_id}
+    except Exception as e:
+        error_str = str(e)
+        if "foreign key constraint" in error_str or "23503" in error_str:
+            raise HTTPException(
+                status_code=409, 
+                detail="Cannot delete product because it is used in existing videos. Please delete the videos first."
+            )
+        print(f"ERROR in api_delete_product: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/products/upload")
+def api_product_upload_url(data: SignedUrlRequest):
+    try:
+        # Generate unique filename to avoid 409 Duplicate
+        import uuid
+        name_parts = data.file_name.rsplit('.', 1)
+        ext = f".{name_parts[1]}" if len(name_parts) > 1 else ""
+        unique_name = f"{uuid.uuid4()}{ext}"
+        
+        print(f"DEBUG: api_product_upload_url processing {data.file_name} -> {unique_name}")
+        
+        sb = get_supabase()
+        bucket = "product-images"
+        
+        try:
+            result = sb.storage.from_(bucket).create_signed_upload_url(unique_name)
+            # Construct public URL with the new unique name
+            public_url = sb.storage.from_(bucket).get_public_url(unique_name)
+            return {
+                "signed_url": result.get("signedURL") or result.get("signed_url"), 
+                "public_url": public_url, 
+                "path": unique_name
+            }
+        except Exception as e:
+            print(f"ERROR inside api_product_upload_url inner block: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to create signed URL: {str(e)}")
+            
+    except Exception as e:
+        print(f"ERROR in api_product_upload_url: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+
+
+class ProductAnalyzeRequest(BaseModel):
+    product_id: str
+
+@app.post("/api/products/analyze")
+def api_analyze_product(data: ProductAnalyzeRequest):
+    try:
+        from ugc_backend.llm_vision_client import LLMVisionClient
+        from ugc_db.db_manager import get_product, update_product
+        
+        print(f"DEBUG: Analyzing product {data.product_id}")
+        
+        # 1. Fetch Product
+        product = get_product(data.product_id)
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+            
+        if not product.get("image_url"):
+            raise HTTPException(status_code=400, detail="Product has no image URL")
+            
+        # 2. Analyze
+        client = LLMVisionClient()
+        analysis = client.describe_product_image(product["image_url"])
+        
+        if not analysis:
+            raise HTTPException(status_code=500, detail="Vision analysis failed or returned empty")
+            
+        print(f"DEBUG: Analysis result: {analysis}")
+        
+        # 3. Update DB
+        # Note: Using visual_description column as per Directive, mapping analysis result to it.
+        # Ensure the column used matches DB schema. 
+        # The prompt requested 'visual_description' JSONB. 
+        # If migration 005 used 'visual_analysis', we should align. 
+        # I will use 'visual_description' here and ensure migration 006 adds it.
+        update_product(data.product_id, {"visual_description": analysis})
+        
+        return analysis
+        
+    except Exception as e:
+        print(f"ERROR in api_analyze_product: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+class ScriptGenerateRequest(BaseModel):
+    product_id: str
+    duration: int = 15
+
+@app.post("/api/scripts/generate")
+def api_generate_script(data: ScriptGenerateRequest):
+    try:
+        from ugc_backend.ai_script_client import AIScriptClient
+        from ugc_db.db_manager import get_product
+        
+        print(f"DEBUG: Generating script for product {data.product_id} ({data.duration}s)")
+        
+        # 1. Fetch Product
+        product = get_product(data.product_id)
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+            
+        # 2. Generate Script
+        client = AIScriptClient()
+        # Use visual_description if available, otherwise empty dict (client handles defaults)
+        visuals = product.get("visual_description") or {}
+        
+        script = client.generate_physical_product_script(
+            product_analysis=visuals, 
+            duration=data.duration, 
+            product_name=product.get("name", "Product")
+        )
+        
+        return {"script": script}
+        
+    except Exception as e:
+        print(f"ERROR in api_generate_script: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Jobs
+# ---------------------------------------------------------------------------
+
+@app.post("/jobs")
+def api_create_job(data: JobCreate):
+    # Validation
+    if data.product_type == "digital" and not data.app_clip_id:
+         # Auto-select handled in worker if None, but good to validate intent
+         pass 
+    if data.product_type == "physical" and not data.product_id:
+        raise HTTPException(status_code=400, detail="product_id required for physical products")
+
+    # Estimate cost before saving
+    script_text = ""
+    if data.script_id:
+        s = get_script(data.script_id)
+        if s: script_text = s.get("text", "")
+    elif data.hook:
+        script_text = data.hook
+
+    costs = cost_service.estimate_total_cost(
+        script_text=script_text,
+        duration=data.length,
+        model=data.model_api,
+        product_type=data.product_type
+    )
+
+    job_data = data.model_dump(exclude_none=True)
+    job_data.update(costs)
+    job_data["status"] = "pending"
+    job_data["progress"] = 0
+    
+    job = create_job(job_data)
+    _dispatch_worker(job["id"])
+    return job
+
+
 
 
 # =========================================================================

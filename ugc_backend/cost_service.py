@@ -49,32 +49,54 @@ class CostService:
         script_text: str = "",
         duration: int = 15,
         model: str = "seedance-1.5-pro",
+        product_type: str = "digital",
+        num_scenes: int = 2
     ) -> dict:
         """
         Returns a full cost breakdown dict.
 
         Voice cost is only included for silent models (e.g. Kling) that
-        need post-generation ElevenLabs voiceover.  Models like Seedance
+        need post-generation ElevenLabs voiceover. Models like Seedance
         and Veo already include audio so voice cost = 0.
         """
-        cost_video = self.calculate_video_cost(duration, model)
+        cost_video = 0.0
+        cost_image = 0.0
 
-        # Only charge for voice on silent models
-        if self.is_silent_model(model):
+        if product_type == "physical":
+            # Physical flow: 2-step generation per scene (Nano Banana Image + Veo Video)
+            # 1. Image Generation Cost
+            cost_per_image = self.config["kie_ai"]["models"].get("nano_banana_pro", {}).get("cost_per_image", 0.10)
+            cost_image = num_scenes * cost_per_image
+            
+            # 2. Video Animation Cost (Veo 3.1 Fast)
+            video_model_config = self.config["kie_ai"]["models"].get("veo-3.1-fast", {})
+            cost_per_second_video = video_model_config.get("cost_per_second", 0.02)
+            cost_video = duration * cost_per_second_video
+
+        else:
+            # Digital flow: Single video generation call (Seedance/Kling)
+            cost_video = self.calculate_video_cost(duration, model)
+
+        # Voice cost handling
+        if product_type == "physical":
+             # Veo is silent, so we always need voiceover
+             cost_voice = self.calculate_voice_cost(len(script_text))
+        elif self.is_silent_model(model):
             cost_voice = self.calculate_voice_cost(len(script_text))
         else:
             cost_voice = 0.0
 
         cost_music = self.calculate_music_cost()
         cost_processing = self.calculate_processing_cost()
-        total_cost = round(cost_video + cost_voice + cost_music + cost_processing, 5)
+        total_cost = round(cost_video + cost_image + cost_voice + cost_music + cost_processing, 5)
 
         return {
-            "cost_video": cost_video,
-            "cost_voice": cost_voice,
-            "cost_music": cost_music,
-            "cost_processing": cost_processing,
-            "total_cost": total_cost,
+            "cost_video": round(cost_video, 4),
+            "cost_image": round(cost_image, 4),
+            "cost_voice": round(cost_voice, 4),
+            "cost_music": round(cost_music, 4),
+            "cost_processing": round(cost_processing, 4),
+            "total_cost": round(total_cost, 4),
         }
 
 

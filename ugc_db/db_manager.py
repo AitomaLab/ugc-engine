@@ -90,6 +90,11 @@ def delete_script(script_id: str):
     sb = get_supabase()
     sb.table("scripts").delete().eq("id", script_id).execute()
 
+def get_script(script_id: str):
+    sb = get_supabase()
+    result = sb.table("scripts").select("*").eq("id", script_id).execute()
+    return result.data[0] if result.data else None
+
 
 # ---------------------------------------------------------------------------
 # CRUD Helpers — App Clips
@@ -107,6 +112,37 @@ def create_app_clip(data: dict):
 def delete_app_clip(clip_id: str):
     sb = get_supabase()
     sb.table("app_clips").delete().eq("id", clip_id).execute()
+
+
+# ---------------------------------------------------------------------------
+# CRUD Helpers — Products
+# ---------------------------------------------------------------------------
+
+def list_products(category: str = None):
+    sb = get_supabase()
+    q = sb.table("products").select("*")
+    if category:
+        q = q.eq("category", category)
+    return q.execute().data
+
+def get_product(product_id: str):
+    sb = get_supabase()
+    result = sb.table("products").select("*").eq("id", product_id).execute()
+    return result.data[0] if result.data else None
+
+def create_product(data: dict):
+    sb = get_supabase()
+    result = sb.table("products").insert(data).execute()
+    return result.data[0] if result.data else None
+
+def update_product(product_id: str, data: dict):
+    sb = get_supabase()
+    result = sb.table("products").update(data).eq("id", product_id).execute()
+    return result.data[0] if result.data else None
+
+def delete_product(product_id: str):
+    sb = get_supabase()
+    sb.table("products").delete().eq("id", product_id).execute()
 
 
 # ---------------------------------------------------------------------------

@@ -22,6 +22,10 @@ import subtitle_engine
 import assemble_video
 import elevenlabs_client
 import storage_helper
+try:
+    from kie_ai.nano_banana_client import client as nano_client
+except ImportError:
+    nano_client = None # Handle missing client gracefully if needed
 
 def run_generation_pipeline(
     project_name: str,
@@ -29,17 +33,45 @@ def run_generation_pipeline(
     app_clip: dict,
     fields: dict,
     status_callback=None,
-    skip_music: bool = False
+    skip_music: bool = False,
+    product: dict = None,
+    product_type: str = "digital"
 ):
     """
     The main industrial generation flow.
     Takes discrete data objects instead of Airtable record IDs.
     """
+    # 0. Product Analysis (Just-in-Time)
+    if product and not product.get("visual_description") and not product.get("visual_analysis"):
+        try:
+            from ugc_backend.llm_vision_client import LLMVisionClient
+            from ugc_db.db_manager import update_product
+
+            if status_callback:
+                status_callback("Analyzing Product")
+
+            print(f"      👁️ Analyzing product image: {product['image_url']}")
+            client = LLMVisionClient()
+            analysis = client.describe_product_image(product['image_url'])
+
+            if analysis:
+                print(f"      ✅ Analysis complete: {analysis.get('brand_name')}")
+                # Update DB
+                update_product(product['id'], {"visual_description": analysis})
+                # Update local object
+                product["visual_description"] = analysis
+            else:
+                print("      ⚠️ Analysis failed or returned empty.")
+        except Exception as e:
+            print(f"      ❌ Product analysis error: {e}")
+
     # 1. Build scene structure
     if status_callback:
         status_callback("Building scenes")
+
+    scenes = scene_builder.build_scenes(fields, influencer, app_clip, product=product, product_type=product_type)
     
-    scenes = scene_builder.build_scenes(fields, influencer, app_clip)
+
     
     # 2. Generate all scene videos (Multi-API Support)
     if status_callback:
@@ -61,7 +93,59 @@ def run_generation_pipeline(
         output_path = output_dir / f"scene_{i}_{scene['name']}.mp4"
 
         try:
-            if scene["type"] == "veo":
+            if scene["type"] == "physical_product_scene":
+                # 🍌 Step 1: Nano Banana (Composite Image)
+                if status_callback: status_callback(f"Gen: Composite Image ({i}/{len(scenes)})")
+                print(f"      🍌 Generating composite product image with prompt: {scene['nano_banana_prompt'][:50]}...")
+                
+                composite_url = generate_scenes.generate_composite_image(
+                    scene=scene,
+                    influencer=influencer,
+                    product=product
+                )
+                print(f"      ✅ Composite Ready: {composite_url}")
+
+                # 🎥 Step 2: Veo Animation (Image-to-Video)
+                if status_callback: status_callback(f"Gen: Animating Scene ({i}/{len(scenes)})")
+                print(f"      🎥 Animating with Veo...")
+                
+                video_url = generate_scenes.animate_image(
+                    image_url=composite_url,
+                    scene=scene
+                )
+                
+                generate_scenes.download_video(video_url, output_path)
+
+                # Veo is silent, so generates voiceover if needed
+                if scene.get("subtitle_text"):
+                    if status_callback: status_callback(f"Voiceover: {scene['name'].title()}")
+                    print(f"      🎙️ Adding Voiceover...")
+                    
+                    voice_id = scene.get("voice_id", config.VOICE_MAP.get(influencer['name'], "pNInz6obpgDQGcFmaJgB"))
+                    audio_file = elevenlabs_client.generate_voiceover(
+                        text=scene["subtitle_text"],
+                        voice_id=voice_id,
+                        filename=f"vo_{i}_{scene['name']}.mp3"
+                    )
+                    
+                    # Overlay voiceover
+                    video_with_vo = output_dir / f"scene_{i}_{scene['name']}_vo.mp4"
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-i", str(output_path),
+                        "-i", str(audio_file),
+                        "-c:v", "copy",
+                        "-c:a", "aac",
+                        "-map", "0:v",
+                        "-map", "1:a",
+                        "-shortest",
+                        str(video_with_vo),
+                    ]
+                    subprocess.run(cmd, capture_output=True, check=True)
+                    shutil.move(str(video_with_vo), str(output_path))
+
+
+            elif scene["type"] == "veo":
                 if "infinitalk" in model_api:
                     # 🎙️ ElevenLabs Audio + Lip-Sync
                     audio_file = elevenlabs_client.generate_voiceover(
