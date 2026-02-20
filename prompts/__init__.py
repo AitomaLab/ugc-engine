@@ -1,0 +1,3 @@
+"""
+Initializer for prompts module.
+"""
