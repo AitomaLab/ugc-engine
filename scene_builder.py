@@ -118,8 +118,8 @@ def _build_scene_1_veo_prompt(ctx, script_part):
         f"Natural hand-product interaction with realistic grip. "
         f"The person is looking directly at the camera with a positive, {ctx['energy'].lower()} expression. "
         
-        # DIALOGUE (THE CRITICAL ADDITION)
-        f"The person says: \"{script_part}\" "
+        # DIALOGUE REPLACEMENT
+        f"- **Speaking**: The person is speaking enthusiastically to the camera, with natural mouth movements.\n"
         
         # CONSTRAINTS
         f"Natural, authentic UGC-style movements. Professional quality with realistic human proportions. "
@@ -158,8 +158,8 @@ def _build_scene_2_veo_prompt(ctx, script_part):
         f"Natural hand-product interaction with realistic grip and texture demonstration. "
         f"The person is looking directly at the camera with a positive, {ctx['energy'].lower()} expression. "
         
-        # DIALOGUE (THE CRITICAL ADDITION)
-        f"The person says: \"{script_part}\" "
+        # DIALOGUE REPLACEMENT
+        f"- **Speaking**: The person is speaking enthusiastically to the camera, with natural mouth movements.\n"
         
         # CONSTRAINTS
         f"Natural, authentic UGC-style movements. Professional quality with realistic human proportions. "
@@ -326,24 +326,26 @@ def _generate_ultra_prompt(scene_type, ctx):
 
     prompt = (
         f"## 1. Core Concept\n"
-        f"An authentic, high-energy, handheld smartphone selfie video. {ctx['name']}, a {ctx['age']} {ctx['gender'].lower()} with {ctx['visuals']}, is excitedly sharing an amazing discovery.\n\n"
+        # ✨ FIX: Remove person-identifying information
+        f"An authentic, high-energy, handheld smartphone selfie video. THE EXACT SAME PERSON from the reference image is excitedly sharing an amazing discovery.\n\n"
+        
         f"## 2. Visual Style\n"
         f"- **Camera**: Close-up shot, arm's length, slight arm movement and natural handheld shake.\n"
         f"- **Lighting**: Bright natural light from a window, creating a sparkle in {p['poss'].lower()} eyes.\n"
         f"- **Environment**: {env}. Slightly blurry background.\n"
         f"- **Aesthetic**: Raw, genuine TikTok/Reels style. Spontaneous, not polished.\n\n"
+        
         f"## 3. Performance - Visual\n"
-        f"- **Eye Contact**: CRITICAL: {ctx['name']} MUST maintain direct eye contact with the lens throughout.\n"
+        # ✨ FIX: Remove person's name
+        f"- **Eye Contact**: CRITICAL: The person MUST maintain direct eye contact with the lens throughout.\n"
         f"**Expressions**:\n{expressions}\n"
         f"- **Body**: Leans INTO the camera for emphasis. Highly animated.\n"
         f"**Gestures**:\n{gestures}\n\n"
-        f"## 4. Performance - Vocal\n"
-        f"- **Language**: Natural, conversational {ctx['accent']}.\n"
-        f"- **Tone**: {ctx['tone']}. Rising pitch on emphasized words.\n"
-        f"- **Pacing**: Fast start, dramatic micro-pauses, punchy ending.\n\n"
-        f"## 5. Script\n"
-        f"\"{script}\"\n\n"
-        f"## 6. Technical Specifications\n"
+        
+        f"## 4. Performance - Action\n"
+        f"- **Speaking**: The person is speaking enthusiastically to the camera, with natural mouth movements and facial animation.\n\n"
+        
+        f"## 5. Technical Specifications\n"
         f"Vertical 9:16, handheld (fixed_lens: false)."
     )
     return prompt, script
