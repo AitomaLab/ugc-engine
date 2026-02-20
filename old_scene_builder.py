@@ -99,94 +99,10 @@ def _generate_nano_banana_prompt(influencer_name: str, product_description: str,
     return prompt
 
 
-def _build_scene_1_veo_prompt(ctx, script_part):
-    """Scene 1: Holding product up close to camera - WITH SCRIPT INTEGRATION"""
-    return (
-        # VISUAL DESCRIPTION
-        f"A realistic, high-quality, authentic UGC video selfie of THE EXACT SAME PERSON from the reference image. "
-        f"CRITICAL: The person's identity, facial features, skin tone, hair, and body remain COMPLETELY IDENTICAL and CONSISTENT throughout the ENTIRE video from the first frame to the last frame. "
-        f"Upper body shot from chest up, filmed in a well-lit, casual home environment. "
-        f"The person is holding exactly one product bottle in their right hand, positioned at chest level between their face and the camera. "
-        f"The product label is facing the camera and clearly visible. "
-        f"Their left hand is relaxed at their side or near their shoulder. "
-        f"The shot shows exactly two arms and exactly two hands. "
-        f"Both hands are anatomically correct with five fingers each. "
-        f"There is exactly one product bottle in the scene. "
-        f"The product is held firmly in the person's right hand throughout the entire video. "
-        f"The product does not float, duplicate, merge, or change position unnaturally. "
-        f"All objects obey gravity. No objects are floating in mid-air. "
-        f"Natural hand-product interaction with realistic grip. "
-        f"The person is looking directly at the camera with a positive, {ctx['energy'].lower()} expression. "
-        
-        # DIALOGUE (THE CRITICAL ADDITION)
-        f"The person says: \"{script_part}\" "
-        
-        # CONSTRAINTS
-        f"Natural, authentic UGC-style movements. Professional quality with realistic human proportions. "
-        f"The person remains THE SAME INDIVIDUAL with NO CHANGES to their face, identity, or appearance at any point in the video. "
-        
-        # NEGATIVE PROMPT
-        f"NEGATIVE PROMPT: "
-        f"extra limbs, extra hands, extra fingers, third hand, deformed hands, mutated hands, "
-        f"anatomical errors, multiple arms, distorted body, unnatural proportions, "
-        f"floating objects, objects in mid-air, duplicate products, multiple bottles, extra products, "
-        f"merged objects, product duplication, disembodied hands, blurry, low quality, unrealistic, "
-        f"artificial, CGI-looking, unnatural movements, "
-        f"character morphing, face morphing, different person, facial feature changes, identity switching, "
-        f"person changing, character inconsistency, multiple people, appearance changes, face changes, "
-        f"different face, changing identity, morphing person, switching characters."
-    )
-
-
-def _build_scene_2_veo_prompt(ctx, script_part):
-    """Scene 2: Demonstrating product texture on hand - WITH SCRIPT INTEGRATION"""
-    return (
-        # VISUAL DESCRIPTION
-        f"A realistic, high-quality, authentic UGC video selfie of THE EXACT SAME PERSON from the reference image. "
-        f"CRITICAL: The person's identity, facial features, skin tone, hair, and body remain COMPLETELY IDENTICAL and CONSISTENT throughout the ENTIRE video from the first frame to the last frame. "
-        f"Upper body shot from chest up, filmed in a well-lit, casual home environment. "
-        f"The person is holding exactly one product bottle in their left hand at chest level. "
-        f"They are using their right hand to apply product from the bottle, demonstrating the texture. "
-        f"Their right hand shows a small amount of product (cream/conditioner) on the palm or fingers. "
-        f"Both hands are clearly visible in the frame throughout the scene. "
-        f"The shot shows exactly two arms and exactly two hands. "
-        f"Both hands are anatomically correct with five fingers each. "
-        f"There is exactly one product bottle in the scene. "
-        f"The product is held firmly in their left hand throughout the entire video. "
-        f"The product does not float, duplicate, merge, or change position unnaturally. "
-        f"All objects obey gravity. No objects are floating in mid-air. "
-        f"Natural hand-product interaction with realistic grip and texture demonstration. "
-        f"The person is looking directly at the camera with a positive, {ctx['energy'].lower()} expression. "
-        
-        # DIALOGUE (THE CRITICAL ADDITION)
-        f"The person says: \"{script_part}\" "
-        
-        # CONSTRAINTS
-        f"Natural, authentic UGC-style movements. Professional quality with realistic human proportions. "
-        f"The person remains THE SAME INDIVIDUAL with NO CHANGES to their face, identity, or appearance at any point in the video. "
-        
-        # NEGATIVE PROMPT
-        f"NEGATIVE PROMPT: "
-        f"extra limbs, extra hands, extra fingers, third hand, deformed hands, mutated hands, "
-        f"anatomical errors, multiple arms, distorted body, unnatural proportions, "
-        f"floating objects, objects in mid-air, duplicate products, multiple bottles, extra products, "
-        f"merged objects, product duplication, disembodied hands, blurry, low quality, unrealistic, "
-        f"artificial, CGI-looking, unnatural movements, product floating, hands not holding product, "
-        f"character morphing, face morphing, different person, facial feature changes, identity switching, "
-        f"person changing, character inconsistency, multiple people, appearance changes, face changes, "
-        f"different face, changing identity, morphing person, switching characters."
-    )
-
-
 def _build_physical_product_scenes(fields, influencer, product, durations, ctx):
     """Builds scenes for a physical product video."""
-    # ✨ NEW: Generate a single seed for character consistency across all scenes
-    consistency_seed = random.randint(1, 1000000)
-
     scenes = []
-    # ✨ FIX: Check multiple possible keys for the script, not just "Hook"
-    # The AI script generator might return "Script", "caption", or "Hook"
-    script = fields.get("Hook") or fields.get("Script") or fields.get("caption") or "Check this out!"
+    script = fields.get("Hook", "Check this out!")
     
     # 2 scenes for a 15s video (Hook + Showcase)
     scene_descriptions = [
@@ -222,35 +138,31 @@ def _build_physical_product_scenes(fields, influencer, product, durations, ctx):
 
     # Generate Scenes
     for i, desc in enumerate(scene_descriptions):
-        # ✨ FIX: Create a new, stronger prompt that explicitly references the input image
-        nano_banana_prompt = (
-            f"A realistic, high-quality UGC-style photo using the exact person from the reference image. "
-            f"The person is {desc}. "
-            f"They are holding a {visual_desc_str}. "
-            f"The style is a natural, authentic selfie shot in a well-lit, casual environment. "
-            f"The influencer is looking directly at the camera with a positive, {ctx['energy'].lower()} expression. "
-            f"IMPORTANT: Use the exact same person from the reference image, maintaining their facial features, skin tone, and appearance. Do not change the person."
+        # Generate the CORRECT prompt for Nano Banana
+        nano_banana_prompt = _generate_nano_banana_prompt(
+            influencer_name=influencer["name"],
+            product_description=visual_desc_str,
+            scene_description=desc
         )
         
-        scene_script = script_parts[i] if i < len(script_parts) else ""
+        # Generate Video/Animation prompt (The Script)
+        # We assume the script is the "prompt" for animation in this context (Veo/Haier)
+        # But actually Veo needs a visual prompt too + animation instruction.
+        # Let's use the existing _generate_ultra_prompt logic to get a rich prompt
+        # but simpler for Veo animation of an image.
         
-        # ✨ FIX: Pass the script part to the prompt builders
-        if i == 0:
-            visual_animation_prompt = _build_scene_1_veo_prompt(ctx, scene_script)
-        elif i == 1:
-            visual_animation_prompt = _build_scene_2_veo_prompt(ctx, scene_script)
-        else:
-            # Fallback for any additional scenes
-            visual_animation_prompt = _build_scene_1_veo_prompt(ctx, scene_script)
+        # Actually, let's stick to the plan: pass the script as the prompt?
+        # The guide says: "video_animation_prompt": script
+        # But _generate_ultra_prompt gives a WHOLE structured prompt.
+        # Let's use the script part for now as per instructions.
         
         scene_script = script_parts[i] if i < len(script_parts) else ""
         
         scenes.append({
             "name": f"physical_scene_{i+1}",
             "type": "physical_product_scene", # NEW TYPE
-            "seed": consistency_seed, # ✨ NEW: Add the shared seed
             "nano_banana_prompt": nano_banana_prompt, # CORRECT PROMPT
-            "video_animation_prompt": visual_animation_prompt, # CORRECT VISUAL PROMPT
+            "video_animation_prompt": scene_script, # The script is for the video animation part
             "reference_image_url": influencer["reference_image_url"],
             "product_image_url": product["image_url"],
             "target_duration": 7.5, # Split 15s evenly
@@ -292,67 +204,55 @@ def _generate_physical_image_prompt(ctx, close_up=False):
 
 
 # ---------------------------------------------------------------------------
-# Ultra Realistic Prompt Generator
-# ---------------------------------------------------------------------------
-
-def _generate_ultra_prompt(scene_type, ctx):
-    """
-    Generates a 6-section 'Performance Director' prompt for Seedance/Veo.
-    Uses the user's script text verbatim — no wrapping in hard-coded filler.
-    """
-    p = ctx['p']
-    
-    # Environment based on Assistant
-    env_map = {
-        "Travel": "cozy bedroom with a bookshelf and a travel map on the wall",
-        "Shop": "modern living room with a shopping bag and clothes visible in the background",
-        "Fitness": "bright home gym setting with a yoga mat and weights",
-    }
-    env = env_map.get(ctx['assistant'], "cozy, lived-in apartment")
-
-    # Use the user's script text directly — no hard-coded Spanish wrapping
-    if scene_type == "hook":
-        script = ctx['hook']
-        expressions = "- [0-2s]: Opens with wide eyes and raised eyebrows in disbelief.\n- [2-5s]: Transitions to a huge, genuine smile showing teeth.\n- [5-8s]: Confident nod and knowing smirk."
-        gestures = "- [1s]: Places hand on chest in disbelief.\n- [4s]: Points directly at the viewer.\n- [7s]: Gives an enthusiastic thumbs up."
-    elif scene_type == "reaction":
-        script = ctx.get('reaction_text', ctx.get('caption', 'This is amazing!'))
-        expressions = "- [0-3s]: Look of total amazement, shaking head slightly.\n- [3-6s]: Huge crinkly-eyed smile of joy.\n- [6-8s]: Genuine, warm eye contact."
-        gestures = "- [2s]: Hand to cheek in amazement.\n- [5s]: Both hands palms up in a 'can you believe it?' gesture."
-    else: # cta / b-roll
-        script = ctx.get('caption', 'Check the link in bio!')
-        expressions = "- [0-3s]: Warm, encouraging smile.\n- [3-6s]: Direct, friendly eye contact with a wink.\n- [6-8s]: Enthusiastic final nod."
-        gestures = "- [2s]: Points to the side (towards 'bio').\n- [5s]: Friendly wave or heart gesture."
-
-    prompt = (
-        f"## 1. Core Concept\n"
-        f"An authentic, high-energy, handheld smartphone selfie video. {ctx['name']}, a {ctx['age']} {ctx['gender'].lower()} with {ctx['visuals']}, is excitedly sharing an amazing discovery.\n\n"
-        f"## 2. Visual Style\n"
-        f"- **Camera**: Close-up shot, arm's length, slight arm movement and natural handheld shake.\n"
-        f"- **Lighting**: Bright natural light from a window, creating a sparkle in {p['poss'].lower()} eyes.\n"
-        f"- **Environment**: {env}. Slightly blurry background.\n"
-        f"- **Aesthetic**: Raw, genuine TikTok/Reels style. Spontaneous, not polished.\n\n"
-        f"## 3. Performance - Visual\n"
-        f"- **Eye Contact**: CRITICAL: {ctx['name']} MUST maintain direct eye contact with the lens throughout.\n"
-        f"**Expressions**:\n{expressions}\n"
-        f"- **Body**: Leans INTO the camera for emphasis. Highly animated.\n"
-        f"**Gestures**:\n{gestures}\n\n"
-        f"## 4. Performance - Vocal\n"
-        f"- **Language**: Natural, conversational {ctx['accent']}.\n"
-        f"- **Tone**: {ctx['tone']}. Rising pitch on emphasized words.\n"
-        f"- **Pacing**: Fast start, dramatic micro-pauses, punchy ending.\n\n"
-        f"## 5. Script\n"
-        f"\"{script}\"\n\n"
-        f"## 6. Technical Specifications\n"
-        f"Vertical 9:16, handheld (fixed_lens: false)."
-    )
-    return prompt, script
-
-# ---------------------------------------------------------------------------
 # 15-second version: Hook (8s AI) + App Demo (7s clip)
 # ---------------------------------------------------------------------------
 
 def _build_15s(dur, app_clip, ctx):
+    """Simple 2-scene structure with ultra-realistic hook."""
+    scenes = []
+
+    # Scene 1: HOOK
+    prompt, script_text = _generate_ultra_prompt("hook", ctx)
+    scenes.append({
+        "name": "hook",
+        "type": "veo",
+        "prompt": prompt,
+        "reference_image_url": ctx["ref_image"],
+        "video_url": None,
+        "target_duration": dur["hook"],
+        "subtitle_text": script_text,
+        "voice_id": ctx["voice_id"],
+        "trim_mode": "start",
+    })
+
+    # Scene 2: APP DEMO (or Fallback)
+    if app_clip:
+        scenes.append({
+            "name": "app_demo",
+            "type": "clip",
+            "prompt": None,
+            "reference_image_url": None,
+            "video_url": app_clip["video_url"],
+            "target_duration": dur["app_demo"],
+            "subtitle_text": "",
+            "trim_mode": "end",
+        })
+    else:
+        # Fallback: Generic AI Lifestyle Scene if no clip provided
+        prompt_b, _ = _generate_ultra_prompt("b-roll", ctx)
+        scenes.append({
+            "name": "lifestyle_fallback",
+            "type": "veo",
+            "prompt": f"{prompt_b} -- close up of phone screen showing app interface",
+            "reference_image_url": ctx["ref_image"],
+            "video_url": None,
+            "target_duration": dur["app_demo"],
+            "subtitle_text": "Check out the link in bio!",
+            "voice_id": ctx["voice_id"],
+            "trim_mode": "start",
+        })
+
+    return scenes
     """Simple 2-scene structure with ultra-realistic hook."""
     scenes = []
 

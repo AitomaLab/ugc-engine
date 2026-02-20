@@ -549,19 +549,13 @@ def generate_composite_image(scene: dict, influencer: dict, product: dict, seed:
         "input": {
             "prompt": final_prompt,
             "negative_prompt": negative_prompt,
-            "seed": seed,
             "image_input": [
                 scene["reference_image_url"],
                 scene["product_image_url"]
             ],
             "aspect_ratio": "9:16",
-            "width": 768,
-            "height": 1344,
-            # Nano Banana specific params
-            "image_guidance_scale": 8.5,
-            "num_inference_steps": 60,
-        },
-        "callBackUrl": "https://example.com/callback",
+            "resolution": "2K"
+        }
     }
     
     # if seed is not None:
