@@ -129,6 +129,7 @@ def assemble_video(video_paths, output_path, music_path=None, max_duration=None)
         # Normal trimming logic for digital app videos
         normalized = work_dir / f"normalized_{i}.mp4"
         normalize_video(path, normalized)
+        normalized_paths.append(str(normalized))
         
         actual_dur = get_video_duration(normalized)
         print(f"      Scene {i+1}: {actual_dur:.1f}s")
