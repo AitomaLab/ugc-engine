@@ -348,14 +348,41 @@ def api_create_job(data: JobCreate):
     if data.product_type == "physical" and not data.product_id:
         raise HTTPException(status_code=400, detail="product_id required for physical products")
 
-    # 3. Calculate Cost Estimate
+    # 3. Auto-Select Script if missing
     script_text = ""
     if data.script_id:
         s = get_script(data.script_id)
         if s: script_text = s.get("text", "")
     elif data.hook:
         script_text = data.hook
+    else:
+        scripts = list_scripts()
+        if scripts:
+            s = random.choice(scripts)
+            data.script_id = s.get("id")
+            script_text = s.get("text", "")
+            print(f"DEBUG: Auto-selected random script: {data.script_id}")
 
+    # 4. Auto-Select App Clip if missing (for digital products)
+    if data.product_type == "digital" and not data.app_clip_id:
+        clips = list_app_clips()
+        if clips:
+            inf_style = (inf.get("style") or "").lower().strip()
+            matching_clips = [
+                c for c in clips
+                if inf_style and (
+                    inf_style in (c.get("category") or "").lower()
+                    or inf_style in (c.get("description") or "").lower()
+                    or inf_style in (c.get("name") or "").lower()
+                )
+            ]
+            clip_pool = matching_clips if matching_clips else clips
+            if clip_pool:
+                c = random.choice(clip_pool)
+                data.app_clip_id = c.get("id")
+                print(f"DEBUG: Auto-selected random app clip: {data.app_clip_id}")
+
+    # 5. Calculate Cost Estimate
     costs = cost_service.estimate_total_cost(
         script_text=script_text,
         duration=data.length,
@@ -363,16 +390,16 @@ def api_create_job(data: JobCreate):
         product_type=data.product_type
     )
 
-    # 4. Prepare Job Data
+    # 6. Prepare Job Data
     job_data = data.model_dump(exclude_none=True)
     job_data.update(costs)
     job_data["status"] = "pending"
     job_data["progress"] = 0
     
-    # 5. Create in DB
+    # 7. Create in DB
     job = create_job(job_data)
     
-    # 6. Dispatch to Worker (non-blocking)
+    # 8. Dispatch to Worker (non-blocking)
     worker_dispatched = _dispatch_worker(job["id"])
     
     return {**job, "worker_dispatched": worker_dispatched}
