@@ -100,81 +100,51 @@ def _generate_nano_banana_prompt(influencer_name: str, product_description: str,
 
 
 def _build_scene_1_veo_prompt(ctx, script_part):
-    """Scene 1: Holding product up close to camera - WITH SCRIPT INTEGRATION"""
+    """Scene 1: Holding product up close to camera."""
+    age_str = ctx.get('age', '25-year-old')
+    visuals_str = ctx.get('visuals', 'casual style')
+    gender_str = ctx.get('gender', 'Female').lower()
+    energy_str = ctx.get('energy', 'High').lower()
+    
     return (
-        # VISUAL DESCRIPTION
-        f"A realistic, high-quality, authentic UGC video selfie of THE EXACT SAME PERSON from the reference image. "
-        f"CRITICAL: The person's identity, facial features, skin tone, hair, and body remain COMPLETELY IDENTICAL and CONSISTENT throughout the ENTIRE video from the first frame to the last frame. "
+        f"A realistic, high-quality, authentic UGC video selfie of a {age_str} {visuals_str} {gender_str} influencer. "
         f"Upper body shot from chest up, filmed in a well-lit, casual home environment. "
-        f"The person is holding exactly one product bottle in their right hand, positioned at chest level between their face and the camera. "
+        f"The influencer is holding exactly one product bottle in her right hand, positioned at chest level between her face and the camera. "
         f"The product label is facing the camera and clearly visible. "
-        f"Their left hand is relaxed at their side or near their shoulder. "
+        f"Her left hand is relaxed at her side or near her shoulder. "
         f"The shot shows exactly two arms and exactly two hands. "
         f"Both hands are anatomically correct with five fingers each. "
         f"There is exactly one product bottle in the scene. "
-        f"The product is held firmly in the person's right hand throughout the entire video. "
+        f"The product is held firmly in the influencer's right hand throughout the entire video. "
         f"The product does not float, duplicate, merge, or change position unnaturally. "
         f"All objects obey gravity. No objects are floating in mid-air. "
         f"Natural hand-product interaction with realistic grip. "
-        f"The person is looking directly at the camera with a positive, {ctx['energy'].lower()} expression. "
-        
-        # DIALOGUE REPLACEMENT
-        f"- **Speaking**: The person is speaking enthusiastically to the camera, with natural mouth movements.\n"
-        
-        # CONSTRAINTS
+        f"The influencer is looking directly at the camera with a positive, {energy_str} expression. "
         f"Natural, authentic UGC-style movements. Professional quality with realistic human proportions. "
-        f"The person remains THE SAME INDIVIDUAL with NO CHANGES to their face, identity, or appearance at any point in the video. "
-        
-        # NEGATIVE PROMPT
-        f"NEGATIVE PROMPT: "
-        f"extra limbs, extra hands, extra fingers, third hand, deformed hands, mutated hands, "
-        f"anatomical errors, multiple arms, distorted body, unnatural proportions, "
-        f"floating objects, objects in mid-air, duplicate products, multiple bottles, extra products, "
-        f"merged objects, product duplication, disembodied hands, blurry, low quality, unrealistic, "
-        f"artificial, CGI-looking, unnatural movements, "
-        f"character morphing, face morphing, different person, facial feature changes, identity switching, "
-        f"person changing, character inconsistency, multiple people, appearance changes, face changes, "
-        f"different face, changing identity, morphing person, switching characters."
+        f"NEGATIVE PROMPT: extra limbs, extra hands, extra fingers, third hand, deformed hands, mutated hands, "
+        f"anatomical errors, multiple arms, distorted body, unnatural proportions, floating objects, objects in mid-air, "
+        f"duplicate products, multiple bottles, extra products, merged objects, product duplication, disembodied hands, "
+        f"blurry, low quality, unrealistic, artificial, CGI-looking, unnatural movements."
     )
 
 
 def _build_scene_2_veo_prompt(ctx, script_part):
-    """Scene 2: Demonstrating product texture on hand - WITH SCRIPT INTEGRATION"""
+    """Scene 2: Demonstrating product texture on hand."""
+    age_str = ctx.get('age', '25-year-old')
+    visuals_str = ctx.get('visuals', 'casual style')
+    gender_str = ctx.get('gender', 'Female').lower()
+    name_str = ctx.get('name', 'Meg')
+    energy_str = ctx.get('energy', 'High').lower()
+
     return (
-        # VISUAL DESCRIPTION
-        f"A realistic, high-quality, authentic UGC video selfie of THE EXACT SAME PERSON from the reference image. "
-        f"CRITICAL: The person's identity, facial features, skin tone, hair, and body remain COMPLETELY IDENTICAL and CONSISTENT throughout the ENTIRE video from the first frame to the last frame. "
-        f"Upper body shot from chest up, filmed in a well-lit, casual home environment. "
-        f"The person is holding exactly one product bottle in their left hand at chest level. "
-        f"They are using their right hand to apply product from the bottle, demonstrating the texture. "
-        f"Their right hand shows a small amount of product (cream/conditioner) on the palm or fingers. "
-        f"Both hands are clearly visible in the frame throughout the scene. "
-        f"The shot shows exactly two arms and exactly two hands. "
-        f"Both hands are anatomically correct with five fingers each. "
-        f"There is exactly one product bottle in the scene. "
-        f"The product is held firmly in their left hand throughout the entire video. "
-        f"The product does not float, duplicate, merge, or change position unnaturally. "
-        f"All objects obey gravity. No objects are floating in mid-air. "
-        f"Natural hand-product interaction with realistic grip and texture demonstration. "
-        f"The person is looking directly at the camera with a positive, {ctx['energy'].lower()} expression. "
-        
-        # DIALOGUE REPLACEMENT
-        f"- **Speaking**: The person is speaking enthusiastically to the camera, with natural mouth movements.\n"
-        
-        # CONSTRAINTS
-        f"Natural, authentic UGC-style movements. Professional quality with realistic human proportions. "
-        f"The person remains THE SAME INDIVIDUAL with NO CHANGES to their face, identity, or appearance at any point in the video. "
-        
-        # NEGATIVE PROMPT
-        f"NEGATIVE PROMPT: "
-        f"extra limbs, extra hands, extra fingers, third hand, deformed hands, mutated hands, "
-        f"anatomical errors, multiple arms, distorted body, unnatural proportions, "
-        f"floating objects, objects in mid-air, duplicate products, multiple bottles, extra products, "
-        f"merged objects, product duplication, disembodied hands, blurry, low quality, unrealistic, "
-        f"artificial, CGI-looking, unnatural movements, product floating, hands not holding product, "
-        f"character morphing, face morphing, different person, facial feature changes, identity switching, "
-        f"person changing, character inconsistency, multiple people, appearance changes, face changes, "
-        f"different face, changing identity, morphing person, switching characters."
+        f"A realistic, high-quality, cinematic video of a {age_str} {visuals_str} {gender_str} influencer named {name_str}. "
+        f"The scene shows the upper body from the chest up. She is demonstrating the product's texture on her hand. "
+        f"The shot must be anatomically correct with exactly two arms and two hands visible. "
+        f"The style is a natural, authentic, UGC-style shot in a well-lit, casual environment. "
+        f"The influencer is looking directly at the camera with a positive, {energy_str} expression. "
+        f"Ensure the product is clearly visible and held naturally. High-fidelity, professional quality with realistic human proportions. "
+        f"NEGATIVE PROMPT: extra limbs, extra hands, extra fingers, deformed hands, mutated hands, anatomical errors, "
+        f"multiple arms, distorted body, unnatural proportions, blurry, low quality."
     )
 
 
@@ -326,8 +296,7 @@ def _generate_ultra_prompt(scene_type, ctx):
 
     prompt = (
         f"## 1. Core Concept\n"
-        # ✨ FIX: Remove person-identifying information
-        f"An authentic, high-energy, handheld smartphone selfie video. THE EXACT SAME PERSON from the reference image is excitedly sharing an amazing discovery.\n\n"
+        f"An authentic, high-energy, handheld smartphone selfie video. {ctx['name']}, a {ctx['age']} {ctx['gender'].lower()} with {ctx['visuals']}, is excitedly sharing an amazing discovery.\n\n"
         
         f"## 2. Visual Style\n"
         f"- **Camera**: Close-up shot, arm's length, slight arm movement and natural handheld shake.\n"
@@ -336,17 +305,21 @@ def _generate_ultra_prompt(scene_type, ctx):
         f"- **Aesthetic**: Raw, genuine TikTok/Reels style. Spontaneous, not polished.\n\n"
         
         f"## 3. Performance - Visual\n"
-        # ✨ FIX: Remove person's name
-        f"- **Eye Contact**: CRITICAL: The person MUST maintain direct eye contact with the lens throughout.\n"
+        f"- **Eye Contact**: CRITICAL: {ctx['name']} MUST maintain direct eye contact with the lens throughout.\n"
         f"**Expressions**:\n{expressions}\n"
         f"- **Body**: Leans INTO the camera for emphasis. Highly animated.\n"
         f"**Gestures**:\n{gestures}\n\n"
         
-        f"## 4. Performance - Action\n"
-        f"- **Speaking**: The person is speaking enthusiastically to the camera, with natural mouth movements and facial animation.\n\n"
+        f"## 4. Performance - Vocal\n"
+        f"- **Language**: Natural, conversational {ctx['accent']}.\n"
+        f"- **Tone**: {ctx['tone']}. Rising pitch on emphasized words.\n"
+        f"- **Pacing**: Fast start, dramatic micro-pauses, punchy ending.\n\n"
         
-        f"## 5. Technical Specifications\n"
-        f"Vertical 9:16, handheld (fixed_lens: false)."
+        f"## 5. Script\n"
+        f"\"{script}\"\n\n"
+        
+        f"## 6. Technical Specifications\n"
+        f"Vertical 9:16, handheld (fixed_lens: false), audio enabled."
     )
     return prompt, script
 
