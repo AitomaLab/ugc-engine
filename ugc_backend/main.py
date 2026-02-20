@@ -83,7 +83,7 @@ app = FastAPI(title="UGC Engine SaaS API v3")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "*"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -152,6 +152,8 @@ class BulkJobCreate(BaseModel):
     duration: int = 15
     model_api: str = "seedance-1.5-pro"
     assistant_type: str = "Travel"
+    product_type: str = "digital"               # NEW for Physical Products
+    product_id: Optional[str] = None            # NEW for Physical Products
     user_id: Optional[str] = None
     campaign_name: Optional[str] = None     # Campaign grouping name
 
@@ -333,14 +335,20 @@ def api_generate_script(data: ScriptGenerateRequest):
 
 @app.post("/jobs")
 def api_create_job(data: JobCreate):
-    # Validation
-    if data.product_type == "digital" and not data.app_clip_id:
-         # Auto-select handled in worker if None, but good to validate intent
-         pass 
+    """
+    Creates a new video generation job.
+    Supports both digital (app demo) and physical product flows.
+    """
+    # 1. Validate Influencer
+    inf = get_influencer(data.influencer_id)
+    if not inf:
+        raise HTTPException(status_code=404, detail="Influencer not found")
+
+    # 2. Flow-specific Validation
     if data.product_type == "physical" and not data.product_id:
         raise HTTPException(status_code=400, detail="product_id required for physical products")
 
-    # Estimate cost before saving
+    # 3. Calculate Cost Estimate
     script_text = ""
     if data.script_id:
         s = get_script(data.script_id)
@@ -355,14 +363,19 @@ def api_create_job(data: JobCreate):
         product_type=data.product_type
     )
 
+    # 4. Prepare Job Data
     job_data = data.model_dump(exclude_none=True)
     job_data.update(costs)
     job_data["status"] = "pending"
     job_data["progress"] = 0
     
+    # 5. Create in DB
     job = create_job(job_data)
-    _dispatch_worker(job["id"])
-    return job
+    
+    # 6. Dispatch to Worker (non-blocking)
+    worker_dispatched = _dispatch_worker(job["id"])
+    
+    return {**job, "worker_dispatched": worker_dispatched}
 
 
 
@@ -475,40 +488,7 @@ def create_signed_url(data: SignedUrlRequest):
 # Jobs: Single + Bulk
 # ---------------------------------------------------------------------------
 
-@app.post("/jobs")
-def api_create_job(data: JobCreate):
-    inf = get_influencer(data.influencer_id)
-    if not inf:
-        raise HTTPException(status_code=404, detail="Influencer not found")
 
-    # Calculate cost estimate
-    script_text = data.hook or ""
-    if data.script_id:
-        scripts = list_scripts()
-        scr = next((s for s in scripts if s["id"] == data.script_id), None)
-        if scr:
-            script_text = scr.get("text", script_text)
-    costs = cost_service.estimate_total_cost(script_text, data.length, data.model_api)
-
-    job = create_job({
-        "influencer_id": data.influencer_id,
-        "script_id": data.script_id,
-        "app_clip_id": data.app_clip_id,
-        "hook": data.hook,
-        "model_api": data.model_api,
-        "assistant_type": data.assistant_type,
-        "length": data.length,
-        "user_id": data.user_id,
-        "campaign_name": data.campaign_name,
-        "status": "pending",
-        "progress": 0,
-        **costs,
-    })
-
-    # Dispatch to Celery worker (non-blocking, fails gracefully)
-    worker_dispatched = _dispatch_worker(job["id"])
-
-    return {**job, "worker_dispatched": worker_dispatched}
 
 
 @app.post("/jobs/bulk")
@@ -541,12 +521,19 @@ def api_create_bulk_jobs(data: BulkJobCreate):
 
         # Calculate cost for this specific job
         script_text = selected_script.get("text", "")
-        costs = cost_service.estimate_total_cost(script_text, data.duration, data.model_api)
+        costs = cost_service.estimate_total_cost(
+            script_text=script_text,
+            duration=data.duration,
+            model=data.model_api,
+            product_type=data.product_type
+        )
 
         job = create_job({
             "influencer_id": data.influencer_id,
             "script_id": selected_script["id"],
             "app_clip_id": selected_clip["id"] if selected_clip else None,
+            "product_type": data.product_type,
+            "product_id": data.product_id,
             "model_api": data.model_api,
             "campaign_name": data.campaign_name,
             "status": "pending",

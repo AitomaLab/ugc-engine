@@ -8,6 +8,11 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
+# Ensure the local virtual environment scripts folder (containing portable ffmpeg) is in PATH
+venv_scripts_path = Path(__file__).parent / ".venv" / "Scripts"
+os.environ["PATH"] = f"{venv_scripts_path}{os.pathsep}{os.environ.get('PATH', '')}"
+
+
 # Load .env from project root
 PROJECT_ROOT = Path(__file__).parent
 load_dotenv(PROJECT_ROOT / ".env")
