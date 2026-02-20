@@ -35,7 +35,7 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=Non
 
     durations = config.get_scene_durations(length)
 
-    hook = content_row.get("Hook") or content_row.get("Script") or content_row.get("caption") or "Check this out!"
+    hook = content_row.get("Hook") or content_row.get("Script") or content_row.get("caption") or "¡Mira esto, te va a encantar!"
     assistant = content_row.get("AI Assistant", "Travel")
     theme = content_row.get("Theme", "")
     caption = content_row.get("Caption", "Link in bio!")
