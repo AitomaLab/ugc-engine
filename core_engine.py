@@ -128,8 +128,8 @@ def run_generation_pipeline(
                 generate_scenes.download_video(video_url, output_path)
 
                 # Veo is silent, so generates voiceover if needed
-                # ✨ FIX: Define models that generate their own audio
-                MODELS_WITH_NATIVE_AUDIO = {"veo-3.1-fast", "veo-3.1", "seedance-1.5-pro", "seedance-2.0"}
+                # ✨ FIX: Define models that generate their own audio (Veo FIRST_AND_LAST_FRAMES_2_VIDEO is silent)
+                MODELS_WITH_NATIVE_AUDIO = {"seedance-1.5-pro", "seedance-2.0"}
                 
                 # For physical product scenes, the model is usually veo-3.1-fast (via animate_image)
                 model_used = "veo-3.1-fast" 
@@ -194,8 +194,8 @@ def run_generation_pipeline(
 
 
             elif scene["type"] == "veo":
-                # Models that include native audio/lip-sync
-                MODELS_WITH_NATIVE_AUDIO = {"infinitalk", "seedance", "veo-3.1-fast"}
+                # Models that include native audio/lip-sync (Veo FIRST_AND_LAST_FRAMES_2_VIDEO is silent)
+                MODELS_WITH_NATIVE_AUDIO = {"infinitalk", "seedance"}
                 has_native_audio = any(m in model_api.lower() for m in MODELS_WITH_NATIVE_AUDIO)
 
                 if "infinitalk" in model_api:
