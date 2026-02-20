@@ -12,6 +12,7 @@ Output: final MP4 ready for upload.
 """
 import subprocess
 import shutil
+import uuid
 from pathlib import Path
 import config
 from subtitle_engine import extract_transcription_with_whisper, generate_subtitles_from_whisper
@@ -96,7 +97,8 @@ def assemble_video(video_paths, output_path, music_path=None, max_duration=None)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    work_dir = config.TEMP_DIR / "assembly"
+    assembly_id = uuid.uuid4().hex[:8]
+    work_dir = config.TEMP_DIR / f"assembly_{assembly_id}"
     work_dir.mkdir(parents=True, exist_ok=True)
 
     print("\n🔧 Assembling final video...")
@@ -258,6 +260,12 @@ def assemble_video(video_paths, output_path, music_path=None, max_duration=None)
     print(f"\n✅ Final video: {output_path}")
     print(f"   Duration: {final_dur:.1f}s | Size: {size_mb:.1f} MB")
 
+    # Clean up this specific job's assembly folder
+    try:
+        shutil.rmtree(work_dir, ignore_errors=True)
+    except Exception:
+        pass
+
     return str(output_path)
 
 
@@ -266,11 +274,8 @@ def cleanup_temp(project_name=None):
     if project_name:
         temp = config.TEMP_DIR / project_name
         if temp.exists():
-            shutil.rmtree(temp)
-    assembly = config.TEMP_DIR / "assembly"
-    if assembly.exists():
-        shutil.rmtree(assembly)
-    print("   🧹 Temp files cleaned up")
+            shutil.rmtree(temp, ignore_errors=True)
+    print("   🧹 Temp files cleaned up (assembly dirs are self-cleaning)")
 
 
 if __name__ == "__main__":
