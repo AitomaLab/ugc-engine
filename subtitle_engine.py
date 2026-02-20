@@ -8,6 +8,10 @@ Style: Big, bold, centered, word-by-word with power-word highlighting.
 """
 import re
 from pathlib import Path
+import subprocess
+import json
+from openai import OpenAI
+import os
 
 
 # Pro UGC subtitle style constants (Alex Hormozi / Mr Beast style)
@@ -29,6 +33,64 @@ POWER_WORDS = {
     "seconds", "fast", "easy", "simple", "just", "wow",
     "unbelievable", "mind-blowing", "game-changer", "instantly",
 }
+
+
+def extract_transcription_with_whisper(video_path):
+    """Extracts word-level timestamps using the OpenAI Whisper API."""
+    try:
+        print(f"   🎤 Extracting audio and transcribing with Whisper API...")
+        audio_path = Path(video_path).parent / f"{Path(video_path).stem}.mp3"
+        ffmpeg_cmd = ["ffmpeg", "-y", "-i", str(video_path), "-q:a", "0", "-map", "a", str(audio_path)]
+        subprocess.run(ffmpeg_cmd, check=True, capture_output=True)
+
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        with open(audio_path, "rb") as audio_file:
+            response = client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file,
+                response_format="verbose_json",
+                timestamp_granularities=["word"]
+            )
+        
+        os.remove(audio_path)
+        print("   ✅ Whisper transcription successful.")
+        return response.model_dump()
+    except Exception as e:
+        print(f"   ❌ Error during Whisper transcription: {e}")
+        return None
+
+
+def generate_subtitles_from_whisper(transcription, output_path, max_words=3):
+    """Generates an ASS subtitle file from a Whisper API verbose_json response."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    ass_content = _build_ass_header()
+    
+    if not transcription or "words" not in transcription or not transcription["words"]:
+        print("   ⚠️ No words found in transcription. Skipping subtitle generation.")
+        with open(output_path, "w") as f: f.write(ass_content)
+        return None
+
+    all_words = transcription["words"]
+    chunks = []
+    for i in range(0, len(all_words), max_words):
+        chunk_words = all_words[i:i + max_words]
+        text = " ".join([word["word"].strip() for word in chunk_words])
+        start_time = chunk_words[0]["start"]
+        end_time = chunk_words[-1]["end"]
+        chunks.append({"text": text, "start": start_time, "end": end_time})
+
+    for chunk in chunks:
+        start = _format_ass_time(chunk["start"])
+        end = _format_ass_time(chunk["end"])
+        styled_chunk = _highlight_power_words(chunk["text"])
+        ass_content += f"Dialogue: 0,{start},{end},Hormozi,,0,0,0,,{styled_chunk}\n"
+    
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(ass_content)
+    
+    print(f"   🔤 Synchronized subtitles saved: {output_path}")
+    return str(output_path)
 
 
 def _format_ass_time(seconds):
@@ -96,39 +158,109 @@ def generate_subtitles(scenes, output_path):
     for scene in scenes:
         text = scene.get("subtitle_text", "").strip()
         duration = scene["target_duration"]
+        transcription = scene.get("transcription")
 
-        if not text:
-            # No subtitles for this scene (e.g., app demo)
+        if transcription and transcription.get("words"):
+            # ✨ SYNCED LOGIC: Use Whisper timestamps
+            words = transcription["words"]
+            chunk_size = 3
+            
+            for i in range(0, len(words), chunk_size):
+                chunk_words = words[i:i + chunk_size]
+                
+                # Timestamps relative to clip start -> offset by current_time
+                start_time = chunk_words[0]["start"] + current_time
+                end_time = chunk_words[-1]["end"] + current_time
+                
+                text_content = " ".join([w["word"] for w in chunk_words])
+                
+                # Formatting
+                start = _format_ass_time(start_time)
+                end = _format_ass_time(end_time)
+                styled_chunk = _highlight_power_words(text_content)
+                
+                ass_content += (
+                    f"Dialogue: 0,{start},{end},Hormozi,,0,0,0,,"
+                    f"{styled_chunk}\n"
+                )
+            
+            # Advance time by full duration of the clip (not just the last word)
             current_time += duration
-            continue
 
-        # Split into chunks shown sequentially
-        chunks = _split_into_chunks(text, max_words=3)
-        chunk_duration = duration / max(len(chunks), 1)
+        elif text:
+            # 🕰️ LEGACY LOGIC: Dead reckoning
+            chunks = _split_into_chunks(text, max_words=3)
+            chunk_duration = duration / max(len(chunks), 1)
 
-        for chunk in chunks:
-            start = _format_ass_time(current_time)
-            end = _format_ass_time(current_time + chunk_duration)
+            for chunk in chunks:
+                start = _format_ass_time(current_time)
+                end = _format_ass_time(current_time + chunk_duration)
+                styled_chunk = _highlight_power_words(chunk)
 
-            # Apply power word highlighting
-            styled_chunk = _highlight_power_words(chunk)
-
-            # Add dialogue line
-            ass_content += (
-                f"Dialogue: 0,{start},{end},Hormozi,,0,0,0,,"
-                f"{styled_chunk}\n"
-            )
-
-            current_time += chunk_duration
-
-        # If no chunks but had text, still advance time
-        if not chunks:
+                ass_content += (
+                    f"Dialogue: 0,{start},{end},Hormozi,,0,0,0,,"
+                    f"{styled_chunk}\n"
+                )
+                current_time += chunk_duration
+        else:
+            # No text
             current_time += duration
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(ass_content)
 
     print(f"   🔤 Subtitles saved: {output_path}")
+    return str(output_path)
+
+
+def generate_synced_subtitles(transcription_data, output_path):
+    """
+    Generate an ASS subtitle file from precise Whisper timestamps.
+    
+    Args:
+        transcription_data: Dict with 'words' list from TranscriptionClient
+        output_path: Where to save the .ass file
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    ass_content = _build_ass_header()
+    
+    words = transcription_data.get("words", [])
+    if not words:
+        print("   ⚠️ No words found in transcription to subtitle.")
+        return None
+
+    # Hormozi style: Group words into small chunks (1-3 words)
+    # But now we use exact start/end times from the words themselves.
+    
+    chunk_size = 3
+    for i in range(0, len(words), chunk_size):
+        chunk_words = words[i:i + chunk_size]
+        
+        # Start time of first word
+        start_time = chunk_words[0]["start"]
+        # End time of last word
+        end_time = chunk_words[-1]["end"]
+        
+        # Build text string
+        text_content = " ".join([w["word"] for w in chunk_words])
+        
+        start_str = _format_ass_time(start_time)
+        end_str = _format_ass_time(end_time)
+        
+        # Apply power word highlighting
+        styled_text = _highlight_power_words(text_content)
+        
+        ass_content += (
+            f"Dialogue: 0,{start_str},{end_str},Hormozi,,0,0,0,,"
+            f"{styled_text}\n"
+        )
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(ass_content)
+
+    print(f"   🔤 Synced Subtitles saved: {output_path}")
     return str(output_path)
 
 

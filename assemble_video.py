@@ -14,6 +14,7 @@ import subprocess
 import shutil
 from pathlib import Path
 import config
+from subtitle_engine import extract_transcription_with_whisper, generate_subtitles_from_whisper
 
 
 def get_video_duration(video_path):
@@ -88,21 +89,8 @@ def normalize_video(input_path, output_path, target_width=1080, target_height=19
     return str(output_path)
 
 
-def assemble_video(video_paths, subtitle_path=None, music_path=None,
-                   output_path=None, scene_durations=None, max_duration=None):
-    """
-    Assemble the final UGC video.
-
-    Args:
-        video_paths: List of video file paths in scene order
-        subtitle_path: Path to ASS subtitle file (optional)
-        music_path: Path to background music file (optional)
-        output_path: Where to save the final video
-        scene_durations: List of target durations per scene (optional)
-
-    Returns:
-        Path to the final assembled video
-    """
+def assemble_video(video_paths, output_path, music_path=None, max_duration=None):
+    """Assembles the final UGC video with word-perfect, transcription-based subtitles."""
     if output_path is None:
         output_path = config.OUTPUT_DIR / "final_ugc.mp4"
     output_path = Path(output_path)
@@ -145,9 +133,7 @@ def assemble_video(video_paths, subtitle_path=None, music_path=None,
         actual_dur = get_video_duration(normalized)
         print(f"      Scene {i+1}: {actual_dur:.1f}s")
 
-    # Step 2: Normalize all clips to same resolution/codec
-    print("   📐 Normalizing to 9:16...")
-    # Step 2: Concatenate
+    # Step 2: Concatenate scenes into a single video
     print("   🔗 Concatenating scenes...")
     concat_list = work_dir / "concat.txt"
     with open(concat_list, "w") as f:
@@ -170,23 +156,20 @@ def assemble_video(video_paths, subtitle_path=None, music_path=None,
     total_dur = get_video_duration(combined)
     print(f"      Combined: {total_dur:.1f}s")
 
-    # Step 3: Burn subtitles (if provided)
+    # Step 3: Generate and Burn Synchronized Subtitles
     current_input = str(combined)
-    if subtitle_path and Path(subtitle_path).exists():
-        print("   🔤 Burning in subtitles...")
-        subtitled = work_dir / "subtitled.mp4"
-        sub_path_safe = str(Path(subtitle_path).resolve()).replace("\\", "/").replace(":", "\\:")
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", current_input,
-            "-vf", f"ass='{sub_path_safe}'",
-            "-c:v", "libx264",
-            "-c:a", "copy",
-            "-preset", "fast",
-            str(subtitled),
-        ]
-        subprocess.run(cmd, capture_output=True, check=True)
-        current_input = str(subtitled)
+    transcription = extract_transcription_with_whisper(current_input)
+    if transcription:
+        subtitle_path = work_dir / "subtitles_synced.ass"
+        generate_subtitles_from_whisper(transcription, subtitle_path)
+        
+        if Path(subtitle_path).exists() and Path(subtitle_path).stat().st_size > 250:
+            print("   🔤 Burning in subtitles...")
+            subtitled = work_dir / "subtitled.mp4"
+            sub_path_safe = str(Path(subtitle_path).resolve()).replace("\\", "/").replace(":", "\\:")
+            cmd = ["ffmpeg", "-y", "-i", current_input, "-vf", f"ass=\'{sub_path_safe}\'", "-c:v", "libx264", "-c:a", "copy", "-preset", "fast", str(subtitled)]
+            subprocess.run(cmd, capture_output=True, check=True)
+            current_input = str(subtitled)
 
     # Step 4: Add background music (if provided)
     if music_path and Path(music_path).exists():

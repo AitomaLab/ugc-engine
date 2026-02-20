@@ -105,7 +105,9 @@ def _build_physical_product_scenes(fields, influencer, product, durations, ctx):
     consistency_seed = random.randint(1, 1000000)
 
     scenes = []
-    script = fields.get("Hook", "Check this out!")
+    # ✨ FIX: Check multiple possible keys for the script, not just "Hook"
+    # The AI script generator might return "Script", "caption", or "Hook"
+    script = fields.get("Hook") or fields.get("Script") or fields.get("caption") or "Check this out!"
     
     # 2 scenes for a 15s video (Hook + Showcase)
     scene_descriptions = [
@@ -153,11 +155,16 @@ def _build_physical_product_scenes(fields, influencer, product, durations, ctx):
         
         # ✨ FIX: Generate a dedicated VISUAL prompt for Veo animation
         visual_animation_prompt = (
-            f"A realistic, high-quality video of a {ctx['age']} {ctx['visuals']} "
+            f"A realistic, high-quality, cinematic video of a {ctx['age']} {ctx['visuals']} "
             f"{ctx['gender'].lower()} influencer named {ctx['name']}. "
-            f"{ctx['p']['subj']} is {desc}. The style is a natural, authentic, UGC-style shot in a "
-            f"well-lit, casual environment. The influencer is looking directly at the camera with a positive, "
-            f"{ctx['energy'].lower()} expression. Ensure the product is clearly visible and held naturally."
+            f"The scene shows the upper body from the chest up. "
+            f"{ctx['p']['subj']} is {desc}. "
+            f"The shot must be anatomically correct with exactly two arms and two hands visible. "
+            f"The style is a natural, authentic, UGC-style shot in a well-lit, casual environment. "
+            f"The influencer is looking directly at the camera with a positive, {ctx['energy'].lower()} expression. "
+            f"Ensure the product is clearly visible and held naturally. "
+            f"High-fidelity, professional quality with realistic human proportions. "
+            f"NEGATIVE PROMPT: extra limbs, extra hands, extra fingers, deformed hands, mutated hands, anatomical errors, multiple arms, distorted body, unnatural proportions, blurry, low quality."
         )
         
         scene_script = script_parts[i] if i < len(script_parts) else ""

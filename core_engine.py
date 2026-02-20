@@ -23,6 +23,7 @@ import assemble_video
 import elevenlabs_client
 import storage_helper
 import random
+from ugc_backend.transcription_client import TranscriptionClient
 try:
     from kie_ai.nano_banana_client import client as nano_client
 except ImportError:
@@ -124,6 +125,8 @@ def run_generation_pipeline(
                 
                 generate_scenes.download_video(video_url, output_path)
 
+                generate_scenes.download_video(video_url, output_path)
+
                 # Veo is silent, so generates voiceover if needed
                 # ✨ FIX: Define models that generate their own audio
                 MODELS_WITH_NATIVE_AUDIO = {"veo-3.1-fast", "veo-3.1", "seedance-1.5-pro", "seedance-2.0"}
@@ -159,7 +162,35 @@ def run_generation_pipeline(
                     subprocess.run(cmd, capture_output=True, check=True)
                     shutil.move(str(video_with_vo), str(output_path))
                 else:
-                    print(f"      ✅ Skipping voiceover: Model '{model_used}' has native audio.")
+                    print(f"      ✅ Skipping ElevenLabs: Model '{model_used}' has native audio.")
+                    
+                    # ✨ NEW: Transcribe the native audio for perfect subtitle sync
+                    if model_used in MODELS_WITH_NATIVE_AUDIO:
+                        try:
+                            print(f"      🎙️ Extracting native audio for transcription...")
+                            audio_extract_path = output_dir / f"scene_{i}_{scene['name']}.mp3"
+                            
+                            # Extract audio using ffmpeg
+                            cmd = [
+                                "ffmpeg", "-y", "-v", "quiet",
+                                "-i", str(output_path),
+                                "-vn", # No video
+                                "-acodec", "libmp3lame",
+                                "-q:a", "2",
+                                str(audio_extract_path)
+                            ]
+                            subprocess.run(cmd, check=True)
+                            
+                            # Transcribe
+                            transcription_client = TranscriptionClient()
+                            transcription = transcription_client.transcribe_audio(str(audio_extract_path))
+                            
+                            if transcription:
+                                scene["transcription"] = transcription
+                                print("      ✅ Transcription attached to scene data")
+                                
+                        except Exception as e:
+                            print(f"      ⚠️ Transcription failed: {e}. Falling back to default timing.")
 
 
             elif scene["type"] == "veo":
@@ -290,12 +321,11 @@ def run_generation_pipeline(
         except Exception as e:
             raise RuntimeError(f"Scene {i} ({scene['name']}) generation failed: {e}")
 
-    # 3. Generate subtitles
-    if status_callback:
-        status_callback("Subtitling")
-        
-    subtitle_path = output_dir / "subtitles.ass"
-    subtitle_engine.generate_subtitles(scenes, subtitle_path)
+    # 3. Generate subtitles (Legacy block removed - now handled in assemble_video)
+    # if status_callback:
+    #     status_callback("Subtitling")
+    # subtitle_path = output_dir / "subtitles.ass"
+    # subtitle_engine.generate_subtitles(scenes, subtitle_path)
 
     # 4. Generate music (optional)
     music_path = None
@@ -325,10 +355,8 @@ def run_generation_pipeline(
 
     final_path = assemble_video.assemble_video(
         video_paths=video_paths,
-        subtitle_path=str(subtitle_path),
-        music_path=music_path,
         output_path=output_path,
-        scene_durations=durations,
+        music_path=music_path,
         max_duration=config.get_max_duration(length),
     )
     
