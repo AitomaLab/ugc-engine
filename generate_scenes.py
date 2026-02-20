@@ -105,8 +105,8 @@ def generate_video(prompt, reference_image_url=None, model_api=None):
         payload = {
             "prompt": prompt,
             "model": model_api,
-            "aspect_ratio": "16:9", # REQUIRED FOR FALLBACK MODE
-            "enableFallback": True, # Route blocked requests to permissive backup models
+            "aspect_ratio": "9:16",
+            "enableFallback": False,
         }
         if reference_image_url:
             payload["imageUrls"] = [reference_image_url]

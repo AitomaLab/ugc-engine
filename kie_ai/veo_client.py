@@ -57,8 +57,8 @@ class VeoClient:
         payload = {
             "prompt": prompt,
             "model": api_model_id,
-            "aspect_ratio": "16:9", # REQUIRED FOR FALLBACK MODE
-            "enableFallback": True, # Route blocked requests to permissive backup models
+            "aspect_ratio": "9:16",
+            "enableFallback": False,
         }
         
         if image_url:
