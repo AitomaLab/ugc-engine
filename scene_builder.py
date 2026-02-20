@@ -100,57 +100,82 @@ def _generate_nano_banana_prompt(influencer_name: str, product_description: str,
 
 
 def _build_scene_1_veo_prompt(ctx):
-    """Scene 1: Holding product up close to camera"""
+    """Scene 1: Holding product up close to camera - ENHANCED FOR TEMPORAL CONSISTENCY"""
     return (
-        f"A realistic, high-quality, authentic UGC video selfie of a {ctx['age']} {ctx['visuals']} "
-        f"{ctx['gender'].lower()} influencer. "
+        # ANCHOR: Use the exact person from the reference image
+        f"A realistic, high-quality, authentic UGC video selfie of THE EXACT SAME PERSON from the reference image. "
+        
+        # CRITICAL: Enforce temporal consistency
+        f"CRITICAL: The person's identity, facial features, skin tone, hair, and body remain COMPLETELY IDENTICAL and CONSISTENT throughout the ENTIRE video from the first frame to the last frame. "
+        
+        # ACTION: Describe what the person is doing (not who they are)
         f"Upper body shot from chest up, filmed in a well-lit, casual home environment. "
-        f"The influencer is holding exactly one product bottle in her right hand, "
-        f"positioned at chest level between her face and the camera. "
+        f"The person is holding exactly one product bottle in their right hand, positioned at chest level between their face and the camera. "
         f"The product label is facing the camera and clearly visible. "
-        f"Her left hand is relaxed at her side or near her shoulder. "
+        f"Their left hand is relaxed at their side or near their shoulder. "
         f"The shot shows exactly two arms and exactly two hands. "
         f"Both hands are anatomically correct with five fingers each. "
         f"There is exactly one product bottle in the scene. "
-        f"The product is held firmly in the influencer's right hand throughout the entire video. "
+        f"The product is held firmly in the person's right hand throughout the entire video. "
         f"The product does not float, duplicate, merge, or change position unnaturally. "
         f"All objects obey gravity. No objects are floating in mid-air. "
         f"Natural hand-product interaction with realistic grip. "
-        f"The influencer is looking directly at the camera with a positive, {ctx['energy'].lower()} expression. "
+        f"The person is looking directly at the camera with a positive, {ctx['energy'].lower()} expression. "
         f"Natural, authentic UGC-style movements. Professional quality with realistic human proportions. "
-        f"NEGATIVE PROMPT: extra limbs, extra hands, extra fingers, third hand, deformed hands, mutated hands, "
+        
+        # REINFORCEMENT: Final emphasis on consistency
+        f"The person remains THE SAME INDIVIDUAL with NO CHANGES to their face, identity, or appearance at any point in the video. "
+        
+        # NEGATIVE PROMPT: Prohibit all forms of inconsistency
+        f"NEGATIVE PROMPT: "
+        f"extra limbs, extra hands, extra fingers, third hand, deformed hands, mutated hands, "
         f"anatomical errors, multiple arms, distorted body, unnatural proportions, "
         f"floating objects, objects in mid-air, duplicate products, multiple bottles, extra products, "
         f"merged objects, product duplication, disembodied hands, blurry, low quality, unrealistic, "
-        f"artificial, CGI-looking, unnatural movements."
+        f"artificial, CGI-looking, unnatural movements, "
+        f"character morphing, face morphing, different person, facial feature changes, identity switching, "
+        f"person changing, character inconsistency, multiple people, appearance changes, face changes, "
+        f"different face, changing identity, morphing person, switching characters."
     )
 
 def _build_scene_2_veo_prompt(ctx):
-    """Scene 2: Demonstrating product texture on hand"""
+    """Scene 2: Demonstrating product texture on hand - ENHANCED FOR TEMPORAL CONSISTENCY"""
     return (
-        f"A realistic, high-quality, authentic UGC video selfie of a {ctx['age']} {ctx['visuals']} "
-        f"{ctx['gender'].lower()} influencer. "
+        # ANCHOR: Use the exact person from the reference image
+        f"A realistic, high-quality, authentic UGC video selfie of THE EXACT SAME PERSON from the reference image. "
+        
+        # CRITICAL: Enforce temporal consistency
+        f"CRITICAL: The person's identity, facial features, skin tone, hair, and body remain COMPLETELY IDENTICAL and CONSISTENT throughout the ENTIRE video from the first frame to the last frame. "
+        
+        # ACTION: Describe what the person is doing (not who they are)
         f"Upper body shot from chest up, filmed in a well-lit, casual home environment. "
-        f"The influencer is holding exactly one product bottle in her left hand at chest level. "
-        f"She is using her right hand to apply product from the bottle, demonstrating the texture. "
-        f"Her right hand shows a small amount of product (cream/conditioner) on the palm or fingers. "
+        f"The person is holding exactly one product bottle in their left hand at chest level. "
+        f"They are using their right hand to apply product from the bottle, demonstrating the texture. "
+        f"Their right hand shows a small amount of product (cream/conditioner) on the palm or fingers. "
         f"Both hands are clearly visible in the frame throughout the scene. "
         f"The shot shows exactly two arms and exactly two hands. "
         f"Both hands are anatomically correct with five fingers each. "
-        f"The left hand holds the bottle, the right hand demonstrates the product. "
-        f"There is exactly one product bottle in the scene, held in the left hand. "
-        f"The product bottle remains in the left hand throughout the entire video and does not move, float, duplicate, or merge. "
-        f"A small amount of product is visible on the right hand, applied naturally from the bottle. "
+        f"There is exactly one product bottle in the scene. "
+        f"The product is held firmly in their left hand throughout the entire video. "
+        f"The product does not float, duplicate, merge, or change position unnaturally. "
         f"All objects obey gravity. No objects are floating in mid-air. "
-        f"Natural hand movements with realistic product application. "
-        f"The product on the hand behaves like a real cream/conditioner texture. "
-        f"The influencer is looking directly at the camera with a positive, {ctx['energy'].lower()} expression. "
+        f"Natural hand-product interaction with realistic grip and texture demonstration. "
+        f"The person is looking directly at the camera with a positive, {ctx['energy'].lower()} expression. "
         f"Natural, authentic UGC-style movements. Professional quality with realistic human proportions. "
-        f"NEGATIVE PROMPT: extra limbs, extra hands, extra fingers, third hand, deformed hands, mutated hands, "
+        
+        # REINFORCEMENT: Final emphasis on consistency
+        f"The person remains THE SAME INDIVIDUAL with NO CHANGES to their face, identity, or appearance at any point in the video. "
+        
+        # NEGATIVE PROMPT: Prohibit all forms of inconsistency
+        f"NEGATIVE PROMPT: "
+        f"extra limbs, extra hands, extra fingers, third hand, deformed hands, mutated hands, "
         f"anatomical errors, multiple arms, distorted body, unnatural proportions, "
         f"floating objects, objects in mid-air, duplicate products, multiple bottles, extra products, "
         f"merged objects, product duplication, disembodied hands, blurry, low quality, unrealistic, "
-        f"artificial, CGI-looking, unnatural movements, product floating, hands not holding product."
+        f"artificial, CGI-looking, unnatural movements, product floating, hands not holding product, "
+        f"character morphing, face morphing, different person, facial feature changes, identity switching, "
+        f"person changing, character inconsistency, multiple people, appearance changes, face changes, "
+        f"different face, changing identity, morphing person, switching characters."
     )
 
 
