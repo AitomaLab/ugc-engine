@@ -2,14 +2,14 @@
 Prompt builder for Digital Products (App Clips).
 """
 import config
+from prompts import sanitize_dialogue
 
 def generate_ultra_prompt(scene_type, ctx):
     """
-    Generates a 6-section 'Performance Director' prompt for Seedance/Veo.
-    Uses the user's script text verbatim — no wrapping in hard-coded filler.
+    Generates a structured stringified-YAML prompt for Seedance/Veo.
+    Uses the user's script text verbatim as dialogue.
+    Returns (prompt, script_text) tuple.
     """
-    p = ctx['p']
-    
     # Environment based on Assistant
     env_map = {
         "Travel": "cozy bedroom with a bookshelf and a travel map on the wall",
@@ -18,46 +18,47 @@ def generate_ultra_prompt(scene_type, ctx):
     }
     env = env_map.get(ctx['assistant'], "cozy, lived-in apartment")
 
-    # Use the user's script text directly — no hard-coded Spanish wrapping
     if scene_type == "hook":
-        script = ctx['hook']
-        expressions = "- [0-2s]: Opens with wide eyes and raised eyebrows in disbelief.\n- [2-5s]: Transitions to a huge, genuine smile showing teeth.\n- [5-8s]: Confident nod and knowing smirk."
-        gestures = "- [1s]: Places hand on chest in disbelief.\n- [4s]: Points directly at the viewer.\n- [7s]: Gives an enthusiastic thumbs up."
+        script = sanitize_dialogue(ctx['hook'])
+        action = (
+            "character looks directly at camera with wide eyes and raised eyebrows in disbelief, "
+            "transitions to a genuine smile showing teeth, places hand on chest then points at viewer, "
+            "finishes with an enthusiastic thumbs up and confident nod"
+        )
+        emotion = "disbelief turning to excitement, high energy, genuine amazement"
     elif scene_type == "reaction":
-        script = ctx.get('reaction_text', ctx.get('caption', 'This is amazing!'))
-        expressions = "- [0-3s]: Look of total amazement, shaking head slightly.\n- [3-6s]: Huge crinkly-eyed smile of joy.\n- [6-8s]: Genuine, warm eye contact."
-        gestures = "- [2s]: Hand to cheek in amazement.\n- [5s]: Both hands palms up in a 'can you believe it?' gesture."
-    else: # cta / b-roll
-        script = ctx.get('caption', 'Check the link in bio!')
-        expressions = "- [0-3s]: Warm, encouraging smile.\n- [3-6s]: Direct, friendly eye contact with a wink.\n- [6-8s]: Enthusiastic final nod."
-        gestures = "- [2s]: Points to the side (towards 'bio').\n- [5s]: Friendly wave or heart gesture."
+        script = sanitize_dialogue(ctx.get('reaction_text', ctx.get('caption', 'This is amazing!')))
+        action = (
+            "character shakes head slightly in amazement, hand to cheek, transitions to a huge "
+            "crinkly-eyed smile, both hands palms up in a can-you-believe-it gesture, "
+            "then warm direct eye contact with camera"
+        )
+        emotion = "total amazement, joy, genuine warmth"
+    else:  # cta / b-roll
+        script = sanitize_dialogue(ctx.get('caption', 'Check the link in bio!'))
+        action = (
+            "character gives a warm encouraging smile, points to the side towards bio, "
+            "friendly wave or heart gesture, direct eye contact with a wink, "
+            "enthusiastic final nod"
+        )
+        emotion = "warm, encouraging, friendly, direct"
 
     prompt = (
-        f"## 1. Core Concept\n"
-        f"An authentic, high-energy, handheld smartphone selfie video. {ctx['name']}, a {ctx['age']} {ctx['gender'].lower()} with {ctx['visuals']}, is excitedly sharing an amazing discovery.\n\n"
-        
-        f"## 2. Visual Style\n"
-        f"- **Camera**: Close-up shot, arm's length, slight arm movement and natural handheld shake.\n"
-        f"- **Lighting**: Bright natural light from a window, creating a sparkle in {p['poss'].lower()} eyes.\n"
-        f"- **Environment**: {env}. Slightly blurry background.\n"
-        f"- **Aesthetic**: Raw, genuine TikTok/Reels style. Spontaneous, not polished.\n\n"
-        
-        f"## 3. Performance - Visual\n"
-        f"- **Eye Contact**: CRITICAL: {ctx['name']} MUST maintain direct eye contact with the lens throughout.\n"
-        f"**Expressions**:\n{expressions}\n"
-        f"- **Body**: Leans INTO the camera for emphasis. Highly animated.\n"
-        f"**Gestures**:\n{gestures}\n\n"
-        
-        f"## 4. Performance - Vocal\n"
-        f"- **Language**: Natural, conversational {ctx['accent']}.\n"
-        f"- **Tone**: {ctx['tone']}. Rising pitch on emphasized words.\n"
-        f"- **Pacing**: Fast start, dramatic micro-pauses, punchy ending.\n\n"
-        
-        f"## 5. Script\n"
-        f"\"{script}\"\n\n"
-        
-        f"## 6. Technical Specifications\n"
-        f"Vertical 9:16, handheld (fixed_lens: false), audio enabled."
+        f"dialogue: {script}\n"
+        f"action: {action}, maintains eye contact with camera throughout\n"
+        f"character: {ctx['age']} {ctx['gender'].lower()}, {ctx['visuals']}, "
+        f"natural skin texture with visible pores, subtle grain, not airbrushed\n"
+        f"camera: amateur iPhone selfie video, arms length, slight natural handheld shake, "
+        f"slightly uneven framing\n"
+        f"setting: {env}, slightly blurry background, bright natural light from window\n"
+        f"emotion: {emotion}\n"
+        f"voice_type: casual, conversational {ctx['accent']}, {ctx['tone'].lower()} tone, "
+        f"fast start with dramatic micro-pauses\n"
+        f"style: raw authentic TikTok/Reels UGC, spontaneous not polished, "
+        f"candid UGC look, realism, high detail, skin texture\n"
+        f"speech_constraint: speak ONLY the exact dialogue words provided, do not add or improvise any words\n"
+        f"negative: no airbrushed skin, no studio lighting, no ring light reflection in eyes, "
+        f"no geometric distortion, no extra fingers"
     )
     return prompt, script
 

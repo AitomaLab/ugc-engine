@@ -35,17 +35,34 @@ class AIScriptClient:
         if isinstance(colors, list):
             color_str = "\n".join([f"  - hex: {c.get('hex', '')}, name: {c.get('name', '')}" for c in colors if isinstance(c, dict)])
 
+        # Word budget per scene: ~2.5 words/sec spoken, 7s of dialogue per 8s scene
+        words_per_scene = 17
+        total_words = words_per_scene * 2  # 2 scenes
+
         system_prompt = f"""You are a world-class copywriter specializing in viral User-Generated Content (UGC) for social media platforms like TikTok and Instagram.
 
-Your task is to generate a compelling, authentic, and high-energy UGC script for a {duration}-second video based on the provided product analysis.
+Your task is to generate a UGC script for a {duration}-second video that will be split across 2 video scenes (8 seconds each). The dialogue in each scene must last approximately 7 seconds so it finishes naturally before the scene ends.
 
-**Instructions:**
-1.  The script MUST start with a strong, attention-grabbing hook (the first 3 seconds).
-2.  The body of the script should naturally highlight the product's key benefits and features based on its description.
-3.  The tone should be conversational, enthusiastic, and genuine, as if a real person is sharing a discovery.
-4.  The language should be simple, direct, and persuasive.
-5.  The script must be approximately {int(duration * 3.5)} words long to fit the video duration.
-6.  Only return the script text. Do not include any other comments, titles, or explanations."""
+**STRUCTURE — output exactly 2 parts separated by |||**
+Part 1 (Hook): An attention-grabbing opener that creates curiosity. Max {words_per_scene} words.
+Part 2 (Benefits + CTA): Highlight the product's key benefit and end with a soft call-to-action. Max {words_per_scene} words.
+
+**Example format:**
+You guys, I finally found the one product that completely changed my skin game. ||| The texture is insane, it absorbs in seconds and leaves your skin glowing. Link in bio!
+
+**RULES:**
+- Total script must be approximately {total_words} words. Do NOT exceed this.
+- Each part must be a complete, natural-sounding sentence or two.
+- Tone: conversational, enthusiastic, genuine, as if sharing a real discovery.
+- Language: simple, direct, persuasive.
+
+**CRITICAL FORMAT RULES — the script will be spoken aloud by an AI video model:**
+- Output ONLY the exact words to be spoken, separated by |||
+- Do NOT include emojis, hashtags, or special symbols.
+- Do NOT include stage directions, actions, or annotations like [Shows product], (holds up), *smiles*, etc.
+- Do NOT include scene labels like "Hook:", "Scene 1:", "Part 1:", etc.
+- Do NOT use ellipsis (...). Use a comma or period instead for pauses.
+- Do NOT add any text before Part 1 or after Part 2."""
 
         user_prompt = f"""**Product Analysis:**
 
@@ -57,7 +74,7 @@ font_style: {font}
 visual_description: {visuals}
 ```
 
-Generate the UGC script now."""
+Generate the 2-part UGC script now."""
 
         try:
             response = self.client.chat.completions.create(
@@ -66,7 +83,7 @@ Generate the UGC script now."""
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                max_tokens=300,
+                max_tokens=150,
                 temperature=0.8,
                 top_p=1.0,
                 frequency_penalty=0.1,

@@ -125,8 +125,6 @@ def run_generation_pipeline(
                 
                 generate_scenes.download_video(video_url, output_path)
 
-                generate_scenes.download_video(video_url, output_path)
-
                 # Veo handles its own audio when formatted correctly
                 MODELS_WITH_NATIVE_AUDIO = {"veo-3.1-fast", "veo-3.1", "seedance-1.5-pro", "seedance-2.0"}
                 

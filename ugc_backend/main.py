@@ -154,6 +154,7 @@ class BulkJobCreate(BaseModel):
     assistant_type: str = "Travel"
     product_type: str = "digital"               # NEW for Physical Products
     product_id: Optional[str] = None            # NEW for Physical Products
+    hook: Optional[str] = None                  # AI-generated script from frontend
     user_id: Optional[str] = None
     campaign_name: Optional[str] = None     # Campaign grouping name
 
@@ -546,8 +547,8 @@ def api_create_bulk_jobs(data: BulkJobCreate):
         selected_script = random.choice(scripts)
         selected_clip = random.choice(clip_pool) if clip_pool else None
 
-        # Calculate cost for this specific job
-        script_text = selected_script.get("text", "")
+        # Use frontend hook if provided, otherwise fall back to random script text
+        script_text = data.hook if data.hook else selected_script.get("text", "")
         costs = cost_service.estimate_total_cost(
             script_text=script_text,
             duration=data.duration,
@@ -555,9 +556,9 @@ def api_create_bulk_jobs(data: BulkJobCreate):
             product_type=data.product_type
         )
 
-        job = create_job({
+        job_data = {
             "influencer_id": data.influencer_id,
-            "script_id": selected_script["id"],
+            "script_id": selected_script["id"] if not data.hook else None,
             "app_clip_id": selected_clip["id"] if selected_clip else None,
             "product_type": data.product_type,
             "product_id": data.product_id,
@@ -566,7 +567,11 @@ def api_create_bulk_jobs(data: BulkJobCreate):
             "status": "pending",
             "progress": 0,
             **costs,
-        })
+        }
+        if data.hook:
+            job_data["hook"] = data.hook
+
+        job = create_job(job_data)
         _dispatch_worker(job["id"])
         created_jobs.append(job["id"])
 

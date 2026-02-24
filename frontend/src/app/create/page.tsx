@@ -210,6 +210,11 @@ export default function CreatePage() {
         setSuccessMessage('');
 
         try {
+            // For physical products, use the script textarea as dialogue (AI Hook overrides if set)
+            const effectiveHook = productType === 'physical'
+                ? (hook || customScript || generatedScript || undefined)
+                : (hook || undefined);
+
             if (isCampaignMode) {
                 // Bulk creation
                 await apiFetch('/jobs/bulk', {
@@ -222,7 +227,8 @@ export default function CreatePage() {
                         campaign_name: campaignName || undefined,
                         assistant_type: selectedInf?.style || 'Travel',
                         product_type: productType,
-                        product_id: productType === 'physical' ? productId : undefined
+                        product_id: productType === 'physical' ? productId : undefined,
+                        hook: effectiveHook,
                     }),
                 });
                 setSuccessMessage(`🚀 Campaign "${campaignName || 'Untitled'}" launched with ${quantity} videos!`);
@@ -236,7 +242,7 @@ export default function CreatePage() {
                         app_clip_id: (productType === 'digital' && appClipId !== 'auto') ? appClipId : undefined,
                         product_id: productType === 'physical' ? productId : undefined,
                         product_type: productType,
-                        hook: hook || undefined,
+                        hook: effectiveHook,
                         model_api: modelApi,
                         assistant_type: selectedInf?.style || 'Travel',
                         length: duration,
