@@ -736,109 +736,111 @@ function ProductsTab({ searchQuery }: { searchQuery: string }) {
     if (loading) return <div className="text-slate-500 text-sm italic animate-pulse py-12 text-center">Loading products...</div>;
 
     return (
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-            {/* Upload Area */}
-            <div className="lg:col-span-1">
-                <ProductUpload onUploadSuccess={fetchData} />
-            </div>
+        <div className="space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+                {/* Upload Area */}
+                <div className="lg:col-span-1">
+                    <ProductUpload onUploadSuccess={fetchData} />
+                </div>
 
-            {/* Product Grid */}
-            <div className="lg:col-span-3">
-                {filtered.length === 0 ? (
-                    <div className="text-center py-20 text-slate-500 text-sm italic bg-slate-900/30 rounded-2xl border border-white/5">
-                        No products found. Upload one to get started!
-                    </div>
-                ) : (
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                        {filtered.map((p) => (
-                            <div key={p.id} className="glass-panel-light p-3 flex flex-col gap-2 relative group hover:bg-white/5 transition-colors">
-                                <div className="aspect-[3/4] rounded-lg overflow-hidden bg-slate-800 relative">
-                                    <img src={p.image_url} alt={p.name} className="w-full h-full object-cover" />
+                {/* Product Grid */}
+                <div className="lg:col-span-3">
+                    {filtered.length === 0 ? (
+                        <div className="text-center py-20 text-slate-500 text-sm italic bg-slate-900/30 rounded-2xl border border-white/5">
+                            No products found. Upload one to get started!
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                            {filtered.map((p) => (
+                                <div key={p.id} className="glass-panel-light p-3 flex flex-col gap-2 relative group hover:bg-white/5 transition-colors">
+                                    <div className="aspect-[3/4] rounded-lg overflow-hidden bg-slate-800 relative">
+                                        <img src={p.image_url} alt={p.name} className="w-full h-full object-cover" />
 
-                                    {/* Overlay Actions */}
-                                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2">
-                                        <button
-                                            onClick={() => handleDelete(p.id)}
-                                            className="bg-red-500/80 text-white px-3 py-1 rounded text-xs hover:bg-red-600 w-24"
-                                        >
-                                            Delete
-                                        </button>
-
-                                        {!p.visual_description ? (
+                                        {/* Overlay Actions */}
+                                        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2">
                                             <button
-                                                onClick={() => handleAnalyze(p)}
-                                                disabled={analyzingIds.has(p.id)}
-                                                className="bg-purple-500/80 text-white px-3 py-1 rounded text-xs hover:bg-purple-600 w-24 disabled:opacity-50"
+                                                onClick={() => handleDelete(p.id)}
+                                                className="bg-red-500/80 text-white px-3 py-1 rounded text-xs hover:bg-red-600 w-24"
                                             >
-                                                {analyzingIds.has(p.id) ? 'Analyzing...' : '✨ Analyze'}
+                                                Delete
                                             </button>
-                                        ) : (
+
+                                            {!p.visual_description ? (
+                                                <button
+                                                    onClick={() => handleAnalyze(p)}
+                                                    disabled={analyzingIds.has(p.id)}
+                                                    className="bg-purple-500/80 text-white px-3 py-1 rounded text-xs hover:bg-purple-600 w-24 disabled:opacity-50"
+                                                >
+                                                    {analyzingIds.has(p.id) ? 'Analyzing...' : '✨ Analyze'}
+                                                </button>
+                                            ) : (
+                                                <button
+                                                    onClick={() => setViewingAnalysis(p)}
+                                                    className="bg-slate-500/80 text-white px-3 py-1 rounded text-xs hover:bg-slate-600 w-24"
+                                                >
+                                                    View Info
+                                                </button>
+                                            )}
+
                                             <button
-                                                onClick={() => setViewingAnalysis(p)}
-                                                className="bg-slate-500/80 text-white px-3 py-1 rounded text-xs hover:bg-slate-600 w-24"
+                                                onClick={() => setSelectedProductId(p.id)}
+                                                className="bg-blue-500/80 text-white px-3 py-1 rounded text-xs hover:bg-blue-600 w-24"
                                             >
-                                                View Info
+                                                🎬 Shots
                                             </button>
+                                        </div>
+
+                                        {/* Badge for Analyzed */}
+                                        {p.visual_description && (
+                                            <div className="absolute top-1 right-1 bg-green-500/20 text-green-400 p-1 rounded-full border border-green-500/30" title="AI Analyzed">
+                                                ✅
+                                            </div>
                                         )}
-
-                                        <button
-                                            onClick={() => setSelectedProductId(p.id)}
-                                            className="bg-blue-500/80 text-white px-3 py-1 rounded text-xs hover:bg-blue-600 w-24"
-                                        >
-                                            🎬 Shots
-                                        </button>
                                     </div>
 
-                                    {/* Badge for Analyzed */}
-                                    {p.visual_description && (
-                                        <div className="absolute top-1 right-1 bg-green-500/20 text-green-400 p-1 rounded-full border border-green-500/30" title="AI Analyzed">
-                                            ✅
-                                        </div>
-                                    )}
+                                    <div>
+                                        <h4 className="font-medium text-slate-200 text-sm truncate" title={p.name}>{p.name}</h4>
+                                    </div>
                                 </div>
-
-                                <div>
-                                    <h4 className="font-medium text-slate-200 text-sm truncate" title={p.name}>{p.name}</h4>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
+                            ))}
+                        </div>
+                    )}
+                </div>
             </div>
 
-            {/* Expanded Product Shots Panel (below the grid) */}
+            {/* Expanded Product Shots Panel — full width, OUTSIDE the grid */}
             {selectedProductId && (() => {
                 const selectedProd = products.find(p => p.id === selectedProductId);
                 if (!selectedProd) return null;
                 return (
-                    <div className="mt-6 bg-slate-900/60 rounded-2xl border border-white/5 overflow-hidden">
+                    <div className="bg-slate-900/60 rounded-2xl border border-white/5 overflow-hidden">
                         {/* Panel header */}
-                        <div className="p-4 border-b border-white/5 flex items-center justify-between bg-gradient-to-r from-blue-500/5 to-purple-500/5">
+                        <div className="p-5 border-b border-white/5 flex items-center justify-between bg-gradient-to-r from-blue-500/5 to-purple-500/5">
                             <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-lg overflow-hidden bg-slate-800 flex-shrink-0">
+                                <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-800 flex-shrink-0 border border-white/10">
                                     <img src={selectedProd.image_url} alt={selectedProd.name} className="w-full h-full object-cover" />
                                 </div>
                                 <div>
-                                    <h4 className="text-sm font-semibold text-white">{selectedProd.name}</h4>
-                                    <p className="text-[10px] text-slate-500">Cinematic product shots &amp; videos</p>
+                                    <h4 className="text-base font-semibold text-white">{selectedProd.name}</h4>
+                                    <p className="text-xs text-slate-500">Cinematic product shots & videos</p>
                                 </div>
                             </div>
                             <div className="flex items-center gap-2">
                                 <button
                                     onClick={() => setGeneratingForProduct(selectedProd)}
-                                    className="bg-blue-500/20 text-blue-300 hover:bg-blue-500/30 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                                    className="bg-blue-500/20 text-blue-300 hover:bg-blue-500/30 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
                                 >
                                     + Generate Shots
                                 </button>
                                 <button
                                     onClick={() => setSelectedProductId(null)}
-                                    className="text-slate-400 hover:text-white p-1.5 hover:bg-white/10 rounded-lg transition-colors"
+                                    className="text-slate-400 hover:text-white p-2 hover:bg-white/10 rounded-lg transition-colors"
                                 >
-                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                                 </button>
                             </div>
                         </div>
-                        <div className="p-2">
+                        <div className="p-4">
                             <ProductShotsGallery key={shotsRefreshKey} productId={selectedProductId} onUpdate={fetchData} />
                         </div>
                     </div>

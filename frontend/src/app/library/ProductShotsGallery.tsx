@@ -79,12 +79,12 @@ function ShotCard({
 
     return (
         <div
-            className="rounded-xl overflow-hidden bg-slate-800/60 border border-white/5 relative group transition-all hover:border-white/10 hover:shadow-lg"
+            className="video-card relative group transition-all"
             onMouseEnter={() => setHovering(true)}
             onMouseLeave={() => setHovering(false)}
         >
             {/* Media */}
-            <div className="aspect-square relative cursor-pointer" onClick={onPreview}>
+            <div className="relative aspect-[9/16] bg-slate-800/50 overflow-hidden cursor-pointer" onClick={onPreview}>
                 {shot.status === 'animation_completed' && shot.video_url ? (
                     <video
                         ref={videoRef}
@@ -146,7 +146,7 @@ function ShotCard({
             {/* Footer */}
             <div className="p-3">
                 <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs text-white font-medium capitalize">{shot.shot_type.replace('_', ' ')}</span>
+                    <span className="text-sm text-white font-medium capitalize">{shot.shot_type.replace('_', ' ')}</span>
                     {shot.status === 'failed' ? (
                         <span className="text-[9px] px-1.5 py-0.5 rounded-full font-medium text-red-400 bg-red-500/10">Failed</span>
                     ) : shot.status === 'animation_completed' ? (
@@ -292,8 +292,8 @@ export default function ProductShotsGallery({
                     <button
                         onClick={() => setActiveTab('stills')}
                         className={`flex-1 py-3 px-4 text-xs font-medium transition-colors ${activeTab === 'stills'
-                                ? 'text-blue-400 border-b-2 border-blue-400 bg-blue-500/5'
-                                : 'text-slate-500 hover:text-slate-300'
+                            ? 'text-blue-400 border-b-2 border-blue-400 bg-blue-500/5'
+                            : 'text-slate-500 hover:text-slate-300'
                             }`}
                     >
                         📸 Product Shots ({stills.length})
@@ -301,8 +301,8 @@ export default function ProductShotsGallery({
                     <button
                         onClick={() => setActiveTab('videos')}
                         className={`flex-1 py-3 px-4 text-xs font-medium transition-colors ${activeTab === 'videos'
-                                ? 'text-purple-400 border-b-2 border-purple-400 bg-purple-500/5'
-                                : 'text-slate-500 hover:text-slate-300'
+                            ? 'text-purple-400 border-b-2 border-purple-400 bg-purple-500/5'
+                            : 'text-slate-500 hover:text-slate-300'
                             }`}
                     >
                         🎬 Cinematic Videos ({videos.length})
@@ -321,7 +321,7 @@ export default function ProductShotsGallery({
                             </p>
                         </div>
                     ) : (
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
                             {displayShots.map((shot) => (
                                 <ShotCard
                                     key={shot.id}
