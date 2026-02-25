@@ -427,6 +427,46 @@ def api_list_product_shots(product_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+def _dispatch_shot_task(task_func, shot_id: str, task_name: str):
+    """Dispatch a cinematic shot task — tries Celery, falls back to in-process thread."""
+    import socket, threading
+    from urllib.parse import urlparse
+
+    broker_url = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
+    parsed = urlparse(broker_url)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 6379
+
+    redis_available = False
+    try:
+        sock = socket.create_connection((host, port), timeout=1)
+        sock.close()
+        redis_available = True
+    except (socket.timeout, ConnectionRefusedError, OSError):
+        pass
+
+    if redis_available:
+        try:
+            task_func.delay(shot_id)
+            print(f"✅ Shot task '{task_name}' dispatched to Celery for {shot_id}")
+            return
+        except Exception as e:
+            print(f"⚠️ Celery dispatch failed: {e}, falling back to in-process")
+
+    # Fallback: run directly in a background thread (no Redis needed)
+    def _run():
+        try:
+            print(f"🔧 Running shot task '{task_name}' in-process for {shot_id}...")
+            task_func(shot_id)
+        except Exception as e:
+            print(f"❌ Shot task '{task_name}' failed: {e}")
+            update_product_shot(shot_id, {"status": "failed", "error_message": str(e)})
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    print(f"🚀 Shot task '{task_name}' started in background thread for {shot_id}")
+
+
 @app.post("/api/products/{product_id}/shots")
 def api_generate_shot_image(product_id: str, data: ShotGenerateRequest):
     """Creates records and dispatches tasks to generate still images."""
@@ -439,7 +479,7 @@ def api_generate_shot_image(product_id: str, data: ShotGenerateRequest):
                 "shot_type": data.shot_type,
                 "status": "image_pending"
             })
-            generate_product_shot_image.delay(shot["id"])
+            _dispatch_shot_task(generate_product_shot_image, shot["id"], "generate_product_shot_image")
             created_shots.append(shot)
         return created_shots
     except Exception as e:
@@ -455,7 +495,7 @@ def api_animate_shot(shot_id: str):
             raise HTTPException(status_code=404, detail="Product shot not found")
         if not shot.get("image_url"):
             raise HTTPException(status_code=400, detail="Shot has no image yet")
-        animate_product_shot_video.delay(shot_id)
+        _dispatch_shot_task(animate_product_shot_video, shot_id, "animate_product_shot_video")
         return {"status": "animation_queued", "shot_id": shot_id}
     except HTTPException:
         raise
