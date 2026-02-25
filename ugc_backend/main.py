@@ -23,7 +23,7 @@ from ugc_db.db_manager import (
     list_jobs, get_job, create_job, update_job,
     get_stats,
     list_products, create_product, delete_product,
-    list_product_shots, get_product_shot, create_product_shot, update_product_shot,
+    list_product_shots, get_product_shot, create_product_shot, update_product_shot, delete_product_shot,
 )
 
 # Lazy Celery import — avoids blocking the backend if Redis isn't running
@@ -509,6 +509,20 @@ def api_get_shot_costs():
         "image_generation_cost": cost_service.estimate_shot_image_cost(),
         "animation_cost": cost_service.estimate_shot_animation_cost(),
     }
+
+@app.delete("/api/shots/{shot_id}")
+def api_delete_shot(shot_id: str):
+    """Delete a product shot from the database."""
+    try:
+        shot = get_product_shot(shot_id)
+        if not shot:
+            raise HTTPException(status_code=404, detail="Product shot not found")
+        delete_product_shot(shot_id)
+        return {"status": "deleted", "shot_id": shot_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # =========================================================================

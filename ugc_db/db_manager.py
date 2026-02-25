@@ -243,3 +243,8 @@ def update_product_shot(shot_id: str, data: dict):
     sb = get_supabase()
     result = sb.table("product_shots").update(data).eq("id", shot_id).execute()
     return result.data[0] if result.data else None
+
+def delete_product_shot(shot_id: str):
+    sb = get_supabase()
+    sb.table("product_shots").delete().eq("id", shot_id).execute()
+

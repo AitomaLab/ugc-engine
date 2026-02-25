@@ -675,6 +675,8 @@ function ProductsTab({ searchQuery }: { searchQuery: string }) {
     const [analyzingIds, setAnalyzingIds] = useState<Set<string>>(new Set());
     const [viewingAnalysis, setViewingAnalysis] = useState<Product | null>(null);
     const [generatingForProduct, setGeneratingForProduct] = useState<Product | null>(null);
+    const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
+    const [shotsRefreshKey, setShotsRefreshKey] = useState(0);
 
     const fetchData = useCallback(async () => {
         try {
@@ -780,7 +782,7 @@ function ProductsTab({ searchQuery }: { searchQuery: string }) {
                                         )}
 
                                         <button
-                                            onClick={() => setGeneratingForProduct(p)}
+                                            onClick={() => setSelectedProductId(p.id)}
                                             className="bg-blue-500/80 text-white px-3 py-1 rounded text-xs hover:bg-blue-600 w-24"
                                         >
                                             🎬 Shots
@@ -797,16 +799,51 @@ function ProductsTab({ searchQuery }: { searchQuery: string }) {
 
                                 <div>
                                     <h4 className="font-medium text-slate-200 text-sm truncate" title={p.name}>{p.name}</h4>
-                                    {p.category && <p className="text-xs text-slate-500">{p.category}</p>}
                                 </div>
-
-                                {/* Cinematic Shots Gallery */}
-                                <ProductShotsGallery productId={p.id} onUpdate={fetchData} />
                             </div>
                         ))}
                     </div>
                 )}
             </div>
+
+            {/* Expanded Product Shots Panel (below the grid) */}
+            {selectedProductId && (() => {
+                const selectedProd = products.find(p => p.id === selectedProductId);
+                if (!selectedProd) return null;
+                return (
+                    <div className="mt-6 bg-slate-900/60 rounded-2xl border border-white/5 overflow-hidden">
+                        {/* Panel header */}
+                        <div className="p-4 border-b border-white/5 flex items-center justify-between bg-gradient-to-r from-blue-500/5 to-purple-500/5">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-lg overflow-hidden bg-slate-800 flex-shrink-0">
+                                    <img src={selectedProd.image_url} alt={selectedProd.name} className="w-full h-full object-cover" />
+                                </div>
+                                <div>
+                                    <h4 className="text-sm font-semibold text-white">{selectedProd.name}</h4>
+                                    <p className="text-[10px] text-slate-500">Cinematic product shots &amp; videos</p>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => setGeneratingForProduct(selectedProd)}
+                                    className="bg-blue-500/20 text-blue-300 hover:bg-blue-500/30 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                                >
+                                    + Generate Shots
+                                </button>
+                                <button
+                                    onClick={() => setSelectedProductId(null)}
+                                    className="text-slate-400 hover:text-white p-1.5 hover:bg-white/10 rounded-lg transition-colors"
+                                >
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div className="p-2">
+                            <ProductShotsGallery key={shotsRefreshKey} productId={selectedProductId} onUpdate={fetchData} />
+                        </div>
+                    </div>
+                );
+            })()}
 
             {/* Analysis Modal */}
             {viewingAnalysis && (
@@ -823,7 +860,11 @@ function ProductsTab({ searchQuery }: { searchQuery: string }) {
                 <GenerateShotModal
                     product={generatingForProduct}
                     onClose={() => setGeneratingForProduct(null)}
-                    onSuccess={fetchData}
+                    onSuccess={() => {
+                        setSelectedProductId(generatingForProduct.id);
+                        setShotsRefreshKey(prev => prev + 1);
+                        fetchData();
+                    }}
                 />
             )}
         </div>
