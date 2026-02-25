@@ -42,3 +42,15 @@ export interface VideoJob {
     cost_processing?: number;
     total_cost?: number;
 }
+
+export interface ProductShot {
+    id: string;
+    product_id: string;
+    shot_type: string;
+    status: 'image_pending' | 'image_completed' | 'animation_pending' | 'animation_completed' | 'failed';
+    image_url?: string;
+    video_url?: string;
+    prompt?: string;
+    error_message?: string;
+    created_at: string;
+}

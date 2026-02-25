@@ -12,6 +12,7 @@ Length selector:
 import random
 import config
 from prompts import digital_prompts, physical_prompts
+from ugc_db.db_manager import get_product_shot
 
 
 def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=None, product_type="digital"):
@@ -77,9 +78,40 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=Non
         "caption": caption
     }
 
+    # Fetch cinematic shots if IDs provided (physical products only)
+    cinematic_shot_ids = content_row.get("cinematic_shot_ids") or []
+    cinematic_scenes = []
+    if product_type == "physical" and cinematic_shot_ids:
+        for shot_id in cinematic_shot_ids:
+            shot = get_product_shot(shot_id)
+            if shot and shot.get("video_url"):
+                cinematic_scenes.append({
+                    "name": f"cinematic_{shot['shot_type']}",
+                    "type": "cinematic_shot",
+                    "video_url": shot["video_url"],
+                    "target_duration": 4.0,
+                    "subtitle_text": "",
+                })
+
     if product_type == "physical" and product:
         ctx["product"] = product
-        return physical_prompts.build_physical_product_scenes(content_row, influencer, product, durations, ctx)
+        influencer_scenes = physical_prompts.build_physical_product_scenes(content_row, influencer, product, durations, ctx)
+
+        # Interleave cinematic scenes with influencer scenes if any exist
+        if not cinematic_scenes:
+            return influencer_scenes
+
+        final_scenes = []
+        inf_idx, cin_idx = 0, 0
+        while inf_idx < len(influencer_scenes) or cin_idx < len(cinematic_scenes):
+            if inf_idx < len(influencer_scenes):
+                final_scenes.append(influencer_scenes[inf_idx])
+                inf_idx += 1
+            if cin_idx < len(cinematic_scenes):
+                final_scenes.append(cinematic_scenes[cin_idx])
+                cin_idx += 1
+        return final_scenes
+
     elif length == "30s":
         return digital_prompts.build_30s(durations, app_clip, ctx)
     else:

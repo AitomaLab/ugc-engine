@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { apiFetch, getApiUrl } from '@/lib/utils';
 import { useRouter } from 'next/navigation';
+import type { ProductShot } from '@/lib/types';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -89,6 +90,22 @@ export default function CreatePage() {
     const [successMessage, setSuccessMessage] = useState('');
     const [hookLoading, setHookLoading] = useState(false);
     const [costEstimate, setCostEstimate] = useState<CostEstimate | any | null>(null);
+
+    // Cinematic Product Shots (Step 14)
+    const [cinematicShots, setCinematicShots] = useState<ProductShot[]>([]);
+    const [selectedCinematicShots, setSelectedCinematicShots] = useState<string[]>([]);
+
+    // Fetch animated cinematic shots when a physical product is selected
+    useEffect(() => {
+        if (productType === 'physical' && productId) {
+            apiFetch<ProductShot[]>(`/api/products/${productId}/shots`)
+                .then(shots => setCinematicShots((shots || []).filter(s => s.status === 'animation_completed')))
+                .catch(() => setCinematicShots([]));
+        } else {
+            setCinematicShots([]);
+            setSelectedCinematicShots([]);
+        }
+    }, [productType, productId]);
 
     // Auto-generate script for physical products
     useEffect(() => {
@@ -229,6 +246,7 @@ export default function CreatePage() {
                         product_type: productType,
                         product_id: productType === 'physical' ? productId : undefined,
                         hook: effectiveHook,
+                        cinematic_shot_ids: selectedCinematicShots.length > 0 ? selectedCinematicShots : undefined,
                     }),
                 });
                 setSuccessMessage(`🚀 Campaign "${campaignName || 'Untitled'}" launched with ${quantity} videos!`);
@@ -246,6 +264,7 @@ export default function CreatePage() {
                         model_api: modelApi,
                         assistant_type: selectedInf?.style || 'Travel',
                         length: duration,
+                        cinematic_shot_ids: selectedCinematicShots.length > 0 ? selectedCinematicShots : undefined,
                     }),
                 });
                 setSuccessMessage('🎬 Video generation started!');
@@ -438,6 +457,65 @@ export default function CreatePage() {
                                     </div>
                                 ))}
                             </div>
+                        )}
+                    </div>
+                )}
+
+                {/* Cinematic Product Shots Selector (Step 14) */}
+                {productType === 'physical' && cinematicShots.length > 0 && (
+                    <div className="mt-5">
+                        <label className="text-xs text-slate-400 font-medium mb-2 block">
+                            🎬 Include Cinematic Shots <span className="text-slate-600">(optional)</span>
+                        </label>
+                        <p className="text-[10px] text-slate-500 mb-3">
+                            Select pre-rendered cinematic product shots to interleave with the influencer scenes.
+                        </p>
+                        <div className="grid grid-cols-3 md:grid-cols-4 gap-3">
+                            {cinematicShots.map((shot) => {
+                                const isSelected = selectedCinematicShots.includes(shot.id);
+                                return (
+                                    <div
+                                        key={shot.id}
+                                        onClick={() => {
+                                            setSelectedCinematicShots(prev =>
+                                                isSelected
+                                                    ? prev.filter(id => id !== shot.id)
+                                                    : [...prev, shot.id]
+                                            );
+                                        }}
+                                        className={`cursor-pointer rounded-xl overflow-hidden border-2 transition-all relative aspect-[3/4] bg-slate-800 group ${isSelected
+                                                ? 'border-blue-500 shadow-blue-500/20 shadow-lg scale-[1.02]'
+                                                : 'border-transparent opacity-60 hover:opacity-100'
+                                            }`}
+                                    >
+                                        {shot.video_url ? (
+                                            <video
+                                                src={shot.video_url}
+                                                className="w-full h-full object-cover"
+                                                muted
+                                                loop
+                                                playsInline
+                                                poster={shot.image_url}
+                                                onMouseEnter={(e) => (e.target as HTMLVideoElement).play().catch(() => { })}
+                                                onMouseLeave={(e) => { const v = e.target as HTMLVideoElement; v.pause(); v.currentTime = 0; }}
+                                            />
+                                        ) : (
+                                            <img src={shot.image_url} alt={shot.shot_type} className="w-full h-full object-cover" />
+                                        )}
+                                        <div className="absolute bottom-0 left-0 right-0 bg-black/70 p-2 flex items-center justify-between">
+                                            <p className="text-[10px] text-white capitalize">{shot.shot_type.replace('_', ' ')}</p>
+                                            {isSelected && (
+                                                <span className="text-[9px] bg-blue-500 text-white px-1.5 py-0.5 rounded-full font-bold">✓</span>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                        {selectedCinematicShots.length > 0 && (
+                            <p className="text-[10px] text-blue-400 mt-2">
+                                {selectedCinematicShots.length} shot{selectedCinematicShots.length > 1 ? 's' : ''} selected — will be interleaved with influencer scenes.
+                            </p>
                         )}
                     </div>
                 )}

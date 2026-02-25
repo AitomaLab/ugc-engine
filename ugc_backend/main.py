@@ -23,6 +23,7 @@ from ugc_db.db_manager import (
     list_jobs, get_job, create_job, update_job,
     get_stats,
     list_products, create_product, delete_product,
+    list_product_shots, get_product_shot, create_product_shot, update_product_shot,
 )
 
 # Lazy Celery import — avoids blocking the backend if Redis isn't running
@@ -133,6 +134,10 @@ class ProductCreate(BaseModel):
     category: Optional[str] = None
     image_url: str
 
+class ShotGenerateRequest(BaseModel):
+    shot_type: str
+    variations: int = 1
+
 class JobCreate(BaseModel):
     influencer_id: str
     script_id: Optional[str] = None
@@ -145,6 +150,7 @@ class JobCreate(BaseModel):
     length: int = 15
     user_id: Optional[str] = None
     campaign_name: Optional[str] = None
+    cinematic_shot_ids: Optional[List[str]] = None  # Cinematic Product Shots
 
 class BulkJobCreate(BaseModel):
     influencer_id: str
@@ -156,7 +162,8 @@ class BulkJobCreate(BaseModel):
     product_id: Optional[str] = None            # NEW for Physical Products
     hook: Optional[str] = None                  # AI-generated script from frontend
     user_id: Optional[str] = None
-    campaign_name: Optional[str] = None     # Campaign grouping name
+    campaign_name: Optional[str] = None         # Campaign grouping name
+    cinematic_shot_ids: Optional[List[str]] = None  # Cinematic Product Shots
 
 class SignedUrlRequest(BaseModel):
     bucket: str
@@ -406,6 +413,62 @@ def api_create_job(data: JobCreate):
     return {**job, "worker_dispatched": worker_dispatched}
 
 
+
+
+# ---------------------------------------------------------------------------
+# Product Shots API (Cinematic Product Shots)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/products/{product_id}/shots")
+def api_list_product_shots(product_id: str):
+    """List all cinematic shots for a product."""
+    try:
+        return list_product_shots(product_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/products/{product_id}/shots")
+def api_generate_shot_image(product_id: str, data: ShotGenerateRequest):
+    """Creates records and dispatches tasks to generate still images."""
+    from ugc_worker.tasks import generate_product_shot_image
+    try:
+        created_shots = []
+        for _ in range(data.variations):
+            shot = create_product_shot({
+                "product_id": product_id,
+                "shot_type": data.shot_type,
+                "status": "image_pending"
+            })
+            generate_product_shot_image.delay(shot["id"])
+            created_shots.append(shot)
+        return created_shots
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/shots/{shot_id}/animate")
+def api_animate_shot(shot_id: str):
+    """Dispatches a task to animate a still image into a video."""
+    from ugc_worker.tasks import animate_product_shot_video
+    try:
+        shot = get_product_shot(shot_id)
+        if not shot:
+            raise HTTPException(status_code=404, detail="Product shot not found")
+        if not shot.get("image_url"):
+            raise HTTPException(status_code=400, detail="Shot has no image yet")
+        animate_product_shot_video.delay(shot_id)
+        return {"status": "animation_queued", "shot_id": shot_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/shots/costs")
+def api_get_shot_costs():
+    """Return cost estimates for cinematic shot generation."""
+    return {
+        "image_generation_cost": cost_service.estimate_shot_image_cost(),
+        "animation_cost": cost_service.estimate_shot_animation_cost(),
+    }
 
 
 # =========================================================================

@@ -5,6 +5,8 @@ import { apiFetch, formatDate, getApiUrl } from '@/lib/utils';
 import { Influencer, Script, AppClipItem, VideoJob } from '@/lib/types';
 import { InfluencerModal } from './InfluencerModal';
 import { ProductUpload } from './ProductUpload';
+import GenerateShotModal from './GenerateShotModal';
+import ProductShotsGallery from './ProductShotsGallery';
 
 type Tab = 'videos' | 'influencers' | 'scripts' | 'clips' | 'products';
 
@@ -672,6 +674,7 @@ function ProductsTab({ searchQuery }: { searchQuery: string }) {
     const [loading, setLoading] = useState(true);
     const [analyzingIds, setAnalyzingIds] = useState<Set<string>>(new Set());
     const [viewingAnalysis, setViewingAnalysis] = useState<Product | null>(null);
+    const [generatingForProduct, setGeneratingForProduct] = useState<Product | null>(null);
 
     const fetchData = useCallback(async () => {
         try {
@@ -775,6 +778,13 @@ function ProductsTab({ searchQuery }: { searchQuery: string }) {
                                                 View Info
                                             </button>
                                         )}
+
+                                        <button
+                                            onClick={() => setGeneratingForProduct(p)}
+                                            className="bg-blue-500/80 text-white px-3 py-1 rounded text-xs hover:bg-blue-600 w-24"
+                                        >
+                                            🎬 Shots
+                                        </button>
                                     </div>
 
                                     {/* Badge for Analyzed */}
@@ -789,6 +799,9 @@ function ProductsTab({ searchQuery }: { searchQuery: string }) {
                                     <h4 className="font-medium text-slate-200 text-sm truncate" title={p.name}>{p.name}</h4>
                                     {p.category && <p className="text-xs text-slate-500">{p.category}</p>}
                                 </div>
+
+                                {/* Cinematic Shots Gallery */}
+                                <ProductShotsGallery productId={p.id} onUpdate={fetchData} />
                             </div>
                         ))}
                     </div>
@@ -802,6 +815,15 @@ function ProductsTab({ searchQuery }: { searchQuery: string }) {
                     onClose={() => setViewingAnalysis(null)}
                     onReanalyze={() => handleAnalyze(viewingAnalysis)}
                     isAnalyzing={analyzingIds.has(viewingAnalysis.id)}
+                />
+            )}
+
+            {/* Generate Shot Modal */}
+            {generatingForProduct && (
+                <GenerateShotModal
+                    product={generatingForProduct}
+                    onClose={() => setGeneratingForProduct(null)}
+                    onSuccess={fetchData}
                 />
             )}
         </div>

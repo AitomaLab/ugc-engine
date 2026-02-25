@@ -218,3 +218,28 @@ def get_stats():
         "scripts": scripts,
         "app_clips": app_clips,
     }
+
+
+# ---------------------------------------------------------------------------
+# CRUD Helpers — Product Shots
+# ---------------------------------------------------------------------------
+
+def list_product_shots(product_id: str):
+    sb = get_supabase()
+    result = sb.table("product_shots").select("*").eq("product_id", product_id).order("created_at", desc=True).execute()
+    return result.data
+
+def get_product_shot(shot_id: str):
+    sb = get_supabase()
+    result = sb.table("product_shots").select("*").eq("id", shot_id).execute()
+    return result.data[0] if result.data else None
+
+def create_product_shot(data: dict):
+    sb = get_supabase()
+    result = sb.table("product_shots").insert(data).execute()
+    return result.data[0] if result.data else None
+
+def update_product_shot(shot_id: str, data: dict):
+    sb = get_supabase()
+    result = sb.table("product_shots").update(data).eq("id", shot_id).execute()
+    return result.data[0] if result.data else None

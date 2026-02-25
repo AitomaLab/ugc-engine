@@ -99,6 +99,20 @@ class CostService:
             "total_cost": round(total_cost, 4),
         }
 
+    # ------------------------------------------------------------------
+    # Cinematic Product Shot costs (standalone, not part of main estimate)
+    # ------------------------------------------------------------------
+
+    def estimate_shot_image_cost(self) -> float:
+        """Cost for a single Nano Banana Pro still image generation."""
+        model_cfg = self.config["kie_ai"]["models"].get("nano-banana-pro", {})
+        return model_cfg.get("cost_per_image", 0.09)
+
+    def estimate_shot_animation_cost(self, duration: int = 4) -> float:
+        """Cost for a single Veo 3.1 Fast animation."""
+        model_cfg = self.config["kie_ai"]["models"].get("veo-3.1-fast", {})
+        return round(duration * model_cfg.get("cost_per_second", 0.02), 5)
+
 
 # Singleton — import this in main.py
 cost_service = CostService()

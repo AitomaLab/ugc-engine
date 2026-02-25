@@ -312,6 +312,11 @@ def run_generation_pipeline(
                 # 📱 App Clip
                 generate_scenes.download_video(scene["video_url"], output_path)
 
+            elif scene["type"] == "cinematic_shot":
+                # 🎬 Pre-rendered cinematic product shot — just download
+                print(f"      🎬 Using pre-rendered cinematic shot: {scene['video_url']}")
+                generate_scenes.download_video(scene["video_url"], output_path)
+
             scene["path"] = str(output_path)
             video_paths.append(scene)
 

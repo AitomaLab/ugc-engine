@@ -199,6 +199,7 @@ def generate_ugc_video(self, job_id: str):
             "Theme": job.get("assistant_type") or script_cat,
             "Length": f"{job.get('length', 15)}s",
             "model_api": job.get("model_api", "seedance-1.5-pro"),
+            "cinematic_shot_ids": job.get("cinematic_shot_ids") or [],
         }
 
     except Exception as e:
@@ -347,6 +348,89 @@ def execute_social_posts():
 
     print(f"📤 Executed {posted_count} social posts")
     return {"posted": posted_count}
+
+
+# ---------------------------------------------------------------------------
+# Cinematic Product Shot Generation Tasks
+# ---------------------------------------------------------------------------
+
+@celery.task(name="generate_product_shot_image")
+def generate_product_shot_image(shot_id: str):
+    """Generates a single still cinematic product shot image."""
+    from ugc_db.db_manager import get_product_shot, get_product, update_product_shot
+    from prompts.cinematic_shots import build_sealcam_prompt
+    import generate_scenes
+
+    print(f"Starting cinematic image generation for Shot {shot_id}...")
+    try:
+        shot = get_product_shot(shot_id)
+        if not shot:
+            raise RuntimeError(f"Product Shot {shot_id} not found.")
+
+        product = get_product(shot["product_id"])
+        if not product:
+            raise RuntimeError(f"Product {shot['product_id']} not found.")
+
+        # 1. Build SEALCaM Prompt
+        prompt = build_sealcam_prompt(shot["shot_type"], product)
+        update_product_shot(shot_id, {"prompt": prompt})
+
+        # 2. Generate Image via Nano Banana Pro
+        image_url = generate_scenes.generate_cinematic_product_image(
+            prompt=prompt,
+            product_image_url=product["image_url"]
+        )
+
+        # 3. Update DB with result
+        update_product_shot(shot_id, {
+            "status": "image_completed",
+            "image_url": image_url
+        })
+        print(f"Image generation complete for Shot {shot_id}")
+
+    except Exception as e:
+        print(f"Image generation failed for Shot {shot_id}: {e}")
+        from ugc_db.db_manager import update_product_shot as _update
+        try:
+            _update(shot_id, {"status": "failed", "error_message": str(e)[:500]})
+        except Exception:
+            pass
+
+
+@celery.task(name="animate_product_shot_video")
+def animate_product_shot_video(shot_id: str):
+    """Animates a single still product shot into a video clip."""
+    from ugc_db.db_manager import get_product_shot, update_product_shot
+    import generate_scenes
+
+    print(f"Starting cinematic animation for Shot {shot_id}...")
+    try:
+        shot = get_product_shot(shot_id)
+        if not shot or not shot.get("image_url"):
+            raise RuntimeError(f"Product Shot {shot_id} not found or has no image_url.")
+
+        update_product_shot(shot_id, {"status": "animation_pending"})
+
+        # Animate via Veo 3.1 (uses RENAMED function to avoid name collision)
+        video_url = generate_scenes.animate_cinematic_still(
+            image_url=shot["image_url"],
+            shot_type=shot["shot_type"]
+        )
+
+        # Update DB with result
+        update_product_shot(shot_id, {
+            "status": "animation_completed",
+            "video_url": video_url
+        })
+        print(f"Animation complete for Shot {shot_id}")
+
+    except Exception as e:
+        print(f"Animation failed for Shot {shot_id}: {e}")
+        from ugc_db.db_manager import update_product_shot as _update
+        try:
+            _update(shot_id, {"status": "failed", "error_message": str(e)[:500]})
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------

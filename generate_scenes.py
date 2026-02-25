@@ -631,6 +631,104 @@ def animate_image(image_url: str, scene: dict) -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# Cinematic Product Shots (Standalone stills + animation)
+# ---------------------------------------------------------------------------
+
+def generate_cinematic_product_image(prompt: str, product_image_url: str, seed: int = None) -> str:
+    """
+    Calls Nano Banana Pro to generate a single cinematic still image.
+    Product-only (no influencer reference image).
+    """
+    print("   Generating cinematic product image with Nano Banana Pro...")
+    endpoint = f"{config.KIE_API_URL}/api/v1/jobs/createTask"
+    negative_prompt = (
+        "(deformed, distorted, disfigured:1.3), poorly drawn, bad anatomy, wrong anatomy, "
+        "extra limb, missing limb, floating limbs, (mutated hands and fingers:1.4), "
+        "disconnected limbs, mutation, mutated, ugly, disgusting, blurry, amputation, "
+        "human, person, character, people"
+    )
+
+    payload = {
+        "model": "nano-banana-pro",
+        "input": {
+            "prompt": prompt,
+            "negative_prompt": negative_prompt,
+            "image_input": [product_image_url],
+            "aspect_ratio": "9:16",
+            "resolution": "2K"
+        }
+    }
+    if seed:
+        payload["input"]["seed"] = seed
+
+    resp = requests.post(endpoint, headers=config.KIE_HEADERS, json=payload)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Nano Banana API error ({resp.status_code}): {resp.text[:500]}")
+
+    result = resp.json()
+    if result.get("code") != 200:
+        raise RuntimeError(f"Nano Banana API error: {result.get('msg', str(result))}")
+
+    task_id = result["data"]["taskId"]
+    print(f"      Task: {task_id}")
+
+    # Poll for completion
+    poll_endpoint = f"{config.KIE_API_URL}/api/v1/jobs/recordInfo"
+    for i in range(60):  # 10 minutes max
+        time.sleep(10)
+        try:
+            resp = requests.get(poll_endpoint, headers=config.KIE_HEADERS, params={"taskId": task_id}, timeout=30)
+            result = resp.json()
+        except Exception as e:
+            print(f"      Poll error: {e}")
+            continue
+
+        if result.get("code") != 200:
+            continue
+
+        data = result.get("data", {})
+        state = data.get("state", "processing").lower()
+
+        if state == "success":
+            result_json = data.get("resultJson", "{}")
+            if isinstance(result_json, str):
+                result_json = json.loads(result_json)
+            image_url = result_json.get("resultUrls", [None])[0]
+            if image_url:
+                print(f"      Cinematic image ready! ({i * 10}s)")
+                return image_url
+        elif state == "fail":
+            fail_msg = data.get("failMsg", "Unknown error")
+            raise RuntimeError(f"Nano Banana generation failed: {fail_msg}")
+
+        print(f"      Composing cinematic image... ({i * 10}s)")
+
+    raise RuntimeError("Cinematic image generation timed out")
+
+
+def animate_cinematic_still(image_url: str, shot_type: str) -> str:
+    """Calls Veo 3.1 to animate a still product shot into a short video."""
+    print("   Animating cinematic still with Veo 3.1...")
+
+    motion_prompts = {
+        "hero": "slowly push in on the product, subtle light glinting off the surface",
+        "macro_detail": "pan slowly across the texture of the product, revealing fine details",
+        "pedestal": "camera slowly orbits the product on the pedestal, 360-degree view",
+        "moody_dramatic": "light source slowly moves, causing shadows to shift dramatically across the product",
+        "floating": "product rotates slowly in zero-gravity, with subtle lens flares appearing",
+        "lifestyle": "camera performs a very slow, subtle zoom-in on the product in its setting",
+    }
+
+    prompt = motion_prompts.get(shot_type, "subtle, slow camera movement to bring the still image to life")
+
+    return generate_video_with_retry(
+        prompt=prompt,
+        reference_image_url=image_url,
+        model_api="veo-3.1-fast"
+    )
+
+
 if __name__ == "__main__":
     print("This module is imported by pipeline.py")
     print("Functions: generate_veo_video(), generate_all_scenes(), generate_music()")
