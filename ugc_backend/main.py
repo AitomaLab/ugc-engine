@@ -110,6 +110,7 @@ def startup_event():
 
 class InfluencerCreate(BaseModel):
     name: str
+    gender: Optional[str] = None
     description: Optional[str] = None
     personality: Optional[str] = None
     style: Optional[str] = None
