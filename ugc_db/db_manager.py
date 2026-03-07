@@ -142,8 +142,11 @@ def update_product(product_id: str, data: dict):
 
 def delete_product(product_id: str):
     sb = get_supabase()
-    # Cascade: delete associated product shots first to avoid FK constraint errors
+    # Cascade: nullify product_id in video_jobs so videos aren't deleted
+    sb.table("video_jobs").update({"product_id": None}).eq("product_id", product_id).execute()
+    # Cascade: delete associated product shots
     sb.table("product_shots").delete().eq("product_id", product_id).execute()
+    # Now safe to delete the product itself
     sb.table("products").delete().eq("id", product_id).execute()
 
 
