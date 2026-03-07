@@ -188,6 +188,11 @@ def generate_ugc_video(self, job_id: str):
             "description": influencer.get("description", ""),
             "personality": influencer.get("personality", ""),
             "style": influencer.get("style", ""),
+            "gender": influencer.get("gender") or "Female",
+            "age": influencer.get("age", "25-year-old"),
+            "accent": influencer.get("accent", "neutral English"),
+            "tone": influencer.get("tone", "Enthusiastic"),
+            "energy_level": influencer.get("energy_level", "High"),
             "image_url": influencer.get("image_url", ""),
             "reference_image_url": influencer.get("image_url", ""),  # Compat for core_engine / scene_builder
             "elevenlabs_voice_id": influencer.get("elevenlabs_voice_id", ""),
