@@ -884,6 +884,16 @@ function ProductAnalysisModal({
     onReanalyze: () => void;
     isAnalyzing: boolean;
 }) {
+    // Helper: safely convert any value to a renderable string
+    // GPT-4o YAML sometimes returns objects like {style: "sans-serif"} instead of plain strings
+    const safeString = (val: any, fallback = ''): string => {
+        if (val === null || val === undefined) return fallback;
+        if (typeof val === 'string') return val;
+        if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+        if (typeof val === 'object') return JSON.stringify(val);
+        return String(val);
+    };
+
     // Determine if we have valid data or just empty/partial
     const vd = product.visual_description || {};
     const hasData = vd.brand_name || vd.visual_description;
@@ -916,7 +926,7 @@ function ProductAnalysisModal({
                         </div>
                         <div className="flex-1 min-w-0 flex flex-col justify-center">
                             <h4 className="text-xl font-bold text-white truncate">
-                                {vd.brand_name || <span className="text-slate-500 italic">Unknown Brand</span>}
+                                {safeString(vd.brand_name) || <span className="text-slate-500 italic">Unknown Brand</span>}
                             </h4>
                             <p className="text-slate-400 text-sm truncate opacity-80">{product.name}</p>
 
@@ -940,7 +950,7 @@ function ProductAnalysisModal({
                             </p>
                             <div className="max-h-40 overflow-y-auto custom-scrollbar pr-2">
                                 <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">
-                                    {vd.visual_description || "No description generated yet."}
+                                    {safeString(vd.visual_description) || "No description generated yet."}
                                 </p>
                             </div>
                         </div>
@@ -948,7 +958,7 @@ function ProductAnalysisModal({
                         <div className="grid grid-cols-2 gap-4">
                             <div className="bg-white/5 p-4 rounded-xl border border-white/5">
                                 <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-2">Typography</p>
-                                <p className="text-sm text-slate-300 font-medium">{vd.font_style || 'N/A'}</p>
+                                <p className="text-sm text-slate-300 font-medium">{safeString(vd.font_style) || 'N/A'}</p>
                             </div>
                             <div className="bg-white/5 p-4 rounded-xl border border-white/5">
                                 <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-2">Colors</p>
@@ -956,8 +966,8 @@ function ProductAnalysisModal({
                                     {vd.color_scheme && vd.color_scheme.length > 0 ? (
                                         vd.color_scheme.map((c: any, i: number) => (
                                             <div key={i} className="flex items-center gap-2 bg-black/40 pr-2 pl-1 py-1 rounded-md border border-white/5">
-                                                <div className="w-4 h-4 rounded-full border border-white/10 shadow-sm" style={{ backgroundColor: c.hex }}></div>
-                                                <span className="text-[10px] font-mono text-slate-400">{c.name}</span>
+                                                <div className="w-4 h-4 rounded-full border border-white/10 shadow-sm" style={{ backgroundColor: safeString(c?.hex, '#666') }}></div>
+                                                <span className="text-[10px] font-mono text-slate-400">{safeString(c?.name, safeString(c?.hex, '?'))}</span>
                                             </div>
                                         ))
                                     ) : (
