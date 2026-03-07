@@ -145,11 +145,13 @@ def build_physical_product_scenes(fields, influencer, product, durations, ctx):
     # ✨ FIX: Check multiple possible keys for the script, not just "Hook"
     # The AI script generator might return "Script", "caption", or "Hook"
     script = fields.get("Hook") or fields.get("Script") or fields.get("caption") or "Check this out!"
+    # Use correct pronoun based on influencer gender
+    poss = "his" if ctx.get("gender", "Female") == "Male" else "her"
     
     # 2 scenes for a 15s video (Hook + Showcase)
     scene_descriptions = [
         "holding the product up close to the camera with an excited expression",
-        "holding the product near her face, tilting it to show the label with a warm smile",
+        f"holding the product near {poss} face, tilting it to show the label with a warm smile",
     ]
     
     # Get visual description safely

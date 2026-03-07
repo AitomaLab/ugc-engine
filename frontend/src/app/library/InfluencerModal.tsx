@@ -18,6 +18,7 @@ const PRESET_CATEGORIES = ['Travel', 'Fashion', 'Tech', 'Fitness', 'Food', 'Gene
 
 export function InfluencerModal({ isOpen, onClose, initialData, onSave }: InfluencerModalProps) {
     const [name, setName] = useState('');
+    const [gender, setGender] = useState('Female');
     const [description, setDescription] = useState('');
     const [style, setStyle] = useState(''); // Category
     const [imageUrl, setImageUrl] = useState('');
@@ -32,6 +33,7 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
         if (isOpen) {
             if (initialData) {
                 setName(initialData.name);
+                setGender(initialData.gender || 'Female');
                 setDescription(initialData.description || '');
                 setStyle(initialData.style || '');
                 setImageUrl(initialData.image_url || '');
@@ -39,6 +41,7 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
             } else {
                 // Create mode: reset
                 setName('');
+                setGender('Female');
                 setDescription('');
                 setStyle('');
                 setImageUrl('');
@@ -104,6 +107,7 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
             setSaving(true);
             const payload = {
                 name,
+                gender,
                 description,
                 style, // Category
                 image_url: imageUrl,
@@ -158,6 +162,27 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
                             className="input-field w-full"
                             placeholder="e.g. Sofia"
                         />
+                    </div>
+
+                    {/* Gender */}
+                    <div className="space-y-1">
+                        <label className="text-xs font-medium text-slate-400">Sex <span className="text-pink-500">*</span></label>
+                        <div className="flex gap-2">
+                            {['Male', 'Female'].map(g => (
+                                <button
+                                    key={g}
+                                    type="button"
+                                    onClick={() => setGender(g)}
+                                    className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium transition border ${
+                                        gender === g
+                                            ? 'bg-blue-600 border-blue-500 text-white'
+                                            : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'
+                                    }`}
+                                >
+                                    {g === 'Male' ? '♂️' : '♀️'} {g}
+                                </button>
+                            ))}
+                        </div>
                     </div>
 
                     {/* Category (Style) */}

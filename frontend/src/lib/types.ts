@@ -1,6 +1,7 @@
 export interface Influencer {
     id: string;
     name: string;
+    gender?: string;           // Male or Female — used in Veo 3.1 prompts
     description?: string;
     personality?: string;
     style?: string;          // Category (Travel, Fashion, etc.)

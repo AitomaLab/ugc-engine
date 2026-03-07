@@ -408,6 +408,13 @@ function InfluencersTab({ searchQuery }: { searchQuery: string }) {
                                                 {inf.style}
                                             </span>
                                         )}
+                                        <span className={`text-[10px] px-2 py-0.5 rounded-full border ${
+                                            inf.gender === 'Male'
+                                                ? 'bg-sky-500/10 text-sky-400 border-sky-500/20'
+                                                : 'bg-pink-500/10 text-pink-400 border-pink-500/20'
+                                        }`}>
+                                            {inf.gender === 'Male' ? '♂️' : '♀️'} {inf.gender || 'Female'}
+                                        </span>
                                     </div>
                                     <p className="text-xs text-slate-500 line-clamp-2 mt-1 leading-relaxed">
                                         {inf.description || 'No description'}
