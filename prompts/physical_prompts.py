@@ -136,8 +136,13 @@ def generate_physical_image_prompt(ctx, close_up=False):
         )
 
 
-def build_physical_product_scenes(fields, influencer, product, durations, ctx):
-    """Builds scenes for a physical product video."""
+def build_physical_product_scenes(fields, influencer, product, durations, ctx, max_scenes=None):
+    """Builds scenes for a physical product video.
+    
+    Args:
+        max_scenes: If set, limits the number of UGC scenes generated.
+                    Use max_scenes=1 when cinematic shots will fill the remaining time.
+    """
     # ✨ NEW: Generate a single seed for character consistency across all scenes
     consistency_seed = random.randint(1, 1000000)
 
@@ -154,6 +159,11 @@ def build_physical_product_scenes(fields, influencer, product, durations, ctx):
         f"holding the product near {poss} face, tilting it to show the label with a warm smile",
     ]
     
+    # Limit scene count when cinematic shots will fill the remaining time
+    if max_scenes and max_scenes < len(scene_descriptions):
+        scene_descriptions = scene_descriptions[:max_scenes]
+        print(f"      🎬 Cinematic mode: reduced UGC scenes to {max_scenes}")
+    
     # Get visual description safely
     prod_desc = product.get("visual_description", {})
     if isinstance(prod_desc, str):
@@ -168,8 +178,14 @@ def build_physical_product_scenes(fields, influencer, product, durations, ctx):
     # NOTE: Split on ||| BEFORE sanitizing, since sanitize_dialogue strips | characters.
     import re
 
+    num_scenes = len(scene_descriptions)
+
+    # Single scene mode: use the full script, no splitting needed
+    if num_scenes == 1:
+        full_script = sanitize_dialogue(script.replace("|||", " ").strip())
+        script_parts = [full_script]
     # Strategy 0 (preferred): Split on ||| delimiter from GPT-4o
-    if "|||" in script:
+    elif "|||" in script:
         parts = [sanitize_dialogue(p) for p in script.split("|||") if p.strip()]
         if len(parts) >= 2:
             part1, part2 = parts[0], parts[1]
@@ -198,7 +214,9 @@ def build_physical_product_scenes(fields, influencer, product, durations, ctx):
                 part1 = script
                 part2 = script
 
-    script_parts = [part1, part2]
+    # Only set script_parts for multi-scene mode (single-scene already set above)
+    if num_scenes > 1:
+        script_parts = [part1, part2]
 
     # Generate Scenes
     for i, desc in enumerate(scene_descriptions):

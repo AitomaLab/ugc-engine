@@ -85,17 +85,30 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=Non
         for shot_id in cinematic_shot_ids:
             shot = get_product_shot(shot_id)
             if shot and shot.get("video_url"):
-                cinematic_scenes.append({
+                scene_data = {
                     "name": f"cinematic_{shot['shot_type']}",
                     "type": "cinematic_shot",
                     "video_url": shot["video_url"],
                     "target_duration": 4.0,
                     "subtitle_text": "",
-                })
+                }
+                # Transition shots (Workflow B) have their xfade transition
+                # already baked into video_url by the generate_transition_shot task.
+                # Carry the flag so core_engine/assemble_video can handle them
+                # appropriately (e.g. skip trimming the overlap region).
+                if shot.get("transition_type"):
+                    scene_data["transition_type"] = shot["transition_type"]
+                cinematic_scenes.append(scene_data)
 
     if product_type == "physical" and product:
         ctx["product"] = product
-        influencer_scenes = physical_prompts.build_physical_product_scenes(content_row, influencer, product, durations, ctx)
+        # When cinematic shots are included, reduce UGC scene count
+        # so total fits ~15s (1 UGC scene ~8s + 1 cinematic ~4-5s)
+        max_ugc_scenes = max(1, 2 - len(cinematic_scenes)) if cinematic_scenes else None
+        influencer_scenes = physical_prompts.build_physical_product_scenes(
+            content_row, influencer, product, durations, ctx,
+            max_scenes=max_ugc_scenes
+        )
 
         # Interleave cinematic scenes with influencer scenes if any exist
         if not cinematic_scenes:
