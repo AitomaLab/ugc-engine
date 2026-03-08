@@ -139,6 +139,11 @@ class ShotGenerateRequest(BaseModel):
     shot_type: str
     variations: int = 1
 
+class TransitionShotRequest(BaseModel):
+    transition_type: str = "match_cut"      # 'match_cut', 'whip_pan', 'focus_pull'
+    target_style: Optional[str] = None      # 'studio_white', 'natural_setting', 'moody'
+    preceding_scene_video_url: str          # URL of the preceding influencer scene video
+
 class JobCreate(BaseModel):
     influencer_id: str
     script_id: Optional[str] = None
@@ -152,6 +157,7 @@ class JobCreate(BaseModel):
     user_id: Optional[str] = None
     campaign_name: Optional[str] = None
     cinematic_shot_ids: Optional[List[str]] = None  # Cinematic Product Shots
+    auto_transition_type: Optional[str] = None      # 'match_cut', 'whip_pan', 'focus_pull'
 
 class BulkJobCreate(BaseModel):
     influencer_id: str
@@ -165,6 +171,7 @@ class BulkJobCreate(BaseModel):
     user_id: Optional[str] = None
     campaign_name: Optional[str] = None         # Campaign grouping name
     cinematic_shot_ids: Optional[List[str]] = None  # Cinematic Product Shots
+    auto_transition_type: Optional[str] = None      # 'match_cut', 'whip_pan', 'focus_pull'
 
 class SignedUrlRequest(BaseModel):
     bucket: str
@@ -348,70 +355,119 @@ def api_create_job(data: JobCreate):
     Creates a new video generation job.
     Supports both digital (app demo) and physical product flows.
     """
-    # 1. Validate Influencer
-    inf = get_influencer(data.influencer_id)
-    if not inf:
-        raise HTTPException(status_code=404, detail="Influencer not found")
+    try:
+        # 1. Validate Influencer
+        inf = get_influencer(data.influencer_id)
+        if not inf:
+            raise HTTPException(status_code=404, detail="Influencer not found")
 
-    # 2. Flow-specific Validation
-    if data.product_type == "physical" and not data.product_id:
-        raise HTTPException(status_code=400, detail="product_id required for physical products")
+        # 2. Flow-specific Validation
+        if data.product_type == "physical" and not data.product_id:
+            raise HTTPException(status_code=400, detail="product_id required for physical products")
 
-    # 3. Auto-Select Script if missing
-    script_text = ""
-    if data.script_id:
-        s = get_script(data.script_id)
-        if s: script_text = s.get("text", "")
-    elif data.hook:
-        script_text = data.hook
-    else:
-        scripts = list_scripts()
-        if scripts:
-            s = random.choice(scripts)
-            data.script_id = s.get("id")
-            script_text = s.get("text", "")
-            print(f"DEBUG: Auto-selected random script: {data.script_id}")
+        # 3. Auto-Select Script if missing
+        script_text = ""
+        if data.script_id:
+            s = get_script(data.script_id)
+            if s: script_text = s.get("text", "")
+        elif data.hook:
+            script_text = data.hook
+        else:
+            scripts = list_scripts()
+            if scripts:
+                s = random.choice(scripts)
+                data.script_id = s.get("id")
+                script_text = s.get("text", "")
 
-    # 4. Auto-Select App Clip if missing (for digital products)
-    if data.product_type == "digital" and not data.app_clip_id:
-        clips = list_app_clips()
-        if clips:
-            inf_style = (inf.get("style") or "").lower().strip()
-            matching_clips = [
-                c for c in clips
-                if inf_style and (
-                    inf_style in (c.get("category") or "").lower()
-                    or inf_style in (c.get("description") or "").lower()
-                    or inf_style in (c.get("name") or "").lower()
-                )
-            ]
-            clip_pool = matching_clips if matching_clips else clips
-            if clip_pool:
-                c = random.choice(clip_pool)
-                data.app_clip_id = c.get("id")
-                print(f"DEBUG: Auto-selected random app clip: {data.app_clip_id}")
+        # 4. Auto-Select App Clip if missing (for digital products)
+        if data.product_type == "digital" and not data.app_clip_id:
+            clips = list_app_clips()
+            if clips:
+                inf_style = (inf.get("style") or "").lower().strip()
+                matching_clips = [
+                    c for c in clips
+                    if inf_style and (
+                        inf_style in (c.get("category") or "").lower()
+                        or inf_style in (c.get("description") or "").lower()
+                        or inf_style in (c.get("name") or "").lower()
+                    )
+                ]
+                clip_pool = matching_clips if matching_clips else clips
+                if clip_pool:
+                    c = random.choice(clip_pool)
+                    data.app_clip_id = c.get("id")
 
-    # 5. Calculate Cost Estimate
-    costs = cost_service.estimate_total_cost(
-        script_text=script_text,
-        duration=data.length,
-        model=data.model_api,
-        product_type=data.product_type
-    )
+        # 5. Calculate Cost Estimate
+        costs = cost_service.estimate_total_cost(
+            script_text=script_text,
+            duration=data.length,
+            model=data.model_api,
+            product_type=data.product_type
+        )
 
-    # 6. Prepare Job Data
-    job_data = data.model_dump(exclude_none=True)
-    job_data.update(costs)
-    job_data["status"] = "pending"
-    job_data["progress"] = 0
-    
-    # 7. Create in DB
-    job = create_job(job_data)
-    
-    # 8. Dispatch to Worker (non-blocking)
-    worker_dispatched = _dispatch_worker(job["id"])
-    
-    return {**job, "worker_dispatched": worker_dispatched}
+        # 6. Prepare Job Data — dynamically detect actual DB columns
+        # Query one row to discover real column names (empty table → fallback list)
+        try:
+            _probe = get_supabase().table("video_jobs").select("*").limit(1).execute()
+            db_columns = set(_probe.data[0].keys()) if _probe.data else set()
+        except Exception:
+            db_columns = set()
+
+        # Fallback: known safe columns if table is empty or query fails
+        if not db_columns:
+            db_columns = {
+                "id", "user_id", "influencer_id", "app_clip_id", "script_id",
+                "status", "progress", "final_video_url", "created_at", "updated_at",
+                "product_type", "product_id", "cost_image",
+                "hook", "model_api", "assistant_type", "length", "campaign_name",
+                "cost_video", "cost_voice", "cost_music", "cost_processing", "total_cost",
+                "cinematic_shot_ids", "error_message",
+            }
+
+        job_data = data.model_dump(exclude_none=True)
+        job_data.update(costs)
+        job_data["status"] = "pending"
+        job_data["progress"] = 0
+
+        # Extract transition info for the worker (stored in job_data if column exists)
+        auto_trans = job_data.pop("auto_transition_type", None)
+        if auto_trans and "auto_transition_type" in db_columns:
+            job_data["auto_transition_type"] = auto_trans
+
+        # Store metadata if the column exists, otherwise just log it
+        if "metadata" in db_columns:
+            metadata = {}
+            if auto_trans:
+                metadata["auto_transition_type"] = auto_trans
+            if job_data.get("cinematic_shot_ids"):
+                metadata["cinematic_shot_ids"] = job_data["cinematic_shot_ids"]
+            if metadata:
+                job_data["metadata"] = metadata
+
+        # Strip any fields that don't exist as actual DB columns
+        unknown_keys = [k for k in list(job_data.keys()) if k not in db_columns]
+        for k in unknown_keys:
+            val = job_data.pop(k)
+            print(f"   ⚠️ Stripped unknown column '{k}' (value: {str(val)[:80]})")
+
+        print(f"DEBUG api_create_job: inserting keys={list(job_data.keys())}")
+
+        # 7. Create in DB
+        job = create_job(job_data)
+        if not job:
+            raise HTTPException(status_code=500, detail="Job creation returned empty result")
+
+        # 8. Dispatch to Worker (non-blocking)
+        worker_dispatched = _dispatch_worker(job["id"])
+
+        return {**job, "worker_dispatched": worker_dispatched}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Job creation failed: {str(e)}")
 
 
 
@@ -520,6 +576,53 @@ def api_delete_shot(shot_id: str):
             raise HTTPException(status_code=404, detail="Product shot not found")
         delete_product_shot(shot_id)
         return {"status": "deleted", "shot_id": shot_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/products/{product_id}/transition-shot")
+def api_create_transition_shot(product_id: str, data: TransitionShotRequest):
+    """
+    Creates a transition shot that seamlessly blends with the preceding UGC scene.
+    Pipeline: extract last frame → analyze → generate context-aware image → animate → stitch.
+    """
+    from ugc_worker.tasks import generate_transition_shot
+    from ugc_db.db_manager import get_product
+
+    valid_transitions = {"match_cut", "whip_pan", "focus_pull"}
+    if data.transition_type not in valid_transitions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid transition_type. Must be one of: {valid_transitions}",
+        )
+
+    try:
+        product = get_product(product_id)
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+
+        # Create a product_shot record with transition metadata
+        shot = create_product_shot({
+            "product_id": product_id,
+            "shot_type": "hero",  # Default base shot type for transitions
+            "status": "image_pending",
+            "transition_type": data.transition_type,
+            "preceding_video_url": data.preceding_scene_video_url,
+        })
+
+        _dispatch_shot_task(
+            generate_transition_shot,
+            shot["id"],
+            "generate_transition_shot",
+        )
+
+        return {
+            "status": "transition_shot_queued",
+            "shot_id": shot["id"],
+            "transition_type": data.transition_type,
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -639,61 +742,110 @@ def create_signed_url(data: SignedUrlRequest):
 
 @app.post("/jobs/bulk")
 def api_create_bulk_jobs(data: BulkJobCreate):
-    inf = get_influencer(data.influencer_id)
-    if not inf:
-        raise HTTPException(status_code=404, detail="Influencer not found")
+    try:
+        inf = get_influencer(data.influencer_id)
+        if not inf:
+            raise HTTPException(status_code=404, detail="Influencer not found")
 
-    scripts = list_scripts()
-    clips = list_app_clips()
-    if not scripts:
-        raise HTTPException(status_code=400, detail="No scripts available. Add scripts first.")
+        scripts = list_scripts()
+        clips = list_app_clips()
+        if not scripts:
+            raise HTTPException(status_code=400, detail="No scripts available. Add scripts first.")
 
-    # Category-match clips to influencer
-    inf_style = (inf.get("style") or "").lower().strip()
-    matching_clips = [
-        c for c in clips
-        if inf_style and (
-            inf_style in (c.get("category") or "").lower()
-            or inf_style in (c.get("description") or "").lower()
-            or inf_style in (c.get("name") or "").lower()
-        )
-    ] if clips else []
-    clip_pool = matching_clips if matching_clips else clips
+        # Category-match clips to influencer
+        inf_style = (inf.get("style") or "").lower().strip()
+        matching_clips = [
+            c for c in clips
+            if inf_style and (
+                inf_style in (c.get("category") or "").lower()
+                or inf_style in (c.get("description") or "").lower()
+                or inf_style in (c.get("name") or "").lower()
+            )
+        ] if clips else []
+        clip_pool = matching_clips if matching_clips else clips
 
-    created_jobs = []
-    for _ in range(data.count):
-        selected_script = random.choice(scripts)
-        selected_clip = random.choice(clip_pool) if clip_pool else None
+        # Detect actual DB columns dynamically (same approach as single job)
+        try:
+            _probe = get_supabase().table("video_jobs").select("*").limit(1).execute()
+            db_columns = set(_probe.data[0].keys()) if _probe.data else set()
+        except Exception:
+            db_columns = set()
 
-        # Use frontend hook if provided, otherwise fall back to random script text
-        script_text = data.hook if data.hook else selected_script.get("text", "")
-        costs = cost_service.estimate_total_cost(
-            script_text=script_text,
-            duration=data.duration,
-            model=data.model_api,
-            product_type=data.product_type
-        )
+        if not db_columns:
+            db_columns = {
+                "id", "user_id", "influencer_id", "app_clip_id", "script_id",
+                "status", "progress", "final_video_url", "created_at", "updated_at",
+                "product_type", "product_id", "cost_image",
+                "hook", "model_api", "assistant_type", "length", "campaign_name",
+                "cost_video", "cost_voice", "cost_music", "cost_processing", "total_cost",
+                "cinematic_shot_ids", "error_message",
+            }
 
-        job_data = {
-            "influencer_id": data.influencer_id,
-            "script_id": selected_script["id"] if not data.hook else None,
-            "app_clip_id": selected_clip["id"] if selected_clip else None,
-            "product_type": data.product_type,
-            "product_id": data.product_id,
-            "model_api": data.model_api,
-            "campaign_name": data.campaign_name,
-            "status": "pending",
-            "progress": 0,
-            **costs,
-        }
-        if data.hook:
-            job_data["hook"] = data.hook
+        created_jobs = []
+        for _ in range(data.count):
+            selected_script = random.choice(scripts)
+            selected_clip = random.choice(clip_pool) if clip_pool else None
 
-        job = create_job(job_data)
-        _dispatch_worker(job["id"])
-        created_jobs.append(job["id"])
+            # Use frontend hook if provided, otherwise fall back to random script text
+            script_text = data.hook if data.hook else selected_script.get("text", "")
+            costs = cost_service.estimate_total_cost(
+                script_text=script_text,
+                duration=data.duration,
+                model=data.model_api,
+                product_type=data.product_type
+            )
 
-    return {"status": "dispatched", "count": len(created_jobs), "job_ids": created_jobs}
+            job_data = {
+                "influencer_id": data.influencer_id,
+                "script_id": selected_script["id"] if not data.hook else None,
+                "app_clip_id": selected_clip["id"] if selected_clip else None,
+                "product_type": data.product_type,
+                "product_id": data.product_id,
+                "model_api": data.model_api,
+                "campaign_name": data.campaign_name,
+                "status": "pending",
+                "progress": 0,
+                **costs,
+            }
+            if data.hook:
+                job_data["hook"] = data.hook
+            if data.cinematic_shot_ids:
+                job_data["cinematic_shot_ids"] = data.cinematic_shot_ids
+
+            # Store auto_transition_type directly if column exists
+            if data.auto_transition_type and "auto_transition_type" in db_columns:
+                job_data["auto_transition_type"] = data.auto_transition_type
+
+            # Store metadata if the column exists
+            if "metadata" in db_columns:
+                metadata = {}
+                if data.auto_transition_type:
+                    metadata["auto_transition_type"] = data.auto_transition_type
+                if job_data.get("cinematic_shot_ids"):
+                    metadata["cinematic_shot_ids"] = job_data["cinematic_shot_ids"]
+                if metadata:
+                    job_data["metadata"] = metadata
+
+            # Strip unknown columns
+            unknown_keys = [k for k in list(job_data.keys()) if k not in db_columns]
+            for k in unknown_keys:
+                job_data.pop(k)
+
+            job = create_job(job_data)
+            if not job:
+                print(f"WARNING: create_job returned None for bulk job")
+                continue
+            _dispatch_worker(job["id"])
+            created_jobs.append(job["id"])
+
+        return {"status": "dispatched", "count": len(created_jobs), "job_ids": created_jobs}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Bulk job creation failed: {str(e)}")
 
 
 # ---------------------------------------------------------------------------
