@@ -180,10 +180,22 @@ def build_physical_product_scenes(fields, influencer, product, durations, ctx, m
 
     num_scenes = len(scene_descriptions)
 
-    # Single scene mode: use the full script, no splitting needed
+    # Single scene mode: use only the FIRST HALF of the script (~7s of speech)
+    # The full script was written for ~15s (2 scenes), so using it all would
+    # make Veo cram too much dialogue into a single 8s clip.
     if num_scenes == 1:
-        full_script = sanitize_dialogue(script.replace("|||", " ").strip())
-        script_parts = [full_script]
+        if "|||" in script:
+            first_part = script.split("|||")[0].strip()
+        else:
+            # No delimiter — take roughly the first half by sentence
+            sanitized = sanitize_dialogue(script)
+            sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', sanitized) if s.strip()]
+            if len(sentences) >= 2:
+                mid = len(sentences) // 2
+                first_part = " ".join(sentences[:mid])
+            else:
+                first_part = sanitized
+        script_parts = [sanitize_dialogue(first_part)]
     # Strategy 0 (preferred): Split on ||| delimiter from GPT-4o
     elif "|||" in script:
         parts = [sanitize_dialogue(p) for p in script.split("|||") if p.strip()]
