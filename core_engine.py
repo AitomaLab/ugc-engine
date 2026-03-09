@@ -317,8 +317,39 @@ def run_generation_pipeline(
                 print(f"      🎬 Using pre-rendered cinematic shot: {scene['video_url']}")
                 generate_scenes.download_video(scene["video_url"], output_path)
 
+                # ✨ Auto-Transition: if enabled, stitch this cinematic shot with
+                # the preceding influencer scene using an xfade transition.
+                auto_trans = fields.get("auto_transition_type")
+                if auto_trans and video_paths:
+                    prev_scene = video_paths[-1]
+                    prev_path = prev_scene.get("path")
+                    if prev_path and prev_scene.get("type") == "physical_product_scene":
+                        try:
+                            if status_callback:
+                                status_callback(f"Transition: {scene['name'].title()} ({i}/{len(scenes)})")
+                            print(f"      ✨ Applying {auto_trans} transition...")
+                            from ugc_worker.video_tools import stitch_with_transition
+                            stitched_path = output_dir / f"scene_{i}_{scene['name']}_stitched.mp4"
+                            stitch_with_transition(
+                                influencer_clip=prev_path,
+                                cinematic_clip=str(output_path),
+                                transition_type=auto_trans,
+                                output_path=str(stitched_path),
+                            )
+                            # Replace both: update the preceding scene's path to the
+                            # stitched version and skip adding this cinematic scene separately
+                            shutil.move(str(stitched_path), prev_path)
+                            print(f"      ✅ Transition applied — merged into preceding scene")
+                            # Mark this scene as merged so it's not added to video_paths
+                            scene["_merged"] = True
+                        except Exception as e:
+                            print(f"      ⚠️ Auto-transition failed: {e}. Using hard cut.")
+
             scene["path"] = str(output_path)
-            video_paths.append(scene)
+            # Skip appending scenes that were merged into the preceding scene
+            # via auto-transition (the stitched video replaces the previous path)
+            if not scene.get("_merged"):
+                video_paths.append(scene)
 
         except Exception as e:
             raise RuntimeError(f"Scene {i} ({scene['name']}) generation failed: {e}")

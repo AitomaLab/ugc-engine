@@ -78,7 +78,7 @@ export default function TransitionShotModal({
                 onClick={e => e.stopPropagation()}
             >
                 {/* Header */}
-                <div className="p-5 border-b border-white/5 flex justify-between items-center bg-gradient-to-r from-purple-500/10 to-transparent">
+                <div className="p-5 border-b border-[#E8ECF4] flex justify-between items-center bg-gradient-to-r from-purple-500/10 to-transparent">
                     <div className="flex items-center gap-2">
                         <span className="text-lg">&#x2728;</span>
                         <h3 className="text-lg font-bold text-white">Create a Transition Shot</h3>

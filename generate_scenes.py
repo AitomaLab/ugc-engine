@@ -714,10 +714,12 @@ def animate_cinematic_still(image_url: str, shot_type: str) -> str:
     motion_prompts = {
         "hero": "slowly push in on the product, subtle light glinting off the surface",
         "macro_detail": "pan slowly across the texture of the product, revealing fine details",
-        "pedestal": "camera slowly orbits the product on the pedestal, 360-degree view",
+        "elevated": "camera slowly orbits the product on the pedestal, 360-degree view",
         "moody_dramatic": "light source slowly moves, causing shadows to shift dramatically across the product",
         "floating": "product rotates slowly in zero-gravity, with subtle lens flares appearing",
         "lifestyle": "camera performs a very slow, subtle zoom-in on the product in its setting",
+        "silhouette": "the light source behind the product slowly brightens, intensifying the silhouette effect and creating subtle lens flares",
+        "overhead": "a subtle, slow zoom-out, revealing more of the flat lay composition around the product",
     }
 
     prompt = motion_prompts.get(shot_type, "subtle, slow camera movement to bring the still image to life")

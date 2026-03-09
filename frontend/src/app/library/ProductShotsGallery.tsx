@@ -166,7 +166,7 @@ function ShotCard({
                             disabled={isAnimating}
                             className="flex-1 bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 px-2 py-1.5 rounded-lg text-[10px] font-medium transition-colors disabled:opacity-50"
                         >
-                            {isAnimating ? 'Queuing...' : '▶ Animate'}
+                            {isAnimating ? 'Queuing...' : ' Animate'}
                         </button>
                     )}
                     <button
@@ -174,7 +174,7 @@ function ShotCard({
                         className="bg-red-500/10 text-red-400 hover:bg-red-500/20 px-2 py-1.5 rounded-lg text-[10px] font-medium transition-colors"
                         title="Delete"
                     >
-                        🗑
+                        
                     </button>
                 </div>
 
@@ -296,7 +296,7 @@ export default function ProductShotsGallery({
                             : 'text-[#94A3B8] hover:text-[#1A1A1F]'
                             }`}
                     >
-                        📸 Product Shots ({stills.length})
+                         Product Shots ({stills.length})
                     </button>
                     <button
                         onClick={() => setActiveTab('videos')}
@@ -305,7 +305,7 @@ export default function ProductShotsGallery({
                             : 'text-[#94A3B8] hover:text-[#1A1A1F]'
                             }`}
                     >
-                        🎬 Cinematic Videos ({videos.length})
+                         Cinematic Videos ({videos.length})
                     </button>
                 </div>
 
@@ -350,7 +350,7 @@ export default function ProductShotsGallery({
                                             className="text-red-400/60 hover:text-red-400 text-[10px] transition-colors"
                                             title="Remove"
                                         >
-                                            ✕
+                                            
                                         </button>
                                     </div>
                                 ))}

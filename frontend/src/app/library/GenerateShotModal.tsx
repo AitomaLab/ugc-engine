@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useEffect } from 'react';
 import { apiFetch } from '@/lib/utils';
@@ -73,9 +73,9 @@ export default function GenerateShotModal({
                 onClick={e => e.stopPropagation()}
             >
                 {/* Header */}
-                <div className="p-5 border-b border-white/5 flex justify-between items-center bg-gradient-to-r from-blue-500/10 to-transparent">
+                <div className="p-5 border-b border-[#E8ECF4] flex justify-between items-center bg-gradient-to-r from-blue-500/10 to-transparent">
                     <div className="flex items-center gap-2">
-                        <span className="text-lg">🎬</span>
+                        <svg className="w-5 h-5 text-[#337AFF]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
                         <h3 className="text-lg font-bold text-white">Generate Cinematic Shots</h3>
                     </div>
                     <button onClick={onClose} className="text-[#4A5568] hover:text-white p-1 hover:bg-white/10 rounded-full transition-colors">

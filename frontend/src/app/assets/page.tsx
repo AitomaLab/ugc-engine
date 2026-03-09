@@ -41,9 +41,9 @@ export default function AssetsPage() {
     const [activeTab, setActiveTab] = useState<Tab>('influencers');
 
     const tabs: { key: Tab; label: string; icon: string }[] = [
-        { key: 'influencers', label: 'Influencers', icon: '👤' },
-        { key: 'scripts', label: 'Scripts', icon: '✍️' },
-        { key: 'clips', label: 'App Clips', icon: '📱' },
+        { key: 'influencers', label: 'Influencers', icon: '' },
+        { key: 'scripts', label: 'Scripts', icon: '' },
+        { key: 'clips', label: 'App Clips', icon: '' },
     ];
 
     return (
@@ -151,7 +151,7 @@ function InfluencersTab() {
                             {inf.personality && <p className="text-[#4A5568] text-sm truncate">{inf.personality}</p>}
                             {inf.elevenlabs_voice_id && <p className="text-[#337AFF] text-xs mt-1 font-mono truncate">Voice: {inf.elevenlabs_voice_id}</p>}
                         </div>
-                        <button onClick={() => handleDelete(inf.id)} className="text-red-400 hover:text-red-300 text-sm self-start">🗑️</button>
+                        <button onClick={() => handleDelete(inf.id)} className="text-red-400 hover:text-red-300 text-sm self-start"></button>
                     </div>
                 ))}
             </div>
@@ -225,7 +225,7 @@ function ScriptsTab() {
                             <p className="text-white">{s.text}</p>
                             {s.category && <span className="inline-block mt-2 px-3 py-1 bg-[#337AFF]/10 text-[#337AFF] rounded-full text-xs font-medium">{s.category}</span>}
                         </div>
-                        <button onClick={() => handleDelete(s.id)} className="text-red-400 hover:text-red-300 text-sm shrink-0">🗑️</button>
+                        <button onClick={() => handleDelete(s.id)} className="text-red-400 hover:text-red-300 text-sm shrink-0"></button>
                     </div>
                 ))}
             </div>
@@ -311,7 +311,7 @@ function ClipsTab() {
                                 {clip.description && <p className="text-[#4A5568] text-sm mt-1">{clip.description}</p>}
                                 {clip.duration_seconds && <span className="inline-block mt-2 px-3 py-1 bg-purple-500/20 text-purple-400 rounded-full text-xs">{clip.duration_seconds}s</span>}
                             </div>
-                            <button onClick={() => handleDelete(clip.id)} className="text-red-400 hover:text-red-300 text-sm">🗑️</button>
+                            <button onClick={() => handleDelete(clip.id)} className="text-red-400 hover:text-red-300 text-sm"></button>
                         </div>
                         <p className="text-[#94A3B8] text-xs mt-3 truncate font-mono">{clip.video_url}</p>
                     </div>

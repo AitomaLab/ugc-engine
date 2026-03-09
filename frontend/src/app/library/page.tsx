@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { apiFetch, formatDate, getApiUrl } from '@/lib/utils';
@@ -37,7 +37,7 @@ export default function LibraryPage() {
                 </div>
 
                 <div className="relative max-w-md w-full md:w-auto">
-                    <svg className="absolute left-3 top-1/2 -tranreveal-1/2 text-[#94A3B8]" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                    <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                     <input
                         type="text"
                         placeholder="Search assets..."
@@ -285,7 +285,7 @@ function VideoDetailModal({
                                 rel="noopener noreferrer"
                                 className="btn-primary text-xs px-4 py-2"
                             >
-                                â¬‡ Download
+                                Download
                             </a>
                             <button onClick={copyUrl} className="btn-secondary text-xs px-4 py-2">
                                 {copied ? 'âœ“ Copied!' : 'ðŸ”— Share'}
@@ -315,7 +315,7 @@ function VideoDetailModal({
 
                     {/* Schedule Placeholder */}
                     <button className="btn-secondary w-full opacity-50 cursor-not-allowed" disabled>
-                        ðŸ“… Schedule to Social Media (Coming Soon)
+                        Schedule to Social Media (Coming Soon)
                     </button>
                 </div>
             </div>
@@ -412,7 +412,7 @@ function InfluencersTab({ searchQuery }: { searchQuery: string }) {
                                                 ? 'bg-sky-500/10 text-sky-400 border-sky-500/20'
                                                 : 'bg-pink-500/10 text-pink-400 border-pink-500/20'
                                         }`}>
-                                            {inf.gender === 'Male' ? 'â™‚ï¸' : 'â™€ï¸'} {inf.gender || 'Female'}
+                                            {inf.gender === 'Male' ? '♂' : '♀'} {inf.gender || 'Female'}
                                         </span>
                                     </div>
                                     <p className="text-xs text-[#94A3B8] line-clamp-2 mt-1 leading-relaxed">
@@ -538,7 +538,7 @@ function ScriptsTab({ searchQuery }: { searchQuery: string }) {
                 />
                 <div className="flex gap-2">
                     <button onClick={handleCreate} className="btn-primary flex-1" disabled={!text.trim()}>Add Script</button>
-                    <button onClick={handleGenerateAI} className="btn-secondary text-xs">âœ¨ AI Generate</button>
+                    <button onClick={handleGenerateAI} className="btn-secondary text-xs">AI Generate</button>
                 </div>
             </div>
 
@@ -766,7 +766,7 @@ function ProductsTab({ searchQuery }: { searchQuery: string }) {
                                         <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2">
                                             <button
                                                 onClick={() => handleDelete(p.id)}
-                                                className="bg-red-500/80 text-[#1A1A1F] px-3 py-1 rounded text-xs hover:bg-red-600 w-24"
+                                                className="bg-red-500/80 text-white px-3 py-1 rounded text-xs hover:bg-red-600 w-24"
                                             >
                                                 Delete
                                             </button>
@@ -775,14 +775,14 @@ function ProductsTab({ searchQuery }: { searchQuery: string }) {
                                                 <button
                                                     onClick={() => handleAnalyze(p)}
                                                     disabled={analyzingIds.has(p.id)}
-                                                    className="bg-purple-500/80 text-[#1A1A1F] px-3 py-1 rounded text-xs hover:bg-purple-600 w-24 disabled:opacity-50"
+                                                    className="bg-purple-500/80 text-white px-3 py-1 rounded text-xs hover:bg-purple-600 w-24 disabled:opacity-50"
                                                 >
-                                                    {analyzingIds.has(p.id) ? 'Analyzing...' : 'âœ¨ Analyze'}
+                                                    {analyzingIds.has(p.id) ? 'Analyzing...' : 'Analyze'}
                                                 </button>
                                             ) : (
                                                 <button
                                                     onClick={() => setViewingAnalysis(p)}
-                                                    className="bg-[#94A3B8]/80 text-[#1A1A1F] px-3 py-1 rounded text-xs hover:bg-[#94A3B8] w-24"
+                                                    className="bg-[#94A3B8]/80 text-white px-3 py-1 rounded text-xs hover:bg-[#94A3B8] w-24"
                                                 >
                                                     View Info
                                                 </button>
@@ -790,16 +790,16 @@ function ProductsTab({ searchQuery }: { searchQuery: string }) {
 
                                             <button
                                                 onClick={() => setSelectedProductId(p.id)}
-                                                className="bg-blue-500/80 text-[#1A1A1F] px-3 py-1 rounded text-xs hover:bg-blue-600 w-24"
+                                                className="bg-blue-500/80 text-white px-3 py-1 rounded text-xs hover:bg-blue-600 w-24"
                                             >
-                                                ðŸŽ¬ Shots
+                                                🎬 Shots
                                             </button>
                                         </div>
 
                                         {/* Badge for Analyzed */}
                                         {p.visual_description && (
-                                            <div className="absolute top-1 right-1 bg-green-500/20 text-green-400 p-1 rounded-full border border-green-500/30" title="AI Analyzed">
-                                                âœ…
+                                            <div className="absolute top-1 right-1 bg-green-500 text-white p-1 rounded-full border border-green-600 shadow-sm" title="AI Analyzed">
+                                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
                                             </div>
                                         )}
                                     </div>
@@ -814,7 +814,7 @@ function ProductsTab({ searchQuery }: { searchQuery: string }) {
                 </div>
             </div>
 
-            {/* Expanded Product Shots Panel â€” full width, OUTSIDE the grid */}
+            {/* Expanded Product Shots Panel — full width, OUTSIDE the grid */}
             {selectedProductId && (() => {
                 const selectedProd = products.find(p => p.id === selectedProductId);
                 if (!selectedProd) return null;
@@ -910,13 +910,13 @@ function ProductAnalysisModal({
             <div className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity" />
 
             <div
-                className="bg-[#0f1115] border border-white/10 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl relative animate-in fade-in zoom-in-95 duration-200"
+                className="bg-white/95 backdrop-blur-md border border-[#E8ECF4] rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl relative animate-in fade-in zoom-in-95 duration-200"
                 onClick={e => e.stopPropagation()}
             >
                 {/* Header */}
                 <div className="p-5 border-b border-[#E8ECF4] flex justify-between items-center bg-gradient-to-r from-purple-500/10 to-transparent">
                     <div className="flex items-center gap-2">
-                        <span className="text-lg">ðŸ‘ï¸</span>
+                        <svg className="w-5 h-5 text-[#337AFF]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
                         <h3 className="text-lg font-bold text-[#1A1A1F]">Visual Analysis</h3>
                     </div>
                     <button onClick={onClose} className="text-[#4A5568] hover:text-[#1A1A1F] p-1 hover:bg-white/10 rounded-full transition-colors">
@@ -927,7 +927,7 @@ function ProductAnalysisModal({
                 <div className="p-6 space-y-6">
                     {/* Top Section: Image & Brand */}
                     <div className="flex gap-5">
-                        <div className="w-24 h-24 rounded-xl bg-white/80 border border-white/10 overflow-hidden flex-shrink-0 shadow-lg">
+                        <div className="w-24 h-24 rounded-xl bg-white/80 border border-[#E8ECF4] overflow-hidden flex-shrink-0 shadow-sm">
                             <img src={product.image_url} className="w-full h-full object-cover" />
                         </div>
                         <div className="flex-1 min-w-0 flex flex-col justify-center">
@@ -942,7 +942,7 @@ function ProductAnalysisModal({
                                 disabled={isAnalyzing}
                                 className="mt-3 text-xs flex items-center gap-1.5 text-purple-400 hover:text-purple-300 transition-colors w-fit disabled:opacity-50"
                             >
-                                <span className={isAnalyzing ? "animate-spin" : ""}>{isAnalyzing ? 'â†»' : 'âœ¨'}</span>
+                                <span className={isAnalyzing ? "animate-spin" : ""}>{isAnalyzing ? '↻' : '✨'}</span>
                                 {isAnalyzing ? 'Analyzing...' : 'Re-analyze Image'}
                             </button>
                         </div>
@@ -951,8 +951,8 @@ function ProductAnalysisModal({
                     {/* Details Grid */}
                     <div className="space-y-4">
                         <div className="bg-white/5 p-4 rounded-xl border border-[#E8ECF4]">
-                            <p className="text-[10px] uppercase tracking-wider text-[#94A3B8] font-bold mb-2 flex items-center gap-2">
-                                ðŸ“ Visual Description
+                            <p className="text-[10px] uppercase tracking-wider text-[#337AFF] font-bold mb-2 flex items-center gap-2">
+                                Visual Description
                             </p>
                             <div className="max-h-40 overflow-y-auto custom-scrollbar pr-2">
                                 <p className="text-sm text-[#1A1A1F] leading-relaxed whitespace-pre-wrap">

@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useRef } from 'react';
 import { apiFetch } from '@/lib/utils';
@@ -79,7 +79,7 @@ export function ProductUpload({ onUploadSuccess }: { onUploadSuccess: () => void
 
     return (
         <div className="glass-panel p-6 space-y-4">
-            <h3 className="text-lg font-semibold text-white">Add New Product</h3>
+            <h3 className="text-lg font-semibold text-[#1A1A1F]">Add New Product</h3>
 
             <div className="flex flex-col gap-4">
                 <div
@@ -98,7 +98,9 @@ export function ProductUpload({ onUploadSuccess }: { onUploadSuccess: () => void
                         </div>
                     ) : (
                         <div className="text-[#4A5568]">
-                            <span className="text-4xl block mb-2">📦</span>
+                            <span className="text-4xl block mb-2 text-[#94A3B8] flex justify-center">
+                                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                            </span>
                             <span className="text-sm">Click to upload product image</span>
                         </div>
                     )}

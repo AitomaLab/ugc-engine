@@ -173,7 +173,7 @@ export default function ActivityPage() {
                     onClick={() => setGroupByCampaign(!groupByCampaign)}
                     className={`tab-button text-xs ${groupByCampaign ? 'active' : ''}`}
                 >
-                    {groupByCampaign ? '✓ ' : ''}Group by Campaign
+                    {groupByCampaign ? ' ' : ''}Group by Campaign
                 </button>
                 <span className="text-xs text-[#94A3B8] ml-auto">{jobs.length} total jobs</span>
             </div>
@@ -343,7 +343,7 @@ function ErrorModal({ job, onClose }: { job: Job; onClose: () => void }) {
                 <div className="p-6 space-y-5">
                     <div className="flex items-center justify-between">
                         <h3 className="font-semibold text-lg text-red-400">Job Failed</h3>
-                        <button onClick={onClose} className="text-[#94A3B8] hover:text-white transition-colors text-lg">✕</button>
+                        <button onClick={onClose} className="text-[#94A3B8] hover:text-white transition-colors text-lg"></button>
                     </div>
 
                     <div>
@@ -353,20 +353,20 @@ function ErrorModal({ job, onClose }: { job: Job; onClose: () => void }) {
 
                     {/* Troubleshooting */}
                     <div className="bg-blue-500/5 border border-[#337AFF]/15 rounded-xl p-4">
-                        <p className="text-[10px] uppercase text-[#337AFF] font-semibold mb-2">💡 Troubleshooting Suggestion</p>
+                        <p className="text-[10px] uppercase text-[#337AFF] font-semibold mb-2"> Troubleshooting Suggestion</p>
                         <p className="text-sm text-[#1A1A1F] leading-relaxed">{suggestion}</p>
                     </div>
 
                     {/* Cost Breakdown */}
                     {job.total_cost != null && (
                         <div>
-                            <p className="text-[10px] uppercase text-[#94A3B8] font-semibold mb-2">💰 Cost Breakdown</p>
+                            <p className="text-[10px] uppercase text-[#94A3B8] font-semibold mb-2"> Cost Breakdown</p>
                             <div className="bg-white rounded-xl p-4 border border-[#E8ECF4] space-y-2">
                                 {[
-                                    { label: '🎬 Video Generation', value: job.cost_video },
-                                    { label: '🎙️ Voice Generation', value: job.cost_voice },
-                                    { label: '🎵 Music', value: job.cost_music },
-                                    { label: '⚙️ Processing', value: job.cost_processing },
+                                    { label: ' Video Generation', value: job.cost_video },
+                                    { label: ' Voice Generation', value: job.cost_voice },
+                                    { label: ' Music', value: job.cost_music },
+                                    { label: ' Processing', value: job.cost_processing },
                                 ].map((c) => (
                                     <div key={c.label} className="flex justify-between text-xs">
                                         <span className="text-[#4A5568]">{c.label}</span>

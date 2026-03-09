@@ -199,12 +199,17 @@ def generate_ugc_video(self, job_id: str):
         }
         print(f"      📦 Influencer Dict for Engine: {influencer_dict}")
 
+        # Read auto_transition_type from metadata JSONB (where api stores it)
+        job_metadata = job.get("metadata") or {}
+        auto_trans_type = job_metadata.get("auto_transition_type") or job.get("auto_transition_type")
+
         fields = {
             "Hook": job.get("hook") or script_text,
             "Theme": job.get("assistant_type") or script_cat,
             "Length": f"{job.get('length', 15)}s",
             "model_api": job.get("model_api", "seedance-1.5-pro"),
-            "cinematic_shot_ids": job.get("cinematic_shot_ids") or [],
+            "cinematic_shot_ids": job.get("cinematic_shot_ids") or job_metadata.get("cinematic_shot_ids") or [],
+            "auto_transition_type": auto_trans_type,
         }
 
     except Exception as e:
@@ -431,6 +436,136 @@ def animate_product_shot_video(shot_id: str):
 
     except Exception as e:
         print(f"Animation failed for Shot {shot_id}: {e}")
+        from ugc_db.db_manager import update_product_shot as _update
+        try:
+            _update(shot_id, {"status": "failed", "error_message": str(e)[:500]})
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Transition Shot Generation Task (Workflow B)
+# ---------------------------------------------------------------------------
+
+@celery.task(name="generate_transition_shot")
+def generate_transition_shot(shot_id: str):
+    """
+    Generates a context-aware transition shot that seamlessly blends with
+    the preceding UGC scene. Pipeline:
+      1. Download preceding scene video
+      2. Extract last frame
+      3. Analyze frame with GPT-4o Vision
+      4. Generate context-aware image prompt
+      5. Generate still image via Nano Banana Pro
+      6. Animate via Veo 3.1
+      7. Stitch with preceding clip using xfade transition
+    """
+    from ugc_db.db_manager import get_product_shot, get_product, update_product_shot
+    from prompts.cinematic_shots import build_transition_prompt
+    from ugc_backend.vision_analysis import analyze_ugc_frame, extract_last_frame
+    from ugc_worker.video_tools import stitch_with_transition
+    import generate_scenes
+    import config
+    import tempfile
+    from pathlib import Path
+
+    print(f"Starting transition shot generation for Shot {shot_id}...")
+    try:
+        shot = get_product_shot(shot_id)
+        if not shot:
+            raise RuntimeError(f"Product Shot {shot_id} not found.")
+
+        product = get_product(shot["product_id"])
+        if not product:
+            raise RuntimeError(f"Product {shot['product_id']} not found.")
+
+        transition_type = shot.get("transition_type", "match_cut")
+        preceding_url = shot.get("preceding_video_url")
+        if not preceding_url:
+            raise RuntimeError("No preceding_video_url on shot record.")
+
+        work_dir = Path(tempfile.mkdtemp(prefix="transition_"))
+
+        # Step 1: Download preceding scene video
+        print(f"   Downloading preceding scene: {preceding_url[:60]}...")
+        preceding_path = work_dir / "preceding.mp4"
+        generate_scenes.download_video(preceding_url, str(preceding_path))
+
+        # Step 2: Extract last frame
+        print("   Extracting last frame...")
+        frame_path = work_dir / "last_frame.jpg"
+        extract_last_frame(str(preceding_path), str(frame_path))
+
+        # Step 3: Analyze frame with GPT-4o Vision
+        print("   Analyzing frame with GPT-4o Vision...")
+        analysis = analyze_ugc_frame(str(frame_path))
+        update_product_shot(shot_id, {"analysis_json": analysis})
+        print(f"   Analysis: framing={analysis.get('product_framing_style')}, "
+              f"angle={analysis.get('camera_angle')}, "
+              f"lighting={analysis.get('lighting_description')}")
+
+        # Step 4: Build context-aware prompts
+        target_style = shot.get("target_style")
+        image_prompt, animation_prompt = build_transition_prompt(
+            product=product,
+            analysis=analysis,
+            transition_type=transition_type,
+            target_style=target_style,
+        )
+        update_product_shot(shot_id, {"prompt": image_prompt})
+
+        # Step 5: Generate still image via Nano Banana Pro
+        print("   Generating transition image via Nano Banana Pro...")
+        image_url = generate_scenes.generate_cinematic_product_image(
+            prompt=image_prompt,
+            product_image_url=product["image_url"],
+        )
+        update_product_shot(shot_id, {"status": "image_completed", "image_url": image_url})
+        print(f"   Image ready: {image_url[:60]}...")
+
+        # Step 6: Animate via Veo 3.1
+        print("   Animating transition shot with Veo 3.1...")
+        update_product_shot(shot_id, {"status": "animation_pending"})
+        cinematic_video_url = generate_scenes.generate_video_with_retry(
+            prompt=animation_prompt,
+            reference_image_url=image_url,
+            model_api="veo-3.1-fast",
+        )
+
+        # Step 7: Download cinematic clip and stitch with preceding scene
+        print("   Stitching with preceding scene...")
+        cinematic_path = work_dir / "cinematic.mp4"
+        generate_scenes.download_video(cinematic_video_url, str(cinematic_path))
+
+        stitched_path = work_dir / "stitched.mp4"
+        stitch_with_transition(
+            influencer_clip=str(preceding_path),
+            cinematic_clip=str(cinematic_path),
+            transition_type=transition_type,
+            output_path=str(stitched_path),
+        )
+
+        # Upload stitched video to storage
+        import storage_helper
+        final_video_url = storage_helper.upload_file(
+            str(stitched_path),
+            f"transition_shots/{shot_id}.mp4",
+        )
+
+        update_product_shot(shot_id, {
+            "status": "animation_completed",
+            "video_url": final_video_url,
+        })
+        print(f"Transition shot complete for Shot {shot_id}: {final_video_url}")
+
+        # Cleanup temp files
+        import shutil
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+    except Exception as e:
+        print(f"Transition shot failed for Shot {shot_id}: {e}")
+        import traceback
+        traceback.print_exc()
         from ugc_db.db_manager import update_product_shot as _update
         try:
             _update(shot_id, {"status": "failed", "error_message": str(e)[:500]})

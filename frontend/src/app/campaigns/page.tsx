@@ -116,7 +116,7 @@ export default function CampaignsPage() {
 
             {/* Campaign Creator */}
             <div className="glass-panel rounded-xl p-8 mb-8">
-                <h2 className="text-xl font-bold text-white mb-6">🚀 Launch New Campaign</h2>
+                <h2 className="text-xl font-bold text-white mb-6"> Launch New Campaign</h2>
 
                 <div className="grid grid-cols-3 gap-6">
                     {/* Influencer Selector */}
@@ -168,12 +168,12 @@ export default function CampaignsPage() {
                         disabled={!selectedInfluencer || submitting}
                         className="px-8 py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 disabled:from-slate-700 disabled:to-slate-700 disabled:text-[#94A3B8] rounded-lg font-bold text-lg transition-all shadow-lg shadow-blue-500/20 hover:shadow-blue-500/40"
                     >
-                        {submitting ? '⏳ Dispatching...' : `🚀 Launch ${count} Videos`}
+                        {submitting ? '⏳ Dispatching...' : ` Launch ${count} Videos`}
                     </button>
 
                     {result && (
                         <span className="text-green-400 text-sm animate-pulse">
-                            ✅ Dispatched {result.count} jobs successfully!
+                             Dispatched {result.count} jobs successfully!
                         </span>
                     )}
                 </div>
@@ -231,7 +231,7 @@ export default function CampaignsPage() {
                                 rel="noreferrer"
                                 className="text-[#337AFF] hover:text-[#337AFF]/80 text-sm shrink-0"
                             >
-                                🎥 View
+                                 View
                             </a>
                         )}
                     </div>

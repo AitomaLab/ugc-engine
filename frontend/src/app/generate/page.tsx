@@ -134,7 +134,7 @@ export default function GeneratePage() {
             {step === 1 && (
                 <section className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
                     <h3 className="text-xl font-bold flex items-center">
-                        <span className="mr-3 text-2xl">👤</span> Select Influencer
+                        <span className="mr-3 text-2xl"></span> Select Influencer
                     </h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         {influencers.map((inf) => (
@@ -147,7 +147,7 @@ export default function GeneratePage() {
                                     {inf.image_url ? (
                                         <img src={inf.image_url} alt={inf.name} className="w-full h-full object-cover" />
                                     ) : (
-                                        <div className="w-full h-full flex items-center justify-center text-4xl opacity-20">👤</div>
+                                        <div className="w-full h-full flex items-center justify-center text-4xl opacity-20"></div>
                                     )}
                                 </div>
                                 <p className="font-bold text-lg">{inf.name}</p>
@@ -172,7 +172,7 @@ export default function GeneratePage() {
                 <section className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                         <div className="space-y-4">
-                            <h3 className="text-xl font-bold">🛠️ Model Selection</h3>
+                            <h3 className="text-xl font-bold"> Model Selection</h3>
                             <select
                                 value={modelApi}
                                 onChange={(e) => setModelApi(e.target.value)}
@@ -185,7 +185,7 @@ export default function GeneratePage() {
                             </select>
                         </div>
                         <div className="space-y-4">
-                            <h3 className="text-xl font-bold">📜 Script Library</h3>
+                            <h3 className="text-xl font-bold"> Script Library</h3>
                             <select
                                 value={selectedScriptId || ""}
                                 onChange={(e) => {
@@ -208,13 +208,13 @@ export default function GeneratePage() {
 
                     <div className="space-y-4">
                         <div className="flex items-center justify-between">
-                            <h3 className="text-xl font-bold">🎬 Video Hook</h3>
+                            <h3 className="text-xl font-bold"> Video Hook</h3>
                             <button
                                 onClick={handleGenerateHook}
                                 disabled={genLoading}
                                 className="text-xs bg-blue-600/20 hover:bg-blue-600/40 text-[#337AFF] px-3 py-1 rounded-full border border-[#337AFF]/30 transition-all"
                             >
-                                {genLoading ? "✨ Generating..." : "✨ AI Generate Hook"}
+                                {genLoading ? " Generating..." : " AI Generate Hook"}
                             </button>
                         </div>
                         <textarea
@@ -240,7 +240,7 @@ export default function GeneratePage() {
                     </div>
 
                     <div className="space-y-4">
-                        <h3 className="text-xl font-bold">📱 Mobile Feature (App Clip)</h3>
+                        <h3 className="text-xl font-bold"> Mobile Feature (App Clip)</h3>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                             <button
                                 onClick={() => setSelectedClip(null)}
@@ -300,7 +300,7 @@ export default function GeneratePage() {
                             </div>
 
                             <div className="bg-blue-500/5 border border-[#337AFF]/20 p-4 rounded-xl flex items-center space-x-4">
-                                <span className="text-2xl text-[#337AFF]">🛡️</span>
+                                <span className="text-2xl text-[#337AFF]"></span>
                                 <p className="text-sm text-blue-200/70 leading-relaxed">
                                     <strong>Anti-Fatigue Filter Active</strong>: The system will automatically select a unique combination of hook and app clip to ensure your content remains fresh for social algorithms.
                                 </p>
@@ -312,7 +312,7 @@ export default function GeneratePage() {
                                     onClick={handleSubmit}
                                     className="px-12 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 rounded-2xl font-black text-lg tracking-tight transition-all active:scale-95 shadow-xl shadow-blue-900/20"
                                 >
-                                    🚀 Launch Engine
+                                     Launch Engine
                                 </button>
                             </div>
                         </div>

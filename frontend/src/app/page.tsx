@@ -370,7 +370,7 @@ export default function StudioPage() {
         </h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {!hasInfluencers && (
-            <Link href="/library" className="glass rounded-2xl p-5 block shadow-card hover:shadow-card-hover hover:-tranreveal-0.5 transition-all duration-300">
+            <Link href="/library" className="glass rounded-2xl p-5 block shadow-card hover:shadow-card-hover hover:-translate-0.5 transition-all duration-300">
               <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-3" style={{ background: 'linear-gradient(135deg, rgba(51,122,255,0.12), rgba(107,95,228,0.12))' }}>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#337AFF" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
               </div>
@@ -383,7 +383,7 @@ export default function StudioPage() {
             </Link>
           )}
           {hasInfluencers && !hasScripts && (
-            <Link href="/library" className="glass rounded-2xl p-5 block shadow-card hover:shadow-card-hover hover:-tranreveal-0.5 transition-all duration-300">
+            <Link href="/library" className="glass rounded-2xl p-5 block shadow-card hover:shadow-card-hover hover:-translate-0.5 transition-all duration-300">
               <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-3" style={{ background: 'linear-gradient(135deg, rgba(51,122,255,0.12), rgba(107,95,228,0.12))' }}>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#337AFF" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
               </div>
@@ -396,7 +396,7 @@ export default function StudioPage() {
             </Link>
           )}
           {hasInfluencers && hasScripts && !hasClips && (
-            <Link href="/library" className="glass rounded-2xl p-5 block shadow-card hover:shadow-card-hover hover:-tranreveal-0.5 transition-all duration-300">
+            <Link href="/library" className="glass rounded-2xl p-5 block shadow-card hover:shadow-card-hover hover:-translate-0.5 transition-all duration-300">
               <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-3" style={{ background: 'linear-gradient(135deg, rgba(51,122,255,0.12), rgba(107,95,228,0.12))' }}>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#337AFF" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/><line x1="17" y1="17" x2="22" y2="17"/></svg>
               </div>
@@ -410,7 +410,7 @@ export default function StudioPage() {
           )}
           {hasInfluencers && hasScripts && (
             <>
-              <Link href="/create" className="glass rounded-2xl p-5 block shadow-card hover:shadow-card-hover hover:-tranreveal-0.5 transition-all duration-300">
+              <Link href="/create" className="glass rounded-2xl p-5 block shadow-card hover:shadow-card-hover hover:-translate-0.5 transition-all duration-300">
                 <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-3" style={{ background: 'linear-gradient(135deg, rgba(51,122,255,0.12), rgba(107,95,228,0.12))' }}>
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#337AFF" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
                 </div>
@@ -423,7 +423,7 @@ export default function StudioPage() {
                   Generate single or bulk UGC videos
                 </p>
               </Link>
-              <Link href="/library" className="glass rounded-2xl p-5 block shadow-card hover:shadow-card-hover hover:-tranreveal-0.5 transition-all duration-300">
+              <Link href="/library" className="glass rounded-2xl p-5 block shadow-card hover:shadow-card-hover hover:-translate-0.5 transition-all duration-300">
                 <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-3" style={{ background: 'linear-gradient(135deg, rgba(51,122,255,0.12), rgba(107,95,228,0.12))' }}>
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#337AFF" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
                 </div>

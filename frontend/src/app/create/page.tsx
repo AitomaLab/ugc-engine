@@ -223,7 +223,7 @@ export default function CreatePage() {
         if (!selectedInfluencer) return;
         if (productType === 'digital' && !appClipId && appClipId !== 'auto') return; // 'auto' is valid for digital
         if (productType === 'physical' && !productId) {
-            setSuccessMessage("❌ Please select a product.");
+            setSuccessMessage(" Please select a product.");
             return;
         }
 
@@ -254,7 +254,7 @@ export default function CreatePage() {
                         auto_transition_type: enableAutoTransitions ? autoTransitionType : undefined,
                     }),
                 });
-                setSuccessMessage(`🚀 Campaign "${campaignName || 'Untitled'}" launched with ${quantity} videos!`);
+                setSuccessMessage(` Campaign "${campaignName || 'Untitled'}" launched with ${quantity} videos!`);
             } else {
                 // Single creation
                 await apiFetch('/jobs', {
@@ -273,7 +273,7 @@ export default function CreatePage() {
                         auto_transition_type: enableAutoTransitions ? autoTransitionType : undefined,
                     }),
                 });
-                setSuccessMessage('🎬 Video generation started!');
+                setSuccessMessage(' Video generation started!');
             }
 
             // Reset after short delay
@@ -282,7 +282,7 @@ export default function CreatePage() {
             }, 2000);
         } catch (err) {
             console.error('Submit error:', err);
-            setSuccessMessage(`❌ Error: ${err instanceof Error ? err.message : 'Unknown error'}`);
+            setSuccessMessage(` Error: ${err instanceof Error ? err.message : 'Unknown error'}`);
         } finally {
             setSubmitting(false);
         }
@@ -311,7 +311,7 @@ export default function CreatePage() {
 
             {/* Success Banner */}
             {successMessage && (
-                <div className={`glass-panel p-4 text-center text-sm font-medium ${successMessage.startsWith('❌') ? 'text-red-400' : 'text-green-400'}`}>
+                <div className={`glass-panel p-4 text-center text-sm font-medium ${successMessage.startsWith('') ? 'text-red-400' : 'text-green-400'}`}>
                     {successMessage}
                 </div>
             )}
@@ -403,13 +403,13 @@ export default function CreatePage() {
                         onClick={() => setProductType('digital')}
                         className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${productType === 'digital' ? 'bg-blue-600 text-white shadow-lg' : 'text-[#4A5568] hover:text-[#1A1A1F]'}`}
                     >
-                        📱 Digital App
+                         Digital App
                     </button>
                     <button
                         onClick={() => setProductType('physical')}
                         className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${productType === 'physical' ? 'bg-purple-600 text-white shadow-lg' : 'text-[#4A5568] hover:text-[#1A1A1F]'}`}
                     >
-                        📦 Physical Product
+                         Physical Product
                     </button>
                 </div>
 
@@ -425,7 +425,7 @@ export default function CreatePage() {
                                     onClick={() => setAppClipId('auto')}
                                     className={`cursor-pointer rounded-xl border-2 transition-all p-4 flex flex-col items-center justify-center gap-2 bg-[#337AFF]/3 ${appClipId === 'auto' ? 'border-[#337AFF] shadow-blue-500/20 shadow-lg' : 'border-dashed border-[#E8ECF4]/50 hover:border-[#E8ECF4]'}`}
                                 >
-                                    <span className="text-2xl">✨</span>
+                                    <span className="text-2xl"></span>
                                     <span className="text-sm font-medium text-[#1A1A1F]">Auto-Select</span>
                                 </div>
                                 {appClips.map((clip) => (
@@ -471,7 +471,7 @@ export default function CreatePage() {
                 {productType === 'physical' && cinematicShots.length > 0 && (
                     <div className="mt-5">
                         <label className="text-xs text-[#4A5568] font-medium mb-2 block">
-                            🎬 Include Cinematic Shots <span className="text-[#94A3B8]">(optional)</span>
+                             Include Cinematic Shots <span className="text-[#94A3B8]">(optional)</span>
                         </label>
                         <p className="text-[10px] text-[#94A3B8] mb-3">
                             Select pre-rendered cinematic product shots to interleave with the influencer scenes.
@@ -511,7 +511,7 @@ export default function CreatePage() {
                                         <div className="absolute bottom-0 left-0 right-0 bg-black/70 p-2 flex items-center justify-between">
                                             <p className="text-[10px] text-white capitalize">{shot.shot_type.replace('_', ' ')}</p>
                                             {isSelected && (
-                                                <span className="text-[9px] bg-blue-500 text-white px-1.5 py-0.5 rounded-full font-bold">✓</span>
+                                                <span className="text-[9px] bg-blue-500 text-white px-1.5 py-0.5 rounded-full font-bold"></span>
                                             )}
                                         </div>
                                     </div>
@@ -585,7 +585,7 @@ export default function CreatePage() {
                         <div className="space-y-2">
                             <div className="flex justify-between items-center mb-1">
                                 <span className="text-[10px] uppercase text-purple-400 font-bold tracking-wider">
-                                    ✨ AI Generated Script
+                                     AI Generated Script
                                 </span>
                                 <button
                                     onClick={() => {
@@ -718,7 +718,7 @@ export default function CreatePage() {
                     <section className="glass-panel p-6 space-y-5 border-[#337AFF]/20">
                         <div>
                             <h3 className="text-sm font-semibold text-[#337AFF] mb-1">
-                                🚀 Campaign Mode
+                                 Campaign Mode
                             </h3>
                             <p className="text-xs text-[#94A3B8]">
                                 Configure your batch of {quantity} videos.
@@ -798,7 +798,7 @@ export default function CreatePage() {
                                     disabled={!selectedInfluencer || hookLoading}
                                     className="btn-secondary text-xs whitespace-nowrap"
                                 >
-                                    {hookLoading ? '...' : '✨ Generate'}
+                                    {hookLoading ? '...' : ' Generate'}
                                 </button>
                             </div>
                         </div>
@@ -839,10 +839,10 @@ export default function CreatePage() {
                             <div className="mt-4 pt-4 border-t border-[#E8ECF4]/40">
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
                                     {[
-                                        { label: 'Video', value: costEstimate.cost_video, icon: '🎬' },
-                                        { label: 'Voice', value: costEstimate.cost_voice, icon: '🎙️' },
-                                        { label: 'Music', value: costEstimate.cost_music, icon: '🎵' },
-                                        { label: 'Processing', value: costEstimate.cost_processing, icon: '⚙️' },
+                                        { label: 'Video', value: costEstimate.cost_video, icon: '' },
+                                        { label: 'Voice', value: costEstimate.cost_voice, icon: '' },
+                                        { label: 'Music', value: costEstimate.cost_music, icon: '' },
+                                        { label: 'Processing', value: costEstimate.cost_processing, icon: '' },
                                     ].map((c) => (
                                         <div key={c.label} className="text-center">
                                             <p className="text-[10px] uppercase text-[#94A3B8] tracking-wider">{c.icon} {c.label}</p>
@@ -851,7 +851,7 @@ export default function CreatePage() {
                                     ))}
                                     {productType === 'physical' && costEstimate.cost_image > 0 && (
                                         <div className="text-center col-span-2 sm:col-span-4 mt-2 border-t border-[#E8ECF4] pt-2">
-                                            <p className="text-[10px] uppercase text-purple-400 tracking-wider">📸 Product Images (Nano)</p>
+                                            <p className="text-[10px] uppercase text-purple-400 tracking-wider"> Product Images (Nano)</p>
                                             <p className="text-sm font-medium text-purple-300">${costEstimate.cost_image.toFixed(3)}</p>
                                         </div>
                                     )}
@@ -890,8 +890,8 @@ export default function CreatePage() {
                     {submitting
                         ? 'Launching...'
                         : isCampaignMode
-                            ? `🚀 Launch Campaign (${quantity} videos)`
-                            : '🎬 Generate Video'}
+                            ? ` Launch Campaign (${quantity} videos)`
+                            : ' Generate Video'}
                 </button>
                 <button
                     onClick={() => router.push('/')}

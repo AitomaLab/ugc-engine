@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useEffect, useRef } from 'react';
 import { Influencer } from '@/lib/types';
@@ -143,11 +143,11 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
             <div className="bg-white border border-[#E8ECF4] rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
 
                 {/* Header */}
-                <div className="p-6 border-b border-white/5 flex justify-between items-center bg-white/5">
-                    <h3 className="text-lg font-semibold text-white">
+                <div className="p-6 border-b border-[#E8ECF4] flex justify-between items-center ">
+                    <h3 className="text-lg font-semibold text-[#1A1A1F]">
                         {initialData ? 'Edit Influencer' : 'Add New Influencer'}
                     </h3>
-                    <button onClick={onClose} className="text-[#4A5568] hover:text-white transition">✕</button>
+                    <button onClick={onClose} className="text-[#4A5568] hover:text-white transition"></button>
                 </div>
 
                 {/* Body */}
@@ -179,7 +179,7 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
                                             : 'bg-white/80 border-[#E8ECF4] text-[#4A5568] hover:bg-[#337AFF]/5'
                                     }`}
                                 >
-                                    {g === 'Male' ? '♂️' : '♀️'} {g}
+                                    {g === 'Male' ? '' : ''} {g}
                                 </button>
                             ))}
                         </div>
@@ -212,7 +212,9 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
                                 {imageUrl ? (
                                     <img src={imageUrl} alt="Preview" className="w-full h-full object-cover" />
                                 ) : (
-                                    <span className="text-2xl text-[#94A3B8]">👤</span>
+                                    <span className="text-[#94A3B8]">
+                                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                                    </span>
                                 )}
                                 {uploading && (
                                     <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
@@ -281,7 +283,7 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
                 </div>
 
                 {/* Footer */}
-                <div className="p-6 border-t border-white/5 bg-white/50 flex justify-end gap-3">
+                <div className="p-6 border-t border-[#E8ECF4] bg-[#F0F4FF]/30 flex justify-end gap-3">
                     <button onClick={onClose} className="btn-secondary">Cancel</button>
                     <button
                         onClick={handleSave}
