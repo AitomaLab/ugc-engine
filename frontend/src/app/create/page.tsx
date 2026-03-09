@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useEffect, useCallback } from 'react';
 import { apiFetch, getApiUrl } from '@/lib/utils';
@@ -677,7 +677,7 @@ export default function CreatePage() {
                                 className={`
                   p-3 rounded-xl text-left transition-all border text-sm
                   ${modelApi === model.value
-                                        ? 'bg-[#337AFF]/10 border-[#337AFF]/30 text-white'
+                                        ? 'bg-[#337AFF]/10 border-[#337AFF]/30 text-[#337AFF] shadow-sm'
                                         : 'bg-[#337AFF]/3 border-[#E8ECF4] text-[#4A5568] hover:border-[#E8ECF4]/50'
                                     }
                 `}
@@ -700,7 +700,7 @@ export default function CreatePage() {
                                 className={`
                   px-6 py-2.5 rounded-xl text-sm font-medium transition-all border
                   ${duration === d
-                                        ? 'bg-[#337AFF]/10 border-[#337AFF]/30 text-white'
+                                        ? 'bg-[#337AFF]/10 border-[#337AFF]/30 text-[#337AFF] shadow-sm'
                                         : 'bg-[#337AFF]/3 border-[#E8ECF4] text-[#4A5568] hover:border-[#E8ECF4]/50'
                                     }
                 `}
@@ -746,7 +746,7 @@ export default function CreatePage() {
                                         className={`
                     w-full p-3 rounded-xl text-left transition-all border text-sm
                     ${contentStrategy === strategy.value
-                                                ? 'bg-[#337AFF]/10 border-[#337AFF]/30 text-white'
+                                                ? 'bg-[#337AFF]/10 border-[#337AFF]/30 text-[#337AFF] shadow-sm'
                                                 : 'bg-[#337AFF]/3 border-[#E8ECF4] text-[#4A5568] hover:border-[#E8ECF4]/50'
                                             }
                   `}
@@ -812,7 +812,7 @@ export default function CreatePage() {
                     <section className="glass-panel p-5 border-[#E8ECF4]/40">
                         <p className="text-sm text-[#1A1A1F] leading-relaxed">
                             You&apos;re about to create{' '}
-                            <span className="text-white font-semibold">
+                            <span className="text-[#1A1A1F] font-bold">
                                 {quantity} video{quantity > 1 ? 's' : ''}
                             </span>{' '}
                             featuring{' '}
@@ -820,7 +820,7 @@ export default function CreatePage() {
                                 {selectedInf?.name}
                             </span>
                             , using{' '}
-                            <span className="text-white">
+                            <span className="text-[#1A1A1F] font-bold">
                                 {scriptSource === 'random' ? 'random' : scriptSource === 'specific' ? 'a specific' : 'a custom'}
                             </span>{' '}
                             script and{' '}

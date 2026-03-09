@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { apiFetch } from '@/lib/utils';
@@ -146,15 +146,15 @@ function ShotCard({
             {/* Footer */}
             <div className="p-3">
                 <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm text-white font-medium capitalize">{shot.shot_type.replace('_', ' ')}</span>
+                    <span className="text-sm text-[#1A1A1F] font-bold capitalize">{shot.shot_type.replace('_', ' ')}</span>
                     {shot.status === 'failed' ? (
-                        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-medium text-red-400 bg-red-500/10">Failed</span>
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold text-red-600 bg-red-100 border border-red-200">Failed</span>
                     ) : shot.status === 'animation_completed' ? (
-                        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-medium text-green-400 bg-green-500/10">Video Ready</span>
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold text-green-700 bg-green-100 border border-green-200">Video Ready</span>
                     ) : shot.status === 'image_completed' ? (
-                        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-medium text-[#337AFF] bg-[#337AFF]/10">Still Ready</span>
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold text-[#337AFF] bg-[#337AFF]/10 border border-[#337AFF]/20">Still Ready</span>
                     ) : (
-                        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-medium text-yellow-400 bg-yellow-500/10 animate-pulse">Processing</span>
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold text-yellow-700 bg-yellow-100 border border-yellow-200 animate-pulse">Processing</span>
                     )}
                 </div>
 
@@ -164,17 +164,17 @@ function ShotCard({
                         <button
                             onClick={(e) => { e.stopPropagation(); onAnimate(); }}
                             disabled={isAnimating}
-                            className="flex-1 bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 px-2 py-1.5 rounded-lg text-[10px] font-medium transition-colors disabled:opacity-50"
+                            className="flex-1 bg-[#337AFF] text-white hover:bg-blue-600 px-2 py-1.5 rounded-lg text-[10px] font-bold shadow-sm transition-colors disabled:opacity-50"
                         >
                             {isAnimating ? 'Queuing...' : ' Animate'}
                         </button>
                     )}
                     <button
                         onClick={(e) => { e.stopPropagation(); onDelete(); }}
-                        className="bg-red-500/10 text-red-400 hover:bg-red-500/20 px-2 py-1.5 rounded-lg text-[10px] font-medium transition-colors"
+                        className="bg-red-50 text-red-500 hover:bg-red-100 px-2 py-1.5 rounded-lg transition-colors border border-red-100"
                         title="Delete"
                     >
-                        
+                        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                     </button>
                 </div>
 

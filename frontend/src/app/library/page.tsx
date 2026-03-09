@@ -43,7 +43,7 @@ export default function LibraryPage() {
                         placeholder="Search assets..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="input-field pl-9 w-full"
+                        className="input-field pl-10 w-full"
                     />
                 </div>
             </div>
@@ -145,24 +145,34 @@ function VideosTab({ searchQuery }: { searchQuery: string }) {
         <div className="space-y-4">
             {/* Filters */}
             <div className="flex items-center gap-3 flex-wrap">
-                <select
-                    value={filterInfluencer}
-                    onChange={(e) => setFilterInfluencer(e.target.value)}
-                    className="input-field w-auto text-xs"
-                >
-                    <option value="all">All Influencers</option>
-                    {influencers.map((inf) => (
-                        <option key={inf.id} value={inf.id}>{inf.name}</option>
-                    ))}
-                </select>
-                <select
-                    value={sortBy}
-                    onChange={(e) => setSortBy(e.target.value as 'newest' | 'oldest')}
-                    className="input-field w-auto text-xs"
-                >
-                    <option value="newest">Newest first</option>
-                    <option value="oldest">Oldest first</option>
-                </select>
+                <div className="relative inline-block">
+                    <select
+                        value={filterInfluencer}
+                        onChange={(e) => setFilterInfluencer(e.target.value)}
+                        className="input-field w-auto text-xs pr-8 appearance-none bg-white cursor-pointer"
+                    >
+                        <option value="all">All Influencers</option>
+                        {influencers.map((inf) => (
+                            <option key={inf.id} value={inf.id}>{inf.name}</option>
+                        ))}
+                    </select>
+                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-[#94A3B8]">
+                        <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
+                    </div>
+                </div>
+                <div className="relative inline-block">
+                    <select
+                        value={sortBy}
+                        onChange={(e) => setSortBy(e.target.value as 'newest' | 'oldest')}
+                        className="input-field w-auto text-xs pr-8 appearance-none bg-white cursor-pointer"
+                    >
+                        <option value="newest">Newest first</option>
+                        <option value="oldest">Oldest first</option>
+                    </select>
+                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-[#94A3B8]">
+                        <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
+                    </div>
+                </div>
                 <span className="text-xs text-[#94A3B8] ml-auto">{videos.length} video{videos.length !== 1 ? 's' : ''}</span>
             </div>
 
