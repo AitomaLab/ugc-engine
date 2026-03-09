@@ -231,10 +231,23 @@ export default function CreatePage() {
         setSuccessMessage('');
 
         try {
-            // For physical products, use the script textarea as dialogue (AI Hook overrides if set)
-            const effectiveHook = productType === 'physical'
-                ? (hook || customScript || generatedScript || undefined)
-                : (hook || undefined);
+            // Determine the base script text depending on mode
+            let baseScriptText = '';
+            if (productType === 'physical') {
+                baseScriptText = customScript || generatedScript || '';
+            } else if (scriptSource === 'custom') {
+                baseScriptText = customScript || '';
+            }
+
+            // Combine hook and base script properly without short-circuiting everything else
+            let effectiveHook: string | undefined = undefined;
+            if (hook && baseScriptText) {
+                effectiveHook = `${hook}\n\n${baseScriptText}`;
+            } else if (hook) {
+                effectiveHook = hook;
+            } else if (baseScriptText) {
+                effectiveHook = baseScriptText;
+            }
 
             if (isCampaignMode) {
                 // Bulk creation
