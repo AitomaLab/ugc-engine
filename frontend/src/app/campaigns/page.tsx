@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useState, useEffect, useCallback } from 'react';
 import { apiFetch, statusColor, formatDate } from '@/lib/utils';
@@ -90,12 +90,12 @@ export default function CampaignsPage() {
         setSubmitting(false);
     };
 
-    if (loading) return <div className="text-slate-400 animate-pulse">Loading campaigns...</div>;
+    if (loading) return <div className="text-[#4A5568] animate-pulse">Loading campaigns...</div>;
 
     return (
         <div>
             <h1 className="text-3xl font-bold gradient-text mb-2">Campaigns</h1>
-            <p className="text-slate-400 mb-8">Launch bulk video generation campaigns and track progress.</p>
+            <p className="text-[#4A5568] mb-8">Launch bulk video generation campaigns and track progress.</p>
 
             {/* Stats Overview */}
             {stats && (
@@ -103,12 +103,12 @@ export default function CampaignsPage() {
                     {[
                         { label: 'Total Jobs', value: stats.total_jobs, color: 'text-white' },
                         { label: 'Pending', value: stats.pending, color: 'text-amber-400' },
-                        { label: 'Processing', value: stats.processing, color: 'text-blue-400' },
+                        { label: 'Processing', value: stats.processing, color: 'text-[#337AFF]' },
                         { label: 'Completed', value: stats.success, color: 'text-green-400' },
                     ].map((stat) => (
                         <div key={stat.label} className="glass-panel rounded-xl p-5 text-center">
                             <p className={`text-3xl font-bold ${stat.color}`}>{stat.value}</p>
-                            <p className="text-slate-500 text-sm mt-1">{stat.label}</p>
+                            <p className="text-[#94A3B8] text-sm mt-1">{stat.label}</p>
                         </div>
                     ))}
                 </div>
@@ -121,11 +121,11 @@ export default function CampaignsPage() {
                 <div className="grid grid-cols-3 gap-6">
                     {/* Influencer Selector */}
                     <div>
-                        <label className="block text-sm font-medium text-slate-400 mb-2">Influencer</label>
+                        <label className="block text-sm font-medium text-[#4A5568] mb-2">Influencer</label>
                         <select
                             value={selectedInfluencer}
                             onChange={(e) => setSelectedInfluencer(e.target.value)}
-                            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white focus:border-blue-500 outline-none appearance-none cursor-pointer"
+                            className="w-full bg-white/80 border border-[#E8ECF4] rounded-lg px-4 py-3 text-white focus:border-[#337AFF] outline-none appearance-none cursor-pointer"
                         >
                             <option value="">Select influencer...</option>
                             {influencers.map((inf) => (
@@ -136,24 +136,24 @@ export default function CampaignsPage() {
 
                     {/* Count */}
                     <div>
-                        <label className="block text-sm font-medium text-slate-400 mb-2">Number of Videos</label>
+                        <label className="block text-sm font-medium text-[#4A5568] mb-2">Number of Videos</label>
                         <input
                             type="number"
                             value={count}
                             onChange={(e) => setCount(Math.max(1, parseInt(e.target.value) || 1))}
                             min={1}
                             max={100}
-                            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white focus:border-blue-500 outline-none"
+                            className="w-full bg-white/80 border border-[#E8ECF4] rounded-lg px-4 py-3 text-white focus:border-[#337AFF] outline-none"
                         />
                     </div>
 
                     {/* Duration */}
                     <div>
-                        <label className="block text-sm font-medium text-slate-400 mb-2">Duration (seconds)</label>
+                        <label className="block text-sm font-medium text-[#4A5568] mb-2">Duration (seconds)</label>
                         <select
                             value={duration}
                             onChange={(e) => setDuration(parseInt(e.target.value))}
-                            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white focus:border-blue-500 outline-none appearance-none cursor-pointer"
+                            className="w-full bg-white/80 border border-[#E8ECF4] rounded-lg px-4 py-3 text-white focus:border-[#337AFF] outline-none appearance-none cursor-pointer"
                         >
                             <option value={15}>15s (Short)</option>
                             <option value={30}>30s (Medium)</option>
@@ -166,7 +166,7 @@ export default function CampaignsPage() {
                     <button
                         onClick={handleBulkCreate}
                         disabled={!selectedInfluencer || submitting}
-                        className="px-8 py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 disabled:from-slate-700 disabled:to-slate-700 disabled:text-slate-500 rounded-lg font-bold text-lg transition-all shadow-lg shadow-blue-500/20 hover:shadow-blue-500/40"
+                        className="px-8 py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 disabled:from-slate-700 disabled:to-slate-700 disabled:text-[#94A3B8] rounded-lg font-bold text-lg transition-all shadow-lg shadow-blue-500/20 hover:shadow-blue-500/40"
                     >
                         {submitting ? '⏳ Dispatching...' : `🚀 Launch ${count} Videos`}
                     </button>
@@ -194,7 +194,7 @@ export default function CampaignsPage() {
                         <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-3">
                                 <span className="text-white font-mono text-sm">{job.id.slice(0, 8)}...</span>
-                                <span className="text-slate-500 text-xs">{formatDate(job.created_at)}</span>
+                                <span className="text-[#94A3B8] text-xs">{formatDate(job.created_at)}</span>
                             </div>
                             {job.error_message && (
                                 <p className="text-red-400 text-xs mt-1 truncate">{job.error_message}</p>
@@ -203,7 +203,7 @@ export default function CampaignsPage() {
 
                         {/* Progress Bar */}
                         <div className="w-32 shrink-0">
-                            <div className="w-full h-2 bg-slate-700 rounded-full overflow-hidden">
+                            <div className="w-full h-2 bg-[#E8ECF4] rounded-full overflow-hidden">
                                 <div
                                     className="h-full rounded-full transition-all duration-500"
                                     style={{
@@ -212,7 +212,7 @@ export default function CampaignsPage() {
                                     }}
                                 />
                             </div>
-                            <p className="text-xs text-slate-500 text-right mt-1">{job.progress}%</p>
+                            <p className="text-xs text-[#94A3B8] text-right mt-1">{job.progress}%</p>
                         </div>
 
                         {/* Status Label */}
@@ -229,7 +229,7 @@ export default function CampaignsPage() {
                                 href={job.final_video_url}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="text-blue-400 hover:text-blue-300 text-sm shrink-0"
+                                className="text-[#337AFF] hover:text-[#337AFF]/80 text-sm shrink-0"
                             >
                                 🎥 View
                             </a>
@@ -239,7 +239,7 @@ export default function CampaignsPage() {
             </div>
 
             {jobs.length === 0 && (
-                <p className="text-slate-500 text-center py-12">No jobs yet. Launch your first campaign above!</p>
+                <p className="text-[#94A3B8] text-center py-12">No jobs yet. Launch your first campaign above!</p>
             )}
         </div>
     );

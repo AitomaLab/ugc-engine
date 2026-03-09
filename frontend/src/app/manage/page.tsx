@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState, useEffect } from "react";
 import { getApiUrl } from "@/lib/utils";
@@ -89,19 +89,19 @@ export default function ManagePage() {
         <div className="space-y-8 pb-20">
             <header>
                 <h2 className="text-3xl font-bold italic tracking-tighter">Assets <span className="gradient-text">Management</span></h2>
-                <p className="text-slate-400 mt-1 uppercase text-xs font-bold tracking-widest">Add and configure your production library</p>
+                <p className="text-[#4A5568] mt-1 uppercase text-xs font-bold tracking-widest">Add and configure your production library</p>
             </header>
 
-            <div className="flex space-x-4 border-b border-slate-900 pb-px">
+            <div className="flex space-x-4 border-b border-[#E8ECF4] pb-px">
                 <button
                     onClick={() => setActiveTab("influencers")}
-                    className={`pb-4 px-2 font-bold transition-all border-b-2 ${activeTab === "influencers" ? "border-blue-500 text-blue-400" : "border-transparent text-slate-500 hover:text-slate-300"}`}
+                    className={`pb-4 px-2 font-bold transition-all border-b-2 ${activeTab === "influencers" ? "border-[#337AFF] text-[#337AFF]" : "border-transparent text-[#94A3B8] hover:text-[#1A1A1F]"}`}
                 >
                     Influencers ({influencers.length})
                 </button>
                 <button
                     onClick={() => setActiveTab("clips")}
-                    className={`pb-4 px-2 font-bold transition-all border-b-2 ${activeTab === "clips" ? "border-blue-500 text-blue-400" : "border-transparent text-slate-500 hover:text-slate-300"}`}
+                    className={`pb-4 px-2 font-bold transition-all border-b-2 ${activeTab === "clips" ? "border-[#337AFF] text-[#337AFF]" : "border-transparent text-[#94A3B8] hover:text-[#1A1A1F]"}`}
                 >
                     App Clips ({clips.length})
                 </button>
@@ -111,16 +111,16 @@ export default function ManagePage() {
                 {/* Form Column */}
                 <div className="lg:col-span-1 space-y-6">
                     {activeTab === "influencers" ? (
-                        <form onSubmit={addInfluencer} className="glass-panel p-6 rounded-2xl border-slate-800 space-y-4">
+                        <form onSubmit={addInfluencer} className="glass-panel p-6 rounded-2xl border-[#E8ECF4] space-y-4">
                             <h3 className="font-bold text-lg mb-2">Add Influencer</h3>
                             <div className="space-y-4">
                                 <div>
-                                    <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Name</label>
-                                    <input value={infForm.name} onChange={e => setInfForm({ ...infForm, name: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm focus:ring-1 focus:ring-blue-500 outline-none" placeholder="Ex: Maria" required />
+                                    <label className="text-xs font-bold text-[#94A3B8] uppercase block mb-1">Name</label>
+                                    <input value={infForm.name} onChange={e => setInfForm({ ...infForm, name: e.target.value })} className="w-full bg-[#F0F4FF] border border-[#E8ECF4] rounded-lg p-3 text-sm focus:ring-1 focus:ring-[#337AFF] outline-none" placeholder="Ex: Maria" required />
                                 </div>
                                 <div>
-                                    <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Personality</label>
-                                    <select value={infForm.personality} onChange={e => setInfForm({ ...infForm, personality: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm outline-none">
+                                    <label className="text-xs font-bold text-[#94A3B8] uppercase block mb-1">Personality</label>
+                                    <select value={infForm.personality} onChange={e => setInfForm({ ...infForm, personality: e.target.value })} className="w-full bg-[#F0F4FF] border border-[#E8ECF4] rounded-lg p-3 text-sm outline-none">
                                         <option>Travel</option>
                                         <option>Shop</option>
                                         <option>Product</option>
@@ -128,27 +128,27 @@ export default function ManagePage() {
                                     </select>
                                 </div>
                                 <div>
-                                    <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Description</label>
-                                    <textarea value={infForm.description} onChange={e => setInfForm({ ...infForm, description: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm focus:ring-1 focus:ring-blue-500 outline-none h-24" placeholder="Description for AI prompt..." required />
+                                    <label className="text-xs font-bold text-[#94A3B8] uppercase block mb-1">Description</label>
+                                    <textarea value={infForm.description} onChange={e => setInfForm({ ...infForm, description: e.target.value })} className="w-full bg-[#F0F4FF] border border-[#E8ECF4] rounded-lg p-3 text-sm focus:ring-1 focus:ring-[#337AFF] outline-none h-24" placeholder="Description for AI prompt..." required />
                                 </div>
                                 <div>
-                                    <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Image URL</label>
-                                    <input value={infForm.image_url} onChange={e => setInfForm({ ...infForm, image_url: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm focus:ring-1 focus:ring-blue-500 outline-none" placeholder="https://..." />
+                                    <label className="text-xs font-bold text-[#94A3B8] uppercase block mb-1">Image URL</label>
+                                    <input value={infForm.image_url} onChange={e => setInfForm({ ...infForm, image_url: e.target.value })} className="w-full bg-[#F0F4FF] border border-[#E8ECF4] rounded-lg p-3 text-sm focus:ring-1 focus:ring-[#337AFF] outline-none" placeholder="https://..." />
                                 </div>
                                 <button type="submit" className="w-full py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold transition-all active:scale-95 shadow-lg shadow-blue-900/20">Create Influencer</button>
                             </div>
                         </form>
                     ) : (
-                        <form onSubmit={addClip} className="glass-panel p-6 rounded-2xl border-slate-800 space-y-4">
+                        <form onSubmit={addClip} className="glass-panel p-6 rounded-2xl border-[#E8ECF4] space-y-4">
                             <h3 className="font-bold text-lg mb-2">Add App Clip</h3>
                             <div className="space-y-4">
                                 <div>
-                                    <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Clip Name</label>
-                                    <input value={clipForm.name} onChange={e => setClipForm({ ...clipForm, name: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm focus:ring-1 focus:ring-blue-500 outline-none" placeholder="Ex: Filter Search" required />
+                                    <label className="text-xs font-bold text-[#94A3B8] uppercase block mb-1">Clip Name</label>
+                                    <input value={clipForm.name} onChange={e => setClipForm({ ...clipForm, name: e.target.value })} className="w-full bg-[#F0F4FF] border border-[#E8ECF4] rounded-lg p-3 text-sm focus:ring-1 focus:ring-[#337AFF] outline-none" placeholder="Ex: Filter Search" required />
                                 </div>
                                 <div>
-                                    <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Category (Assistant Type)</label>
-                                    <select value={clipForm.category} onChange={e => setClipForm({ ...clipForm, category: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm outline-none">
+                                    <label className="text-xs font-bold text-[#94A3B8] uppercase block mb-1">Category (Assistant Type)</label>
+                                    <select value={clipForm.category} onChange={e => setClipForm({ ...clipForm, category: e.target.value })} className="w-full bg-[#F0F4FF] border border-[#E8ECF4] rounded-lg p-3 text-sm outline-none">
                                         <option>Travel</option>
                                         <option>Shop</option>
                                         <option>Product</option>
@@ -156,8 +156,8 @@ export default function ManagePage() {
                                     </select>
                                 </div>
                                 <div>
-                                    <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Direct Video URL</label>
-                                    <input value={clipForm.video_url} onChange={e => setClipForm({ ...clipForm, video_url: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm focus:ring-1 focus:ring-blue-500 outline-none" placeholder="https://...mp4" required />
+                                    <label className="text-xs font-bold text-[#94A3B8] uppercase block mb-1">Direct Video URL</label>
+                                    <input value={clipForm.video_url} onChange={e => setClipForm({ ...clipForm, video_url: e.target.value })} className="w-full bg-[#F0F4FF] border border-[#E8ECF4] rounded-lg p-3 text-sm focus:ring-1 focus:ring-[#337AFF] outline-none" placeholder="https://...mp4" required />
                                 </div>
                                 <button type="submit" className="w-full py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold transition-all active:scale-95 shadow-lg shadow-blue-900/20">Create App Clip</button>
                             </div>
@@ -174,22 +174,22 @@ export default function ManagePage() {
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             {activeTab === "influencers" ? (
                                 influencers.map(inf => (
-                                    <div key={inf.id} className="glass-panel p-4 rounded-xl border-slate-900 flex items-center justify-between">
+                                    <div key={inf.id} className="glass-panel p-4 rounded-xl border-[#E8ECF4] flex items-center justify-between">
                                         <div>
                                             <p className="font-bold">{inf.name}</p>
-                                            <p className="text-xs text-blue-500 font-mono">{inf.personality || 'Influencer'}</p>
+                                            <p className="text-xs text-[#337AFF] font-mono">{inf.personality || 'Influencer'}</p>
                                         </div>
-                                        <div className="w-10 h-10 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-xs opacity-50">API</div>
+                                        <div className="w-10 h-10 rounded-full bg-white/80 border border-[#E8ECF4] flex items-center justify-center text-xs opacity-50">API</div>
                                     </div>
                                 ))
                             ) : (
                                 clips.map(clip => (
-                                    <div key={clip.id} className="glass-panel p-4 rounded-xl border-slate-900 flex items-center justify-between">
+                                    <div key={clip.id} className="glass-panel p-4 rounded-xl border-[#E8ECF4] flex items-center justify-between">
                                         <div>
                                             <p className="font-bold">{clip.name}</p>
                                             <p className="text-xs text-purple-500 font-mono">{clip.category}</p>
                                         </div>
-                                        <div className="w-10 h-10 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-xs opacity-50">MP4</div>
+                                        <div className="w-10 h-10 rounded-full bg-white/80 border border-[#E8ECF4] flex items-center justify-center text-xs opacity-50">MP4</div>
                                     </div>
                                 ))
                             )}

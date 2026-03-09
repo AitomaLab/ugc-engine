@@ -91,10 +91,8 @@ export default function Sidebar() {
             } else if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
                 e.preventDefault();
                 router.push('/library');
-                // Focus search is handled by the Library page itself
             } else if (e.key === 'Escape') {
                 setShowNotifications(false);
-                // Modals handle their own Esc
             }
         }
 
@@ -115,8 +113,8 @@ export default function Sidebar() {
                 })
                 .map((j: { id: string; status: string }) =>
                     j.status === 'success'
-                        ? `Video ${j.id.substring(0, 6)} completed! ✅`
-                        : `Job ${j.id.substring(0, 6)} failed. ❌`
+                        ? `Video ${j.id.substring(0, 6)} — Completed`
+                        : `Job ${j.id.substring(0, 6)} — Failed`
                 );
             setNotifications(recent);
         } catch { /* silent */ }
@@ -134,11 +132,10 @@ export default function Sidebar() {
     };
 
     return (
-        <aside className="w-64 border-r border-slate-800/60 bg-slate-900/40 backdrop-blur-2xl flex flex-col sticky top-0 h-screen">
+        <aside className="w-64 flex flex-col sticky top-0 h-screen glass-dark border-r border-white/5">
             {/* Logo */}
-            <div className="p-6 border-b border-slate-800/40">
-                <h1 className="text-xl font-bold gradient-text tracking-tight">UGC Engine</h1>
-                <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-[0.2em] font-semibold">Creative Platform</p>
+            <div className="p-6 border-b border-white/5">
+                <img src="/studio-logo-white.svg" alt="Aitoma Studio" className="h-8 w-auto" />
             </div>
 
             {/* Navigation */}
@@ -152,18 +149,18 @@ export default function Sidebar() {
                             className={`
                 sidebar-link group flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200
                 ${active
-                                    ? 'bg-blue-500/10 text-white border-l-2 border-blue-500 shadow-[inset_0_0_20px_rgba(59,130,246,0.06)]'
-                                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 border-l-2 border-transparent'
+                                    ? 'bg-white/10 text-white border-l-2 border-[#337AFF] shadow-[inset_0_0_20px_rgba(51,122,255,0.08)]'
+                                    : 'text-white/50 hover:text-white hover:bg-white/[0.08] border-l-2 border-transparent'
                                 }
               `}
                         >
-                            <span className={`transition-colors duration-200 ${active ? 'text-blue-400' : 'text-slate-500 group-hover:text-slate-300'}`}>
+                            <span className={`transition-colors duration-200 ${active ? 'text-[#337AFF]' : 'text-white/30 group-hover:text-white/70'}`}>
                                 <Icon />
                             </span>
                             <span className="font-medium text-sm">{label}</span>
                             {shortcut && (
-                                <span className="ml-auto text-[10px] text-slate-600 font-mono opacity-0 group-hover:opacity-100 transition-opacity">
-                                    ⌘{shortcut}
+                                <span className="ml-auto text-[10px] text-white/20 font-mono opacity-0 group-hover:opacity-100 transition-opacity">
+                                    {shortcut}
                                 </span>
                             )}
                         </Link>
@@ -175,24 +172,24 @@ export default function Sidebar() {
             <div className="px-4 pb-2 relative">
                 <button
                     onClick={() => setShowNotifications(!showNotifications)}
-                    className="flex items-center gap-2 w-full px-3 py-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 transition-all text-sm"
+                    className="flex items-center gap-2 w-full px-3 py-2 rounded-lg text-white/50 hover:text-white hover:bg-white/[0.08] transition-all text-sm"
                 >
                     <BellIcon />
                     <span className="font-medium">Notifications</span>
                     {notifications.length > 0 && (
-                        <span className="ml-auto w-5 h-5 rounded-full bg-blue-500 text-white text-[10px] font-bold flex items-center justify-center">
+                        <span className="ml-auto w-5 h-5 rounded-full bg-[#337AFF] text-white text-[10px] font-bold flex items-center justify-center">
                             {notifications.length}
                         </span>
                     )}
                 </button>
 
                 {showNotifications && (
-                    <div className="absolute bottom-14 left-3 right-3 bg-slate-900 border border-slate-700/60 rounded-xl shadow-2xl p-3 space-y-2 z-50 max-h-60 overflow-y-auto">
+                    <div className="absolute bottom-14 left-3 right-3 glass-dark border border-white/[0.08] rounded-xl shadow-2xl p-3 space-y-2 z-50 max-h-60 overflow-y-auto">
                         {notifications.length === 0 ? (
-                            <p className="text-xs text-slate-500 text-center py-4 italic">No recent notifications</p>
+                            <p className="text-xs text-white/30 text-center py-4 italic">No recent notifications</p>
                         ) : (
                             notifications.map((n, i) => (
-                                <div key={i} className="text-xs text-slate-300 p-2 rounded-lg bg-slate-800/50 border border-slate-700/30">
+                                <div key={i} className="text-xs text-white/70 p-2 rounded-lg bg-white/5 border border-white/[0.08]">
                                     {n}
                                 </div>
                             ))
@@ -202,14 +199,14 @@ export default function Sidebar() {
             </div>
 
             {/* User Profile */}
-            <div className="p-4 border-t border-slate-800/40">
+            <div className="p-4 border-t border-white/5">
                 <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-blue-500/20 flex items-center justify-center text-blue-400 font-bold text-sm">
+                    <div className="w-9 h-9 rounded-xl gradient-cta flex items-center justify-center text-white font-bold text-sm">
                         U
                     </div>
                     <div className="overflow-hidden">
                         <p className="text-white font-medium text-sm truncate">Creator</p>
-                        <p className="text-[10px] text-slate-500">Pro Account</p>
+                        <p className="text-[10px] text-white/40">Pro Account</p>
                     </div>
                 </div>
             </div>

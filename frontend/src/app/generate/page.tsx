@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
@@ -116,13 +116,13 @@ export default function GeneratePage() {
             <header className="flex items-center justify-between">
                 <div>
                     <h2 className="text-3xl font-bold">New <span className="gradient-text">Production</span></h2>
-                    <p className="text-slate-400 mt-1">Configure your AI generator parameters.</p>
+                    <p className="text-[#4A5568] mt-1">Configure your AI generator parameters.</p>
                 </div>
                 <div className="flex space-x-2">
                     {[1, 2, 3].map((s) => (
                         <div
                             key={s}
-                            className={`w-10 h-10 rounded-full flex items-center justify-center font-bold border ${step === s ? 'bg-blue-600 border-blue-400 text-white' : 'bg-slate-900 border-slate-800 text-slate-500'}`}
+                            className={`w-10 h-10 rounded-full flex items-center justify-center font-bold border ${step === s ? 'bg-blue-600 border-blue-400 text-white' : 'bg-white border-[#E8ECF4] text-[#94A3B8]'}`}
                         >
                             {s}
                         </div>
@@ -141,9 +141,9 @@ export default function GeneratePage() {
                             <button
                                 key={inf.id}
                                 onClick={() => setSelectedInfluencer(inf.id)}
-                                className={`glass-panel p-4 rounded-2xl text-left transition-all glow-hover ${selectedInfluencer === inf.id ? 'border-blue-500 bg-blue-500/10 ring-2 ring-blue-500/20' : 'border-slate-800 opacity-70 hover:opacity-100'}`}
+                                className={`glass-panel p-4 rounded-2xl text-left transition-all glow-hover ${selectedInfluencer === inf.id ? 'border-[#337AFF] bg-[#337AFF]/10 ring-2 ring-[#337AFF]/20' : 'border-[#E8ECF4] opacity-70 hover:opacity-100'}`}
                             >
-                                <div className="w-full aspect-square bg-slate-800 rounded-xl mb-4 overflow-hidden">
+                                <div className="w-full aspect-square bg-white/80 rounded-xl mb-4 overflow-hidden">
                                     {inf.image_url ? (
                                         <img src={inf.image_url} alt={inf.name} className="w-full h-full object-cover" />
                                     ) : (
@@ -151,7 +151,7 @@ export default function GeneratePage() {
                                     )}
                                 </div>
                                 <p className="font-bold text-lg">{inf.name}</p>
-                                <p className="text-xs font-mono text-blue-400 uppercase tracking-widest mt-1">{inf.personality || 'Influencer'}</p>
+                                <p className="text-xs font-mono text-[#337AFF] uppercase tracking-widest mt-1">{inf.personality || 'Influencer'}</p>
                             </button>
                         ))}
                     </div>
@@ -176,7 +176,7 @@ export default function GeneratePage() {
                             <select
                                 value={modelApi}
                                 onChange={(e) => setModelApi(e.target.value)}
-                                className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3 outline-none focus:ring-2 focus:ring-blue-500"
+                                className="w-full bg-white border border-[#E8ECF4] rounded-xl p-3 outline-none focus:ring-2 focus:ring-[#337AFF]"
                             >
                                 <option value="infinitalk-audio">InfiniteTalk + ElevenLabs (High Fidelity)</option>
                                 <option value="seedance-1.5-pro">Seedance 1.5 Pro (Ultra Realistic)</option>
@@ -196,7 +196,7 @@ export default function GeneratePage() {
                                         if (s) setHook(s.text);
                                     }
                                 }}
-                                className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3 outline-none focus:ring-2 focus:ring-blue-500"
+                                className="w-full bg-white border border-[#E8ECF4] rounded-xl p-3 outline-none focus:ring-2 focus:ring-[#337AFF]"
                             >
                                 <option value="">-- Random / Custom Hook --</option>
                                 {scripts.map(s => (
@@ -212,7 +212,7 @@ export default function GeneratePage() {
                             <button
                                 onClick={handleGenerateHook}
                                 disabled={genLoading}
-                                className="text-xs bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 px-3 py-1 rounded-full border border-blue-500/30 transition-all"
+                                className="text-xs bg-blue-600/20 hover:bg-blue-600/40 text-[#337AFF] px-3 py-1 rounded-full border border-[#337AFF]/30 transition-all"
                             >
                                 {genLoading ? "✨ Generating..." : "✨ AI Generate Hook"}
                             </button>
@@ -224,14 +224,14 @@ export default function GeneratePage() {
                                 setSelectedScriptId(null);
                             }}
                             placeholder="Type your script or use AI to generate one..."
-                            className="w-full h-32 bg-slate-900 border border-slate-800 rounded-2xl p-4 focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder:text-slate-700"
+                            className="w-full h-32 bg-white border border-[#E8ECF4] rounded-2xl p-4 focus:ring-2 focus:ring-[#337AFF] outline-none transition-all placeholder:text-[#1A1A1F]"
                         />
                         <div className="flex space-x-4">
                             {["15s", "30s"].map((l) => (
                                 <button
                                     key={l}
                                     onClick={() => setDuration(l)}
-                                    className={`px-6 py-2 rounded-lg font-bold border transition-all ${duration === l ? 'bg-slate-100 text-slate-950 border-white' : 'border-slate-800 text-slate-400 hover:border-slate-500'}`}
+                                    className={`px-6 py-2 rounded-lg font-bold border transition-all ${duration === l ? 'bg-[#F0F4FF] text-slate-950 border-white' : 'border-[#E8ECF4] text-[#4A5568] hover:border-[#E8ECF4]'}`}
                                 >
                                     {l}
                                 </button>
@@ -244,7 +244,7 @@ export default function GeneratePage() {
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                             <button
                                 onClick={() => setSelectedClip(null)}
-                                className={`p-3 rounded-xl border text-sm transition-all ${selectedClip === null ? 'border-blue-500 bg-blue-500/10' : 'border-slate-800 hover:border-slate-600 text-slate-500'}`}
+                                className={`p-3 rounded-xl border text-sm transition-all ${selectedClip === null ? 'border-[#337AFF] bg-[#337AFF]/10' : 'border-[#E8ECF4] hover:border-[#E8ECF4] text-[#94A3B8]'}`}
                             >
                                 Auto-Select
                             </button>
@@ -252,7 +252,7 @@ export default function GeneratePage() {
                                 <button
                                     key={clip.id}
                                     onClick={() => setSelectedClip(clip.id)}
-                                    className={`p-3 rounded-xl border text-sm transition-all truncate text-left ${selectedClip === clip.id ? 'border-blue-500 bg-blue-500/10' : 'border-slate-800 hover:border-slate-600 text-slate-500'}`}
+                                    className={`p-3 rounded-xl border text-sm transition-all truncate text-left ${selectedClip === clip.id ? 'border-[#337AFF] bg-[#337AFF]/10' : 'border-[#E8ECF4] hover:border-[#E8ECF4] text-[#94A3B8]'}`}
                                 >
                                     {clip.name}
                                 </button>
@@ -261,7 +261,7 @@ export default function GeneratePage() {
                     </div>
 
                     <div className="pt-10 flex justify-between">
-                        <button onClick={() => setStep(1)} className="px-6 py-3 text-slate-400 hover:text-white transition-colors">← Back</button>
+                        <button onClick={() => setStep(1)} className="px-6 py-3 text-[#4A5568] hover:text-white transition-colors">← Back</button>
                         <button
                             disabled={!hook}
                             onClick={() => setStep(3)}
@@ -276,38 +276,38 @@ export default function GeneratePage() {
             {/* Step 3: Confirmation */}
             {step === 3 && (
                 <section className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-                    <div className="glass-panel p-1 rounded-3xl border-slate-800 overflow-hidden">
-                        <div className="bg-slate-900/50 p-8 rounded-[23px] space-y-8">
-                            <h3 className="text-2xl font-bold">Confirm <span className="text-blue-400">Production Run</span></h3>
+                    <div className="glass-panel p-1 rounded-3xl border-[#E8ECF4] overflow-hidden">
+                        <div className="bg-white/50 p-8 rounded-[23px] space-y-8">
+                            <h3 className="text-2xl font-bold">Confirm <span className="text-[#337AFF]">Production Run</span></h3>
 
                             <div className="grid grid-cols-2 gap-8">
                                 <div className="space-y-1">
-                                    <p className="text-xs uppercase font-bold text-slate-500 tracking-widest">Influencer</p>
+                                    <p className="text-xs uppercase font-bold text-[#94A3B8] tracking-widest">Influencer</p>
                                     <p className="text-xl">{influencers.find(i => i.id === selectedInfluencer)?.name}</p>
                                 </div>
                                 <div className="space-y-1">
-                                    <p className="text-xs uppercase font-bold text-slate-500 tracking-widest">Format</p>
+                                    <p className="text-xs uppercase font-bold text-[#94A3B8] tracking-widest">Format</p>
                                     <p className="text-xl">Vertical ({duration})</p>
                                 </div>
                                 <div className="col-span-2 space-y-1">
-                                    <p className="text-xs uppercase font-bold text-slate-500 tracking-widest">Script Snippet</p>
-                                    <p className="text-slate-300 italic">"{hook || "Auto-Selected Unique Script"}"</p>
+                                    <p className="text-xs uppercase font-bold text-[#94A3B8] tracking-widest">Script Snippet</p>
+                                    <p className="text-[#1A1A1F] italic">"{hook || "Auto-Selected Unique Script"}"</p>
                                 </div>
                                 <div className="space-y-1">
-                                    <p className="text-xs uppercase font-bold text-slate-500 tracking-widest">AI Engine</p>
-                                    <p className="text-xl text-blue-400 font-mono text-sm">{modelApi}</p>
+                                    <p className="text-xs uppercase font-bold text-[#94A3B8] tracking-widest">AI Engine</p>
+                                    <p className="text-xl text-[#337AFF] font-mono text-sm">{modelApi}</p>
                                 </div>
                             </div>
 
-                            <div className="bg-blue-500/5 border border-blue-500/20 p-4 rounded-xl flex items-center space-x-4">
-                                <span className="text-2xl text-blue-400">🛡️</span>
+                            <div className="bg-blue-500/5 border border-[#337AFF]/20 p-4 rounded-xl flex items-center space-x-4">
+                                <span className="text-2xl text-[#337AFF]">🛡️</span>
                                 <p className="text-sm text-blue-200/70 leading-relaxed">
                                     <strong>Anti-Fatigue Filter Active</strong>: The system will automatically select a unique combination of hook and app clip to ensure your content remains fresh for social algorithms.
                                 </p>
                             </div>
 
-                            <div className="pt-4 flex items-center justify-between border-t border-slate-800">
-                                <button onClick={() => setStep(2)} className="text-slate-500 hover:text-white">Modify settings</button>
+                            <div className="pt-4 flex items-center justify-between border-t border-[#E8ECF4]">
+                                <button onClick={() => setStep(2)} className="text-[#94A3B8] hover:text-white">Modify settings</button>
                                 <button
                                     onClick={handleSubmit}
                                     className="px-12 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 rounded-2xl font-black text-lg tracking-tight transition-all active:scale-95 shadow-xl shadow-blue-900/20"

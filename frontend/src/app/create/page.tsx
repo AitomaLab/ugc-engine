@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useState, useEffect, useCallback } from 'react';
 import { apiFetch, getApiUrl } from '@/lib/utils';
@@ -94,6 +94,10 @@ export default function CreatePage() {
     // Cinematic Product Shots (Step 14)
     const [cinematicShots, setCinematicShots] = useState<ProductShot[]>([]);
     const [selectedCinematicShots, setSelectedCinematicShots] = useState<string[]>([]);
+
+    // Auto-Transition Shots (Workflow B)
+    const [enableAutoTransitions, setEnableAutoTransitions] = useState(false);
+    const [autoTransitionType, setAutoTransitionType] = useState('match_cut');
 
     // Fetch animated cinematic shots when a physical product is selected
     useEffect(() => {
@@ -247,6 +251,7 @@ export default function CreatePage() {
                         product_id: productType === 'physical' ? productId : undefined,
                         hook: effectiveHook,
                         cinematic_shot_ids: selectedCinematicShots.length > 0 ? selectedCinematicShots : undefined,
+                        auto_transition_type: enableAutoTransitions ? autoTransitionType : undefined,
                     }),
                 });
                 setSuccessMessage(`🚀 Campaign "${campaignName || 'Untitled'}" launched with ${quantity} videos!`);
@@ -265,6 +270,7 @@ export default function CreatePage() {
                         assistant_type: selectedInf?.style || 'Travel',
                         length: duration,
                         cinematic_shot_ids: selectedCinematicShots.length > 0 ? selectedCinematicShots : undefined,
+                        auto_transition_type: enableAutoTransitions ? autoTransitionType : undefined,
                     }),
                 });
                 setSuccessMessage('🎬 Video generation started!');
@@ -285,7 +291,7 @@ export default function CreatePage() {
     if (loading) {
         return (
             <div className="flex items-center justify-center h-96">
-                <div className="text-slate-500 text-sm italic animate-pulse">
+                <div className="text-[#94A3B8] text-sm italic animate-pulse">
                     Loading creative assets...
                 </div>
             </div>
@@ -293,12 +299,12 @@ export default function CreatePage() {
     }
 
     return (
-        <div className="space-y-10 animate-slide-up max-w-3xl">
+        <div className="space-y-10 animate-reveal max-w-3xl">
             <header>
                 <h2 className="text-3xl font-bold tracking-tight">
                     <span className="gradient-text">Create</span>
                 </h2>
-                <p className="text-slate-400 mt-2 text-sm">
+                <p className="text-[#4A5568] mt-2 text-sm">
                     Generate single videos or launch full campaigns — all from one place.
                 </p>
             </header>
@@ -313,13 +319,13 @@ export default function CreatePage() {
             {/* ============ SECTION 1: WHAT TO CREATE ============ */}
             <section className="glass-panel p-6 space-y-6">
                 <div>
-                    <h3 className="text-sm font-semibold text-slate-200 mb-1">What do you want to create?</h3>
-                    <p className="text-xs text-slate-500">Select an influencer and specify quantity.</p>
+                    <h3 className="text-sm font-semibold text-[#1A1A1F] mb-1">What do you want to create?</h3>
+                    <p className="text-xs text-[#94A3B8]">Select an influencer and specify quantity.</p>
                 </div>
 
                 {/* Influencer Grid */}
                 <div>
-                    <label className="text-xs text-slate-400 font-medium mb-3 block">Influencer</label>
+                    <label className="text-xs text-[#4A5568] font-medium mb-3 block">Influencer</label>
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                         {influencers.map((inf) => (
                             <button
@@ -328,8 +334,8 @@ export default function CreatePage() {
                                 className={`
                   relative p-4 rounded-xl text-left transition-all duration-200
                   ${selectedInfluencer === inf.id
-                                        ? 'bg-blue-500/10 border-blue-500/40 ring-1 ring-blue-500/20'
-                                        : 'bg-slate-800/30 border-slate-700/30 hover:border-slate-600/50 hover:bg-slate-800/50'
+                                        ? 'bg-[#337AFF]/10 border-[#337AFF]/40 ring-1 ring-[#337AFF]/20'
+                                        : 'bg-white/80/30 border-[#E8ECF4] hover:border-[#E8ECF4]/50 hover:bg-[#F0F4FF]'
                                     }
                   border
                 `}
@@ -341,13 +347,13 @@ export default function CreatePage() {
                                         className="w-12 h-12 rounded-lg object-cover mb-3"
                                     />
                                 ) : (
-                                    <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-blue-500/20 to-purple-500/20 flex items-center justify-center text-blue-400 font-bold text-lg mb-3">
+                                    <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-blue-500/20 to-purple-500/20 flex items-center justify-center text-[#337AFF] font-bold text-lg mb-3">
                                         {inf.name[0]}
                                     </div>
                                 )}
-                                <p className="text-sm font-medium text-slate-200">{inf.name}</p>
+                                <p className="text-sm font-medium text-[#1A1A1F]">{inf.name}</p>
                                 {inf.style && (
-                                    <p className="text-[10px] text-slate-500 mt-0.5">{inf.style}</p>
+                                    <p className="text-[10px] text-[#94A3B8] mt-0.5">{inf.style}</p>
                                 )}
                                 {selectedInfluencer === inf.id && (
                                     <div className="absolute top-2 right-2 w-5 h-5 rounded-full bg-blue-500 flex items-center justify-center">
@@ -363,7 +369,7 @@ export default function CreatePage() {
 
                 {/* Quantity */}
                 <div>
-                    <label className="text-xs text-slate-400 font-medium mb-2 block">
+                    <label className="text-xs text-[#4A5568] font-medium mb-2 block">
                         How many videos?
                     </label>
                     <div className="flex items-center gap-3">
@@ -375,7 +381,7 @@ export default function CreatePage() {
                             onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
                             className="input-field w-24 text-center"
                         />
-                        <span className="text-xs text-slate-500">
+                        <span className="text-xs text-[#94A3B8]">
                             {isCampaignMode
                                 ? '→ Campaign mode enabled'
                                 : 'Enter 2+ to launch a campaign'}
@@ -387,21 +393,21 @@ export default function CreatePage() {
             {/* ============ SECTION 2: PRODUCT / APP CLIP ============ */}
             <section className="glass-panel p-6 space-y-6">
                 <div>
-                    <h3 className="text-sm font-semibold text-slate-200 mb-1">2. Choose Your Product</h3>
-                    <p className="text-xs text-slate-500">Select what you want to promote.</p>
+                    <h3 className="text-sm font-semibold text-[#1A1A1F] mb-1">2. Choose Your Product</h3>
+                    <p className="text-xs text-[#94A3B8]">Select what you want to promote.</p>
                 </div>
 
                 {/* Type Switcher */}
-                <div className="flex bg-slate-800/50 p-1 rounded-lg w-fit">
+                <div className="flex bg-[#F0F4FF] p-1 rounded-lg w-fit">
                     <button
                         onClick={() => setProductType('digital')}
-                        className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${productType === 'digital' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}
+                        className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${productType === 'digital' ? 'bg-blue-600 text-white shadow-lg' : 'text-[#4A5568] hover:text-[#1A1A1F]'}`}
                     >
                         📱 Digital App
                     </button>
                     <button
                         onClick={() => setProductType('physical')}
-                        className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${productType === 'physical' ? 'bg-purple-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}
+                        className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${productType === 'physical' ? 'bg-purple-600 text-white shadow-lg' : 'text-[#4A5568] hover:text-[#1A1A1F]'}`}
                     >
                         📦 Physical Product
                     </button>
@@ -410,23 +416,23 @@ export default function CreatePage() {
                 {/* Grid */}
                 {productType === 'digital' ? (
                     <div>
-                        <label className="text-xs text-slate-400 font-medium mb-3 block">Select App Clip</label>
+                        <label className="text-xs text-[#4A5568] font-medium mb-3 block">Select App Clip</label>
                         {appClips.length === 0 ? (
-                            <p className="text-slate-500 text-sm italic">No app clips found. Add one in the Library.</p>
+                            <p className="text-[#94A3B8] text-sm italic">No app clips found. Add one in the Library.</p>
                         ) : (
                             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                                 <div
                                     onClick={() => setAppClipId('auto')}
-                                    className={`cursor-pointer rounded-xl border-2 transition-all p-4 flex flex-col items-center justify-center gap-2 bg-slate-800/20 ${appClipId === 'auto' ? 'border-blue-500 shadow-blue-500/20 shadow-lg' : 'border-dashed border-slate-700/50 hover:border-slate-500'}`}
+                                    className={`cursor-pointer rounded-xl border-2 transition-all p-4 flex flex-col items-center justify-center gap-2 bg-[#337AFF]/3 ${appClipId === 'auto' ? 'border-[#337AFF] shadow-blue-500/20 shadow-lg' : 'border-dashed border-[#E8ECF4]/50 hover:border-[#E8ECF4]'}`}
                                 >
                                     <span className="text-2xl">✨</span>
-                                    <span className="text-sm font-medium text-slate-300">Auto-Select</span>
+                                    <span className="text-sm font-medium text-[#1A1A1F]">Auto-Select</span>
                                 </div>
                                 {appClips.map((clip) => (
                                     <div
                                         key={clip.id}
                                         onClick={() => setAppClipId(clip.id)}
-                                        className={`cursor-pointer rounded-xl overflow-hidden border-2 transition-all relative aspect-video bg-slate-800 ${appClipId === clip.id ? 'border-blue-500 shadow-blue-500/20 shadow-lg scale-[1.02]' : 'border-transparent opacity-60 hover:opacity-100'}`}
+                                        className={`cursor-pointer rounded-xl overflow-hidden border-2 transition-all relative aspect-video bg-white/80 ${appClipId === clip.id ? 'border-[#337AFF] shadow-blue-500/20 shadow-lg scale-[1.02]' : 'border-transparent opacity-60 hover:opacity-100'}`}
                                     >
                                         <video src={clip.video_url} className="w-full h-full object-cover" muted />
                                         <div className="absolute bottom-0 left-0 right-0 bg-black/70 p-2">
@@ -439,16 +445,16 @@ export default function CreatePage() {
                     </div>
                 ) : (
                     <div>
-                        <label className="text-xs text-slate-400 font-medium mb-3 block">Select Product</label>
+                        <label className="text-xs text-[#4A5568] font-medium mb-3 block">Select Product</label>
                         {products.length === 0 ? (
-                            <p className="text-slate-500 text-sm italic">No products found. Add one in the Library.</p>
+                            <p className="text-[#94A3B8] text-sm italic">No products found. Add one in the Library.</p>
                         ) : (
                             <div className="grid grid-cols-3 md:grid-cols-4 gap-3">
                                 {products.map((prod) => (
                                     <div
                                         key={prod.id}
                                         onClick={() => setProductId(prod.id)}
-                                        className={`cursor-pointer rounded-xl overflow-hidden border-2 transition-all relative aspect-[3/4] bg-slate-800 ${productId === prod.id ? 'border-purple-500 shadow-purple-500/20 shadow-lg scale-[1.02]' : 'border-transparent opacity-60 hover:opacity-100'}`}
+                                        className={`cursor-pointer rounded-xl overflow-hidden border-2 transition-all relative aspect-[3/4] bg-white/80 ${productId === prod.id ? 'border-purple-500 shadow-purple-500/20 shadow-lg scale-[1.02]' : 'border-transparent opacity-60 hover:opacity-100'}`}
                                     >
                                         <img src={prod.image_url} alt={prod.name} className="w-full h-full object-cover" />
                                         <div className="absolute bottom-0 left-0 right-0 bg-black/70 p-2">
@@ -464,10 +470,10 @@ export default function CreatePage() {
                 {/* Cinematic Product Shots Selector (Step 14) */}
                 {productType === 'physical' && cinematicShots.length > 0 && (
                     <div className="mt-5">
-                        <label className="text-xs text-slate-400 font-medium mb-2 block">
-                            🎬 Include Cinematic Shots <span className="text-slate-600">(optional)</span>
+                        <label className="text-xs text-[#4A5568] font-medium mb-2 block">
+                            🎬 Include Cinematic Shots <span className="text-[#94A3B8]">(optional)</span>
                         </label>
-                        <p className="text-[10px] text-slate-500 mb-3">
+                        <p className="text-[10px] text-[#94A3B8] mb-3">
                             Select pre-rendered cinematic product shots to interleave with the influencer scenes.
                         </p>
                         <div className="grid grid-cols-3 md:grid-cols-4 gap-3">
@@ -483,8 +489,8 @@ export default function CreatePage() {
                                                     : [...prev, shot.id]
                                             );
                                         }}
-                                        className={`cursor-pointer rounded-xl overflow-hidden border-2 transition-all relative aspect-[3/4] bg-slate-800 group ${isSelected
-                                                ? 'border-blue-500 shadow-blue-500/20 shadow-lg scale-[1.02]'
+                                        className={`cursor-pointer rounded-xl overflow-hidden border-2 transition-all relative aspect-[3/4] bg-white/80 group ${isSelected
+                                                ? 'border-[#337AFF] shadow-blue-500/20 shadow-lg scale-[1.02]'
                                                 : 'border-transparent opacity-60 hover:opacity-100'
                                             }`}
                                     >
@@ -513,9 +519,52 @@ export default function CreatePage() {
                             })}
                         </div>
                         {selectedCinematicShots.length > 0 && (
-                            <p className="text-[10px] text-blue-400 mt-2">
+                            <p className="text-[10px] text-[#337AFF] mt-2">
                                 {selectedCinematicShots.length} shot{selectedCinematicShots.length > 1 ? 's' : ''} selected — will be interleaved with influencer scenes.
                             </p>
+                        )}
+                    </div>
+                )}
+
+                {/* Transition Effects (Workflow B) */}
+                {productType === 'physical' && productId && selectedCinematicShots.length > 0 && (
+                    <div className="mt-5 border-t border-white/5 pt-5">
+                        <div className="flex items-center justify-between mb-2">
+                            <label className="text-xs text-[#4A5568] font-medium">
+                                Transition Effects <span className="text-[#94A3B8]">(optional)</span>
+                            </label>
+                            <button
+                                onClick={() => setEnableAutoTransitions(!enableAutoTransitions)}
+                                className={`relative w-10 h-5 rounded-full transition-colors ${enableAutoTransitions ? 'bg-purple-500' : 'bg-white/10'}`}
+                            >
+                                <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${enableAutoTransitions ? 'tranreveal-5' : 'tranreveal-0.5'}`} />
+                            </button>
+                        </div>
+                        <p className="text-[10px] text-[#94A3B8] mb-3">
+                            Automatically blend cinematic shots into your video with smooth transitions.
+                            The AI analyzes each scene to create seamless, context-aware effects.
+                        </p>
+                        {enableAutoTransitions && (
+                            <div className="grid grid-cols-3 gap-2">
+                                {[
+                                    { value: 'match_cut', label: 'Match Cut', desc: 'Smooth zoom to product' },
+                                    { value: 'whip_pan', label: 'Whip Pan', desc: 'Fast motion-blur reveal' },
+                                    { value: 'focus_pull', label: 'Focus Pull', desc: 'Blur-to-sharp transition' },
+                                ].map((tt) => (
+                                    <button
+                                        key={tt.value}
+                                        onClick={() => setAutoTransitionType(tt.value)}
+                                        className={`text-center p-2.5 rounded-xl border transition-all ${
+                                            autoTransitionType === tt.value
+                                                ? 'border-purple-500 bg-purple-500/10'
+                                                : 'border-white/5 bg-white/[0.02] hover:bg-white/5'
+                                        }`}
+                                    >
+                                        <p className="text-xs font-medium text-white">{tt.label}</p>
+                                        <p className="text-[9px] text-[#94A3B8] mt-0.5">{tt.desc}</p>
+                                    </button>
+                                ))}
+                            </div>
                         )}
                     </div>
                 )}
@@ -524,13 +573,13 @@ export default function CreatePage() {
             {/* ============ SECTION 3: SCRIPT & STYLE ============ */}
             <section className="glass-panel p-6 space-y-5">
                 <div>
-                    <h3 className="text-sm font-semibold text-slate-200 mb-1">3. Content & Style</h3>
-                    <p className="text-xs text-slate-500">Configure generation parameters.</p>
+                    <h3 className="text-sm font-semibold text-[#1A1A1F] mb-1">3. Content & Style</h3>
+                    <p className="text-xs text-[#94A3B8]">Configure generation parameters.</p>
                 </div>
 
                 {/* Script Source */}
                 <div>
-                    <label className="text-xs text-slate-400 font-medium mb-2 block">Script Source</label>
+                    <label className="text-xs text-[#4A5568] font-medium mb-2 block">Script Source</label>
 
                     {productType === 'physical' ? (
                         <div className="space-y-2">
@@ -556,7 +605,7 @@ export default function CreatePage() {
                                             .finally(() => setIsGeneratingScript(false));
                                     }}
                                     disabled={isGeneratingScript || !productId}
-                                    className="text-xs text-slate-400 hover:text-white transition-colors"
+                                    className="text-xs text-[#4A5568] hover:text-white transition-colors"
                                 >
                                     {isGeneratingScript ? 'Generating...' : '↻ Regenerate'}
                                 </button>
@@ -571,9 +620,9 @@ export default function CreatePage() {
                                 placeholder="Select a product to generate a script..."
                                 rows={6}
                                 disabled={isGeneratingScript}
-                                className={`input-field w-full resize-none font-mono text-sm leading-relaxed ${isGeneratingScript ? 'animate-pulse text-slate-500' : ''}`}
+                                className={`input-field w-full resize-none font-mono text-sm leading-relaxed ${isGeneratingScript ? 'animate-pulse text-[#94A3B8]' : ''}`}
                             />
-                            <p className="text-[10px] text-slate-500">
+                            <p className="text-[10px] text-[#94A3B8]">
                                 This script is tailored to your product&apos;s visual analysis and selected duration.
                             </p>
                         </div>
@@ -619,7 +668,7 @@ export default function CreatePage() {
 
                 {/* AI Model */}
                 <div>
-                    <label className="text-xs text-slate-400 font-medium mb-2 block">AI Model</label>
+                    <label className="text-xs text-[#4A5568] font-medium mb-2 block">AI Model</label>
                     <div className="grid grid-cols-2 gap-2">
                         {AI_MODELS.map((model) => (
                             <button
@@ -628,13 +677,13 @@ export default function CreatePage() {
                                 className={`
                   p-3 rounded-xl text-left transition-all border text-sm
                   ${modelApi === model.value
-                                        ? 'bg-blue-500/10 border-blue-500/30 text-white'
-                                        : 'bg-slate-800/20 border-slate-700/30 text-slate-400 hover:border-slate-600/50'
+                                        ? 'bg-[#337AFF]/10 border-[#337AFF]/30 text-white'
+                                        : 'bg-[#337AFF]/3 border-[#E8ECF4] text-[#4A5568] hover:border-[#E8ECF4]/50'
                                     }
                 `}
                             >
                                 <p className="font-medium text-xs">{model.label}</p>
-                                <p className="text-[10px] text-slate-500 mt-0.5">{model.desc}</p>
+                                <p className="text-[10px] text-[#94A3B8] mt-0.5">{model.desc}</p>
                             </button>
                         ))}
                     </div>
@@ -642,7 +691,7 @@ export default function CreatePage() {
 
                 {/* Duration */}
                 <div>
-                    <label className="text-xs text-slate-400 font-medium mb-2 block">Duration</label>
+                    <label className="text-xs text-[#4A5568] font-medium mb-2 block">Duration</label>
                     <div className="flex gap-2">
                         {[15, 30].map((d) => (
                             <button
@@ -651,8 +700,8 @@ export default function CreatePage() {
                                 className={`
                   px-6 py-2.5 rounded-xl text-sm font-medium transition-all border
                   ${duration === d
-                                        ? 'bg-blue-500/10 border-blue-500/30 text-white'
-                                        : 'bg-slate-800/20 border-slate-700/30 text-slate-400 hover:border-slate-600/50'
+                                        ? 'bg-[#337AFF]/10 border-[#337AFF]/30 text-white'
+                                        : 'bg-[#337AFF]/3 border-[#E8ECF4] text-[#4A5568] hover:border-[#E8ECF4]/50'
                                     }
                 `}
                             >
@@ -666,18 +715,18 @@ export default function CreatePage() {
             {/* ============ SECTION 3: CAMPAIGN MODE ============ */}
             {
                 isCampaignMode && (
-                    <section className="glass-panel p-6 space-y-5 border-blue-500/20">
+                    <section className="glass-panel p-6 space-y-5 border-[#337AFF]/20">
                         <div>
-                            <h3 className="text-sm font-semibold text-blue-400 mb-1">
+                            <h3 className="text-sm font-semibold text-[#337AFF] mb-1">
                                 🚀 Campaign Mode
                             </h3>
-                            <p className="text-xs text-slate-500">
+                            <p className="text-xs text-[#94A3B8]">
                                 Configure your batch of {quantity} videos.
                             </p>
                         </div>
 
                         <div>
-                            <label className="text-xs text-slate-400 font-medium mb-2 block">Campaign Name</label>
+                            <label className="text-xs text-[#4A5568] font-medium mb-2 block">Campaign Name</label>
                             <input
                                 type="text"
                                 value={campaignName}
@@ -688,7 +737,7 @@ export default function CreatePage() {
                         </div>
 
                         <div>
-                            <label className="text-xs text-slate-400 font-medium mb-2 block">Content Strategy</label>
+                            <label className="text-xs text-[#4A5568] font-medium mb-2 block">Content Strategy</label>
                             <div className="space-y-2">
                                 {CONTENT_STRATEGIES.map((strategy) => (
                                     <button
@@ -697,13 +746,13 @@ export default function CreatePage() {
                                         className={`
                     w-full p-3 rounded-xl text-left transition-all border text-sm
                     ${contentStrategy === strategy.value
-                                                ? 'bg-blue-500/10 border-blue-500/30 text-white'
-                                                : 'bg-slate-800/20 border-slate-700/30 text-slate-400 hover:border-slate-600/50'
+                                                ? 'bg-[#337AFF]/10 border-[#337AFF]/30 text-white'
+                                                : 'bg-[#337AFF]/3 border-[#E8ECF4] text-[#4A5568] hover:border-[#E8ECF4]/50'
                                             }
                   `}
                                     >
                                         <p className="font-medium text-xs">{strategy.label}</p>
-                                        <p className="text-[10px] text-slate-500 mt-0.5">{strategy.desc}</p>
+                                        <p className="text-[10px] text-[#94A3B8] mt-0.5">{strategy.desc}</p>
                                     </button>
                                 ))}
                             </div>
@@ -716,7 +765,7 @@ export default function CreatePage() {
             <div>
                 <button
                     onClick={() => setShowAdvanced(!showAdvanced)}
-                    className="flex items-center gap-2 text-xs text-slate-500 hover:text-slate-300 transition-colors"
+                    className="flex items-center gap-2 text-xs text-[#94A3B8] hover:text-[#1A1A1F] transition-colors"
                 >
                     <svg
                         width="14"
@@ -735,7 +784,7 @@ export default function CreatePage() {
                 {showAdvanced && (
                     <div className="glass-panel p-6 mt-3 space-y-4">
                         <div>
-                            <label className="text-xs text-slate-400 font-medium mb-2 block">AI Hook</label>
+                            <label className="text-xs text-[#4A5568] font-medium mb-2 block">AI Hook</label>
                             <div className="flex gap-2">
                                 <input
                                     type="text"
@@ -760,14 +809,14 @@ export default function CreatePage() {
             {/* ============ SMART PREVIEW ============ */}
             {
                 selectedInfluencer && (
-                    <section className="glass-panel p-5 border-slate-700/40">
-                        <p className="text-sm text-slate-300 leading-relaxed">
+                    <section className="glass-panel p-5 border-[#E8ECF4]/40">
+                        <p className="text-sm text-[#1A1A1F] leading-relaxed">
                             You&apos;re about to create{' '}
                             <span className="text-white font-semibold">
                                 {quantity} video{quantity > 1 ? 's' : ''}
                             </span>{' '}
                             featuring{' '}
-                            <span className="text-blue-400 font-semibold">
+                            <span className="text-[#337AFF] font-semibold">
                                 {selectedInf?.name}
                             </span>
                             , using{' '}
@@ -787,7 +836,7 @@ export default function CreatePage() {
 
                         {/* Cost Breakdown */}
                         {costEstimate && (
-                            <div className="mt-4 pt-4 border-t border-slate-700/40">
+                            <div className="mt-4 pt-4 border-t border-[#E8ECF4]/40">
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
                                     {[
                                         { label: 'Video', value: costEstimate.cost_video, icon: '🎬' },
@@ -796,19 +845,19 @@ export default function CreatePage() {
                                         { label: 'Processing', value: costEstimate.cost_processing, icon: '⚙️' },
                                     ].map((c) => (
                                         <div key={c.label} className="text-center">
-                                            <p className="text-[10px] uppercase text-slate-500 tracking-wider">{c.icon} {c.label}</p>
-                                            <p className="text-sm font-medium text-slate-300">${c.value.toFixed(3)}</p>
+                                            <p className="text-[10px] uppercase text-[#94A3B8] tracking-wider">{c.icon} {c.label}</p>
+                                            <p className="text-sm font-medium text-[#1A1A1F]">${c.value.toFixed(3)}</p>
                                         </div>
                                     ))}
                                     {productType === 'physical' && costEstimate.cost_image > 0 && (
-                                        <div className="text-center col-span-2 sm:col-span-4 mt-2 border-t border-slate-800 pt-2">
+                                        <div className="text-center col-span-2 sm:col-span-4 mt-2 border-t border-[#E8ECF4] pt-2">
                                             <p className="text-[10px] uppercase text-purple-400 tracking-wider">📸 Product Images (Nano)</p>
                                             <p className="text-sm font-medium text-purple-300">${costEstimate.cost_image.toFixed(3)}</p>
                                         </div>
                                     )}
                                 </div>
-                                <div className="flex items-center justify-between bg-slate-800/40 rounded-lg px-4 py-2.5">
-                                    <span className="text-xs text-slate-400 font-medium">
+                                <div className="flex items-center justify-between glass rounded-lg px-4 py-2.5">
+                                    <span className="text-xs text-[#4A5568] font-medium">
                                         {isCampaignMode ? 'Cost per video' : 'Estimated Total'}
                                     </span>
                                     <span className="text-lg font-bold text-green-400">

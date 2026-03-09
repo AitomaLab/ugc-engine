@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useState, useEffect, useRef } from 'react';
 import { Influencer } from '@/lib/types';
@@ -140,14 +140,14 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="bg-white border border-[#E8ECF4] rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
 
                 {/* Header */}
                 <div className="p-6 border-b border-white/5 flex justify-between items-center bg-white/5">
                     <h3 className="text-lg font-semibold text-white">
                         {initialData ? 'Edit Influencer' : 'Add New Influencer'}
                     </h3>
-                    <button onClick={onClose} className="text-slate-400 hover:text-white transition">✕</button>
+                    <button onClick={onClose} className="text-[#4A5568] hover:text-white transition">✕</button>
                 </div>
 
                 {/* Body */}
@@ -155,7 +155,7 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
 
                     {/* Name */}
                     <div className="space-y-1">
-                        <label className="text-xs font-medium text-slate-400">Name <span className="text-pink-500">*</span></label>
+                        <label className="text-xs font-medium text-[#4A5568]">Name <span className="text-pink-500">*</span></label>
                         <input
                             value={name}
                             onChange={(e) => setName(e.target.value)}
@@ -166,7 +166,7 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
 
                     {/* Gender */}
                     <div className="space-y-1">
-                        <label className="text-xs font-medium text-slate-400">Sex <span className="text-pink-500">*</span></label>
+                        <label className="text-xs font-medium text-[#4A5568]">Sex <span className="text-pink-500">*</span></label>
                         <div className="flex gap-2">
                             {['Male', 'Female'].map(g => (
                                 <button
@@ -175,8 +175,8 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
                                     onClick={() => setGender(g)}
                                     className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium transition border ${
                                         gender === g
-                                            ? 'bg-blue-600 border-blue-500 text-white'
-                                            : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'
+                                            ? 'bg-blue-600 border-[#337AFF] text-white'
+                                            : 'bg-white/80 border-[#E8ECF4] text-[#4A5568] hover:bg-[#337AFF]/5'
                                     }`}
                                 >
                                     {g === 'Male' ? '♂️' : '♀️'} {g}
@@ -187,7 +187,7 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
 
                     {/* Category (Style) */}
                     <div className="space-y-1">
-                        <label className="text-xs font-medium text-slate-400">Category</label>
+                        <label className="text-xs font-medium text-[#4A5568]">Category</label>
                         <div className="relative">
                             <input
                                 value={style}
@@ -204,15 +204,15 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
 
                     {/* Image Upload */}
                     <div className="space-y-2">
-                        <label className="text-xs font-medium text-slate-400">Profile Image</label>
+                        <label className="text-xs font-medium text-[#4A5568]">Profile Image</label>
 
                         <div className="flex items-center gap-4">
                             {/* Preview */}
-                            <div className="w-20 h-20 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center overflow-hidden shrink-0 relative group">
+                            <div className="w-20 h-20 rounded-xl bg-white/80 border border-[#E8ECF4] flex items-center justify-center overflow-hidden shrink-0 relative group">
                                 {imageUrl ? (
                                     <img src={imageUrl} alt="Preview" className="w-full h-full object-cover" />
                                 ) : (
-                                    <span className="text-2xl text-slate-600">👤</span>
+                                    <span className="text-2xl text-[#94A3B8]">👤</span>
                                 )}
                                 {uploading && (
                                     <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
@@ -234,7 +234,7 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
                                     <button
                                         onClick={() => fileInputRef.current?.click()}
                                         disabled={uploading}
-                                        className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs rounded-lg transition border border-slate-700"
+                                        className="px-3 py-1.5 bg-white/80 hover:bg-[#337AFF]/5 text-[#1A1A1F] text-xs rounded-lg transition border border-[#E8ECF4]"
                                     >
                                         {uploading ? 'Uploading...' : 'Upload Image'}
                                     </button>
@@ -259,7 +259,7 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
 
                     {/* Description */}
                     <div className="space-y-1">
-                        <label className="text-xs font-medium text-slate-400">Description</label>
+                        <label className="text-xs font-medium text-[#4A5568]">Description</label>
                         <textarea
                             value={description}
                             onChange={(e) => setDescription(e.target.value)}
@@ -270,7 +270,7 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
 
                     {/* Voice ID */}
                     <div className="space-y-1">
-                        <label className="text-xs font-medium text-slate-400">ElevenLabs Voice ID</label>
+                        <label className="text-xs font-medium text-[#4A5568]">ElevenLabs Voice ID</label>
                         <input
                             value={voiceId}
                             onChange={(e) => setVoiceId(e.target.value)}
@@ -281,7 +281,7 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
                 </div>
 
                 {/* Footer */}
-                <div className="p-6 border-t border-white/5 bg-slate-900/50 flex justify-end gap-3">
+                <div className="p-6 border-t border-white/5 bg-white/50 flex justify-end gap-3">
                     <button onClick={onClose} className="btn-secondary">Cancel</button>
                     <button
                         onClick={handleSave}

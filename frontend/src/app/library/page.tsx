@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { apiFetch, formatDate, getApiUrl } from '@/lib/utils';
@@ -18,26 +18,26 @@ export default function LibraryPage() {
     const [tab, setTab] = useState<Tab>('videos');
     const [searchQuery, setSearchQuery] = useState('');
 
-    const tabs: { key: Tab; label: string; icon: string }[] = [
-        { key: 'videos', label: 'Videos', icon: '🎬' },
-        { key: 'influencers', label: 'Influencers', icon: '👤' },
-        { key: 'scripts', label: 'Scripts', icon: '📝' },
-        { key: 'clips', label: 'App Clips', icon: '📱' },
-        { key: 'products', label: 'Products', icon: '📦' },
+    const tabs: { key: Tab; label: string }[] = [
+        { key: 'videos', label: 'Videos' },
+        { key: 'influencers', label: 'Influencers' },
+        { key: 'scripts', label: 'Scripts' },
+        { key: 'clips', label: 'App Clips' },
+        { key: 'products', label: 'Products' },
     ];
 
     return (
-        <div className="space-y-8 animate-slide-up">
+        <div className="space-y-8 animate-reveal">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
-                    <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400">
+                    <h2 className="text-3xl font-bold tracking-tight text-[#1A1A1F]">
                         Asset Library
                     </h2>
-                    <p className="text-slate-400 mt-1">Manage your video assets, influencers, and scripts.</p>
+                    <p className="text-[#4A5568] mt-1">Manage your video assets, influencers, and scripts.</p>
                 </div>
 
                 <div className="relative max-w-md w-full md:w-auto">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">🔍</span>
+                    <svg className="absolute left-3 top-1/2 -tranreveal-1/2 text-[#94A3B8]" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                     <input
                         type="text"
                         placeholder="Search assets..."
@@ -49,20 +49,19 @@ export default function LibraryPage() {
             </div>
 
             {/* Tabs */}
-            <div className="flex overflow-x-auto gap-2 pb-2 scrollbar-none border-b border-white/5">
+            <div className="flex overflow-x-auto gap-2 pb-2 scrollbar-none border-b border-[#E8ECF4]">
                 {tabs.map((t) => (
                     <button
                         key={t.key}
                         onClick={() => setTab(t.key)}
                         className={`
-                            flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all whitespace-nowrap
+                            flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap
                             ${tab === t.key
-                                ? 'bg-primary-500 text-white shadow-lg shadow-primary-500/20'
-                                : 'text-slate-400 hover:text-white hover:bg-white/5'
+                                ? 'gradient-cta text-white shadow-glow'
+                                : 'text-[#4A5568] hover:text-[#1A1A1F] hover:bg-white/60'
                             }
                         `}
                     >
-                        <span>{t.icon}</span>
                         {t.label}
                     </button>
                 ))}
@@ -140,7 +139,7 @@ function VideosTab({ searchQuery }: { searchQuery: string }) {
         return sortBy === 'newest' ? db - da : da - db;
     });
 
-    if (loading) return <div className="text-slate-500 text-sm italic animate-pulse py-12 text-center">Loading videos...</div>;
+    if (loading) return <div className="text-[#94A3B8] text-sm italic animate-pulse py-12 text-center">Loading videos...</div>;
 
     return (
         <div className="space-y-4">
@@ -164,13 +163,13 @@ function VideosTab({ searchQuery }: { searchQuery: string }) {
                     <option value="newest">Newest first</option>
                     <option value="oldest">Oldest first</option>
                 </select>
-                <span className="text-xs text-slate-500 ml-auto">{videos.length} video{videos.length !== 1 ? 's' : ''}</span>
+                <span className="text-xs text-[#94A3B8] ml-auto">{videos.length} video{videos.length !== 1 ? 's' : ''}</span>
             </div>
 
             {/* Video Grid */}
             {videos.length === 0 ? (
-                <div className="text-center py-20 text-slate-500 text-sm italic">
-                    No videos yet. Go to <a href="/create" className="text-blue-400 underline">Create</a> to generate your first video!
+                <div className="text-center py-20 text-[#94A3B8] text-sm italic">
+                    No videos yet. Go to <a href="/create" className="text-[#337AFF] underline">Create</a> to generate your first video!
                 </div>
             ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 video-grid">
@@ -182,7 +181,7 @@ function VideosTab({ searchQuery }: { searchQuery: string }) {
                                 className="video-card cursor-pointer"
                                 onClick={() => setSelectedVideo(video)}
                             >
-                                <div className="relative aspect-[9/16] bg-slate-800/50 overflow-hidden">
+                                <div className="relative aspect-[9/16] bg-[#F0F4FF] overflow-hidden">
                                     <video
                                         src={video.final_video_url}
                                         muted
@@ -198,8 +197,8 @@ function VideosTab({ searchQuery }: { searchQuery: string }) {
                                     </div>
                                 </div>
                                 <div className="p-3">
-                                    <p className="text-xs font-medium text-slate-200 truncate">{inf?.name ?? 'Video'}</p>
-                                    <p className="text-[10px] text-slate-500 mt-0.5">{new Date(video.created_at || '').toLocaleDateString()}</p>
+                                    <p className="text-xs font-medium text-[#1A1A1F] truncate">{inf?.name ?? 'Video'}</p>
+                                    <p className="text-[10px] text-[#94A3B8] mt-0.5">{new Date(video.created_at || '').toLocaleDateString()}</p>
                                 </div>
                             </div>
                         );
@@ -263,7 +262,7 @@ function VideoDetailModal({
                         onClick={onClose}
                         className="absolute top-3 right-3 w-8 h-8 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80 transition-colors"
                     >
-                        ✕
+                        âœ•
                     </button>
                 </div>
 
@@ -271,10 +270,10 @@ function VideoDetailModal({
                 <div className="p-6 space-y-5">
                     <div className="flex items-center justify-between">
                         <div>
-                            <h3 className="font-semibold text-lg text-slate-100">
+                            <h3 className="font-semibold text-lg text-[#1A1A1F]">
                                 {influencer?.name ?? 'Untitled Video'}
                             </h3>
-                            <p className="text-xs text-slate-500 mt-0.5">
+                            <p className="text-xs text-[#94A3B8] mt-0.5">
                                 {formatDate(video.created_at)}
                             </p>
                         </div>
@@ -286,10 +285,10 @@ function VideoDetailModal({
                                 rel="noopener noreferrer"
                                 className="btn-primary text-xs px-4 py-2"
                             >
-                                ⬇ Download
+                                â¬‡ Download
                             </a>
                             <button onClick={copyUrl} className="btn-secondary text-xs px-4 py-2">
-                                {copied ? '✓ Copied!' : '🔗 Share'}
+                                {copied ? 'âœ“ Copied!' : 'ðŸ”— Share'}
                             </button>
                         </div>
                     </div>
@@ -297,26 +296,26 @@ function VideoDetailModal({
                     {/* Metadata */}
                     <div className="grid grid-cols-2 gap-4 text-sm">
                         <div>
-                            <p className="text-[10px] uppercase text-slate-500 font-semibold mb-1">Influencer</p>
-                            <p className="text-slate-300">{influencer?.name ?? '—'}</p>
+                            <p className="text-[10px] uppercase text-[#94A3B8] font-semibold mb-1">Influencer</p>
+                            <p className="text-[#1A1A1F]">{influencer?.name ?? 'â€”'}</p>
                         </div>
                         <div>
-                            <p className="text-[10px] uppercase text-slate-500 font-semibold mb-1">AI Model</p>
-                            <p className="text-slate-300">{video.model_api ?? '—'}</p>
+                            <p className="text-[10px] uppercase text-[#94A3B8] font-semibold mb-1">AI Model</p>
+                            <p className="text-[#1A1A1F]">{video.model_api ?? 'â€”'}</p>
                         </div>
                         <div>
-                            <p className="text-[10px] uppercase text-slate-500 font-semibold mb-1">Campaign</p>
-                            <p className="text-slate-300">{video.campaign_name ?? 'Single Generation'}</p>
+                            <p className="text-[10px] uppercase text-[#94A3B8] font-semibold mb-1">Campaign</p>
+                            <p className="text-[#1A1A1F]">{video.campaign_name ?? 'Single Generation'}</p>
                         </div>
                         <div>
-                            <p className="text-[10px] uppercase text-slate-500 font-semibold mb-1">Job ID</p>
-                            <p className="text-slate-300 font-mono text-xs">{video.id.substring(0, 12)}...</p>
+                            <p className="text-[10px] uppercase text-[#94A3B8] font-semibold mb-1">Job ID</p>
+                            <p className="text-[#1A1A1F] font-mono text-xs">{video.id.substring(0, 12)}...</p>
                         </div>
                     </div>
 
                     {/* Schedule Placeholder */}
                     <button className="btn-secondary w-full opacity-50 cursor-not-allowed" disabled>
-                        📅 Schedule to Social Media (Coming Soon)
+                        ðŸ“… Schedule to Social Media (Coming Soon)
                     </button>
                 </div>
             </div>
@@ -373,38 +372,38 @@ function InfluencersTab({ searchQuery }: { searchQuery: string }) {
         );
     }
 
-    if (loading) return <div className="text-slate-500 text-sm italic animate-pulse py-12 text-center">Loading influencers...</div>;
+    if (loading) return <div className="text-[#94A3B8] text-sm italic animate-pulse py-12 text-center">Loading influencers...</div>;
 
     return (
         <div className="space-y-6">
             <div className="flex justify-between items-center">
-                <p className="text-slate-400 text-sm">Manage your AI influencers.</p>
+                <p className="text-[#4A5568] text-sm">Manage your AI influencers.</p>
                 <button onClick={openCreateModal} className="btn-primary px-4 py-2">
                     + Add Influencer
                 </button>
             </div>
 
             {filtered.length === 0 ? (
-                <div className="text-center py-20 text-slate-500 text-sm italic bg-slate-900/30 rounded-2xl border border-white/5">
+                <div className="text-center py-20 text-[#94A3B8] text-sm italic bg-[#F0F4FF]/50 rounded-2xl border border-[#E8ECF4]">
                     No influencers found. Create one to get started!
                 </div>
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {filtered.map((inf) => (
-                        <div key={inf.id} className="glass-panel-light p-4 flex flex-col gap-3 group relative hover:bg-white/5 transition-colors">
+                        <div key={inf.id} className="glass-panel-light p-4 flex flex-col gap-3 group relative hover:bg-white/60 transition-colors">
                             <div className="flex items-start gap-4">
-                                <div className="w-14 h-14 rounded-xl bg-slate-800 border border-white/10 overflow-hidden flex-shrink-0">
+                                <div className="w-14 h-14 rounded-xl bg-white/80 border border-white/10 overflow-hidden flex-shrink-0">
                                     {inf.image_url ? (
                                         <img src={inf.image_url} alt={inf.name} className="w-full h-full object-cover" />
                                     ) : (
-                                        <div className="w-full h-full flex items-center justify-center text-2xl">👤</div>
+                                        <div className="w-full h-full flex items-center justify-center text-2xl">ðŸ‘¤</div>
                                     )}
                                 </div>
                                 <div className="min-w-0 flex-1">
                                     <div className="flex justify-between items-start">
-                                        <h4 className="font-semibold text-slate-200 truncate">{inf.name}</h4>
+                                        <h4 className="font-semibold text-[#1A1A1F] truncate">{inf.name}</h4>
                                         {inf.style && (
-                                            <span className="text-[10px] bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded-full border border-blue-500/20">
+                                            <span className="text-[10px] bg-[#337AFF]/10 text-[#337AFF] px-2 py-0.5 rounded-full border border-[#337AFF]/20">
                                                 {inf.style}
                                             </span>
                                         )}
@@ -413,19 +412,19 @@ function InfluencersTab({ searchQuery }: { searchQuery: string }) {
                                                 ? 'bg-sky-500/10 text-sky-400 border-sky-500/20'
                                                 : 'bg-pink-500/10 text-pink-400 border-pink-500/20'
                                         }`}>
-                                            {inf.gender === 'Male' ? '♂️' : '♀️'} {inf.gender || 'Female'}
+                                            {inf.gender === 'Male' ? 'â™‚ï¸' : 'â™€ï¸'} {inf.gender || 'Female'}
                                         </span>
                                     </div>
-                                    <p className="text-xs text-slate-500 line-clamp-2 mt-1 leading-relaxed">
+                                    <p className="text-xs text-[#94A3B8] line-clamp-2 mt-1 leading-relaxed">
                                         {inf.description || 'No description'}
                                     </p>
                                 </div>
                             </div>
 
-                            <div className="flex justify-end gap-2 mt-auto pt-2 border-t border-white/5">
+                            <div className="flex justify-end gap-2 mt-auto pt-2 border-t border-[#E8ECF4]">
                                 <button
                                     onClick={() => openEditModal(inf)}
-                                    className="text-xs text-slate-400 hover:text-white px-3 py-1.5 rounded-lg hover:bg-white/5 transition"
+                                    className="text-xs text-[#4A5568] hover:text-[#1A1A1F] px-3 py-1.5 rounded-lg hover:bg-white/60 transition"
                                 >
                                     Edit
                                 </button>
@@ -517,13 +516,13 @@ function ScriptsTab({ searchQuery }: { searchQuery: string }) {
         );
     }
 
-    if (loading) return <div className="text-slate-500 text-sm italic animate-pulse py-12 text-center">Loading scripts...</div>;
+    if (loading) return <div className="text-[#94A3B8] text-sm italic animate-pulse py-12 text-center">Loading scripts...</div>;
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Create Form */}
             <div className="glass-panel p-6 space-y-4 h-fit">
-                <h4 className="font-semibold text-sm text-slate-200">Add Script</h4>
+                <h4 className="font-semibold text-sm text-[#1A1A1F]">Add Script</h4>
                 <textarea
                     value={text}
                     onChange={(e) => setText(e.target.value)}
@@ -539,24 +538,24 @@ function ScriptsTab({ searchQuery }: { searchQuery: string }) {
                 />
                 <div className="flex gap-2">
                     <button onClick={handleCreate} className="btn-primary flex-1" disabled={!text.trim()}>Add Script</button>
-                    <button onClick={handleGenerateAI} className="btn-secondary text-xs">✨ AI Generate</button>
+                    <button onClick={handleGenerateAI} className="btn-secondary text-xs">âœ¨ AI Generate</button>
                 </div>
             </div>
 
             {/* List */}
             <div className="lg:col-span-2 space-y-3">
                 {filtered.length === 0 ? (
-                    <p className="text-slate-500 text-sm italic text-center py-12">No scripts found.</p>
+                    <p className="text-[#94A3B8] text-sm italic text-center py-12">No scripts found.</p>
                 ) : (
                     filtered.map((script) => (
                         <div key={script.id} className="glass-panel-light p-4">
                             <div className="flex items-start justify-between gap-3">
                                 <div className="flex-1 min-w-0">
-                                    <p className="text-sm text-slate-300 leading-relaxed">
+                                    <p className="text-sm text-[#1A1A1F] leading-relaxed">
                                         {script.text.substring(0, 120)}{script.text.length > 120 ? '...' : ''}
                                     </p>
                                     {script.category && (
-                                        <span className="inline-block mt-2 text-[10px] bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded-md font-medium">
+                                        <span className="inline-block mt-2 text-[10px] bg-[#337AFF]/10 text-[#337AFF] px-2 py-0.5 rounded-md font-medium">
                                             {script.category}
                                         </span>
                                     )}
@@ -623,13 +622,13 @@ function ClipsTab({ searchQuery }: { searchQuery: string }) {
         );
     }
 
-    if (loading) return <div className="text-slate-500 text-sm italic animate-pulse py-12 text-center">Loading clips...</div>;
+    if (loading) return <div className="text-[#94A3B8] text-sm italic animate-pulse py-12 text-center">Loading clips...</div>;
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Create Form */}
             <div className="glass-panel p-6 space-y-4 h-fit">
-                <h4 className="font-semibold text-sm text-slate-200">Add App Clip</h4>
+                <h4 className="font-semibold text-sm text-[#1A1A1F]">Add App Clip</h4>
                 <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Clip Name" className="input-field" />
                 <input value={videoUrl} onChange={(e) => setVideoUrl(e.target.value)} placeholder="Video URL (mp4)" className="input-field" />
                 <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description" className="input-field" />
@@ -639,16 +638,16 @@ function ClipsTab({ searchQuery }: { searchQuery: string }) {
             {/* List */}
             <div className="lg:col-span-2 space-y-3">
                 {filtered.length === 0 ? (
-                    <p className="text-slate-500 text-sm italic text-center py-12">No app clips found.</p>
+                    <p className="text-[#94A3B8] text-sm italic text-center py-12">No app clips found.</p>
                 ) : (
                     filtered.map((clip) => (
                         <div key={clip.id} className="glass-panel-light p-4 flex items-center gap-4">
-                            <div className="w-16 h-10 rounded-lg bg-slate-800/50 overflow-hidden flex-shrink-0">
+                            <div className="w-16 h-10 rounded-lg bg-[#F0F4FF] overflow-hidden flex-shrink-0">
                                 <video src={clip.video_url} muted className="w-full h-full object-cover" />
                             </div>
                             <div className="flex-1 min-w-0">
-                                <p className="font-medium text-sm text-slate-200">{clip.name}</p>
-                                {clip.description && <p className="text-xs text-slate-500 truncate">{clip.description}</p>}
+                                <p className="font-medium text-sm text-[#1A1A1F]">{clip.name}</p>
+                                {clip.description && <p className="text-xs text-[#94A3B8] truncate">{clip.description}</p>}
                             </div>
                             <button onClick={() => handleDelete(clip.id)} className="btn-danger">Delete</button>
                         </div>
@@ -740,7 +739,7 @@ function ProductsTab({ searchQuery }: { searchQuery: string }) {
         filtered = products.filter((p) => p.name.toLowerCase().includes(q));
     }
 
-    if (loading) return <div className="text-slate-500 text-sm italic animate-pulse py-12 text-center">Loading products...</div>;
+    if (loading) return <div className="text-[#94A3B8] text-sm italic animate-pulse py-12 text-center">Loading products...</div>;
 
     return (
         <div className="space-y-6">
@@ -753,21 +752,21 @@ function ProductsTab({ searchQuery }: { searchQuery: string }) {
                 {/* Product Grid */}
                 <div className="lg:col-span-3">
                     {filtered.length === 0 ? (
-                        <div className="text-center py-20 text-slate-500 text-sm italic bg-slate-900/30 rounded-2xl border border-white/5">
+                        <div className="text-center py-20 text-[#94A3B8] text-sm italic bg-[#F0F4FF]/50 rounded-2xl border border-[#E8ECF4]">
                             No products found. Upload one to get started!
                         </div>
                     ) : (
                         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                             {filtered.map((p) => (
-                                <div key={p.id} className="glass-panel-light p-3 flex flex-col gap-2 relative group hover:bg-white/5 transition-colors">
-                                    <div className="aspect-[3/4] rounded-lg overflow-hidden bg-slate-800 relative">
+                                <div key={p.id} className="glass-panel-light p-3 flex flex-col gap-2 relative group hover:bg-white/60 transition-colors">
+                                    <div className="aspect-[3/4] rounded-lg overflow-hidden bg-white/80 relative">
                                         <img src={p.image_url} alt={p.name} className="w-full h-full object-cover" />
 
                                         {/* Overlay Actions */}
                                         <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2">
                                             <button
                                                 onClick={() => handleDelete(p.id)}
-                                                className="bg-red-500/80 text-white px-3 py-1 rounded text-xs hover:bg-red-600 w-24"
+                                                className="bg-red-500/80 text-[#1A1A1F] px-3 py-1 rounded text-xs hover:bg-red-600 w-24"
                                             >
                                                 Delete
                                             </button>
@@ -776,14 +775,14 @@ function ProductsTab({ searchQuery }: { searchQuery: string }) {
                                                 <button
                                                     onClick={() => handleAnalyze(p)}
                                                     disabled={analyzingIds.has(p.id)}
-                                                    className="bg-purple-500/80 text-white px-3 py-1 rounded text-xs hover:bg-purple-600 w-24 disabled:opacity-50"
+                                                    className="bg-purple-500/80 text-[#1A1A1F] px-3 py-1 rounded text-xs hover:bg-purple-600 w-24 disabled:opacity-50"
                                                 >
-                                                    {analyzingIds.has(p.id) ? 'Analyzing...' : '✨ Analyze'}
+                                                    {analyzingIds.has(p.id) ? 'Analyzing...' : 'âœ¨ Analyze'}
                                                 </button>
                                             ) : (
                                                 <button
                                                     onClick={() => setViewingAnalysis(p)}
-                                                    className="bg-slate-500/80 text-white px-3 py-1 rounded text-xs hover:bg-slate-600 w-24"
+                                                    className="bg-[#94A3B8]/80 text-[#1A1A1F] px-3 py-1 rounded text-xs hover:bg-[#94A3B8] w-24"
                                                 >
                                                     View Info
                                                 </button>
@@ -791,22 +790,22 @@ function ProductsTab({ searchQuery }: { searchQuery: string }) {
 
                                             <button
                                                 onClick={() => setSelectedProductId(p.id)}
-                                                className="bg-blue-500/80 text-white px-3 py-1 rounded text-xs hover:bg-blue-600 w-24"
+                                                className="bg-blue-500/80 text-[#1A1A1F] px-3 py-1 rounded text-xs hover:bg-blue-600 w-24"
                                             >
-                                                🎬 Shots
+                                                ðŸŽ¬ Shots
                                             </button>
                                         </div>
 
                                         {/* Badge for Analyzed */}
                                         {p.visual_description && (
                                             <div className="absolute top-1 right-1 bg-green-500/20 text-green-400 p-1 rounded-full border border-green-500/30" title="AI Analyzed">
-                                                ✅
+                                                âœ…
                                             </div>
                                         )}
                                     </div>
 
                                     <div>
-                                        <h4 className="font-medium text-slate-200 text-sm truncate" title={p.name}>{p.name}</h4>
+                                        <h4 className="font-medium text-[#1A1A1F] text-sm truncate" title={p.name}>{p.name}</h4>
                                     </div>
                                 </div>
                             ))}
@@ -815,33 +814,33 @@ function ProductsTab({ searchQuery }: { searchQuery: string }) {
                 </div>
             </div>
 
-            {/* Expanded Product Shots Panel — full width, OUTSIDE the grid */}
+            {/* Expanded Product Shots Panel â€” full width, OUTSIDE the grid */}
             {selectedProductId && (() => {
                 const selectedProd = products.find(p => p.id === selectedProductId);
                 if (!selectedProd) return null;
                 return (
-                    <div className="bg-slate-900/60 rounded-2xl border border-white/5 overflow-hidden">
+                    <div className="bg-white/60 rounded-2xl border border-[#E8ECF4] overflow-hidden">
                         {/* Panel header */}
-                        <div className="p-5 border-b border-white/5 flex items-center justify-between bg-gradient-to-r from-blue-500/5 to-purple-500/5">
+                        <div className="p-5 border-b border-[#E8ECF4] flex items-center justify-between bg-gradient-to-r from-blue-500/5 to-purple-500/5">
                             <div className="flex items-center gap-3">
-                                <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-800 flex-shrink-0 border border-white/10">
+                                <div className="w-12 h-12 rounded-xl overflow-hidden bg-white/80 flex-shrink-0 border border-white/10">
                                     <img src={selectedProd.image_url} alt={selectedProd.name} className="w-full h-full object-cover" />
                                 </div>
                                 <div>
-                                    <h4 className="text-base font-semibold text-white">{selectedProd.name}</h4>
-                                    <p className="text-xs text-slate-500">Cinematic product shots & videos</p>
+                                    <h4 className="text-base font-semibold text-[#1A1A1F]">{selectedProd.name}</h4>
+                                    <p className="text-xs text-[#94A3B8]">Cinematic product shots & videos</p>
                                 </div>
                             </div>
                             <div className="flex items-center gap-2">
                                 <button
                                     onClick={() => setGeneratingForProduct(selectedProd)}
-                                    className="bg-blue-500/20 text-blue-300 hover:bg-blue-500/30 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                                    className="bg-[#337AFF]/10 text-[#337AFF]/80 hover:bg-blue-500/30 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
                                 >
                                     + Generate Shots
                                 </button>
                                 <button
                                     onClick={() => setSelectedProductId(null)}
-                                    className="text-slate-400 hover:text-white p-2 hover:bg-white/10 rounded-lg transition-colors"
+                                    className="text-[#4A5568] hover:text-[#1A1A1F] p-2 hover:bg-white/10 rounded-lg transition-colors"
                                 >
                                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                                 </button>
@@ -915,12 +914,12 @@ function ProductAnalysisModal({
                 onClick={e => e.stopPropagation()}
             >
                 {/* Header */}
-                <div className="p-5 border-b border-white/5 flex justify-between items-center bg-gradient-to-r from-purple-500/10 to-transparent">
+                <div className="p-5 border-b border-[#E8ECF4] flex justify-between items-center bg-gradient-to-r from-purple-500/10 to-transparent">
                     <div className="flex items-center gap-2">
-                        <span className="text-lg">👁️</span>
-                        <h3 className="text-lg font-bold text-white">Visual Analysis</h3>
+                        <span className="text-lg">ðŸ‘ï¸</span>
+                        <h3 className="text-lg font-bold text-[#1A1A1F]">Visual Analysis</h3>
                     </div>
-                    <button onClick={onClose} className="text-slate-400 hover:text-white p-1 hover:bg-white/10 rounded-full transition-colors">
+                    <button onClick={onClose} className="text-[#4A5568] hover:text-[#1A1A1F] p-1 hover:bg-white/10 rounded-full transition-colors">
                         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                     </button>
                 </div>
@@ -928,14 +927,14 @@ function ProductAnalysisModal({
                 <div className="p-6 space-y-6">
                     {/* Top Section: Image & Brand */}
                     <div className="flex gap-5">
-                        <div className="w-24 h-24 rounded-xl bg-slate-800 border border-white/10 overflow-hidden flex-shrink-0 shadow-lg">
+                        <div className="w-24 h-24 rounded-xl bg-white/80 border border-white/10 overflow-hidden flex-shrink-0 shadow-lg">
                             <img src={product.image_url} className="w-full h-full object-cover" />
                         </div>
                         <div className="flex-1 min-w-0 flex flex-col justify-center">
-                            <h4 className="text-xl font-bold text-white truncate">
-                                {safeString(vd.brand_name) || <span className="text-slate-500 italic">Unknown Brand</span>}
+                            <h4 className="text-xl font-bold text-[#1A1A1F] truncate">
+                                {safeString(vd.brand_name) || <span className="text-[#94A3B8] italic">Unknown Brand</span>}
                             </h4>
-                            <p className="text-slate-400 text-sm truncate opacity-80">{product.name}</p>
+                            <p className="text-[#4A5568] text-sm truncate opacity-80">{product.name}</p>
 
                             {/* Re-analyze Button */}
                             <button
@@ -943,7 +942,7 @@ function ProductAnalysisModal({
                                 disabled={isAnalyzing}
                                 className="mt-3 text-xs flex items-center gap-1.5 text-purple-400 hover:text-purple-300 transition-colors w-fit disabled:opacity-50"
                             >
-                                <span className={isAnalyzing ? "animate-spin" : ""}>{isAnalyzing ? '↻' : '✨'}</span>
+                                <span className={isAnalyzing ? "animate-spin" : ""}>{isAnalyzing ? 'â†»' : 'âœ¨'}</span>
                                 {isAnalyzing ? 'Analyzing...' : 'Re-analyze Image'}
                             </button>
                         </div>
@@ -951,34 +950,34 @@ function ProductAnalysisModal({
 
                     {/* Details Grid */}
                     <div className="space-y-4">
-                        <div className="bg-white/5 p-4 rounded-xl border border-white/5">
-                            <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-2 flex items-center gap-2">
-                                📝 Visual Description
+                        <div className="bg-white/5 p-4 rounded-xl border border-[#E8ECF4]">
+                            <p className="text-[10px] uppercase tracking-wider text-[#94A3B8] font-bold mb-2 flex items-center gap-2">
+                                ðŸ“ Visual Description
                             </p>
                             <div className="max-h-40 overflow-y-auto custom-scrollbar pr-2">
-                                <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">
+                                <p className="text-sm text-[#1A1A1F] leading-relaxed whitespace-pre-wrap">
                                     {safeString(vd.visual_description) || "No description generated yet."}
                                 </p>
                             </div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-4">
-                            <div className="bg-white/5 p-4 rounded-xl border border-white/5">
-                                <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-2">Typography</p>
-                                <p className="text-sm text-slate-300 font-medium">{safeString(vd.font_style) || 'N/A'}</p>
+                            <div className="bg-white/5 p-4 rounded-xl border border-[#E8ECF4]">
+                                <p className="text-[10px] uppercase tracking-wider text-[#94A3B8] font-bold mb-2">Typography</p>
+                                <p className="text-sm text-[#1A1A1F] font-medium">{safeString(vd.font_style) || 'N/A'}</p>
                             </div>
-                            <div className="bg-white/5 p-4 rounded-xl border border-white/5">
-                                <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-2">Colors</p>
+                            <div className="bg-white/5 p-4 rounded-xl border border-[#E8ECF4]">
+                                <p className="text-[10px] uppercase tracking-wider text-[#94A3B8] font-bold mb-2">Colors</p>
                                 <div className="flex flex-wrap gap-2">
                                     {vd.color_scheme && vd.color_scheme.length > 0 ? (
                                         vd.color_scheme.map((c: any, i: number) => (
-                                            <div key={i} className="flex items-center gap-2 bg-black/40 pr-2 pl-1 py-1 rounded-md border border-white/5">
+                                            <div key={i} className="flex items-center gap-2 bg-black/40 pr-2 pl-1 py-1 rounded-md border border-[#E8ECF4]">
                                                 <div className="w-4 h-4 rounded-full border border-white/10 shadow-sm" style={{ backgroundColor: safeString(c?.hex, '#666') }}></div>
-                                                <span className="text-[10px] font-mono text-slate-400">{safeString(c?.name, safeString(c?.hex, '?'))}</span>
+                                                <span className="text-[10px] font-mono text-[#4A5568]">{safeString(c?.name, safeString(c?.hex, '?'))}</span>
                                             </div>
                                         ))
                                     ) : (
-                                        <span className="text-sm text-slate-500 italic">N/A</span>
+                                        <span className="text-sm text-[#94A3B8] italic">N/A</span>
                                     )}
                                 </div>
                             </div>
@@ -998,3 +997,4 @@ function ProductAnalysisModal({
         </div>
     );
 }
+

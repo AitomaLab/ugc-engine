@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useState, useEffect } from 'react';
 import { apiFetch } from '@/lib/utils';
@@ -6,10 +6,12 @@ import { apiFetch } from '@/lib/utils';
 const SHOT_TYPES = [
     { value: 'hero', label: 'Hero', desc: 'Classic, centered, well-lit product shot' },
     { value: 'macro_detail', label: 'Macro Detail', desc: 'Extreme close-up on texture and material' },
-    { value: 'pedestal', label: 'Pedestal', desc: 'Elevated on a block, luxurious feel' },
+    { value: 'elevated', label: 'Elevated', desc: 'Elevated on a block, luxurious feel' },
     { value: 'moody_dramatic', label: 'Moody/Dramatic', desc: 'High-contrast, chiaroscuro lighting' },
     { value: 'floating', label: 'Floating', desc: 'Suspended weightlessly, futuristic' },
     { value: 'lifestyle', label: 'Lifestyle', desc: 'Natural setting, ready for use' },
+    { value: 'silhouette', label: 'Silhouette', desc: 'Backlit outline, dramatic shape' },
+    { value: 'overhead', label: 'Overhead', desc: 'Top-down flat lay composition' },
 ];
 
 interface Product {
@@ -76,7 +78,7 @@ export default function GenerateShotModal({
                         <span className="text-lg">🎬</span>
                         <h3 className="text-lg font-bold text-white">Generate Cinematic Shots</h3>
                     </div>
-                    <button onClick={onClose} className="text-slate-400 hover:text-white p-1 hover:bg-white/10 rounded-full transition-colors">
+                    <button onClick={onClose} className="text-[#4A5568] hover:text-white p-1 hover:bg-white/10 rounded-full transition-colors">
                         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                     </button>
                 </div>
@@ -84,18 +86,18 @@ export default function GenerateShotModal({
                 <div className="p-6 space-y-5">
                     {/* Product Info */}
                     <div className="flex items-center gap-3">
-                        <div className="w-12 h-12 rounded-lg overflow-hidden bg-slate-800 flex-shrink-0">
+                        <div className="w-12 h-12 rounded-lg overflow-hidden bg-white/80 flex-shrink-0">
                             <img src={product.image_url} alt={product.name} className="w-full h-full object-cover" />
                         </div>
                         <div>
                             <p className="text-sm font-medium text-white">{product.name}</p>
-                            <p className="text-xs text-slate-500">Cinematic product photography</p>
+                            <p className="text-xs text-[#94A3B8]">Cinematic product photography</p>
                         </div>
                     </div>
 
                     {/* Shot Type */}
                     <div>
-                        <label className="text-xs text-slate-400 font-medium mb-2 block">Shot Type</label>
+                        <label className="text-xs text-[#4A5568] font-medium mb-2 block">Shot Type</label>
                         <div className="grid grid-cols-2 gap-2">
                             {SHOT_TYPES.map((st) => (
                                 <button
@@ -103,12 +105,12 @@ export default function GenerateShotModal({
                                     onClick={() => setShotType(st.value)}
                                     className={`text-left p-3 rounded-xl border transition-all ${
                                         shotType === st.value
-                                            ? 'border-blue-500 bg-blue-500/10'
+                                            ? 'border-[#337AFF] bg-[#337AFF]/10'
                                             : 'border-white/5 bg-white/[0.02] hover:bg-white/5'
                                     }`}
                                 >
                                     <p className="text-sm font-medium text-white">{st.label}</p>
-                                    <p className="text-[10px] text-slate-500 mt-0.5">{st.desc}</p>
+                                    <p className="text-[10px] text-[#94A3B8] mt-0.5">{st.desc}</p>
                                 </button>
                             ))}
                         </div>
@@ -116,7 +118,7 @@ export default function GenerateShotModal({
 
                     {/* Variations */}
                     <div>
-                        <label className="text-xs text-slate-400 font-medium mb-2 block">Variations</label>
+                        <label className="text-xs text-[#4A5568] font-medium mb-2 block">Variations</label>
                         <div className="flex gap-2">
                             {[1, 2, 3, 4].map((n) => (
                                 <button
@@ -125,7 +127,7 @@ export default function GenerateShotModal({
                                     className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${
                                         variations === n
                                             ? 'bg-blue-500 text-white'
-                                            : 'bg-white/5 text-slate-400 hover:bg-white/10'
+                                            : 'bg-white/5 text-[#4A5568] hover:bg-white/10'
                                     }`}
                                 >
                                     {n}
@@ -137,10 +139,10 @@ export default function GenerateShotModal({
                     {/* Cost Estimate */}
                     <div className="bg-white/5 rounded-xl p-3 border border-white/5">
                         <div className="flex justify-between items-center">
-                            <span className="text-xs text-slate-400">Estimated cost</span>
+                            <span className="text-xs text-[#4A5568]">Estimated cost</span>
                             <span className="text-sm font-mono text-green-400">${estimatedCost}</span>
                         </div>
-                        <p className="text-[10px] text-slate-500 mt-1">
+                        <p className="text-[10px] text-[#94A3B8] mt-1">
                             {variations} image{variations > 1 ? 's' : ''} x ${costs?.image_generation_cost?.toFixed(2) ?? '...'}/image. Animation billed separately.
                         </p>
                     </div>

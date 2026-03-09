@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useState, useRef } from 'react';
 import { apiFetch } from '@/lib/utils';
@@ -97,7 +97,7 @@ export function ProductUpload({ onUploadSuccess }: { onUploadSuccess: () => void
                             </button>
                         </div>
                     ) : (
-                        <div className="text-slate-400">
+                        <div className="text-[#4A5568]">
                             <span className="text-4xl block mb-2">📦</span>
                             <span className="text-sm">Click to upload product image</span>
                         </div>

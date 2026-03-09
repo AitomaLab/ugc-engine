@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { apiFetch } from '@/lib/utils';
@@ -14,7 +14,7 @@ function Lightbox({ shot, onClose }: { shot: ProductShot; onClose: () => void })
             <div className="absolute inset-0 bg-black/80 backdrop-blur-md" />
             <div className="relative max-w-4xl w-full max-h-[90vh] flex flex-col items-center" onClick={e => e.stopPropagation()}>
                 {/* Close */}
-                <button onClick={onClose} className="absolute -top-2 -right-2 z-10 bg-slate-800 hover:bg-slate-700 text-white rounded-full p-2 shadow-xl transition-colors">
+                <button onClick={onClose} className="absolute -top-2 -right-2 z-10 bg-white/80 hover:bg-[#337AFF]/5 text-white rounded-full p-2 shadow-xl transition-colors">
                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                 </button>
 
@@ -34,7 +34,7 @@ function Lightbox({ shot, onClose }: { shot: ProductShot; onClose: () => void })
                 {/* Caption */}
                 <div className="mt-3 text-center">
                     <p className="text-sm text-white font-medium capitalize">{shot.shot_type.replace('_', ' ')} Shot</p>
-                    <p className="text-xs text-slate-400 mt-1">
+                    <p className="text-xs text-[#4A5568] mt-1">
                         {shot.status === 'animation_completed' ? 'Cinematic Video' : 'Product Still'}
                     </p>
                 </div>
@@ -84,7 +84,7 @@ function ShotCard({
             onMouseLeave={() => setHovering(false)}
         >
             {/* Media */}
-            <div className="relative aspect-[9/16] bg-slate-800/50 overflow-hidden cursor-pointer" onClick={onPreview}>
+            <div className="relative aspect-[9/16] bg-[#F0F4FF] overflow-hidden cursor-pointer" onClick={onPreview}>
                 {shot.status === 'animation_completed' && shot.video_url ? (
                     <video
                         ref={videoRef}
@@ -98,16 +98,16 @@ function ShotCard({
                 ) : shot.image_url ? (
                     <img src={shot.image_url} alt={shot.shot_type} className="w-full h-full object-cover" />
                 ) : (
-                    <div className="w-full h-full flex items-center justify-center bg-slate-900">
+                    <div className="w-full h-full flex items-center justify-center bg-white">
                         {isPending ? (
                             <div className="flex flex-col items-center gap-2">
-                                <div className="animate-spin w-8 h-8 border-2 border-slate-600 border-t-blue-400 rounded-full" />
-                                <span className="text-[10px] text-slate-500 animate-pulse">
+                                <div className="animate-spin w-8 h-8 border-2 border-[#E8ECF4] border-t-blue-400 rounded-full" />
+                                <span className="text-[10px] text-[#94A3B8] animate-pulse">
                                     {shot.status === 'image_pending' ? 'Generating...' : 'Animating...'}
                                 </span>
                             </div>
                         ) : (
-                            <span className="text-slate-600 text-xs">No image</span>
+                            <span className="text-[#94A3B8] text-xs">No image</span>
                         )}
                     </div>
                 )}
@@ -152,7 +152,7 @@ function ShotCard({
                     ) : shot.status === 'animation_completed' ? (
                         <span className="text-[9px] px-1.5 py-0.5 rounded-full font-medium text-green-400 bg-green-500/10">Video Ready</span>
                     ) : shot.status === 'image_completed' ? (
-                        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-medium text-blue-400 bg-blue-500/10">Still Ready</span>
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-medium text-[#337AFF] bg-[#337AFF]/10">Still Ready</span>
                     ) : (
                         <span className="text-[9px] px-1.5 py-0.5 rounded-full font-medium text-yellow-400 bg-yellow-500/10 animate-pulse">Processing</span>
                     )}
@@ -286,14 +286,14 @@ export default function ProductShotsGallery({
 
     return (
         <>
-            <div className="mt-4 bg-slate-900/50 rounded-2xl border border-white/5 overflow-hidden">
+            <div className="mt-4 bg-white/50 rounded-2xl border border-white/5 overflow-hidden">
                 {/* Tab Header */}
                 <div className="flex items-center gap-0 border-b border-white/5">
                     <button
                         onClick={() => setActiveTab('stills')}
                         className={`flex-1 py-3 px-4 text-xs font-medium transition-colors ${activeTab === 'stills'
-                            ? 'text-blue-400 border-b-2 border-blue-400 bg-blue-500/5'
-                            : 'text-slate-500 hover:text-slate-300'
+                            ? 'text-[#337AFF] border-b-2 border-blue-400 bg-blue-500/5'
+                            : 'text-[#94A3B8] hover:text-[#1A1A1F]'
                             }`}
                     >
                         📸 Product Shots ({stills.length})
@@ -302,7 +302,7 @@ export default function ProductShotsGallery({
                         onClick={() => setActiveTab('videos')}
                         className={`flex-1 py-3 px-4 text-xs font-medium transition-colors ${activeTab === 'videos'
                             ? 'text-purple-400 border-b-2 border-purple-400 bg-purple-500/5'
-                            : 'text-slate-500 hover:text-slate-300'
+                            : 'text-[#94A3B8] hover:text-[#1A1A1F]'
                             }`}
                     >
                         🎬 Cinematic Videos ({videos.length})
@@ -313,10 +313,10 @@ export default function ProductShotsGallery({
                 <div className="p-4">
                     {displayShots.length === 0 ? (
                         <div className="text-center py-8">
-                            <p className="text-slate-500 text-sm">
+                            <p className="text-[#94A3B8] text-sm">
                                 {activeTab === 'stills' ? 'No product shots yet.' : 'No cinematic videos yet.'}
                             </p>
-                            <p className="text-slate-600 text-xs mt-1">
+                            <p className="text-[#94A3B8] text-xs mt-1">
                                 {activeTab === 'videos' ? 'Animate a product shot to create a cinematic video.' : 'Generate shots to get started.'}
                             </p>
                         </div>

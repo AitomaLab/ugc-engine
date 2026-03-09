@@ -53,5 +53,6 @@ export interface ProductShot {
     video_url?: string;
     prompt?: string;
     error_message?: string;
+    transition_type?: string;
     created_at: string;
 }

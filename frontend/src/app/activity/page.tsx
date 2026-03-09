@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useState, useEffect, useCallback } from 'react';
 import { apiFetch, formatDate, getApiUrl } from '@/lib/utils';
@@ -134,18 +134,18 @@ export default function ActivityPage() {
     if (loading) {
         return (
             <div className="flex items-center justify-center h-96">
-                <div className="text-slate-500 text-sm italic animate-pulse">Loading activity...</div>
+                <div className="text-[#94A3B8] text-sm italic animate-pulse">Loading activity...</div>
             </div>
         );
     }
 
     return (
-        <div className="space-y-8 animate-slide-up">
+        <div className="space-y-8 animate-reveal">
             <header>
                 <h2 className="text-3xl font-bold tracking-tight">
                     <span className="gradient-text">Activity</span>
                 </h2>
-                <p className="text-slate-400 mt-2 text-sm">
+                <p className="text-[#4A5568] mt-2 text-sm">
                     Monitor generation jobs, track performance, and debug issues.
                 </p>
             </header>
@@ -160,9 +160,9 @@ export default function ActivityPage() {
                     { label: 'Total Spend', value: costStats ? `$${costStats.total_spend_month.toFixed(2)}` : '—', sub: costStats ? `$${costStats.total_spend_all.toFixed(2)} all time` : 'this month' },
                 ].map((stat) => (
                     <div key={stat.label} className="glass-panel p-5">
-                        <p className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">{stat.label}</p>
-                        <p className="text-2xl font-bold text-slate-100 mt-1">{stat.value}</p>
-                        <p className="text-[10px] text-slate-500 mt-1">{stat.sub}</p>
+                        <p className="text-[10px] uppercase tracking-wider text-[#94A3B8] font-semibold">{stat.label}</p>
+                        <p className="text-2xl font-bold text-[#1A1A1F] mt-1">{stat.value}</p>
+                        <p className="text-[10px] text-[#94A3B8] mt-1">{stat.sub}</p>
                     </div>
                 ))}
             </div>
@@ -175,7 +175,7 @@ export default function ActivityPage() {
                 >
                     {groupByCampaign ? '✓ ' : ''}Group by Campaign
                 </button>
-                <span className="text-xs text-slate-500 ml-auto">{jobs.length} total jobs</span>
+                <span className="text-xs text-[#94A3B8] ml-auto">{jobs.length} total jobs</span>
             </div>
 
             {/* ============ JOB TABLE ============ */}
@@ -185,8 +185,8 @@ export default function ActivityPage() {
                     {Array.from(campaignGroups.entries()).map(([campaignName, campaignJobs]) => (
                         <div key={campaignName}>
                             <div className="flex items-center gap-2 mb-3">
-                                <h4 className="text-sm font-semibold text-slate-300">{campaignName}</h4>
-                                <span className="text-[10px] text-slate-500">({campaignJobs.length} jobs)</span>
+                                <h4 className="text-sm font-semibold text-[#1A1A1F]">{campaignName}</h4>
+                                <span className="text-[10px] text-[#94A3B8]">({campaignJobs.length} jobs)</span>
                             </div>
                             <JobTable
                                 jobs={campaignJobs}
@@ -239,36 +239,36 @@ function JobTable({
             <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                     <thead>
-                        <tr className="bg-slate-900/50 border-b border-slate-800/60">
-                            {showCampaign && <th className="p-4 text-[10px] uppercase font-bold text-slate-500 tracking-tighter">Campaign</th>}
-                            <th className="p-4 text-[10px] uppercase font-bold text-slate-500 tracking-tighter">Job ID</th>
-                            <th className="p-4 text-[10px] uppercase font-bold text-slate-500 tracking-tighter">Influencer</th>
-                            <th className="p-4 text-[10px] uppercase font-bold text-slate-500 tracking-tighter">Status</th>
-                            <th className="p-4 text-[10px] uppercase font-bold text-slate-500 tracking-tighter">Progress</th>
-                            <th className="p-4 text-[10px] uppercase font-bold text-slate-500 tracking-tighter">Model</th>
-                            <th className="p-4 text-[10px] uppercase font-bold text-slate-500 tracking-tighter">Cost</th>
-                            <th className="p-4 text-[10px] uppercase font-bold text-slate-500 tracking-tighter">Duration</th>
-                            <th className="p-4 text-[10px] uppercase font-bold text-slate-500 tracking-tighter">Created</th>
-                            <th className="p-4 text-[10px] uppercase font-bold text-slate-500 tracking-tighter">Actions</th>
+                        <tr className="bg-white/50 border-b border-[#E8ECF4]">
+                            {showCampaign && <th className="p-4 text-[10px] uppercase font-bold text-[#94A3B8] tracking-tighter">Campaign</th>}
+                            <th className="p-4 text-[10px] uppercase font-bold text-[#94A3B8] tracking-tighter">Job ID</th>
+                            <th className="p-4 text-[10px] uppercase font-bold text-[#94A3B8] tracking-tighter">Influencer</th>
+                            <th className="p-4 text-[10px] uppercase font-bold text-[#94A3B8] tracking-tighter">Status</th>
+                            <th className="p-4 text-[10px] uppercase font-bold text-[#94A3B8] tracking-tighter">Progress</th>
+                            <th className="p-4 text-[10px] uppercase font-bold text-[#94A3B8] tracking-tighter">Model</th>
+                            <th className="p-4 text-[10px] uppercase font-bold text-[#94A3B8] tracking-tighter">Cost</th>
+                            <th className="p-4 text-[10px] uppercase font-bold text-[#94A3B8] tracking-tighter">Duration</th>
+                            <th className="p-4 text-[10px] uppercase font-bold text-[#94A3B8] tracking-tighter">Created</th>
+                            <th className="p-4 text-[10px] uppercase font-bold text-[#94A3B8] tracking-tighter">Actions</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-900/50">
                         {jobs.length === 0 ? (
                             <tr>
-                                <td colSpan={showCampaign ? 10 : 9} className="p-16 text-center text-slate-600 italic text-sm">
+                                <td colSpan={showCampaign ? 10 : 9} className="p-16 text-center text-[#94A3B8] italic text-sm">
                                     No jobs found.
                                 </td>
                             </tr>
                         ) : (
                             jobs.map((job) => (
-                                <tr key={job.id} className="hover:bg-slate-800/10 transition-colors">
+                                <tr key={job.id} className="hover:bg-white/80/10 transition-colors">
                                     {showCampaign && (
-                                        <td className="p-4 text-xs text-slate-400">{job.campaign_name || 'Single'}</td>
+                                        <td className="p-4 text-xs text-[#4A5568]">{job.campaign_name || 'Single'}</td>
                                     )}
                                     <td className="p-4">
-                                        <span className="text-xs font-mono text-slate-400">{job.id.substring(0, 8)}</span>
+                                        <span className="text-xs font-mono text-[#4A5568]">{job.id.substring(0, 8)}</span>
                                     </td>
-                                    <td className="p-4 text-xs text-slate-300">
+                                    <td className="p-4 text-xs text-[#1A1A1F]">
                                         {influencerMap.get(job.influencer_id || '')?.name ?? '—'}
                                     </td>
                                     <td className="p-4">
@@ -287,19 +287,19 @@ function JobTable({
                                             />
                                         </div>
                                     </td>
-                                    <td className="p-4 text-xs text-slate-400">{job.model_api || '—'}</td>
+                                    <td className="p-4 text-xs text-[#4A5568]">{job.model_api || '—'}</td>
                                     <td className="p-4 text-xs font-medium text-green-400">
                                         {job.total_cost != null ? `$${Number(job.total_cost).toFixed(3)}` : '—'}
                                     </td>
-                                    <td className="p-4 text-xs text-slate-400">{getDuration(job)}</td>
-                                    <td className="p-4 text-xs text-slate-500">{new Date(job.created_at).toLocaleDateString()}</td>
+                                    <td className="p-4 text-xs text-[#4A5568]">{getDuration(job)}</td>
+                                    <td className="p-4 text-xs text-[#94A3B8]">{new Date(job.created_at).toLocaleDateString()}</td>
                                     <td className="p-4">
                                         {job.final_video_url ? (
                                             <a
                                                 href={job.final_video_url}
                                                 target="_blank"
                                                 rel="noopener noreferrer"
-                                                className="text-xs text-blue-400 hover:text-blue-300 font-medium"
+                                                className="text-xs text-[#337AFF] hover:text-[#337AFF]/80 font-medium"
                                             >
                                                 Preview
                                             </a>
@@ -311,7 +311,7 @@ function JobTable({
                                                 View Error
                                             </button>
                                         ) : (
-                                            <span className="text-xs text-slate-600 italic">—</span>
+                                            <span className="text-xs text-[#94A3B8] italic">—</span>
                                         )}
                                     </td>
                                 </tr>
@@ -343,25 +343,25 @@ function ErrorModal({ job, onClose }: { job: Job; onClose: () => void }) {
                 <div className="p-6 space-y-5">
                     <div className="flex items-center justify-between">
                         <h3 className="font-semibold text-lg text-red-400">Job Failed</h3>
-                        <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors text-lg">✕</button>
+                        <button onClick={onClose} className="text-[#94A3B8] hover:text-white transition-colors text-lg">✕</button>
                     </div>
 
                     <div>
-                        <p className="text-[10px] uppercase text-slate-500 font-semibold mb-1">Job ID</p>
-                        <p className="text-sm text-slate-300 font-mono">{job.id}</p>
+                        <p className="text-[10px] uppercase text-[#94A3B8] font-semibold mb-1">Job ID</p>
+                        <p className="text-sm text-[#1A1A1F] font-mono">{job.id}</p>
                     </div>
 
                     {/* Troubleshooting */}
-                    <div className="bg-blue-500/5 border border-blue-500/15 rounded-xl p-4">
-                        <p className="text-[10px] uppercase text-blue-400 font-semibold mb-2">💡 Troubleshooting Suggestion</p>
-                        <p className="text-sm text-slate-300 leading-relaxed">{suggestion}</p>
+                    <div className="bg-blue-500/5 border border-[#337AFF]/15 rounded-xl p-4">
+                        <p className="text-[10px] uppercase text-[#337AFF] font-semibold mb-2">💡 Troubleshooting Suggestion</p>
+                        <p className="text-sm text-[#1A1A1F] leading-relaxed">{suggestion}</p>
                     </div>
 
                     {/* Cost Breakdown */}
                     {job.total_cost != null && (
                         <div>
-                            <p className="text-[10px] uppercase text-slate-500 font-semibold mb-2">💰 Cost Breakdown</p>
-                            <div className="bg-slate-900 rounded-xl p-4 border border-slate-800/60 space-y-2">
+                            <p className="text-[10px] uppercase text-[#94A3B8] font-semibold mb-2">💰 Cost Breakdown</p>
+                            <div className="bg-white rounded-xl p-4 border border-[#E8ECF4] space-y-2">
                                 {[
                                     { label: '🎬 Video Generation', value: job.cost_video },
                                     { label: '🎙️ Voice Generation', value: job.cost_voice },
@@ -369,14 +369,14 @@ function ErrorModal({ job, onClose }: { job: Job; onClose: () => void }) {
                                     { label: '⚙️ Processing', value: job.cost_processing },
                                 ].map((c) => (
                                     <div key={c.label} className="flex justify-between text-xs">
-                                        <span className="text-slate-400">{c.label}</span>
-                                        <span className="text-slate-300 font-medium">
+                                        <span className="text-[#4A5568]">{c.label}</span>
+                                        <span className="text-[#1A1A1F] font-medium">
                                             ${c.value != null ? Number(c.value).toFixed(3) : '0.000'}
                                         </span>
                                     </div>
                                 ))}
-                                <div className="border-t border-slate-700/50 pt-2 mt-2 flex justify-between text-sm">
-                                    <span className="text-slate-300 font-semibold">Total</span>
+                                <div className="border-t border-[#E8ECF4]/50 pt-2 mt-2 flex justify-between text-sm">
+                                    <span className="text-[#1A1A1F] font-semibold">Total</span>
                                     <span className="text-green-400 font-bold">${Number(job.total_cost).toFixed(3)}</span>
                                 </div>
                             </div>
@@ -385,8 +385,8 @@ function ErrorModal({ job, onClose }: { job: Job; onClose: () => void }) {
 
                     {/* Error Message */}
                     <div>
-                        <p className="text-[10px] uppercase text-slate-500 font-semibold mb-2">Full Error</p>
-                        <pre className="text-xs text-red-400/80 bg-slate-900 rounded-xl p-4 overflow-x-auto whitespace-pre-wrap max-h-60 border border-slate-800/60">
+                        <p className="text-[10px] uppercase text-[#94A3B8] font-semibold mb-2">Full Error</p>
+                        <pre className="text-xs text-red-400/80 bg-white rounded-xl p-4 overflow-x-auto whitespace-pre-wrap max-h-60 border border-[#E8ECF4]">
                             {job.error_message || 'No error message available.'}
                         </pre>
                     </div>
