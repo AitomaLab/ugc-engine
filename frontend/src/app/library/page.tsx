@@ -11,6 +11,69 @@ import ProductShotsGallery from './ProductShotsGallery';
 type Tab = 'videos' | 'influencers' | 'scripts' | 'clips' | 'products';
 
 // ---------------------------------------------------------------------------
+// Custom Dropdown Component
+// ---------------------------------------------------------------------------
+
+function CustomDropdown({
+    value,
+    onChange,
+    options,
+    className = ""
+}: {
+    value: string;
+    onChange: (val: string) => void;
+    options: { value: string; label: string }[];
+    className?: string;
+}) {
+    const [isOpen, setIsOpen] = useState(false);
+    const dropdownRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        function handleClickOutside(event: MouseEvent) {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+                setIsOpen(false);
+            }
+        }
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
+
+    const selectedLabel = options.find(o => o.value === value)?.label || '';
+
+    return (
+        <div className={`relative inline-block ${className}`} ref={dropdownRef}>
+            <button
+                type="button"
+                onClick={() => setIsOpen(!isOpen)}
+                className="input-field w-auto min-w-[140px] text-xs pr-8 bg-white cursor-pointer flex items-center justify-between transition-all"
+            >
+                <span className="truncate mr-2 font-medium text-[#1A1A1F]">{selectedLabel}</span>
+                <div className="pointer-events-none absolute right-2 flex items-center text-[#94A3B8]">
+                    <svg className={`fill-current h-4 w-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
+                </div>
+            </button>
+            {isOpen && (
+                <div className="absolute z-50 mt-2 min-w-full w-48 bg-white/90 backdrop-blur-md border border-[#E8ECF4] rounded-xl shadow-xl py-1 max-h-60 overflow-y-auto animate-in fade-in zoom-in-95 duration-150">
+                    {options.map(opt => (
+                        <button
+                            key={opt.value}
+                            type="button"
+                            className={`w-full text-left truncate px-4 py-2 text-xs hover:bg-[#337AFF]/5 transition-colors ${value === opt.value ? 'text-[#337AFF] font-semibold bg-[#337AFF]/5' : 'text-[#4A5568]'}`}
+                            onClick={() => {
+                                onChange(opt.value);
+                                setIsOpen(false);
+                            }}
+                        >
+                            {opt.label}
+                        </button>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Main Library Page
 // ---------------------------------------------------------------------------
 
@@ -145,34 +208,22 @@ function VideosTab({ searchQuery }: { searchQuery: string }) {
         <div className="space-y-4">
             {/* Filters */}
             <div className="flex items-center gap-3 flex-wrap">
-                <div className="relative inline-block">
-                    <select
-                        value={filterInfluencer}
-                        onChange={(e) => setFilterInfluencer(e.target.value)}
-                        className="input-field w-auto text-xs pr-8 appearance-none bg-white cursor-pointer"
-                    >
-                        <option value="all">All Influencers</option>
-                        {influencers.map((inf) => (
-                            <option key={inf.id} value={inf.id}>{inf.name}</option>
-                        ))}
-                    </select>
-                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-[#94A3B8]">
-                        <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
-                    </div>
-                </div>
-                <div className="relative inline-block">
-                    <select
-                        value={sortBy}
-                        onChange={(e) => setSortBy(e.target.value as 'newest' | 'oldest')}
-                        className="input-field w-auto text-xs pr-8 appearance-none bg-white cursor-pointer"
-                    >
-                        <option value="newest">Newest first</option>
-                        <option value="oldest">Oldest first</option>
-                    </select>
-                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-[#94A3B8]">
-                        <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
-                    </div>
-                </div>
+                <CustomDropdown
+                    value={filterInfluencer}
+                    onChange={setFilterInfluencer}
+                    options={[
+                        { value: 'all', label: 'All Influencers' },
+                        ...influencers.map(inf => ({ value: inf.id, label: inf.name }))
+                    ]}
+                />
+                <CustomDropdown
+                    value={sortBy}
+                    onChange={(val) => setSortBy(val as 'newest' | 'oldest')}
+                    options={[
+                        { value: 'newest', label: 'Newest first' },
+                        { value: 'oldest', label: 'Oldest first' }
+                    ]}
+                />
                 <span className="text-xs text-[#94A3B8] ml-auto">{videos.length} video{videos.length !== 1 ? 's' : ''}</span>
             </div>
 
