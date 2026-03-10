@@ -1,6 +1,6 @@
 ﻿'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { Suspense, useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { apiFetch } from '@/lib/utils';
 import type { Product, ProductShot } from '@/lib/types';
@@ -12,7 +12,7 @@ const SHOT_STYLES = [
   { key: 'moody', label: 'Moody', icon: <svg viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg> },
 ];
 
-export default function CinematicPage() {
+function CinematicContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [products, setProducts] = useState<any[]>([]);
@@ -223,7 +223,7 @@ export default function CinematicPage() {
         </h2>
 
         {existingShots.length > 0 ? (
-          <div className="video-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))' }}>
+          <div className="video-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px', width: '100%' }}>
             {existingShots.map(shot => {
               const statusClass = shot.status.includes('completed') ? 'done' : shot.status.includes('failed') ? 'failed' : 'processing';
               const statusLabel = shot.status.includes('completed') ? 'Done' : shot.status.includes('failed') ? 'Failed' : 'Processing';
@@ -243,9 +243,14 @@ export default function CinematicPage() {
                     <div className="video-name" style={{ fontSize: '12px', fontWeight: 600 }}>{shot.shot_type.replace('_', ' ')}</div>
                     <div className="video-date" style={{ fontSize: '10px', color: 'var(--text-3)' }}>{new Date(shot.created_at).toLocaleDateString()}</div>
                   </div>
-                  <div className="video-info flex p-2 border-t border-[var(--border-soft)]">
-                    <button className="flex-1 py-1.5 bg-[var(--surface-hover)] hover:bg-[var(--blue-light)] hover:text-[var(--blue)] text-[var(--text-2)] rounded text-xs font-semibold" onClick={() => shot.video_url && window.open(shot.video_url)}>
+                  <div className="video-info" style={{ display: 'flex', gap: '8px', paddingTop: 0, paddingBottom: '12px', marginTop: 'auto' }}>
+                    <button style={{ flex: 1, padding: '6px 0', backgroundColor: 'var(--surface-hover)', color: 'var(--blue)', borderRadius: '4px', fontSize: '12px', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px', border: '1px solid rgba(51,122,255,0.15)', cursor: 'pointer' }} onClick={() => shot.video_url && window.open(shot.video_url)}>
+                      <svg viewBox='0 0 24 24' style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><path d='M21 15v4a2 0 0 1-2 2H5a2 0 0 1-2-2v-4' /><polyline points='7 10 12 15 17 10' /><line x1='12' y1='15' x2='12' y2='3' /></svg>
                       Download
+                    </button>
+                    <button style={{ flex: 1, padding: '6px 0', backgroundColor: 'transparent', color: 'var(--text-2)', borderRadius: '4px', fontSize: '12px', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px', border: '1px solid var(--border)', cursor: 'pointer' }}>
+                      <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
+                      Use in Video
                     </button>
                   </div>
                 </div>
@@ -263,5 +268,13 @@ export default function CinematicPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function CinematicPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <CinematicContent />
+    </Suspense>
   );
 }
