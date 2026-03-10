@@ -25,6 +25,8 @@ export default function CinematicPage() {
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [productShots, setProductShots] = useState<ProductShot[]>([]);
+
   const fetchProducts = useCallback(async () => {
     try {
       const data = await apiFetch<any[]>('/api/products');
@@ -43,8 +45,38 @@ export default function CinematicPage() {
 
   useEffect(() => { fetchProducts(); }, [fetchProducts]);
 
+  const fetchShots = useCallback(async (pid: string) => {
+    if (!pid) {
+      setProductShots([]);
+      return;
+    }
+    try {
+      const data = await apiFetch<ProductShot[]>(`/api/products/${pid}/shots`);
+      setProductShots(data || []);
+    } catch (e) {
+      console.error(e);
+      setProductShots([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchShots(selectedProductId);
+  }, [selectedProductId, fetchShots]);
+
+  // Poll for generating shots
+  useEffect(() => {
+    if (!selectedProductId || productShots.length === 0) return;
+    const hasPending = productShots.some(s => s.status.includes('pending') || s.status.includes('processing') || s.status === 'image_completed');
+    if (!hasPending) return;
+
+    const interval = setInterval(() => {
+      fetchShots(selectedProductId);
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [productShots, selectedProductId, fetchShots]);
+
   const selectedProduct = products.find((p: any) => p.id === selectedProductId);
-  const existingShots: ProductShot[] = selectedProduct?.cinematic_shots || [];
+  const existingShots: ProductShot[] = productShots;
 
   const handleProductChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const pid = e.target.value;
@@ -91,7 +123,7 @@ export default function CinematicPage() {
         body: JSON.stringify(payload),
       });
       // Refresh shots
-      await fetchProducts();
+      await fetchShots(selectedProductId);
     } catch (e: any) {
       setError(e.message ?? 'Generation failed. Please try again.');
     }
