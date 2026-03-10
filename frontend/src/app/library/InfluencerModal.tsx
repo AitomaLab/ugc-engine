@@ -139,23 +139,25 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
     }
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-            <div className="bg-white border border-[#E8ECF4] rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+        <div className="modal-overlay">
+            <div className="modal-box">
 
                 {/* Header */}
-                <div className="p-6 border-b border-[#E8ECF4] flex justify-between items-center ">
-                    <h3 className="text-lg font-semibold text-[#1A1A1F]">
+                <div className="modal-header">
+                    <h3 className="">
                         {initialData ? 'Edit Influencer' : 'Add New Influencer'}
                     </h3>
-                    <button onClick={onClose} className="text-[#4A5568] hover:text-white transition"></button>
+                    <button onClick={onClose} className="modal-close">
+                        <svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12" /></svg>
+                    </button>
                 </div>
 
                 {/* Body */}
-                <div className="p-6 space-y-5 max-h-[80vh] overflow-y-auto">
+                <div className="modal-body space-y-5">
 
                     {/* Name */}
                     <div className="space-y-1">
-                        <label className="text-xs font-medium text-[#4A5568]">Name <span className="text-pink-500">*</span></label>
+                        <label className="form-label">Name <span className="required">*</span></label>
                         <input
                             value={name}
                             onChange={(e) => setName(e.target.value)}
@@ -165,21 +167,22 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
                     </div>
 
                     {/* Gender */}
-                    <div className="space-y-1">
-                        <label className="text-xs font-medium text-[#4A5568]">Sex <span className="text-pink-500">*</span></label>
-                        <div className="flex gap-2">
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <label className="form-label" style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase' }}>Sex <span className="required" style={{ color: 'var(--red)' }}>*</span></label>
+                        <div style={{ display: 'flex', gap: '8px' }}>
                             {['Male', 'Female'].map(g => (
                                 <button
                                     key={g}
                                     type="button"
                                     onClick={() => setGender(g)}
-                                    className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium transition border ${
-                                        gender === g
-                                            ? 'bg-blue-600 border-[#337AFF] text-white'
-                                            : 'bg-white/80 border-[#E8ECF4] text-[#4A5568] hover:bg-[#337AFF]/5'
-                                    }`}
+                                    style={{
+                                        flex: 1, padding: '8px 16px', borderRadius: 'var(--radius-sm)', fontSize: '13px', fontWeight: 500, transition: 'all 0.15s',
+                                        border: `1px solid ${gender === g ? 'var(--blue)' : 'var(--border)'}`,
+                                        background: gender === g ? 'var(--blue)' : 'var(--surface)',
+                                        color: gender === g ? 'white' : 'var(--text-2)'
+                                    }}
                                 >
-                                    {g === 'Male' ? '' : ''} {g}
+                                    {g}
                                 </button>
                             ))}
                         </div>
@@ -187,7 +190,7 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
 
                     {/* Category (Style) */}
                     <div className="space-y-1">
-                        <label className="text-xs font-medium text-[#4A5568]">Category</label>
+                        <label className="form-label">Category</label>
                         <div className="relative">
                             <input
                                 value={style}
@@ -203,47 +206,47 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
                     </div>
 
                     {/* Image Upload */}
-                    <div className="space-y-2">
-                        <label className="text-xs font-medium text-[#4A5568]">Profile Image</label>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <label className="form-label" style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase' }}>Profile Image</label>
 
-                        <div className="flex items-center gap-4">
+                        <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
                             {/* Preview */}
-                            <div className="w-20 h-20 rounded-xl bg-white/80 border border-[#E8ECF4] flex items-center justify-center overflow-hidden shrink-0 relative group">
+                            <div style={{ width: '80px', height: '80px', borderRadius: '50%', backgroundColor: 'var(--surface-hover)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative', flexShrink: 0 }}>
                                 {imageUrl ? (
-                                    <img src={imageUrl} alt="Preview" className="w-full h-full object-cover" />
+                                    <img src={imageUrl} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                 ) : (
-                                    <span className="text-[#94A3B8]">
-                                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                                    <span style={{ color: 'var(--text-3)' }}>
+                                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
                                     </span>
                                 )}
                                 {uploading && (
-                                    <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
-                                        <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                    <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                        <div style={{ width: '20px', height: '20px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: 'white', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></div>
                                     </div>
                                 )}
                             </div>
 
                             {/* Controls */}
-                            <div className="flex-1 space-y-2">
+                            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                 <input
                                     type="file"
                                     ref={fileInputRef}
                                     onChange={handleFileSelect}
-                                    className="hidden"
+                                    style={{ display: 'none' }}
                                     accept="image/*"
                                 />
-                                <div className="flex gap-2">
+                                <div style={{ display: 'flex', gap: '8px' }}>
                                     <button
                                         onClick={() => fileInputRef.current?.click()}
                                         disabled={uploading}
-                                        className="px-3 py-1.5 bg-white/80 hover:bg-[#337AFF]/5 text-[#1A1A1F] text-xs rounded-lg transition border border-[#E8ECF4]"
+                                        style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 600, borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-2)', cursor: 'pointer' }}
                                     >
                                         {uploading ? 'Uploading...' : 'Upload Image'}
                                     </button>
                                     {imageUrl && (
                                         <button
                                             onClick={() => setImageUrl('')}
-                                            className="px-3 py-1.5 text-red-400 hover:bg-red-500/10 text-xs rounded-lg transition"
+                                            style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 600, borderRadius: 'var(--radius-sm)', border: 'none', background: 'rgba(239, 68, 68, 0.1)', color: 'var(--red)', cursor: 'pointer' }}
                                         >
                                             Remove
                                         </button>
@@ -253,7 +256,8 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
                                     value={imageUrl}
                                     onChange={(e) => setImageUrl(e.target.value)}
                                     placeholder="Or paste image URL..."
-                                    className="input-field w-full text-xs py-1.5"
+                                    className="input-field w-full"
+                                    style={{ fontSize: '12px', padding: '6px 10px', width: '100%' }}
                                 />
                             </div>
                         </div>
@@ -261,7 +265,7 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
 
                     {/* Description */}
                     <div className="space-y-1">
-                        <label className="text-xs font-medium text-[#4A5568]">Description</label>
+                        <label className="form-label">Description</label>
                         <textarea
                             value={description}
                             onChange={(e) => setDescription(e.target.value)}
@@ -272,7 +276,7 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
 
                     {/* Voice ID */}
                     <div className="space-y-1">
-                        <label className="text-xs font-medium text-[#4A5568]">ElevenLabs Voice ID</label>
+                        <label className="form-label">ElevenLabs Voice ID</label>
                         <input
                             value={voiceId}
                             onChange={(e) => setVoiceId(e.target.value)}
@@ -283,7 +287,7 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
                 </div>
 
                 {/* Footer */}
-                <div className="p-6 border-t border-[#E8ECF4] bg-[#F0F4FF]/30 flex justify-end gap-3">
+                <div className="modal-footer">
                     <button onClick={onClose} className="btn-secondary">Cancel</button>
                     <button
                         onClick={handleSave}

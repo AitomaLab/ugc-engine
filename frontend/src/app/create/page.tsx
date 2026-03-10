@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { apiFetch, getApiUrl } from '@/lib/utils';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import type { ProductShot } from '@/lib/types';
 
 // ---------------------------------------------------------------------------
@@ -60,6 +60,7 @@ const CONTENT_STRATEGIES = [
 
 export default function CreatePage() {
     const router = useRouter();
+    const searchParams = useSearchParams();
     const API_URL = getApiUrl();
 
     // Data
@@ -90,6 +91,35 @@ export default function CreatePage() {
     const [successMessage, setSuccessMessage] = useState('');
     const [hookLoading, setHookLoading] = useState(false);
     const [costEstimate, setCostEstimate] = useState<CostEstimate | any | null>(null);
+
+    // Initial data load
+    useEffect(() => {
+        let mounted = true;
+        Promise.all([
+            apiFetch<Influencer[]>('/influencers').catch(() => []),
+            apiFetch<Script[]>('/scripts').catch(() => []),
+            apiFetch<AppClip[]>('/app-clips').catch(() => []),
+            apiFetch<any[]>('/api/products').catch(() => [])
+        ]).then(([infRes, scRes, clipRes, prodRes]) => {
+            if (!mounted) return;
+            setInfluencers(infRes || []);
+            setScripts(scRes || []);
+            setAppClips(clipRes || []);
+            setProducts(prodRes || []);
+            setLoading(false);
+
+            const targetProductId = searchParams.get('product_id');
+            if (targetProductId) {
+                setProductType('physical');
+                setProductId(targetProductId);
+            }
+            const targetInfId = searchParams.get('influencer_id');
+            if (targetInfId) setSelectedInfluencer(targetInfId);
+            const targetScrId = searchParams.get('script_id');
+            if (targetScrId) setSelectedScript(targetScrId);
+        });
+        return () => { mounted = false; };
+    }, [searchParams]);
 
     // Cinematic Product Shots (Step 14)
     const [cinematicShots, setCinematicShots] = useState<ProductShot[]>([]);
@@ -150,28 +180,6 @@ export default function CreatePage() {
     const isCampaignMode = quantity > 1;
     const selectedInf = influencers.find((i) => i.id === selectedInfluencer);
     const selectedScr = scripts.find((s) => s.id === selectedScript);
-
-    // Fetch data
-    const fetchData = useCallback(async () => {
-        try {
-            const [inf, scr, clips, prods] = await Promise.all([
-                apiFetch<Influencer[]>('/influencers'),
-                apiFetch<Script[]>('/scripts'),
-                apiFetch<AppClip[]>('/app-clips'),
-                apiFetch<any[]>('/api/products').then(d => Array.isArray(d) ? d : []).catch(() => []),
-            ]);
-            setInfluencers(inf);
-            setScripts(scr);
-            setAppClips(clips);
-            setProducts(prods);
-        } catch (err) {
-            console.error('Create page fetch error:', err);
-        } finally {
-            setLoading(false);
-        }
-    }, []);
-
-    useEffect(() => { fetchData(); }, [fetchData]);
 
     // Debounced cost estimation
     useEffect(() => {
@@ -303,616 +311,378 @@ export default function CreatePage() {
 
     if (loading) {
         return (
-            <div className="flex items-center justify-center h-96">
-                <div className="text-[#94A3B8] text-sm italic animate-pulse">
-                    Loading creative assets...
+            <div className="content-area">
+                <div className="empty-state">
+                    <div className="empty-title">Loading creative assets...</div>
                 </div>
             </div>
         );
     }
 
     return (
-        <div className="space-y-10 animate-reveal max-w-3xl">
-            <header>
-                <h2 className="text-3xl font-bold tracking-tight">
-                    <span className="gradient-text">Create</span>
-                </h2>
-                <p className="text-[#4A5568] mt-2 text-sm">
-                    Generate single videos or launch full campaigns — all from one place.
-                </p>
-            </header>
-
-            {/* Success Banner */}
-            {successMessage && (
-                <div className={`glass-panel p-4 text-center text-sm font-medium ${successMessage.startsWith('') ? 'text-red-400' : 'text-green-400'}`}>
-                    {successMessage}
-                </div>
-            )}
-
-            {/* ============ SECTION 1: WHAT TO CREATE ============ */}
-            <section className="glass-panel p-6 space-y-6">
-                <div>
-                    <h3 className="text-sm font-semibold text-[#1A1A1F] mb-1">What do you want to create?</h3>
-                    <p className="text-xs text-[#94A3B8]">Select an influencer and specify quantity.</p>
+        <div className="create-layout">
+            {/* ──── LEFT PANEL: Configuration ──── */}
+            <div className="config-panel">
+                <div style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-1)', marginBottom: '20px', letterSpacing: '-0.3px' }}>
+                    Create Video
                 </div>
 
-                {/* Influencer Grid */}
-                <div>
-                    <label className="text-xs text-[#4A5568] font-medium mb-3 block">Influencer</label>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                        {influencers.map((inf) => (
-                            <button
-                                key={inf.id}
-                                onClick={() => setSelectedInfluencer(inf.id)}
-                                className={`
-                  relative p-4 rounded-xl text-left transition-all duration-200
-                  ${selectedInfluencer === inf.id
-                                        ? 'bg-[#337AFF]/10 border-[#337AFF]/40 ring-1 ring-[#337AFF]/20'
-                                        : 'bg-white/80/30 border-[#E8ECF4] hover:border-[#E8ECF4]/50 hover:bg-[#F0F4FF]'
-                                    }
-                  border
-                `}
-                            >
-                                {inf.image_url ? (
-                                    <img
-                                        src={inf.image_url}
-                                        alt={inf.name}
-                                        className="w-12 h-12 rounded-lg object-cover mb-3"
-                                    />
-                                ) : (
-                                    <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-blue-500/20 to-purple-500/20 flex items-center justify-center text-[#337AFF] font-bold text-lg mb-3">
-                                        {inf.name[0]}
-                                    </div>
-                                )}
-                                <p className="text-sm font-medium text-[#1A1A1F]">{inf.name}</p>
-                                {inf.style && (
-                                    <p className="text-[10px] text-[#94A3B8] mt-0.5">{inf.style}</p>
-                                )}
-                                {selectedInfluencer === inf.id && (
-                                    <div className="absolute top-2 right-2 w-5 h-5 rounded-full bg-blue-500 flex items-center justify-center">
-                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3">
-                                            <path d="M5 13l4 4L19 7" />
-                                        </svg>
-                                    </div>
-                                )}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-
-                {/* Quantity */}
-                <div>
-                    <label className="text-xs text-[#4A5568] font-medium mb-2 block">
-                        How many videos?
-                    </label>
-                    <div className="flex items-center gap-3">
-                        <input
-                            type="number"
-                            min={1}
-                            max={100}
-                            value={quantity}
-                            onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
-                            className="input-field w-24 text-center"
-                        />
-                        <span className="text-xs text-[#94A3B8]">
-                            {isCampaignMode
-                                ? '→ Campaign mode enabled'
-                                : 'Enter 2+ to launch a campaign'}
-                        </span>
-                    </div>
-                </div>
-            </section>
-
-            {/* ============ SECTION 2: PRODUCT / APP CLIP ============ */}
-            <section className="glass-panel p-6 space-y-6">
-                <div>
-                    <h3 className="text-sm font-semibold text-[#1A1A1F] mb-1">2. Choose Your Product</h3>
-                    <p className="text-xs text-[#94A3B8]">Select what you want to promote.</p>
-                </div>
-
-                {/* Type Switcher */}
-                <div className="flex bg-[#F0F4FF] p-1 rounded-lg w-fit">
-                    <button
-                        onClick={() => setProductType('digital')}
-                        className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${productType === 'digital' ? 'bg-blue-600 text-white shadow-lg' : 'text-[#4A5568] hover:text-[#1A1A1F]'}`}
-                    >
-                         Digital App
-                    </button>
-                    <button
-                        onClick={() => setProductType('physical')}
-                        className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${productType === 'physical' ? 'bg-purple-600 text-white shadow-lg' : 'text-[#4A5568] hover:text-[#1A1A1F]'}`}
-                    >
-                         Physical Product
-                    </button>
-                </div>
-
-                {/* Grid */}
-                {productType === 'digital' ? (
-                    <div>
-                        <label className="text-xs text-[#4A5568] font-medium mb-3 block">Select App Clip</label>
-                        {appClips.length === 0 ? (
-                            <p className="text-[#94A3B8] text-sm italic">No app clips found. Add one in the Library.</p>
-                        ) : (
-                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                                <div
-                                    onClick={() => setAppClipId('auto')}
-                                    className={`cursor-pointer rounded-xl border-2 transition-all p-4 flex flex-col items-center justify-center gap-2 bg-[#337AFF]/3 ${appClipId === 'auto' ? 'border-[#337AFF] shadow-blue-500/20 shadow-lg' : 'border-dashed border-[#E8ECF4]/50 hover:border-[#E8ECF4]'}`}
-                                >
-                                    <span className="text-2xl"></span>
-                                    <span className="text-sm font-medium text-[#1A1A1F]">Auto-Select</span>
-                                </div>
-                                {appClips.map((clip) => (
-                                    <div
-                                        key={clip.id}
-                                        onClick={() => setAppClipId(clip.id)}
-                                        className={`cursor-pointer rounded-xl overflow-hidden border-2 transition-all relative aspect-video bg-white/80 ${appClipId === clip.id ? 'border-[#337AFF] shadow-blue-500/20 shadow-lg scale-[1.02]' : 'border-transparent opacity-60 hover:opacity-100'}`}
-                                    >
-                                        <video src={clip.video_url} className="w-full h-full object-cover" muted />
-                                        <div className="absolute bottom-0 left-0 right-0 bg-black/70 p-2">
-                                            <p className="text-xs text-white truncate">{clip.name}</p>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                ) : (
-                    <div>
-                        <label className="text-xs text-[#4A5568] font-medium mb-3 block">Select Product</label>
-                        {products.length === 0 ? (
-                            <p className="text-[#94A3B8] text-sm italic">No products found. Add one in the Library.</p>
-                        ) : (
-                            <div className="grid grid-cols-3 md:grid-cols-4 gap-3">
-                                {products.map((prod) => (
-                                    <div
-                                        key={prod.id}
-                                        onClick={() => setProductId(prod.id)}
-                                        className={`cursor-pointer rounded-xl overflow-hidden border-2 transition-all relative aspect-[3/4] bg-white/80 ${productId === prod.id ? 'border-purple-500 shadow-purple-500/20 shadow-lg scale-[1.02]' : 'border-transparent opacity-60 hover:opacity-100'}`}
-                                    >
-                                        <img src={prod.image_url} alt={prod.name} className="w-full h-full object-cover" />
-                                        <div className="absolute bottom-0 left-0 right-0 bg-black/70 p-2">
-                                            <p className="text-xs text-white truncate">{prod.name}</p>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
+                {/* Success Banner */}
+                {successMessage && (
+                    <div style={{
+                        background: successMessage.includes('Error') ? 'rgba(239,68,68,0.1)' : 'rgba(34,197,94,0.1)',
+                        border: `1px solid ${successMessage.includes('Error') ? 'rgba(239,68,68,0.3)' : 'rgba(34,197,94,0.3)'}`,
+                        borderRadius: 'var(--radius-sm)', padding: '10px 12px', marginBottom: '16px', fontSize: '12px',
+                        color: successMessage.includes('Error') ? 'var(--red)' : 'var(--green)', fontWeight: 600
+                    }}>
+                        {successMessage}
                     </div>
                 )}
 
-                {/* Cinematic Product Shots Selector (Step 14) */}
+                {/* STEP 1 — Product */}
+                <div className="config-section">
+                    <div className="config-step">
+                        <div className={`step-num ${productId || appClipId ? 'done' : ''}`}>1</div>
+                        <div className="step-text">Choose Product</div>
+                    </div>
+
+                    {/* Product Type Pills */}
+                    <div className="pill-group" style={{ marginTop: '10px' }}>
+                        <button className={`pill ${productType === 'digital' ? 'selected' : ''}`} onClick={() => setProductType('digital')}>
+                            Digital App
+                        </button>
+                        <button className={`pill ${productType === 'physical' ? 'selected' : ''}`} onClick={() => setProductType('physical')}>
+                            Physical Product
+                        </button>
+                    </div>
+
+                    {/* Product Grid */}
+                    {productType === 'digital' ? (
+                        <div style={{ marginTop: '8px' }}>
+                            {appClips.length === 0 ? (
+                                <div style={{ fontSize: '12px', color: 'var(--text-3)' }}>No app clips found. Add one in App Clips.</div>
+                            ) : (
+                                <div className="product-selector-grid">
+                                    <div
+                                        className={`prod-card ${appClipId === 'auto' ? 'selected' : ''}`}
+                                        onClick={() => setAppClipId('auto')}
+                                    >
+                                        <div className="prod-thumb" style={{ background: 'var(--blue-light)' }}>
+                                            <svg viewBox="0 0 24 24"><polygon points="13,2 3,14 12,14 11,22 21,10 12,10" /></svg>
+                                        </div>
+                                        <div className="prod-card-name">Auto</div>
+                                        <div className="prod-card-type">Random</div>
+                                    </div>
+                                    {appClips.map((clip) => (
+                                        <div key={clip.id} className={`prod-card ${appClipId === clip.id ? 'selected' : ''}`} onClick={() => setAppClipId(clip.id)}>
+                                            <div className="prod-thumb" style={{ background: 'var(--blue-light)' }}>
+                                                <svg viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2" /><line x1="12" y1="18" x2="12.01" y2="18" /></svg>
+                                            </div>
+                                            <div className="prod-card-name">{clip.name}</div>
+                                            <div className="prod-card-type">{clip.category || 'Clip'}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    ) : (
+                        <div style={{ marginTop: '8px' }}>
+                            {products.length === 0 ? (
+                                <div style={{ fontSize: '12px', color: 'var(--text-3)' }}>No products found. Add one in Products.</div>
+                            ) : (
+                                <div className="product-selector-grid">
+                                    {products.map((prod) => (
+                                        <div key={prod.id} className={`prod-card ${productId === prod.id ? 'selected' : ''}`} onClick={() => setProductId(prod.id)}>
+                                            <div className="prod-thumb" style={prod.image_url ? { backgroundImage: `url(${prod.image_url})`, backgroundSize: 'cover', backgroundPosition: 'center' } : { background: 'var(--blue-light)' }}>
+                                                {!prod.image_url && <svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /></svg>}
+                                            </div>
+                                            <div className="prod-card-name">{prod.name}</div>
+                                            <div className="prod-card-type">{prod.product_type || 'Physical'}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+
+                {/* Cinematic Shots (physical products only) */}
                 {productType === 'physical' && cinematicShots.length > 0 && (
-                    <div className="mt-5">
-                        <label className="text-xs text-[#4A5568] font-medium mb-2 block">
-                             Include Cinematic Shots <span className="text-[#94A3B8]">(optional)</span>
-                        </label>
-                        <p className="text-[10px] text-[#94A3B8] mb-3">
-                            Select pre-rendered cinematic product shots to interleave with the influencer scenes.
-                        </p>
-                        <div className="grid grid-cols-3 md:grid-cols-4 gap-3">
+                    <div className="config-section">
+                        <div className="config-label">
+                            Cinematic Shots
+                            <span style={{ fontSize: '10px', color: 'var(--text-3)', fontWeight: 400 }}>Optional</span>
+                        </div>
+                        <div style={{ display: 'flex', gap: '12px', marginTop: '12px', overflowX: 'auto', paddingBottom: '16px' }} className="no-scrollbar">
                             {cinematicShots.map((shot) => {
                                 const isSelected = selectedCinematicShots.includes(shot.id);
                                 return (
                                     <div
                                         key={shot.id}
-                                        onClick={() => {
-                                            setSelectedCinematicShots(prev =>
-                                                isSelected
-                                                    ? prev.filter(id => id !== shot.id)
-                                                    : [...prev, shot.id]
-                                            );
-                                        }}
-                                        className={`cursor-pointer rounded-xl overflow-hidden border-2 transition-all relative aspect-[3/4] bg-white/80 group ${isSelected
-                                                ? 'border-[#337AFF] shadow-blue-500/20 shadow-lg scale-[1.02]'
-                                                : 'border-transparent opacity-60 hover:opacity-100'
-                                            }`}
+                                        style={{ width: '88px', height: '156px', flexShrink: 0, position: 'relative', borderRadius: '12px', overflow: 'hidden', cursor: 'pointer', border: isSelected ? '2px solid var(--blue)' : '2px solid transparent', boxShadow: isSelected ? '0 0 0 2px rgba(51,122,255,0.2)' : 'none', transition: 'all 0.2s' }}
+                                        onClick={() => setSelectedCinematicShots(prev => isSelected ? prev.filter(id => id !== shot.id) : [...prev, shot.id])}
                                     >
                                         {shot.video_url ? (
-                                            <video
-                                                src={shot.video_url}
-                                                className="w-full h-full object-cover"
-                                                muted
-                                                loop
-                                                playsInline
-                                                poster={shot.image_url}
-                                                onMouseEnter={(e) => (e.target as HTMLVideoElement).play().catch(() => { })}
-                                                onMouseLeave={(e) => { const v = e.target as HTMLVideoElement; v.pause(); v.currentTime = 0; }}
-                                            />
+                                            <video src={shot.video_url} autoPlay muted loop playsInline style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', inset: 0 }} />
+                                        ) : shot.image_url ? (
+                                            <img src={shot.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', inset: 0 }} />
                                         ) : (
-                                            <img src={shot.image_url} alt={shot.shot_type} className="w-full h-full object-cover" />
+                                            <div style={{ width: '100%', height: '100%', backgroundColor: 'var(--surface-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-3)', fontSize: '11px', textAlign: 'center', padding: '8px', lineHeight: 1.2 }}>No Preview</div>
                                         )}
-                                        <div className="absolute bottom-0 left-0 right-0 bg-black/70 p-2 flex items-center justify-between">
-                                            <p className="text-[10px] text-white capitalize">{shot.shot_type.replace('_', ' ')}</p>
-                                            {isSelected && (
-                                                <span className="text-[9px] bg-blue-500 text-white px-1.5 py-0.5 rounded-full font-bold"></span>
-                                            )}
+                                        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'linear-gradient(to top, rgba(0,0,0,0.8), transparent)', padding: '24px 8px 8px 8px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', color: 'white', fontSize: '10px', fontWeight: 600 }}>
+                                            <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', paddingRight: '4px' }}>{shot.shot_type.replace('_', ' ')}</span>
+                                            {isSelected && <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', flexShrink: 0, fill: 'var(--blue)' }}><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" /></svg>}
                                         </div>
                                     </div>
                                 );
                             })}
                         </div>
                         {selectedCinematicShots.length > 0 && (
-                            <p className="text-[10px] text-[#337AFF] mt-2">
-                                {selectedCinematicShots.length} shot{selectedCinematicShots.length > 1 ? 's' : ''} selected — will be interleaved with influencer scenes.
-                            </p>
+                            <div style={{ fontSize: '10px', color: 'var(--blue)', marginTop: '4px' }}>
+                                {selectedCinematicShots.length} shot{selectedCinematicShots.length > 1 ? 's' : ''} selected
+                            </div>
                         )}
                     </div>
                 )}
 
-                {/* Transition Effects (Workflow B) */}
+                {/* Transition Effects */}
                 {productType === 'physical' && productId && selectedCinematicShots.length > 0 && (
-                    <div className="mt-5 border-t border-white/5 pt-5">
-                        <div className="flex items-center justify-between mb-2">
-                            <label className="text-xs text-[#4A5568] font-medium">
-                                Transition Effects <span className="text-[#94A3B8]">(optional)</span>
-                            </label>
-                            <button
-                                onClick={() => setEnableAutoTransitions(!enableAutoTransitions)}
-                                className={`relative w-10 h-5 rounded-full transition-colors ${enableAutoTransitions ? 'bg-purple-500' : 'bg-white/10'}`}
-                            >
-                                <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${enableAutoTransitions ? 'tranreveal-5' : 'tranreveal-0.5'}`} />
+                    <div className="config-section">
+                        <div className="config-label">
+                            Transitions
+                            <button onClick={() => setEnableAutoTransitions(!enableAutoTransitions)}
+                                style={{ width: 36, height: 20, borderRadius: 10, background: enableAutoTransitions ? 'var(--blue)' : 'var(--border)', position: 'relative', cursor: 'pointer', border: 'none', padding: 0 }}>
+                                <span style={{ position: 'absolute', left: 2, top: 2, width: 16, height: 16, borderRadius: '50%', background: 'white', transition: 'transform 0.15s', transform: enableAutoTransitions ? 'translateX(16px)' : 'translateX(0)' }} />
                             </button>
                         </div>
-                        <p className="text-[10px] text-[#94A3B8] mb-3">
-                            Automatically blend cinematic shots into your video with smooth transitions.
-                            The AI analyzes each scene to create seamless, context-aware effects.
-                        </p>
                         {enableAutoTransitions && (
-                            <div className="grid grid-cols-3 gap-2">
+                            <div className="pill-group">
                                 {[
-                                    { value: 'match_cut', label: 'Match Cut', desc: 'Smooth zoom to product' },
-                                    { value: 'whip_pan', label: 'Whip Pan', desc: 'Fast motion-blur reveal' },
-                                    { value: 'focus_pull', label: 'Focus Pull', desc: 'Blur-to-sharp transition' },
+                                    { value: 'match_cut', label: 'Match Cut' },
+                                    { value: 'whip_pan', label: 'Whip Pan' },
+                                    { value: 'focus_pull', label: 'Focus Pull' },
                                 ].map((tt) => (
-                                    <button
-                                        key={tt.value}
-                                        onClick={() => setAutoTransitionType(tt.value)}
-                                        className={`text-center p-2.5 rounded-xl border transition-all ${
-                                            autoTransitionType === tt.value
-                                                ? 'border-purple-500 bg-purple-500/10'
-                                                : 'border-white/5 bg-white/[0.02] hover:bg-white/5'
-                                        }`}
-                                    >
-                                        <p className="text-xs font-medium text-white">{tt.label}</p>
-                                        <p className="text-[9px] text-[#94A3B8] mt-0.5">{tt.desc}</p>
+                                    <button key={tt.value} className={`pill ${autoTransitionType === tt.value ? 'selected' : ''}`}
+                                        onClick={() => setAutoTransitionType(tt.value)}>
+                                        {tt.label}
                                     </button>
                                 ))}
                             </div>
                         )}
                     </div>
                 )}
-            </section>
 
-            {/* ============ SECTION 3: SCRIPT & STYLE ============ */}
-            <section className="glass-panel p-6 space-y-5">
-                <div>
-                    <h3 className="text-sm font-semibold text-[#1A1A1F] mb-1">3. Content & Style</h3>
-                    <p className="text-xs text-[#94A3B8]">Configure generation parameters.</p>
-                </div>
-
-                {/* Script Source */}
-                <div>
-                    <label className="text-xs text-[#4A5568] font-medium mb-2 block">Script Source</label>
-
-                    {productType === 'physical' ? (
-                        <div className="space-y-2">
-                            <div className="flex justify-between items-center mb-1">
-                                <span className="text-[10px] uppercase text-purple-400 font-bold tracking-wider">
-                                     AI Generated Script
-                                </span>
-                                <button
-                                    onClick={() => {
-                                        // Manually trigger regeneration
-                                        setIsGeneratingScript(true);
-                                        fetch(`${API_URL}/api/scripts/generate`, {
-                                            method: 'POST',
-                                            headers: { 'Content-Type': 'application/json' },
-                                            body: JSON.stringify({ product_id: productId, duration }),
-                                        })
-                                            .then(res => res.json())
-                                            .then(data => {
-                                                setGeneratedScript(data.script);
-                                                setCustomScript(data.script);
-                                                setScriptSource('custom');
-                                            })
-                                            .finally(() => setIsGeneratingScript(false));
-                                    }}
-                                    disabled={isGeneratingScript || !productId}
-                                    className="text-xs text-[#4A5568] hover:text-white transition-colors"
-                                >
-                                    {isGeneratingScript ? 'Generating...' : '↻ Regenerate'}
-                                </button>
-                            </div>
-
-                            <textarea
-                                value={isGeneratingScript ? 'Generating compelling script for your product...' : (scriptSource === 'custom' ? customScript : generatedScript)}
-                                onChange={(e) => {
-                                    setCustomScript(e.target.value);
-                                    setScriptSource('custom');
-                                }}
-                                placeholder="Select a product to generate a script..."
-                                rows={6}
-                                disabled={isGeneratingScript}
-                                className={`input-field w-full resize-none font-mono text-sm leading-relaxed ${isGeneratingScript ? 'animate-pulse text-[#94A3B8]' : ''}`}
-                            />
-                            <p className="text-[10px] text-[#94A3B8]">
-                                This script is tailored to your product&apos;s visual analysis and selected duration.
-                            </p>
+                {/* STEP 2 — Video Count */}
+                <div className="config-section">
+                    <div className="config-step">
+                        <div className={`step-num ${selectedInfluencer ? 'done' : ''}`}>2</div>
+                        <div className="step-text">Video Count</div>
+                    </div>
+                    <div className="video-count-row">
+                        <button className="count-btn" onClick={() => setQuantity(Math.max(1, quantity - 1))}>-</button>
+                        <div className="count-display">{quantity}</div>
+                        <button className="count-btn" onClick={() => setQuantity(Math.min(100, quantity + 1))}>+</button>
+                        <div className={`count-label ${isCampaignMode ? 'campaign' : ''}`}>
+                            {isCampaignMode ? 'Campaign' : 'Single'}
                         </div>
-                    ) : (
-                        <>
-                            <select
-                                value={scriptSource}
-                                onChange={(e) => setScriptSource(e.target.value as 'random' | 'specific' | 'custom')}
-                                className="input-field"
-                            >
-                                <option value="random">Random from library (Recommended)</option>
-                                <option value="specific">Use a specific script</option>
-                                <option value="custom">Write custom script</option>
-                            </select>
-
-                            {scriptSource === 'specific' && (
-                                <select
-                                    value={selectedScript}
-                                    onChange={(e) => setSelectedScript(e.target.value)}
-                                    className="input-field mt-3"
-                                >
-                                    <option value="">Select a script...</option>
-                                    {scripts.map((s) => (
-                                        <option key={s.id} value={s.id}>
-                                            {s.text.substring(0, 80)}{s.text.length > 80 ? '...' : ''} ({s.category || 'General'})
-                                        </option>
-                                    ))}
-                                </select>
-                            )}
-
-                            {scriptSource === 'custom' && (
-                                <textarea
-                                    value={customScript}
-                                    onChange={(e) => setCustomScript(e.target.value)}
-                                    placeholder="Write your script here..."
-                                    rows={4}
-                                    className="input-field mt-3 resize-none"
-                                />
-                            )}
-                        </>
-                    )}
+                    </div>
+                    <div className={`count-hint ${isCampaignMode ? 'campaign' : ''}`}>
+                        {isCampaignMode ? `Campaign mode: ${quantity} videos` : '2+ to enable campaign mode'}
+                    </div>
                 </div>
 
-                {/* AI Model */}
-                <div>
-                    <label className="text-xs text-[#4A5568] font-medium mb-2 block">AI Model</label>
-                    <div className="grid grid-cols-2 gap-2">
-                        {AI_MODELS.map((model) => (
-                            <button
-                                key={model.value}
-                                onClick={() => setModelApi(model.value)}
-                                className={`
-                  p-3 rounded-xl text-left transition-all border text-sm
-                  ${modelApi === model.value
-                                        ? 'bg-[#337AFF]/10 border-[#337AFF]/30 text-[#337AFF] shadow-sm'
-                                        : 'bg-[#337AFF]/3 border-[#E8ECF4] text-[#4A5568] hover:border-[#E8ECF4]/50'
-                                    }
-                `}
-                            >
-                                <p className="font-medium text-xs">{model.label}</p>
-                                <p className="text-[10px] text-[#94A3B8] mt-0.5">{model.desc}</p>
+                {/* Campaign Mode */}
+                {isCampaignMode && (
+                    <div className="config-section">
+                        <div className="config-label">Campaign Name</div>
+                        <input type="text" className="input-field" value={campaignName} onChange={e => setCampaignName(e.target.value)} placeholder="e.g., Spring Promo" />
+                        <div style={{ marginTop: '10px' }}>
+                            <div className="config-label">Content Strategy</div>
+                            <div className="pill-group">
+                                {CONTENT_STRATEGIES.map(s => (
+                                    <button key={s.value} className={`pill ${contentStrategy === s.value ? 'selected' : ''}`} onClick={() => setContentStrategy(s.value)}>
+                                        {s.label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* STEP 3 — AI Model */}
+                <div className="config-section">
+                    <div className="config-step">
+                        <div className="step-num">3</div>
+                        <div className="step-text">AI Model</div>
+                    </div>
+                    <div className="pill-group">
+                        {AI_MODELS.map(model => (
+                            <button key={model.value} className={`pill ${modelApi === model.value ? 'selected' : ''}`} onClick={() => setModelApi(model.value)}>
+                                {model.label}
                             </button>
                         ))}
                     </div>
                 </div>
 
                 {/* Duration */}
-                <div>
-                    <label className="text-xs text-[#4A5568] font-medium mb-2 block">Duration</label>
-                    <div className="flex gap-2">
-                        {[15, 30].map((d) => (
-                            <button
-                                key={d}
-                                onClick={() => setDuration(d)}
-                                className={`
-                  px-6 py-2.5 rounded-xl text-sm font-medium transition-all border
-                  ${duration === d
-                                        ? 'bg-[#337AFF]/10 border-[#337AFF]/30 text-[#337AFF] shadow-sm'
-                                        : 'bg-[#337AFF]/3 border-[#E8ECF4] text-[#4A5568] hover:border-[#E8ECF4]/50'
-                                    }
-                `}
-                            >
+                <div className="config-section">
+                    <div className="config-label">Duration</div>
+                    <div className="pill-group">
+                        {[15, 30].map(d => (
+                            <button key={d} className={`pill ${duration === d ? 'selected' : ''}`} onClick={() => setDuration(d)}>
                                 {d}s
                             </button>
                         ))}
                     </div>
                 </div>
-            </section>
 
-            {/* ============ SECTION 3: CAMPAIGN MODE ============ */}
-            {
-                isCampaignMode && (
-                    <section className="glass-panel p-6 space-y-5 border-[#337AFF]/20">
+                {/* Script Source */}
+                <div className="config-section">
+                    <div className="config-label">Script</div>
+                    {productType === 'physical' ? (
                         <div>
-                            <h3 className="text-sm font-semibold text-[#337AFF] mb-1">
-                                 Campaign Mode
-                            </h3>
-                            <p className="text-xs text-[#94A3B8]">
-                                Configure your batch of {quantity} videos.
-                            </p>
-                        </div>
-
-                        <div>
-                            <label className="text-xs text-[#4A5568] font-medium mb-2 block">Campaign Name</label>
-                            <input
-                                type="text"
-                                value={campaignName}
-                                onChange={(e) => setCampaignName(e.target.value)}
-                                placeholder="e.g., Spring Promo for Max"
-                                className="input-field"
-                            />
-                        </div>
-
-                        <div>
-                            <label className="text-xs text-[#4A5568] font-medium mb-2 block">Content Strategy</label>
-                            <div className="space-y-2">
-                                {CONTENT_STRATEGIES.map((strategy) => (
-                                    <button
-                                        key={strategy.value}
-                                        onClick={() => setContentStrategy(strategy.value)}
-                                        className={`
-                    w-full p-3 rounded-xl text-left transition-all border text-sm
-                    ${contentStrategy === strategy.value
-                                                ? 'bg-[#337AFF]/10 border-[#337AFF]/30 text-[#337AFF] shadow-sm'
-                                                : 'bg-[#337AFF]/3 border-[#E8ECF4] text-[#4A5568] hover:border-[#E8ECF4]/50'
-                                            }
-                  `}
-                                    >
-                                        <p className="font-medium text-xs">{strategy.label}</p>
-                                        <p className="text-[10px] text-[#94A3B8] mt-0.5">{strategy.desc}</p>
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-                    </section>
-                )
-            }
-
-            {/* ============ ADVANCED SETTINGS ============ */}
-            <div>
-                <button
-                    onClick={() => setShowAdvanced(!showAdvanced)}
-                    className="flex items-center gap-2 text-xs text-[#94A3B8] hover:text-[#1A1A1F] transition-colors"
-                >
-                    <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        className={`transition-transform ${showAdvanced ? 'rotate-180' : ''}`}
-                    >
-                        <path d="M6 9l6 6 6-6" />
-                    </svg>
-                    Advanced Settings
-                </button>
-
-                {showAdvanced && (
-                    <div className="glass-panel p-6 mt-3 space-y-4">
-                        <div>
-                            <label className="text-xs text-[#4A5568] font-medium mb-2 block">AI Hook</label>
-                            <div className="flex gap-2">
-                                <input
-                                    type="text"
-                                    value={hook}
-                                    onChange={(e) => setHook(e.target.value)}
-                                    placeholder="Optional opening hook..."
-                                    className="input-field flex-1"
-                                />
-                                <button
-                                    onClick={generateHook}
-                                    disabled={!selectedInfluencer || hookLoading}
-                                    className="btn-secondary text-xs whitespace-nowrap"
-                                >
-                                    {hookLoading ? '...' : ' Generate'}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                                <span style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.6px', color: 'var(--blue)' }}>AI Generated</span>
+                                <button onClick={() => {
+                                    setIsGeneratingScript(true);
+                                    fetch(`${API_URL}/api/scripts/generate`, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ product_id: productId, duration }),
+                                    })
+                                        .then(res => res.json())
+                                        .then(data => { setGeneratedScript(data.script); setCustomScript(data.script); setScriptSource('custom'); })
+                                        .finally(() => setIsGeneratingScript(false));
+                                }} disabled={isGeneratingScript || !productId} style={{ fontSize: '11px', color: 'var(--blue)', fontWeight: 600, cursor: 'pointer', background: 'none', border: 'none' }}>
+                                    {isGeneratingScript ? 'Generating...' : 'Regenerate'}
                                 </button>
                             </div>
+                            <textarea className="config-textarea" rows={5}
+                                value={isGeneratingScript ? 'Generating compelling script...' : (scriptSource === 'custom' ? customScript : generatedScript)}
+                                onChange={e => { setCustomScript(e.target.value); setScriptSource('custom'); }}
+                                placeholder="Select a product to generate a script..."
+                                disabled={isGeneratingScript}
+                            />
+                        </div>
+                    ) : (
+                        <div>
+                            <div className="pill-group" style={{ marginBottom: '8px' }}>
+                                <button className={`pill ${scriptSource === 'random' ? 'selected' : ''}`} onClick={() => setScriptSource('random')}>Random</button>
+                                <button className={`pill ${scriptSource === 'specific' ? 'selected' : ''}`} onClick={() => setScriptSource('specific')}>Specific</button>
+                                <button className={`pill ${scriptSource === 'custom' ? 'selected' : ''}`} onClick={() => setScriptSource('custom')}>Custom</button>
+                            </div>
+                            {scriptSource === 'specific' && (
+                                <select className="filter-select" style={{ width: '100%', marginBottom: '8px' }} value={selectedScript} onChange={e => setSelectedScript(e.target.value)}>
+                                    <option value="">Select a script...</option>
+                                    {scripts.map(s => (
+                                        <option key={s.id} value={s.id}>
+                                            {s.text.substring(0, 60)}{s.text.length > 60 ? '...' : ''} ({s.category || 'General'})
+                                        </option>
+                                    ))}
+                                </select>
+                            )}
+                            {scriptSource === 'custom' && (
+                                <textarea className="config-textarea" rows={4} value={customScript} onChange={e => setCustomScript(e.target.value)} placeholder="Write your script here..." />
+                            )}
+                        </div>
+                    )}
+                </div>
+
+                {/* Advanced Settings */}
+                <div className="config-section">
+                    <button onClick={() => setShowAdvanced(!showAdvanced)} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 500, color: 'var(--text-3)', cursor: 'pointer', background: 'none', border: 'none' }}>
+                        <svg style={{ width: 12, height: 12, stroke: 'currentColor', fill: 'none', strokeWidth: 2, transform: showAdvanced ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" /></svg>
+                        Advanced Settings
+                    </button>
+                    {showAdvanced && (
+                        <div style={{ marginTop: '10px' }}>
+                            <div className="config-label">AI Hook</div>
+                            <div style={{ display: 'flex', gap: '6px' }}>
+                                <input type="text" className="input-field" value={hook} onChange={e => setHook(e.target.value)} placeholder="Optional opening hook..." style={{ flex: 1 }} />
+                                <button className="btn-secondary" style={{ fontSize: '11px', whiteSpace: 'nowrap', padding: '6px 12px' }} onClick={generateHook} disabled={!selectedInfluencer || hookLoading}>
+                                    {hookLoading ? '...' : 'Generate'}
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* Cost Summary */}
+                {costEstimate && (
+                    <div className="gen-summary">
+                        <div className="gen-summary-title">Cost Estimate</div>
+                        <div className="gen-summary-row"><span>Video</span><span>${costEstimate.cost_video?.toFixed(3) ?? '0.000'}</span></div>
+                        <div className="gen-summary-row"><span>Voice</span><span>${costEstimate.cost_voice?.toFixed(3) ?? '0.000'}</span></div>
+                        <div className="gen-summary-row"><span>Music</span><span>${costEstimate.cost_music?.toFixed(3) ?? '0.000'}</span></div>
+                        <div className="gen-summary-row"><span>Processing</span><span>${costEstimate.cost_processing?.toFixed(3) ?? '0.000'}</span></div>
+                        <div className="gen-summary-divider" />
+                        <div className="gen-summary-total"><span>Per Video</span><span>${costEstimate.total_cost?.toFixed(3) ?? '0.000'}</span></div>
+                        {isCampaignMode && (
+                            <div className="gen-summary-total" style={{ marginTop: '4px' }}><span>Campaign ({quantity})</span><span>${(costEstimate.total_cost * quantity).toFixed(2)}</span></div>
+                        )}
+                    </div>
+                )}
+
+                {/* Generate Button */}
+                <button className="btn-generate" onClick={handleSubmit} disabled={!selectedInfluencer || submitting}>
+                    <svg style={{ width: 16, height: 16, stroke: 'white', fill: 'none', strokeWidth: 2 }} viewBox="0 0 24 24"><polygon points="13,2 3,14 12,14 11,22 21,10 12,10" /></svg>
+                    {submitting ? 'Launching...' : isCampaignMode ? `Launch Campaign (${quantity})` : 'Generate Video'}
+                    {costEstimate && <span className="credit-cost">${costEstimate.total_cost?.toFixed(2) ?? '0.00'}</span>}
+                </button>
+            </div>
+
+            {/* ──── RIGHT PANEL: Workspace ──── */}
+            <div className="workspace">
+                {/* Influencer Selector */}
+                <div className="config-section">
+                    <div className="section-title">Select Influencer</div>
+                    {influencers.length === 0 ? (
+                        <div className="empty-state" style={{ padding: '40px 20px' }}>
+                            <div className="empty-icon">
+                                <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4" /><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" /></svg>
+                            </div>
+                            <div className="empty-title">No influencers yet</div>
+                            <div className="empty-sub">Add an AI influencer profile to get started.</div>
+                        </div>
+                    ) : (
+                        <div className="influencer-grid">
+                            {influencers.map(inf => (
+                                <div key={inf.id}
+                                    className={`inf-card ${selectedInfluencer === inf.id ? 'selected' : ''}`}
+                                    onClick={() => setSelectedInfluencer(inf.id)}
+                                >
+                                    <div className="inf-thumb" style={inf.image_url ? { backgroundImage: `url(${inf.image_url})` } : { background: 'linear-gradient(135deg, var(--blue) 0%, #6B4EFF 100%)' }}>
+                                        <div className="inf-name">{inf.name}</div>
+                                    </div>
+                                    <div className="inf-check">
+                                        <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" /></svg>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                {/* Smart Preview */}
+                {selectedInfluencer && (
+                    <div className="how-it-works" style={{ textAlign: 'left', marginTop: '24px' }}>
+                        <div style={{ fontSize: '14px', color: 'var(--text-1)', lineHeight: 1.7 }}>
+                            You&apos;re about to create{' '}
+                            <strong>{quantity} video{quantity > 1 ? 's' : ''}</strong>{' '}
+                            featuring{' '}
+                            <span style={{ color: 'var(--blue)', fontWeight: 700 }}>{selectedInf?.name}</span>
+                            , using{' '}
+                            <strong>{scriptSource === 'random' ? 'random' : scriptSource === 'specific' ? 'a specific' : 'a custom'}</strong>{' '}
+                            script and{' '}
+                            <span style={{ color: 'var(--blue)', fontWeight: 600 }}>{AI_MODELS.find(m => m.value === modelApi)?.label}</span>.
+                            {isCampaignMode && campaignName && (
+                                <> Campaign: <strong style={{ color: 'var(--blue)' }}>&quot;{campaignName}&quot;</strong>.</>
+                            )}
+                            {' '}Estimated time: ~{quantity * 2.5} minutes.
                         </div>
                     </div>
                 )}
             </div>
-
-            {/* ============ SMART PREVIEW ============ */}
-            {
-                selectedInfluencer && (
-                    <section className="glass-panel p-5 border-[#E8ECF4]/40">
-                        <p className="text-sm text-[#1A1A1F] leading-relaxed">
-                            You&apos;re about to create{' '}
-                            <span className="text-[#1A1A1F] font-bold">
-                                {quantity} video{quantity > 1 ? 's' : ''}
-                            </span>{' '}
-                            featuring{' '}
-                            <span className="text-[#337AFF] font-semibold">
-                                {selectedInf?.name}
-                            </span>
-                            , using{' '}
-                            <span className="text-[#1A1A1F] font-bold">
-                                {scriptSource === 'random' ? 'random' : scriptSource === 'specific' ? 'a specific' : 'a custom'}
-                            </span>{' '}
-                            script and{' '}
-                            <span className="text-purple-400 font-medium">
-                                {AI_MODELS.find((m) => m.value === modelApi)?.label}
-                            </span>
-                            .
-                            {isCampaignMode && campaignName && (
-                                <> Campaign: <span className="text-yellow-400 font-medium">&quot;{campaignName}&quot;</span>.</>
-                            )}
-                            {' '}Estimated time: ~{quantity * 2.5} minutes.
-                        </p>
-
-                        {/* Cost Breakdown */}
-                        {costEstimate && (
-                            <div className="mt-4 pt-4 border-t border-[#E8ECF4]/40">
-                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
-                                    {[
-                                        { label: 'Video', value: costEstimate.cost_video, icon: '' },
-                                        { label: 'Voice', value: costEstimate.cost_voice, icon: '' },
-                                        { label: 'Music', value: costEstimate.cost_music, icon: '' },
-                                        { label: 'Processing', value: costEstimate.cost_processing, icon: '' },
-                                    ].map((c) => (
-                                        <div key={c.label} className="text-center">
-                                            <p className="text-[10px] uppercase text-[#94A3B8] tracking-wider">{c.icon} {c.label}</p>
-                                            <p className="text-sm font-medium text-[#1A1A1F]">${c.value.toFixed(3)}</p>
-                                        </div>
-                                    ))}
-                                    {productType === 'physical' && costEstimate.cost_image > 0 && (
-                                        <div className="text-center col-span-2 sm:col-span-4 mt-2 border-t border-[#E8ECF4] pt-2">
-                                            <p className="text-[10px] uppercase text-purple-400 tracking-wider"> Product Images (Nano)</p>
-                                            <p className="text-sm font-medium text-purple-300">${costEstimate.cost_image.toFixed(3)}</p>
-                                        </div>
-                                    )}
-                                </div>
-                                <div className="flex items-center justify-between glass rounded-lg px-4 py-2.5">
-                                    <span className="text-xs text-[#4A5568] font-medium">
-                                        {isCampaignMode ? 'Cost per video' : 'Estimated Total'}
-                                    </span>
-                                    <span className="text-lg font-bold text-green-400">
-                                        ${costEstimate.total_cost.toFixed(3)}
-                                    </span>
-                                </div>
-                                {isCampaignMode && (
-                                    <div className="flex items-center justify-between bg-green-500/5 border border-green-500/15 rounded-lg px-4 py-2.5 mt-2">
-                                        <span className="text-xs text-green-400/80 font-medium">
-                                            Campaign Total ({quantity} videos)
-                                        </span>
-                                        <span className="text-xl font-bold text-green-400">
-                                            ${(costEstimate.total_cost * quantity).toFixed(2)}
-                                        </span>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                    </section>
-                )
-            }
-
-            {/* ============ SUBMIT ============ */}
-            <div className="flex items-center gap-4">
-                <button
-                    onClick={handleSubmit}
-                    disabled={!selectedInfluencer || submitting}
-                    className="btn-primary px-8 py-3 text-base"
-                >
-                    {submitting
-                        ? 'Launching...'
-                        : isCampaignMode
-                            ? ` Launch Campaign (${quantity} videos)`
-                            : ' Generate Video'}
-                </button>
-                <button
-                    onClick={() => router.push('/')}
-                    className="btn-secondary"
-                >
-                    Cancel
-                </button>
-            </div>
-        </div >
+        </div>
     );
 }

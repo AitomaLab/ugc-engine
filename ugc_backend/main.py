@@ -441,6 +441,8 @@ def api_create_job(data: JobCreate):
                 metadata["auto_transition_type"] = auto_trans
             if job_data.get("cinematic_shot_ids"):
                 metadata["cinematic_shot_ids"] = job_data["cinematic_shot_ids"]
+            if data.hook:
+                metadata["hook"] = data.hook
             if metadata:
                 job_data["metadata"] = metadata
 
@@ -539,6 +541,15 @@ def api_generate_shot_image(product_id: str, data: ShotGenerateRequest):
             _dispatch_shot_task(generate_product_shot_image, shot["id"], "generate_product_shot_image")
             created_shots.append(shot)
         return created_shots
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/products/{product_id}/shots")
+def api_get_product_shots(product_id: str):
+    """Get all existing shots for a specific product."""
+    from ugc_db.db_manager import list_product_shots
+    try:
+        return list_product_shots(product_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -823,6 +834,8 @@ def api_create_bulk_jobs(data: BulkJobCreate):
                     metadata["auto_transition_type"] = data.auto_transition_type
                 if job_data.get("cinematic_shot_ids"):
                     metadata["cinematic_shot_ids"] = job_data["cinematic_shot_ids"]
+                if data.hook:
+                    metadata["hook"] = data.hook
                 if metadata:
                     job_data["metadata"] = metadata
 

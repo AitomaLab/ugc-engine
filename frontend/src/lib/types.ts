@@ -25,6 +25,17 @@ export interface AppClipItem {
     duration_seconds?: number;
 }
 
+export interface Product {
+    id: string;
+    name: string;
+    type?: string;
+    product_type?: string;
+    image_url?: string;
+    job_count?: number;
+    visual_description?: any;
+    created_at?: string;
+}
+
 export interface VideoJob {
     id: string;
     status: string;

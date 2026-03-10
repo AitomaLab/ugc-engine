@@ -133,25 +133,23 @@ export default function ActivityPage() {
 
     if (loading) {
         return (
-            <div className="flex items-center justify-center h-96">
-                <div className="text-[#94A3B8] text-sm italic animate-pulse">Loading activity...</div>
+            <div className="content-area">
+                <div className="empty-state">
+                    <div className="empty-title">Loading activity...</div>
+                </div>
             </div>
         );
     }
 
     return (
-        <div className="space-y-8 animate-reveal">
-            <header>
-                <h2 className="text-3xl font-bold tracking-tight">
-                    <span className="gradient-text">Activity</span>
-                </h2>
-                <p className="text-[#4A5568] mt-2 text-sm">
-                    Monitor generation jobs, track performance, and debug issues.
-                </p>
-            </header>
+        <div className="content-area">
+            <div className="page-header">
+                <h1>Activity</h1>
+                <p>Monitor generation jobs, track performance, and debug issues.</p>
+            </div>
 
-            {/* ============ RESOURCE USAGE DASHBOARD ============ */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            {/* Stats Row */}
+            <div className="stats-row">
                 {[
                     { label: 'Total Videos', value: totalJobs.toString(), sub: 'all time' },
                     { label: 'Success Rate', value: `${successRate}%`, sub: `${successJobs} success · ${failedJobs} failed` },
@@ -159,35 +157,33 @@ export default function ActivityPage() {
                     { label: 'Active Queue', value: (jobs.filter(j => j.status === 'processing' || j.status === 'pending').length).toString(), sub: 'in pipeline' },
                     { label: 'Total Spend', value: costStats ? `$${costStats.total_spend_month.toFixed(2)}` : '—', sub: costStats ? `$${costStats.total_spend_all.toFixed(2)} all time` : 'this month' },
                 ].map((stat) => (
-                    <div key={stat.label} className="glass-panel p-5">
-                        <p className="text-[10px] uppercase tracking-wider text-[#94A3B8] font-semibold">{stat.label}</p>
-                        <p className="text-2xl font-bold text-[#1A1A1F] mt-1">{stat.value}</p>
-                        <p className="text-[10px] text-[#94A3B8] mt-1">{stat.sub}</p>
+                    <div key={stat.label} className="stat-card">
+                        <div className="stat-label">{stat.label}</div>
+                        <div className="stat-value">{stat.value}</div>
+                        <div className="stat-sub">{stat.sub}</div>
                     </div>
                 ))}
             </div>
 
-            {/* ============ CONTROLS ============ */}
-            <div className="flex items-center gap-4">
-                <button
-                    onClick={() => setGroupByCampaign(!groupByCampaign)}
-                    className={`tab-button text-xs ${groupByCampaign ? 'active' : ''}`}
-                >
-                    {groupByCampaign ? ' ' : ''}Group by Campaign
-                </button>
-                <span className="text-xs text-[#94A3B8] ml-auto">{jobs.length} total jobs</span>
+            {/* Group Toggle */}
+            <div className="asset-toolbar">
+                <div className="asset-toolbar-left">
+                    <button
+                        onClick={() => setGroupByCampaign(!groupByCampaign)}
+                        className={`pill ${groupByCampaign ? 'selected' : ''}`}
+                    >
+                        Group by Campaign
+                    </button>
+                    <span style={{ fontSize: '12px', color: 'var(--text-3)', marginLeft: 'auto' }}>{jobs.length} total jobs</span>
+                </div>
             </div>
 
-            {/* ============ JOB TABLE ============ */}
+            {/* Job Table */}
             {groupByCampaign ? (
-                // Grouped view
-                <div className="space-y-6">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
                     {Array.from(campaignGroups.entries()).map(([campaignName, campaignJobs]) => (
                         <div key={campaignName}>
-                            <div className="flex items-center gap-2 mb-3">
-                                <h4 className="text-sm font-semibold text-[#1A1A1F]">{campaignName}</h4>
-                                <span className="text-[10px] text-[#94A3B8]">({campaignJobs.length} jobs)</span>
-                            </div>
+                            <div className="section-title">{campaignName} <span style={{ fontSize: '12px', color: 'var(--text-3)', fontWeight: 400 }}>({campaignJobs.length} jobs)</span></div>
                             <JobTable
                                 jobs={campaignJobs}
                                 influencerMap={influencerMap}
@@ -199,7 +195,6 @@ export default function ActivityPage() {
                     ))}
                 </div>
             ) : (
-                // Flat view
                 <JobTable
                     jobs={jobs}
                     influencerMap={influencerMap}
@@ -209,7 +204,7 @@ export default function ActivityPage() {
                 />
             )}
 
-            {/* ============ ERROR DETAIL MODAL ============ */}
+            {/* Error Detail Modal */}
             {errorModal && (
                 <ErrorModal job={errorModal} onClose={() => setErrorModal(null)} />
             )}
@@ -234,92 +229,78 @@ function JobTable({
     onErrorClick: (job: Job) => void;
     showCampaign: boolean;
 }) {
-    return (
-        <div className="glass-panel overflow-hidden">
-            <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                    <thead>
-                        <tr className="bg-white/50 border-b border-[#E8ECF4]">
-                            {showCampaign && <th className="p-4 text-[10px] uppercase font-bold text-[#94A3B8] tracking-tighter">Campaign</th>}
-                            <th className="p-4 text-[10px] uppercase font-bold text-[#94A3B8] tracking-tighter">Job ID</th>
-                            <th className="p-4 text-[10px] uppercase font-bold text-[#94A3B8] tracking-tighter">Influencer</th>
-                            <th className="p-4 text-[10px] uppercase font-bold text-[#94A3B8] tracking-tighter">Status</th>
-                            <th className="p-4 text-[10px] uppercase font-bold text-[#94A3B8] tracking-tighter">Progress</th>
-                            <th className="p-4 text-[10px] uppercase font-bold text-[#94A3B8] tracking-tighter">Model</th>
-                            <th className="p-4 text-[10px] uppercase font-bold text-[#94A3B8] tracking-tighter">Cost</th>
-                            <th className="p-4 text-[10px] uppercase font-bold text-[#94A3B8] tracking-tighter">Duration</th>
-                            <th className="p-4 text-[10px] uppercase font-bold text-[#94A3B8] tracking-tighter">Created</th>
-                            <th className="p-4 text-[10px] uppercase font-bold text-[#94A3B8] tracking-tighter">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-900/50">
-                        {jobs.length === 0 ? (
-                            <tr>
-                                <td colSpan={showCampaign ? 10 : 9} className="p-16 text-center text-[#94A3B8] italic text-sm">
-                                    No jobs found.
-                                </td>
-                            </tr>
-                        ) : (
-                            jobs.map((job) => (
-                                <tr key={job.id} className="hover:bg-white/80/10 transition-colors">
-                                    {showCampaign && (
-                                        <td className="p-4 text-xs text-[#4A5568]">{job.campaign_name || 'Single'}</td>
-                                    )}
-                                    <td className="p-4">
-                                        <span className="text-xs font-mono text-[#4A5568]">{job.id.substring(0, 8)}</span>
-                                    </td>
-                                    <td className="p-4 text-xs text-[#1A1A1F]">
-                                        {influencerMap.get(job.influencer_id || '')?.name ?? '—'}
-                                    </td>
-                                    <td className="p-4">
-                                        <button
-                                            onClick={() => job.status === 'failed' ? onErrorClick(job) : undefined}
-                                            className={`badge badge-${job.status === 'success' ? 'success' : job.status === 'failed' ? 'failed' : job.status === 'processing' ? 'processing' : 'pending'} ${job.status === 'failed' ? 'cursor-pointer hover:opacity-80' : ''}`}
-                                        >
-                                            {job.status}
-                                        </button>
-                                    </td>
-                                    <td className="p-4">
-                                        <div className="w-20 progress-bar">
-                                            <div
-                                                className={`progress-bar-fill ${job.status === 'success' ? 'bg-green-500' : job.status === 'failed' ? 'bg-red-500' : 'bg-blue-500'}`}
-                                                style={{ width: `${job.status === 'success' ? 100 : job.status === 'failed' ? 100 : job.progress}%` }}
-                                            />
-                                        </div>
-                                    </td>
-                                    <td className="p-4 text-xs text-[#4A5568]">{job.model_api || '—'}</td>
-                                    <td className="p-4 text-xs font-medium text-green-400">
-                                        {job.total_cost != null ? `$${Number(job.total_cost).toFixed(3)}` : '—'}
-                                    </td>
-                                    <td className="p-4 text-xs text-[#4A5568]">{getDuration(job)}</td>
-                                    <td className="p-4 text-xs text-[#94A3B8]">{new Date(job.created_at).toLocaleDateString()}</td>
-                                    <td className="p-4">
-                                        {job.final_video_url ? (
-                                            <a
-                                                href={job.final_video_url}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                className="text-xs text-[#337AFF] hover:text-[#337AFF]/80 font-medium"
-                                            >
-                                                Preview
-                                            </a>
-                                        ) : job.status === 'failed' ? (
-                                            <button
-                                                onClick={() => onErrorClick(job)}
-                                                className="text-xs text-red-400 hover:text-red-300 font-medium"
-                                            >
-                                                View Error
-                                            </button>
-                                        ) : (
-                                            <span className="text-xs text-[#94A3B8] italic">—</span>
-                                        )}
-                                    </td>
-                                </tr>
-                            ))
-                        )}
-                    </tbody>
-                </table>
+    if (jobs.length === 0) {
+        return (
+            <div className="empty-state">
+                <div className="empty-icon">
+                    <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12" /></svg>
+                </div>
+                <div className="empty-title">No jobs found</div>
+                <div className="empty-sub">Jobs will appear here as you create videos.</div>
             </div>
+        );
+    }
+
+    return (
+        <div className="activity-table">
+            <div className="table-header">
+                {showCampaign && <div className="th">Campaign</div>}
+                <div className="th">Job</div>
+                <div className="th">Influencer</div>
+                <div className="th">Status</div>
+                <div className="th">Model</div>
+                <div className="th">Cost</div>
+                <div className="th">Duration</div>
+                <div className="th">Actions</div>
+            </div>
+            {jobs.map((job) => {
+                const statusClass = job.status === 'success' ? 'done' : job.status === 'processing' ? 'active' : job.status === 'pending' ? 'pending' : 'failed';
+                const statusLabel = job.status === 'success' ? 'Completed' : job.status === 'processing' ? 'Processing' : job.status === 'pending' ? 'Queued' : 'Failed';
+                return (
+                    <div key={job.id} className="table-row" style={{ gridTemplateColumns: showCampaign ? '1fr 2fr 1fr 1fr 1fr 0.7fr 0.7fr 120px' : '2fr 1fr 1fr 1fr 0.7fr 0.7fr 120px' }}>
+                        {showCampaign && (
+                            <div className="td">
+                                {job.campaign_name ? <span className="campaign-tag">{job.campaign_name}</span> : <span className="td muted">Single</span>}
+                            </div>
+                        )}
+                        <div className="td">
+                            <div className="job-name-cell">
+                                <div className="job-icon">
+                                    <svg viewBox="0 0 24 24"><polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" /></svg>
+                                </div>
+                                <div>
+                                    <div className="job-name">{influencerMap.get(job.influencer_id || '')?.name ?? 'Unknown'}</div>
+                                    <div className="job-id">{job.id.substring(0, 12)}...</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="td muted">{influencerMap.get(job.influencer_id || '')?.name ?? '—'}</div>
+                        <div className="td">
+                            <button
+                                onClick={() => job.status === 'failed' ? onErrorClick(job) : undefined}
+                                className={`status-pill ${statusClass} ${job.status === 'failed' ? 'cursor-pointer' : ''}`}
+                                style={job.status === 'failed' ? { cursor: 'pointer' } : {}}
+                            >
+                                {statusLabel}
+                            </button>
+                        </div>
+                        <div className="td muted">{job.model_api || '—'}</div>
+                        <div className="td" style={{ color: 'var(--green)', fontWeight: 600, fontSize: '12px' }}>
+                            {job.total_cost != null ? `$${Number(job.total_cost).toFixed(3)}` : '—'}
+                        </div>
+                        <div className="td muted">{getDuration(job)}</div>
+                        <div className="td">
+                            <div className="row-actions">
+                                {job.final_video_url ? (
+                                    <a href={job.final_video_url} target="_blank" rel="noopener noreferrer" className="row-btn primary">View</a>
+                                ) : job.status === 'failed' ? (
+                                    <button onClick={() => onErrorClick(job)} className="row-btn ghost" style={{ color: 'var(--red)' }}>Error</button>
+                                ) : null}
+                            </div>
+                        </div>
+                    </div>
+                );
+            })}
         </div>
     );
 }
@@ -339,45 +320,46 @@ function ErrorModal({ job, onClose }: { job: Job; onClose: () => void }) {
 
     return (
         <div className="modal-overlay" onClick={onClose}>
-            <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-                <div className="p-6 space-y-5">
-                    <div className="flex items-center justify-between">
-                        <h3 className="font-semibold text-lg text-red-400">Job Failed</h3>
-                        <button onClick={onClose} className="text-[#94A3B8] hover:text-white transition-colors text-lg"></button>
-                    </div>
-
+            <div className="modal-box" style={{ maxWidth: '560px' }} onClick={(e) => e.stopPropagation()}>
+                <div className="modal-header">
+                    <h3 style={{ color: 'var(--red)' }}>Job Failed</h3>
+                    <button className="modal-close" onClick={onClose}>
+                        <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                    </button>
+                </div>
+                <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
                     <div>
-                        <p className="text-[10px] uppercase text-[#94A3B8] font-semibold mb-1">Job ID</p>
-                        <p className="text-sm text-[#1A1A1F] font-mono">{job.id}</p>
+                        <div className="form-label">Job ID</div>
+                        <div style={{ fontSize: '13px', fontFamily: 'monospace', color: 'var(--text-1)' }}>{job.id}</div>
                     </div>
 
                     {/* Troubleshooting */}
-                    <div className="bg-blue-500/5 border border-[#337AFF]/15 rounded-xl p-4">
-                        <p className="text-[10px] uppercase text-[#337AFF] font-semibold mb-2"> Troubleshooting Suggestion</p>
-                        <p className="text-sm text-[#1A1A1F] leading-relaxed">{suggestion}</p>
+                    <div style={{ background: 'var(--blue-light)', border: '1px solid rgba(51,122,255,0.15)', borderRadius: 'var(--radius-sm)', padding: '14px 16px' }}>
+                        <div className="form-label" style={{ color: 'var(--blue)' }}>Troubleshooting Suggestion</div>
+                        <div style={{ fontSize: '13px', color: 'var(--text-1)', lineHeight: 1.6 }}>{suggestion}</div>
                     </div>
 
                     {/* Cost Breakdown */}
                     {job.total_cost != null && (
                         <div>
-                            <p className="text-[10px] uppercase text-[#94A3B8] font-semibold mb-2"> Cost Breakdown</p>
-                            <div className="bg-white rounded-xl p-4 border border-[#E8ECF4] space-y-2">
+                            <div className="form-label">Cost Breakdown</div>
+                            <div style={{ background: 'white', borderRadius: 'var(--radius-sm)', padding: '14px 16px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                 {[
-                                    { label: ' Video Generation', value: job.cost_video },
-                                    { label: ' Voice Generation', value: job.cost_voice },
-                                    { label: ' Music', value: job.cost_music },
-                                    { label: ' Processing', value: job.cost_processing },
+                                    { label: 'Video Generation', value: job.cost_video },
+                                    { label: 'Voice Generation', value: job.cost_voice },
+                                    { label: 'Music', value: job.cost_music },
+                                    { label: 'Processing', value: job.cost_processing },
                                 ].map((c) => (
-                                    <div key={c.label} className="flex justify-between text-xs">
-                                        <span className="text-[#4A5568]">{c.label}</span>
-                                        <span className="text-[#1A1A1F] font-medium">
+                                    <div key={c.label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                                        <span style={{ color: 'var(--text-2)' }}>{c.label}</span>
+                                        <span style={{ color: 'var(--text-1)', fontWeight: 600 }}>
                                             ${c.value != null ? Number(c.value).toFixed(3) : '0.000'}
                                         </span>
                                     </div>
                                 ))}
-                                <div className="border-t border-[#E8ECF4]/50 pt-2 mt-2 flex justify-between text-sm">
-                                    <span className="text-[#1A1A1F] font-semibold">Total</span>
-                                    <span className="text-green-400 font-bold">${Number(job.total_cost).toFixed(3)}</span>
+                                <div style={{ borderTop: '1px solid var(--border-soft)', paddingTop: '8px', marginTop: '4px', display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+                                    <span style={{ fontWeight: 700, color: 'var(--text-1)' }}>Total</span>
+                                    <span style={{ fontWeight: 700, color: 'var(--green)' }}>${Number(job.total_cost).toFixed(3)}</span>
                                 </div>
                             </div>
                         </div>
@@ -385,15 +367,17 @@ function ErrorModal({ job, onClose }: { job: Job; onClose: () => void }) {
 
                     {/* Error Message */}
                     <div>
-                        <p className="text-[10px] uppercase text-[#94A3B8] font-semibold mb-2">Full Error</p>
-                        <pre className="text-xs text-red-400/80 bg-white rounded-xl p-4 overflow-x-auto whitespace-pre-wrap max-h-60 border border-[#E8ECF4]">
+                        <div className="form-label">Full Error</div>
+                        <pre style={{ fontSize: '12px', color: 'var(--red)', background: 'rgba(239,68,68,0.05)', borderRadius: 'var(--radius-sm)', padding: '14px 16px', overflow: 'auto', whiteSpace: 'pre-wrap', maxHeight: '200px', border: '1px solid rgba(239,68,68,0.15)' }}>
                             {job.error_message || 'No error message available.'}
                         </pre>
                     </div>
-
-                    <button onClick={onClose} className="btn-secondary w-full">Close</button>
+                </div>
+                <div className="modal-footer">
+                    <button onClick={onClose} className="btn-secondary" style={{ width: '100%' }}>Close</button>
                 </div>
             </div>
         </div>
     );
 }
+

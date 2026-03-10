@@ -204,7 +204,7 @@ def generate_ugc_video(self, job_id: str):
         auto_trans_type = job_metadata.get("auto_transition_type") or job.get("auto_transition_type")
 
         fields = {
-            "Hook": job.get("hook") or script_text,
+            "Hook": job.get("hook") or job_metadata.get("hook") or script_text,
             "Theme": job.get("assistant_type") or script_cat,
             "Length": f"{job.get('length', 15)}s",
             "model_api": job.get("model_api", "seedance-1.5-pro"),

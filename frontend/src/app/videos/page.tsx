@@ -1,0 +1,171 @@
+'use client';
+
+import { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
+import { apiFetch, formatDate } from '@/lib/utils';
+import { VideoJob, Influencer } from '@/lib/types';
+import { CustomDropdown } from '@/components/ui/CustomDropdown';
+
+export default function VideosPage() {
+    const [jobs, setJobs] = useState<VideoJob[]>([]);
+    const [influencers, setInfluencers] = useState<Influencer[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [search, setSearch] = useState('');
+    const [influencerFilter, setInfluencerFilter] = useState('');
+    const [statusFilter, setStatusFilter] = useState('');
+    const [sortOrder, setSortOrder] = useState('newest');
+
+    const fetchData = useCallback(async () => {
+        try {
+            const [jobsData, infData] = await Promise.all([
+                apiFetch<VideoJob[]>('/jobs?limit=200'),
+                apiFetch<Influencer[]>('/influencers'),
+            ]);
+            setJobs(jobsData);
+            setInfluencers(infData);
+        } catch (err) {
+            console.error('Videos fetch error:', err);
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => { fetchData(); }, [fetchData]);
+
+    const influencerMap = new Map(influencers.map((i) => [i.id, i]));
+
+    let filteredJobs = jobs;
+
+    if (search) {
+        const q = search.toLowerCase();
+        filteredJobs = filteredJobs.filter(job =>
+            (influencerMap.get(job.influencer_id || '')?.name || '').toLowerCase().includes(q) ||
+            (job.campaign_name || '').toLowerCase().includes(q) ||
+            job.id.toLowerCase().includes(q)
+        );
+    }
+
+    if (influencerFilter) {
+        filteredJobs = filteredJobs.filter(job => job.influencer_id === influencerFilter);
+    }
+
+    if (statusFilter) {
+        filteredJobs = filteredJobs.filter(job => job.status === statusFilter);
+    }
+
+    filteredJobs.sort((a, b) => {
+        const da = new Date(a.created_at || 0).getTime();
+        const db = new Date(b.created_at || 0).getTime();
+        return sortOrder === 'newest' ? db - da : da - db;
+    });
+
+    if (loading) {
+        return <div className='content-area'><div className='text-[#94A3B8] text-sm italic animate-pulse py-12 text-center'>Loading videos...</div></div>;
+    }
+
+    return (
+        <div className='content-area'>
+            <div className='page-header'>
+                <h1>Videos</h1>
+                <p>All your generated UGC videos in one place.</p>
+            </div>
+
+            <div className='asset-toolbar border-b pb-6 mb-8 mt-6 flex justify-between items-center' style={{ borderBottomColor: 'var(--border)' }}>
+                <div className='asset-toolbar-left flex gap-3 flex-1' style={{ display: 'flex', gap: '12px', flex: 1, alignItems: 'center' }}>
+                    <div className='search-box' style={{ flex: 1, maxWidth: '280px', display: 'flex', alignItems: 'center', gap: '8px', background: 'white', border: '1px solid var(--border)', borderRadius: '8px', padding: '8px 12px' }}>
+                        <svg viewBox='0 0 24 24' style={{ width: '16px', height: '16px', stroke: 'var(--text-3)', fill: 'none', strokeWidth: 2 }}><circle cx='11' cy='11' r='8' /><line x1='21' y1='21' x2='16.65' y2='16.65' /></svg>
+                        <input type='text' style={{ background: 'transparent', border: 'none', outline: 'none', width: '100%', fontSize: '14px', color: 'var(--text-1)' }} placeholder='Search videos...' value={search} onChange={e => setSearch(e.target.value)} />
+                    </div>
+                    <div style={{ width: '160px', background: 'white', border: '1px solid var(--border)', borderRadius: '8px', overflow: 'hidden' }}>
+                        <select
+                            value={influencerFilter}
+                            onChange={(e) => setInfluencerFilter(e.target.value)}
+                            style={{ width: '100%', height: '100%', background: 'transparent', padding: '8px 12px', fontSize: '14px', border: 'none', outline: 'none', color: 'var(--text-2)', cursor: 'pointer' }}
+                        >
+                            <option value="">All Influencers</option>
+                            {influencers.map(inf => <option key={inf.id} value={inf.id}>{inf.name}</option>)}
+                        </select>
+                    </div>
+                    <div style={{ width: '150px', background: 'white', border: '1px solid var(--border)', borderRadius: '8px', overflow: 'hidden' }}>
+                        <select
+                            value={statusFilter}
+                            onChange={(e) => setStatusFilter(e.target.value)}
+                            style={{ width: '100%', height: '100%', background: 'transparent', padding: '8px 12px', fontSize: '14px', border: 'none', outline: 'none', color: 'var(--text-2)', cursor: 'pointer' }}
+                        >
+                            <option value="">All Status</option>
+                            <option value="success">Completed</option>
+                            <option value="processing">Processing</option>
+                            <option value="pending">Queued</option>
+                            <option value="failed">Failed</option>
+                        </select>
+                    </div>
+                    <div style={{ width: '140px', background: 'white', border: '1px solid var(--border)', borderRadius: '8px', overflow: 'hidden' }}>
+                        <select
+                            value={sortOrder}
+                            onChange={(e) => setSortOrder(e.target.value)}
+                            style={{ width: '100%', height: '100%', background: 'transparent', padding: '8px 12px', fontSize: '14px', border: 'none', outline: 'none', color: 'var(--text-2)', cursor: 'pointer' }}
+                        >
+                            <option value="newest">Newest First</option>
+                            <option value="oldest">Oldest First</option>
+                        </select>
+                    </div>
+                </div>
+                <Link href='/create' className='btn-primary' style={{ padding: '8px 16px', fontWeight: 600, fontSize: '14px', height: '38px', display: 'flex', alignItems: 'center' }}>
+                    + Create Video
+                </Link>
+            </div>
+
+            {filteredJobs.length === 0 ? (
+                <div className='empty-state'>
+                    <div className='empty-icon'>
+                        <svg viewBox='0 0 24 24'><rect x='2' y='3' width='20' height='14' rx='2' /><path d='M8 21h8M12 17v4' /></svg>
+                    </div>
+                    <div className='empty-title'>No videos yet</div>
+                    <div className='empty-sub'>Create your first video to get started.</div>
+                    <Link href='/create' className='btn-primary'>Create Video</Link>
+                </div>
+            ) : (
+                <div className='video-grid'>
+                    {filteredJobs.map((job, i) => {
+                        const statusClass = job.status === 'success' ? 'done' : job.status === 'processing' ? 'processing' : job.status === 'pending' ? 'queued' : 'failed';
+                        const statusLabel = job.status === 'success' ? 'Done' : job.status === 'processing' ? 'Processing...' : job.status === 'pending' ? 'Queued' : 'Failed';
+                        return (
+                            <div key={job.id} className='video-card'>
+                                <div className={`video-thumb grad-${(i % 5) + 1}`} style={job.final_video_url ? {} : {}}>
+                                    {job.final_video_url && (
+                                        <video src={job.final_video_url} style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', inset: 0 }} muted loop playsInline />
+                                    )}
+                                    <span className={`status-pill ${statusClass}`} style={{ position: 'absolute', top: '8px', right: '8px', fontWeight: 700 }}>{statusLabel}</span>
+                                </div>
+                                <div className='video-info' style={{ paddingBottom: '12px' }}>
+                                    <div className='video-name' style={{ fontWeight: 700 }}>{influencerMap.get(job.influencer_id ?? '')?.name ?? 'Unknown'} — {job.campaign_name || 'Single'}</div>
+                                    <div className='video-date' style={{ marginTop: '4px' }}>{(job as any).product_type === 'physical' ? 'Physical' : 'Digital'} 15s · {formatDate(job.created_at ?? '')}</div>
+                                </div>
+                                <div className='video-info' style={{ display: 'flex', gap: '8px', paddingTop: 0, paddingBottom: '12px', marginTop: 'auto' }}>
+                                    {job.final_video_url ? (
+                                        <>
+                                            <button style={{ flex: 1, padding: '6px 0', backgroundColor: 'var(--surface-hover)', color: 'var(--blue)', borderRadius: '4px', fontSize: '12px', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px', border: '1px solid rgba(51,122,255,0.15)', cursor: 'pointer' }} onClick={() => window.open(job.final_video_url!)}>
+                                                <svg viewBox='0 0 24 24' style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><path d='M21 15v4a2 0 0 1-2 2H5a2 0 0 1-2-2v-4' /><polyline points='7 10 12 15 17 10' /><line x1='12' y1='15' x2='12' y2='3' /></svg>
+                                                Save
+                                            </button>
+                                            <button style={{ flex: 1, padding: '6px 0', backgroundColor: 'transparent', color: 'var(--text-2)', borderRadius: '4px', fontSize: '12px', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px', border: '1px solid var(--border)', cursor: 'pointer' }}>
+                                                <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" /></svg>
+                                                Share
+                                            </button>
+                                        </>
+                                    ) : (
+                                        <div style={{ width: '100%', textAlign: 'center' }}>
+                                            <button style={{ width: '90%', margin: '0 auto', padding: '6px 0', backgroundColor: 'transparent', color: 'var(--text-2)', borderRadius: '20px', fontSize: '12px', fontWeight: 600, border: '1px solid var(--border)', opacity: 0.6, cursor: 'not-allowed' }}>
+                                                {statusLabel.replace('...', '')}...
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+        </div>
+    );
+}

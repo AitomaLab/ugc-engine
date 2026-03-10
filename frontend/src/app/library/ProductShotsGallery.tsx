@@ -286,9 +286,9 @@ export default function ProductShotsGallery({
 
     return (
         <>
-            <div className="mt-4 bg-white/50 rounded-2xl border border-white/5 overflow-hidden">
+            <div className="mt-4 bg-white rounded-2xl border border-[#E8ECF4] overflow-hidden">
                 {/* Tab Header */}
-                <div className="flex items-center gap-0 border-b border-white/5">
+                <div className="flex items-center gap-0 border-b border-[#E8ECF4]">
                     <button
                         onClick={() => setActiveTab('stills')}
                         className={`flex-1 py-3 px-4 text-xs font-medium transition-colors ${activeTab === 'stills'
@@ -296,7 +296,7 @@ export default function ProductShotsGallery({
                             : 'text-[#94A3B8] hover:text-[#1A1A1F]'
                             }`}
                     >
-                         Product Shots ({stills.length})
+                        Product Shots ({stills.length})
                     </button>
                     <button
                         onClick={() => setActiveTab('videos')}
@@ -305,7 +305,7 @@ export default function ProductShotsGallery({
                             : 'text-[#94A3B8] hover:text-[#1A1A1F]'
                             }`}
                     >
-                         Cinematic Videos ({videos.length})
+                        Cinematic Videos ({videos.length})
                     </button>
                 </div>
 
@@ -337,7 +337,7 @@ export default function ProductShotsGallery({
 
                     {/* Failed shots section */}
                     {failed.length > 0 && (
-                        <div className="mt-4 border-t border-white/5 pt-3">
+                        <div className="mt-4 border-t border-[#E8ECF4] pt-3">
                             <p className="text-[10px] uppercase tracking-wider text-red-400/60 font-bold mb-2">
                                 Failed ({failed.length})
                             </p>
@@ -350,7 +350,7 @@ export default function ProductShotsGallery({
                                             className="text-red-400/60 hover:text-red-400 text-[10px] transition-colors"
                                             title="Remove"
                                         >
-                                            
+
                                         </button>
                                     </div>
                                 ))}
