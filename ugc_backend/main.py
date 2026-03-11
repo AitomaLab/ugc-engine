@@ -213,6 +213,19 @@ def api_create_product(data: ProductCreate):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.put("/api/products/{product_id}")
+def api_update_product(product_id: str, data: dict):
+    try:
+        from ugc_db.db_manager import update_product
+        print(f"DEBUG: api_update_product {product_id} with {data}")
+        result = update_product(product_id, data)
+        return result
+    except Exception as e:
+        print(f"ERROR in api_update_product: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.delete("/api/products/{product_id}")
 def api_delete_product(product_id: str):
     try:
@@ -311,33 +324,50 @@ def api_analyze_product(data: ProductAnalyzeRequest):
 class ScriptGenerateRequest(BaseModel):
     product_id: str
     duration: int = 15
+    influencer_id: Optional[str] = None
 
 @app.post("/api/scripts/generate")
 def api_generate_script(data: ScriptGenerateRequest):
     try:
         from ugc_backend.ai_script_client import AIScriptClient
-        from ugc_db.db_manager import get_product
-        
+        from ugc_db.db_manager import get_product, get_influencer
+
         print(f"DEBUG: Generating script for product {data.product_id} ({data.duration}s)")
-        
+
         # 1. Fetch Product
         product = get_product(data.product_id)
         if not product:
             raise HTTPException(status_code=404, detail="Product not found")
-            
-        # 2. Generate Script
+
+        # 2. Fetch Influencer (optional — enables persona-driven generation)
+        influencer_data = None
+        if data.influencer_id:
+            influencer = get_influencer(data.influencer_id)
+            if influencer:
+                influencer_data = {
+                    "name": influencer.get("name", ""),
+                    "personality": influencer.get("personality", ""),
+                    "style": influencer.get("style", ""),
+                    "gender": influencer.get("gender", "Female"),
+                    "age": influencer.get("age", "25-year-old"),
+                    "accent": influencer.get("accent", "neutral English"),
+                    "tone": influencer.get("tone", "Enthusiastic"),
+                    "energy_level": influencer.get("energy_level", "High"),
+                }
+
+        # 3. Generate Script
         client = AIScriptClient()
-        # Use visual_description if available, otherwise empty dict (client handles defaults)
         visuals = product.get("visual_description") or {}
-        
+
         script = client.generate_physical_product_script(
-            product_analysis=visuals, 
-            duration=data.duration, 
-            product_name=product.get("name", "Product")
+            product_analysis=visuals,
+            duration=data.duration,
+            product_name=product.get("name", "Product"),
+            influencer_data=influencer_data,
         )
-        
+
         return {"script": script}
-        
+
     except Exception as e:
         print(f"ERROR in api_generate_script: {e}")
         import traceback

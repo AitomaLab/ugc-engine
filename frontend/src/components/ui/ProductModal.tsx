@@ -107,8 +107,16 @@ export default function ProductModal({ isOpen, onClose, product, onSave }: Produ
                     }),
                 });
             } else {
-                // Currently backend doesn't have PUT /api/products/{id}.
-                // We'll mimic save by closing. Analysis auto-saves to DB.
+                // Update
+                await apiFetch(`/api/products/${product.id}`, {
+                    method: 'PUT',
+                    body: JSON.stringify({
+                        name,
+                        type,
+                        image_url: imageUrl,
+                        product_type: type
+                    }),
+                });
             }
             onSave();
             onClose();
@@ -243,17 +251,17 @@ export default function ProductModal({ isOpen, onClose, product, onSave }: Produ
                                                                 ))}
                                                             </div>
                                                         ) : (
-                                                            <span style={{ color: '#1e293b', wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>
+                                                            <div className="pm-analysis-scrollable" style={{ color: '#1e293b', wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>
                                                                 {typeof analysisResult[key] === 'object'
                                                                     ? JSON.stringify(analysisResult[key], null, 2)
                                                                     : String(analysisResult[key])}
-                                                            </span>
+                                                            </div>
                                                         )}
                                                     </div>
                                                 );
                                             })
                                         ) : (
-                                            <div className="pm-analysis-item" style={{ whiteSpace: 'pre-wrap' }}>
+                                            <div className="pm-analysis-item pm-analysis-scrollable" style={{ whiteSpace: 'pre-wrap' }}>
                                                 {String(analysisResult)}
                                             </div>
                                         )}
@@ -290,11 +298,9 @@ export default function ProductModal({ isOpen, onClose, product, onSave }: Produ
                     <button type="button" onClick={onClose} className="pm-btn-cancel">
                         Cancel
                     </button>
-                    {!isEditing && (
-                        <button type="submit" form="product-form" className="pm-btn-save">
-                            Save Product
-                        </button>
-                    )}
+                    <button type="submit" form="product-form" className="pm-btn-save">
+                        {isEditing ? 'Save Changes' : 'Save Product'}
+                    </button>
                 </div>
             </div>
         </div>,
