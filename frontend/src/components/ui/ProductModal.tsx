@@ -224,18 +224,34 @@ export default function ProductModal({ isOpen, onClose, product, onSave }: Produ
                                     <div className="pm-analysis-content">
                                         {/* Parse JSON if it's an object, or show raw text */}
                                         {typeof analysisResult === 'object' ? (
-                                            Object.keys(analysisResult).map((key) => (
-                                                <div key={key} className="pm-analysis-item" key={`k_${key}`}>
-                                                    <span style={{ display: 'block', fontSize: '10px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '4px' }}>
-                                                        {key.replace(/_/g, ' ')}
-                                                    </span>
-                                                    <span style={{ color: '#1e293b', wordBreak: 'break-word' }}>
-                                                        {typeof analysisResult[key] === 'object'
-                                                            ? JSON.stringify(analysisResult[key], null, 2)
-                                                            : String(analysisResult[key])}
-                                                    </span>
-                                                </div>
-                                            ))
+                                            Object.keys(analysisResult).map((key) => {
+                                                const isColorScheme = key === 'color_scheme' && Array.isArray(analysisResult[key]);
+                                                return (
+                                                    <div key={`k_${key}`} className="pm-analysis-item">
+                                                        <span style={{ display: 'block', fontSize: '10px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '4px' }}>
+                                                            {key.replace(/_/g, ' ')}
+                                                        </span>
+                                                        {isColorScheme ? (
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
+                                                                {analysisResult[key].map((color: any, idx: number) => (
+                                                                    <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                        <div title={color.hex} style={{ width: '24px', height: '24px', borderRadius: '4px', backgroundColor: color.hex, border: '1px solid #e2e8f0', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }} />
+                                                                        <span style={{ fontSize: '13px', color: '#1e293b' }}>
+                                                                            <strong style={{ fontWeight: 600 }}>{color.name}</strong> <span style={{ color: '#64748b', fontSize: '12px' }}>{color.hex}</span>
+                                                                        </span>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        ) : (
+                                                            <span style={{ color: '#1e293b', wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>
+                                                                {typeof analysisResult[key] === 'object'
+                                                                    ? JSON.stringify(analysisResult[key], null, 2)
+                                                                    : String(analysisResult[key])}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })
                                         ) : (
                                             <div className="pm-analysis-item" style={{ whiteSpace: 'pre-wrap' }}>
                                                 {String(analysisResult)}
