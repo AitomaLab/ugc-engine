@@ -102,8 +102,7 @@ export default function ProductModal({ isOpen, onClose, product, onSave }: Produ
                     body: JSON.stringify({
                         name,
                         type,
-                        image_url: imageUrl,
-                        product_type: type
+                        image_url: imageUrl
                     }),
                 });
             } else {
@@ -113,8 +112,7 @@ export default function ProductModal({ isOpen, onClose, product, onSave }: Produ
                     body: JSON.stringify({
                         name,
                         type,
-                        image_url: imageUrl,
-                        product_type: type
+                        image_url: imageUrl
                     }),
                 });
             }
