@@ -76,39 +76,35 @@ export default function VideosPage() {
                         <svg viewBox='0 0 24 24' style={{ width: '16px', height: '16px', stroke: 'var(--text-3)', fill: 'none', strokeWidth: 2 }}><circle cx='11' cy='11' r='8' /><line x1='21' y1='21' x2='16.65' y2='16.65' /></svg>
                         <input type='text' style={{ background: 'transparent', border: 'none', outline: 'none', width: '100%', fontSize: '14px', color: 'var(--text-1)' }} placeholder='Search videos...' value={search} onChange={e => setSearch(e.target.value)} />
                     </div>
-                    <div style={{ width: '160px', background: 'white', border: '1px solid var(--border)', borderRadius: '8px', overflow: 'hidden' }}>
-                        <select
-                            value={influencerFilter}
-                            onChange={(e) => setInfluencerFilter(e.target.value)}
-                            style={{ width: '100%', height: '100%', background: 'transparent', padding: '8px 12px', fontSize: '14px', border: 'none', outline: 'none', color: 'var(--text-2)', cursor: 'pointer' }}
-                        >
-                            <option value="">All Influencers</option>
-                            {influencers.map(inf => <option key={inf.id} value={inf.id}>{inf.name}</option>)}
-                        </select>
-                    </div>
-                    <div style={{ width: '150px', background: 'white', border: '1px solid var(--border)', borderRadius: '8px', overflow: 'hidden' }}>
-                        <select
-                            value={statusFilter}
-                            onChange={(e) => setStatusFilter(e.target.value)}
-                            style={{ width: '100%', height: '100%', background: 'transparent', padding: '8px 12px', fontSize: '14px', border: 'none', outline: 'none', color: 'var(--text-2)', cursor: 'pointer' }}
-                        >
-                            <option value="">All Status</option>
-                            <option value="success">Completed</option>
-                            <option value="processing">Processing</option>
-                            <option value="pending">Queued</option>
-                            <option value="failed">Failed</option>
-                        </select>
-                    </div>
-                    <div style={{ width: '140px', background: 'white', border: '1px solid var(--border)', borderRadius: '8px', overflow: 'hidden' }}>
-                        <select
-                            value={sortOrder}
-                            onChange={(e) => setSortOrder(e.target.value)}
-                            style={{ width: '100%', height: '100%', background: 'transparent', padding: '8px 12px', fontSize: '14px', border: 'none', outline: 'none', color: 'var(--text-2)', cursor: 'pointer' }}
-                        >
-                            <option value="newest">Newest First</option>
-                            <option value="oldest">Oldest First</option>
-                        </select>
-                    </div>
+                    <select
+                        className="filter-select"
+                        value={influencerFilter}
+                        onChange={(e) => setInfluencerFilter(e.target.value)}
+                    >
+                        <option value="">All Influencers</option>
+                        {influencers.map(inf => <option key={inf.id} value={inf.id}>{inf.name}</option>)}
+                    </select>
+
+                    <select
+                        className="filter-select"
+                        value={statusFilter}
+                        onChange={(e) => setStatusFilter(e.target.value)}
+                    >
+                        <option value="">All Status</option>
+                        <option value="success">Completed</option>
+                        <option value="processing">Processing</option>
+                        <option value="pending">Queued</option>
+                        <option value="failed">Failed</option>
+                    </select>
+
+                    <select
+                        className="filter-select"
+                        value={sortOrder}
+                        onChange={(e) => setSortOrder(e.target.value)}
+                    >
+                        <option value="newest">Newest First</option>
+                        <option value="oldest">Oldest First</option>
+                    </select>
                 </div>
                 <Link href='/create' className='btn-primary' style={{ padding: '8px 16px', fontWeight: 600, fontSize: '14px', height: '38px', display: 'flex', alignItems: 'center' }}>
                     + Create Video
