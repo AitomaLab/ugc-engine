@@ -101,7 +101,6 @@ export default function ProductModal({ isOpen, onClose, product, onSave }: Produ
                     method: 'POST',
                     body: JSON.stringify({
                         name,
-                        type,
                         image_url: imageUrl
                     }),
                 });
@@ -111,7 +110,6 @@ export default function ProductModal({ isOpen, onClose, product, onSave }: Produ
                     method: 'PUT',
                     body: JSON.stringify({
                         name,
-                        type,
                         image_url: imageUrl
                     }),
                 });
