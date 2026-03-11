@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import Select from '@/components/ui/Select';
+import ProductModal from '@/components/ui/ProductModal';
 import { apiFetch } from '@/lib/utils';
 import { Product } from '@/lib/types';
 
@@ -11,6 +12,14 @@ export default function ProductsPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
+
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+
+  const handleOpenModal = (product?: Product) => {
+    setSelectedProduct(product || null);
+    setIsModalOpen(true);
+  };
 
   const fetchProducts = useCallback(async () => {
     try {
@@ -51,7 +60,7 @@ export default function ProductsPage() {
             ]}
           />
         </div>
-        <button className='btn-create' onClick={() => {/* open product upload modal */ }}>
+        <button className='btn-create' onClick={() => handleOpenModal()}>
           <svg viewBox='0 0 24 24'><line x1='12' y1='5' x2='12' y2='19' /><line x1='5' y1='12' x2='19' y2='12' /></svg>
           Add Product
         </button>
@@ -66,7 +75,7 @@ export default function ProductsPage() {
           </div>
           <div className='empty-title'>No products yet</div>
           <div className='empty-sub'>Add a product to start creating UGC videos.</div>
-          <button className='btn-primary'>Add Product</button>
+          <button className='btn-primary' onClick={() => handleOpenModal()}>Add Product</button>
         </div>
       ) : (
         <div className='products-grid'>
@@ -84,6 +93,9 @@ export default function ProductsPage() {
                 <div className='product-meta'>{product.type ?? 'Product'} · {product.job_count ?? 0} videos generated</div>
               </div>
               <div className='product-actions'>
+                <button onClick={() => handleOpenModal(product)} className='product-btn secondary' style={{ flex: '0 0 auto', padding: '10px' }} title="Edit Product Analysis & Settings">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+                </button>
                 <Link href={`/cinematic?product_id=${product.id}`} className='product-btn primary'>
                   <svg viewBox='0 0 24 24'><path d='M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4' /><polyline points='10 17 15 12 10 7' /></svg>
                   Cinematic
@@ -96,6 +108,15 @@ export default function ProductsPage() {
             </div>
           ))}
         </div>
+      )}
+
+      {isModalOpen && (
+        <ProductModal
+          isOpen={isModalOpen}
+          product={selectedProduct}
+          onClose={() => setIsModalOpen(false)}
+          onSave={() => { fetchProducts(); }}
+        />
       )}
     </div>
   );

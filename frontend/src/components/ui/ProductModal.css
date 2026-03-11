@@ -1,0 +1,340 @@
+.pm-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-color: rgba(15, 23, 42, 0.6);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    animation: pm-fadeIn 0.2s ease-out;
+}
+
+@keyframes pm-fadeIn {
+    from {
+        opacity: 0;
+        transform: scale(0.98);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+.pm-container {
+    background-color: #ffffff;
+    border-radius: 16px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+    width: 100%;
+    max-width: 800px;
+    display: flex;
+    flex-direction: column;
+    max-height: 90vh;
+    overflow: hidden;
+}
+
+/* Header */
+.pm-header {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    background-color: #f8fafc;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.pm-header h2 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--text-1);
+    margin: 0;
+}
+
+.pm-close-btn {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    border: none;
+    background: transparent;
+    color: #64748b;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.pm-close-btn:hover {
+    background-color: #e2e8f0;
+}
+
+/* Body */
+.pm-body {
+    padding: 24px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.pm-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 32px;
+}
+
+@media (min-width: 768px) {
+    .pm-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+.pm-form-group {
+    margin-bottom: 24px;
+}
+
+.pm-label {
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+}
+
+.pm-input {
+    width: 100%;
+    background-color: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 12px;
+    font-size: 0.875rem;
+    color: var(--text-1);
+    outline: none;
+    transition: all 0.2s;
+}
+
+.pm-input:focus {
+    border-color: var(--blue);
+    box-shadow: 0 0 0 3px var(--blue-glow);
+}
+
+.pm-image-upload {
+    border: 2px dashed #e2e8f0;
+    border-radius: 12px;
+    background-color: #f8fafc;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    transition: all 0.2s;
+    cursor: auto;
+}
+
+.pm-image-upload:hover {
+    border-color: rgba(51, 122, 255, 0.5);
+    background-color: rgba(51, 122, 255, 0.05);
+}
+
+.pm-preview {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid #e2e8f0;
+}
+
+.pm-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background-color: #f1f5f9;
+}
+
+.pm-uploading-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(2px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.875rem;
+    font-weight: 700;
+    color: var(--blue);
+}
+
+.pm-upload-btn {
+    margin-top: 16px;
+    padding: 8px 16px;
+    background-color: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    font-weight: 700;
+    color: var(--text-1);
+    cursor: pointer;
+    transition: background-color 0.2s;
+    width: 100%;
+}
+
+.pm-upload-btn:hover:not(:disabled) {
+    background-color: #f8fafc;
+}
+
+.pm-upload-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* AI Analysis Section */
+.pm-ai-gradient-text {
+    background: linear-gradient(to right, #2563eb, #4f46e5);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    display: inline-block;
+}
+
+.pm-ai-desc {
+    font-size: 0.875rem;
+    color: #64748b;
+    margin-bottom: 16px;
+}
+
+.pm-analysis-container {
+    flex: 1;
+    background-color: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 16px;
+    overflow-y: auto;
+    position: relative;
+    min-height: 300px;
+    margin-bottom: 24px;
+}
+
+.pm-analysis-empty {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 24px;
+    color: #94a3b8;
+}
+
+.pm-analysis-empty-icon {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    background-color: #f1f5f9;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 16px;
+}
+
+.pm-analysis-content {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.pm-analysis-item {
+    background-color: #ffffff;
+    padding: 12px;
+    border-radius: 8px;
+    border: 1px solid #f1f5f9;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.pm-ai-btn {
+    width: 100%;
+    padding: 12px;
+    border-radius: 12px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: all 0.2s;
+    border: none;
+    cursor: pointer;
+}
+
+.pm-ai-btn.active {
+    background: linear-gradient(to right, #2563eb, #4f46e5);
+    color: #ffffff;
+    box-shadow: 0 4px 14px 0 rgba(37, 99, 235, 0.39);
+}
+
+.pm-ai-btn.active:hover {
+    background: linear-gradient(to right, #3b82f6, #6366f1);
+}
+
+.pm-ai-btn.disabled {
+    background-color: #f1f5f9;
+    color: #94a3b8;
+    cursor: not-allowed;
+}
+
+/* Footer */
+.pm-footer {
+    padding: 16px 24px;
+    border-top: 1px solid var(--border);
+    background-color: #f8fafc;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+}
+
+.pm-btn-cancel {
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    font-weight: 700;
+    color: #475569;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.pm-btn-cancel:hover {
+    background-color: #e2e8f0;
+}
+
+.pm-btn-save {
+    padding: 10px 24px;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    font-weight: 700;
+    background-color: #0f172a;
+    color: #ffffff;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.pm-btn-save:hover {
+    background-color: #1e293b;
+    transform: translateY(-1px);
+}
