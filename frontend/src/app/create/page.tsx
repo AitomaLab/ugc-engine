@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { apiFetch, getApiUrl } from '@/lib/utils';
+import { Suspense, useState, useRef, useEffect, useMemo } from 'react';
+import { apiFetch, formatDate, getApiUrl } from '@/lib/utils';
 import { useRouter, useSearchParams } from 'next/navigation';
+import Select from '@/components/ui/Select';
 import type { ProductShot } from '@/lib/types';
 
 // ---------------------------------------------------------------------------
@@ -59,6 +60,14 @@ const CONTENT_STRATEGIES = [
 // ---------------------------------------------------------------------------
 
 export default function CreatePage() {
+    return (
+        <Suspense fallback={<div className="empty-state" style={{ padding: '40px' }}><div className="empty-title">Loading Studio...</div></div>}>
+            <CreateContent />
+        </Suspense>
+    );
+}
+
+function CreateContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const API_URL = getApiUrl();
@@ -572,14 +581,20 @@ export default function CreatePage() {
                                 <button className={`pill ${scriptSource === 'custom' ? 'selected' : ''}`} onClick={() => setScriptSource('custom')}>Custom</button>
                             </div>
                             {scriptSource === 'specific' && (
-                                <select className="filter-select" style={{ width: '100%', marginBottom: '8px' }} value={selectedScript} onChange={e => setSelectedScript(e.target.value)}>
-                                    <option value="">Select a script...</option>
-                                    {scripts.map(s => (
-                                        <option key={s.id} value={s.id}>
-                                            {s.text.substring(0, 60)}{s.text.length > 60 ? '...' : ''} ({s.category || 'General'})
-                                        </option>
-                                    ))}
-                                </select>
+                                <Select
+                                    className="filter-select"
+                                    style={{ width: '100%', marginBottom: '8px' }}
+                                    value={selectedScript}
+                                    onChange={setSelectedScript}
+                                    placeholder="Select a script..."
+                                    options={[
+                                        { value: '', label: 'Select a script...' },
+                                        ...scripts.map(s => ({
+                                            value: s.id,
+                                            label: `${s.text.substring(0, 60)}${s.text.length > 60 ? '...' : ''} (${s.category || 'General'})`
+                                        }))
+                                    ]}
+                                />
                             )}
                             {scriptSource === 'custom' && (
                                 <textarea className="config-textarea" rows={4} value={customScript} onChange={e => setCustomScript(e.target.value)} placeholder="Write your script here..." />

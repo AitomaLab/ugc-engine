@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { apiFetch, statusColor, formatDate } from '@/lib/utils';
+import Select from '@/components/ui/Select';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -122,16 +123,16 @@ export default function CampaignsPage() {
                     {/* Influencer Selector */}
                     <div>
                         <label className="block text-sm font-medium text-[#4A5568] mb-2">Influencer</label>
-                        <select
+                        <Select
                             value={selectedInfluencer}
-                            onChange={(e) => setSelectedInfluencer(e.target.value)}
-                            className="w-full bg-white/80 border border-[#E8ECF4] rounded-lg px-4 py-3 text-white focus:border-[#337AFF] outline-none appearance-none cursor-pointer"
-                        >
-                            <option value="">Select influencer...</option>
-                            {influencers.map((inf) => (
-                                <option key={inf.id} value={inf.id}>{inf.name}</option>
-                            ))}
-                        </select>
+                            onChange={setSelectedInfluencer}
+                            className="w-full"
+                            placeholder="Select influencer..."
+                            options={[
+                                { value: '', label: 'Select influencer...' },
+                                ...influencers.map((inf) => ({ value: inf.id, label: inf.name }))
+                            ]}
+                        />
                     </div>
 
                     {/* Count */}
@@ -150,15 +151,16 @@ export default function CampaignsPage() {
                     {/* Duration */}
                     <div>
                         <label className="block text-sm font-medium text-[#4A5568] mb-2">Duration (seconds)</label>
-                        <select
-                            value={duration}
-                            onChange={(e) => setDuration(parseInt(e.target.value))}
-                            className="w-full bg-white/80 border border-[#E8ECF4] rounded-lg px-4 py-3 text-white focus:border-[#337AFF] outline-none appearance-none cursor-pointer"
-                        >
-                            <option value={15}>15s (Short)</option>
-                            <option value={30}>30s (Medium)</option>
-                            <option value={60}>60s (Long)</option>
-                        </select>
+                        <Select
+                            value={duration.toString()}
+                            onChange={(val) => setDuration(parseInt(val))}
+                            className="w-full"
+                            options={[
+                                { value: '15', label: '15s (Short)' },
+                                { value: '30', label: '30s (Medium)' },
+                                { value: '60', label: '60s (Long)' }
+                            ]}
+                        />
                     </div>
                 </div>
 
@@ -173,7 +175,7 @@ export default function CampaignsPage() {
 
                     {result && (
                         <span className="text-green-400 text-sm animate-pulse">
-                             Dispatched {result.count} jobs successfully!
+                            Dispatched {result.count} jobs successfully!
                         </span>
                     )}
                 </div>
@@ -231,7 +233,7 @@ export default function CampaignsPage() {
                                 rel="noreferrer"
                                 className="text-[#337AFF] hover:text-[#337AFF]/80 text-sm shrink-0"
                             >
-                                 View
+                                View
                             </a>
                         )}
                     </div>

@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { getApiUrl } from "@/lib/utils";
+import Select from '@/components/ui/Select';
 
 const API_URL = getApiUrl();
 
@@ -173,36 +174,36 @@ export default function GeneratePage() {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                         <div className="space-y-4">
                             <h3 className="text-xl font-bold"> Model Selection</h3>
-                            <select
+                            <Select
                                 value={modelApi}
-                                onChange={(e) => setModelApi(e.target.value)}
-                                className="w-full bg-white border border-[#E8ECF4] rounded-xl p-3 outline-none focus:ring-2 focus:ring-[#337AFF]"
-                            >
-                                <option value="infinitalk-audio">InfiniteTalk + ElevenLabs (High Fidelity)</option>
-                                <option value="seedance-1.5-pro">Seedance 1.5 Pro (Ultra Realistic)</option>
-                                <option value="kling-2.6">Kling 2.6 (Cinematic)</option>
-                                <option value="veo-3.1">Google Veo 3.1 (Experimental)</option>
-                            </select>
+                                onChange={setModelApi}
+                                className="w-full border-none ring-1 ring-[#E8ECF4] focus-within:ring-[#337AFF]"
+                                options={[
+                                    { value: 'infinitalk-audio', label: 'InfiniteTalk + ElevenLabs (High Fidelity)' },
+                                    { value: 'seedance-1.5-pro', label: 'Seedance 1.5 Pro (Ultra Realistic)' },
+                                    { value: 'kling-2.6', label: 'Kling 2.6 (Cinematic)' },
+                                    { value: 'veo-3.1', label: 'Google Veo 3.1 (Experimental)' }
+                                ]}
+                            />
                         </div>
                         <div className="space-y-4">
                             <h3 className="text-xl font-bold"> Script Library</h3>
-                            <select
+                            <Select
                                 value={selectedScriptId || ""}
-                                onChange={(e) => {
-                                    const id = e.target.value;
+                                onChange={(id) => {
                                     setSelectedScriptId(id || null);
                                     if (id) {
                                         const s = scripts.find(scr => scr.id === id);
                                         if (s) setHook(s.text);
                                     }
                                 }}
-                                className="w-full bg-white border border-[#E8ECF4] rounded-xl p-3 outline-none focus:ring-2 focus:ring-[#337AFF]"
-                            >
-                                <option value="">-- Random / Custom Hook --</option>
-                                {scripts.map(s => (
-                                    <option key={s.id} value={s.id}>{s.text.substring(0, 40)}...</option>
-                                ))}
-                            </select>
+                                className="w-full border-none ring-1 ring-[#E8ECF4] focus-within:ring-[#337AFF]"
+                                placeholder="-- Random / Custom Hook --"
+                                options={[
+                                    { value: '', label: '-- Random / Custom Hook --' },
+                                    ...scripts.map(s => ({ value: s.id, label: `${s.text.substring(0, 40)}...` }))
+                                ]}
+                            />
                         </div>
                     </div>
 
@@ -312,7 +313,7 @@ export default function GeneratePage() {
                                     onClick={handleSubmit}
                                     className="px-12 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 rounded-2xl font-black text-lg tracking-tight transition-all active:scale-95 shadow-xl shadow-blue-900/20"
                                 >
-                                     Launch Engine
+                                    Launch Engine
                                 </button>
                             </div>
                         </div>

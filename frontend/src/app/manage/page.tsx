@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { getApiUrl } from "@/lib/utils";
+import Select from '@/components/ui/Select';
 
 const API_URL = getApiUrl();
 
@@ -120,12 +121,16 @@ export default function ManagePage() {
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-[#94A3B8] uppercase block mb-1">Personality</label>
-                                    <select value={infForm.personality} onChange={e => setInfForm({ ...infForm, personality: e.target.value })} className="w-full bg-[#F0F4FF] border border-[#E8ECF4] rounded-lg p-3 text-sm outline-none">
-                                        <option>Travel</option>
-                                        <option>Shop</option>
-                                        <option>Product</option>
-                                        <option>App</option>
-                                    </select>
+                                    <Select
+                                        value={infForm.personality}
+                                        onChange={val => setInfForm({ ...infForm, personality: val })}
+                                        options={[
+                                            { value: 'Travel', label: 'Travel' },
+                                            { value: 'Shop', label: 'Shop' },
+                                            { value: 'Product', label: 'Product' },
+                                            { value: 'App', label: 'App' }
+                                        ]}
+                                    />
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-[#94A3B8] uppercase block mb-1">Description</label>
@@ -148,12 +153,16 @@ export default function ManagePage() {
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-[#94A3B8] uppercase block mb-1">Category (Assistant Type)</label>
-                                    <select value={clipForm.category} onChange={e => setClipForm({ ...clipForm, category: e.target.value })} className="w-full bg-[#F0F4FF] border border-[#E8ECF4] rounded-lg p-3 text-sm outline-none">
-                                        <option>Travel</option>
-                                        <option>Shop</option>
-                                        <option>Product</option>
-                                        <option>App</option>
-                                    </select>
+                                    <Select
+                                        value={clipForm.category}
+                                        onChange={val => setClipForm({ ...clipForm, category: val })}
+                                        options={[
+                                            { value: 'Travel', label: 'Travel' },
+                                            { value: 'Shop', label: 'Shop' },
+                                            { value: 'Product', label: 'Product' },
+                                            { value: 'App', label: 'App' }
+                                        ]}
+                                    />
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-[#94A3B8] uppercase block mb-1">Direct Video URL</label>

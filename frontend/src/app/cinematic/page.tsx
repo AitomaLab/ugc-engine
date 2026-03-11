@@ -4,6 +4,7 @@ import { Suspense, useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { apiFetch } from '@/lib/utils';
 import type { Product, ProductShot } from '@/lib/types';
+import Select from '@/components/ui/Select';
 
 const SHOT_STYLES = [
   { key: 'hero', label: 'Hero', icon: <svg viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" /><polyline points="10 17 15 12 10 7" /><line x1="15" y1="12" x2="3" y2="12" /></svg> },
@@ -78,10 +79,10 @@ function CinematicContent() {
   const selectedProduct = products.find((p: any) => p.id === selectedProductId);
   const existingShots: ProductShot[] = productShots;
 
-  const handleProductChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const pid = e.target.value;
-    setSelectedProductId(pid);
-    const prod = products.find((p: any) => p.id === pid);
+  const handleProductChange = async (value: string) => {
+    const pId = value;
+    setSelectedProductId(pId);
+    const prod = products.find((p: any) => p.id === pId);
     if (prod && prod.image_url) {
       setUploadedImage(prod.image_url);
       setUploadedFile(null); // Clear file upload since we use DB image
@@ -141,12 +142,16 @@ function CinematicContent() {
         {/* Product Selection */}
         <div className="config-section">
           <div className="config-label">Target Product</div>
-          <select value={selectedProductId} onChange={handleProductChange} className="input-field w-full">
-            <option value="">Select a physical product...</option>
-            {products.map((p: any) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
+          <Select
+            className="input-field w-full"
+            value={selectedProductId}
+            onChange={handleProductChange}
+            placeholder="Select a physical product..."
+            options={[
+              { value: '', label: 'Select a physical product...' },
+              ...products.map((p: any) => ({ value: p.id, label: p.name }))
+            ]}
+          />
         </div>
 
         {/* Product Image Override */}

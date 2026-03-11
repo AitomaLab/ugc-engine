@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { apiFetch } from '@/lib/utils';
 import { Influencer } from '@/lib/types';
 import { InfluencerModal } from '@/app/library/InfluencerModal';
+import Select from '@/components/ui/Select';
 
 export default function InfluencersPage() {
   const [influencers, setInfluencers] = useState<Influencer[]>([]);
@@ -42,11 +43,16 @@ export default function InfluencersPage() {
             <svg viewBox='0 0 24 24'><circle cx='11' cy='11' r='8' /><line x1='21' y1='21' x2='16.65' y2='16.65' /></svg>
             <input type='text' placeholder='Search influencers...' value={search} onChange={e => setSearch(e.target.value)} />
           </div>
-          <select className='filter-select' value={genderFilter} onChange={e => setGenderFilter(e.target.value)}>
-            <option value=''>All Types</option>
-            <option value='Female'>Female</option>
-            <option value='Male'>Male</option>
-          </select>
+          <Select
+            className='filter-select'
+            value={genderFilter}
+            onChange={setGenderFilter}
+            options={[
+              { value: '', label: 'All Types' },
+              { value: 'Female', label: 'Female' },
+              { value: 'Male', label: 'Male' }
+            ]}
+          />
         </div>
         <button className='btn-create' onClick={() => { setEditTarget(null); setModalOpen(true); }}>
           <svg viewBox='0 0 24 24'><line x1='12' y1='5' x2='12' y2='19' /><line x1='5' y1='12' x2='19' y2='12' /></svg>

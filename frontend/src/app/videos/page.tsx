@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { apiFetch, formatDate } from '@/lib/utils';
 import { VideoJob, Influencer } from '@/lib/types';
-import { CustomDropdown } from '@/components/ui/CustomDropdown';
+import Select from '@/components/ui/Select';
 
 export default function VideosPage() {
     const [jobs, setJobs] = useState<VideoJob[]>([]);
@@ -76,35 +76,40 @@ export default function VideosPage() {
                         <svg viewBox='0 0 24 24' style={{ width: '16px', height: '16px', stroke: 'var(--text-3)', fill: 'none', strokeWidth: 2 }}><circle cx='11' cy='11' r='8' /><line x1='21' y1='21' x2='16.65' y2='16.65' /></svg>
                         <input type='text' style={{ background: 'transparent', border: 'none', outline: 'none', width: '100%', fontSize: '14px', color: 'var(--text-1)' }} placeholder='Search videos...' value={search} onChange={e => setSearch(e.target.value)} />
                     </div>
-                    <select
+                    <Select
                         className="filter-select"
                         value={influencerFilter}
-                        onChange={(e) => setInfluencerFilter(e.target.value)}
-                    >
-                        <option value="">All Influencers</option>
-                        {influencers.map(inf => <option key={inf.id} value={inf.id}>{inf.name}</option>)}
-                    </select>
+                        onChange={setInfluencerFilter}
+                        placeholder="All Influencers"
+                        options={[
+                            { value: '', label: 'All Influencers' },
+                            ...influencers.map(inf => ({ value: inf.id, label: inf.name }))
+                        ]}
+                    />
 
-                    <select
+                    <Select
                         className="filter-select"
                         value={statusFilter}
-                        onChange={(e) => setStatusFilter(e.target.value)}
-                    >
-                        <option value="">All Status</option>
-                        <option value="success">Completed</option>
-                        <option value="processing">Processing</option>
-                        <option value="pending">Queued</option>
-                        <option value="failed">Failed</option>
-                    </select>
+                        onChange={setStatusFilter}
+                        placeholder="All Status"
+                        options={[
+                            { value: '', label: 'All Status' },
+                            { value: 'success', label: 'Completed' },
+                            { value: 'processing', label: 'Processing' },
+                            { value: 'pending', label: 'Queued' },
+                            { value: 'failed', label: 'Failed' }
+                        ]}
+                    />
 
-                    <select
+                    <Select
                         className="filter-select"
                         value={sortOrder}
-                        onChange={(e) => setSortOrder(e.target.value)}
-                    >
-                        <option value="newest">Newest First</option>
-                        <option value="oldest">Oldest First</option>
-                    </select>
+                        onChange={setSortOrder}
+                        options={[
+                            { value: 'newest', label: 'Newest First' },
+                            { value: 'oldest', label: 'Oldest First' }
+                        ]}
+                    />
                 </div>
                 <Link href='/create' className='btn-primary' style={{ padding: '8px 16px', fontWeight: 600, fontSize: '14px', height: '38px', display: 'flex', alignItems: 'center' }}>
                     + Create Video
