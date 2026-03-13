@@ -103,8 +103,27 @@ def generate_ugc_video(self, job_id: str):
                     "description": clip.get("description", ""),
                     "video_url": clip.get("video_url", ""),
                     "duration": clip.get("duration_seconds", 4),
+                    "first_frame_url": clip.get("first_frame_url", ""),
+                    "product_id": clip.get("product_id", ""),
                 }
                 print(f"      ✅ App Clip found: {clip['name']}")
+
+                # Ensure first_frame_url exists for the digital unified pipeline.
+                # The background extractor may not have finished, so extract now.
+                if app_clip_dict["video_url"] and not app_clip_dict["first_frame_url"]:
+                    print(f"      🎞️ first_frame_url missing — extracting synchronously...")
+                    try:
+                        from ugc_backend.frame_extractor import extract_first_frame
+                        from ugc_db.db_manager import update_app_clip
+                        frame_url = extract_first_frame(app_clip_dict["video_url"])
+                        if frame_url:
+                            app_clip_dict["first_frame_url"] = frame_url
+                            update_app_clip(clip_id, {"first_frame_url": frame_url})
+                            print(f"      ✅ First frame extracted: {frame_url[:60]}...")
+                        else:
+                            print(f"      ⚠️ Frame extraction returned None")
+                    except Exception as e:
+                        print(f"      ⚠️ Sync frame extraction failed: {e}")
             else:
                 print(f"      ⚠️ App Clip ID {clip_id} not found in database!")
         else:
@@ -132,21 +151,37 @@ def generate_ugc_video(self, job_id: str):
                     "description": selected.get("description", ""),
                     "video_url": selected.get("video_url", ""),
                     "duration": selected.get("duration_seconds", 4),
+                    "first_frame_url": selected.get("first_frame_url", ""),
+                    "product_id": selected.get("product_id", ""),
                 }
                 match_type = "category match" if matching else "random fallback"
                 print(f"      ✅ Auto-selected: {selected['name']} ({match_type})")
+
+                # Ensure first_frame_url for auto-selected clips too
+                if app_clip_dict["video_url"] and not app_clip_dict["first_frame_url"]:
+                    print(f"      🎞️ first_frame_url missing — extracting synchronously...")
+                    try:
+                        from ugc_backend.frame_extractor import extract_first_frame
+                        from ugc_db.db_manager import update_app_clip
+                        frame_url = extract_first_frame(app_clip_dict["video_url"])
+                        if frame_url:
+                            app_clip_dict["first_frame_url"] = frame_url
+                            update_app_clip(selected["id"], {"first_frame_url": frame_url})
+                            print(f"      ✅ First frame extracted: {frame_url[:60]}...")
+                    except Exception as e:
+                        print(f"      ⚠️ Sync frame extraction failed: {e}")
             else:
                 print("      ⚠️ No App Clips available for auto-selection!")
 
-        # Fetch product if linked (Physical Product Flow)
+        # Fetch product if linked (any product type — physical or digital)
         product_dict = None
-        if job.get("product_type") == "physical" and job.get("product_id"):
+        if job.get("product_id"):
             prod_id = job["product_id"]
             print(f"      📦 Fetching Product: {prod_id}")
             prod_result = sb.table("products").select("*").eq("id", prod_id).execute()
             if prod_result.data:
                 prod = prod_result.data[0]
-                
+
                 # Check for visual_description (Auto-Analysis)
                 visual_desc = prod.get("visual_description")
                 if not visual_desc:
@@ -173,6 +208,7 @@ def generate_ugc_video(self, job_id: str):
                     "image_url": prod["image_url"],
                     "category": prod.get("category", ""),
                     "visual_description": visual_desc,
+                    "website_url": prod.get("website_url", ""),
                 }
                 print(f"      ✅ Product found: {prod['name']}")
             else:

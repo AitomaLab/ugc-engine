@@ -25,6 +25,14 @@ export default function InfluencersPage() {
 
   useEffect(() => { fetchInfluencers(); }, [fetchInfluencers]);
 
+  async function handleDelete(id: string) {
+    if (!confirm('Delete this influencer? This cannot be undone.')) return;
+    try {
+      await apiFetch(`/influencers/${id}`, { method: 'DELETE' });
+      setInfluencers(prev => prev.filter(i => i.id !== id));
+    } catch (err) { console.error('Delete error:', err); }
+  }
+
   const filtered = influencers.filter(inf =>
     inf.name.toLowerCase().includes(search.toLowerCase()) &&
     (genderFilter === '' || inf.gender === genderFilter)
@@ -73,8 +81,11 @@ export default function InfluencersPage() {
         <div className='influencers-grid'>
           {filtered.map(inf => (
             <div key={inf.id} className='icard' style={{ cursor: 'default' }}>
-              <div className='icard-thumb' style={inf.image_url ? { backgroundImage: `url(${inf.image_url})` } : { background: 'linear-gradient(160deg,#1a1a2e,#0f3460)' }}>
+              <div className='icard-thumb' style={inf.image_url ? { backgroundImage: `url(${inf.image_url})`, position: 'relative' } : { background: 'linear-gradient(160deg,#1a1a2e,#0f3460)', position: 'relative' }}>
                 <span className='icard-name'>{inf.name}</span>
+                <button className="card-delete-btn" onClick={(e) => { e.stopPropagation(); handleDelete(inf.id); }} title="Delete influencer">
+                  <svg viewBox="0 0 24 24"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
+                </button>
               </div>
               <div className='icard-info' style={{ paddingBottom: '0' }}>
                 <div className='icard-tags'>

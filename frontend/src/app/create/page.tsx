@@ -3,7 +3,6 @@
 import { Suspense, useState, useRef, useEffect, useMemo } from 'react';
 import { apiFetch, formatDate, getApiUrl } from '@/lib/utils';
 import { useRouter, useSearchParams } from 'next/navigation';
-import Select from '@/components/ui/Select';
 import type { ProductShot } from '@/lib/types';
 
 // ---------------------------------------------------------------------------
@@ -30,6 +29,8 @@ interface AppClip {
     name: string;
     category?: string;
     video_url: string;
+    product_id?: string;
+    first_frame_url?: string;
 }
 
 interface CostEstimate {
@@ -84,8 +85,10 @@ function CreateContent() {
     const [scriptSource, setScriptSource] = useState<'random' | 'specific' | 'custom'>('random');
     const [selectedScript, setSelectedScript] = useState<string>('');
     const [customScript, setCustomScript] = useState('');
-    const [generatedScript, setGeneratedScript] = useState('');                 // NEW
-    const [isGeneratingScript, setIsGeneratingScript] = useState(false);        // NEW
+    const [generatedScript, setGeneratedScript] = useState('');
+    const [isGeneratingScript, setIsGeneratingScript] = useState(false);
+    const [linkedClips, setLinkedClips] = useState<AppClip[]>([]);
+    const [selectedLinkedClip, setSelectedLinkedClip] = useState<string>('');
     const [modelApi, setModelApi] = useState('seedance-1.5-pro');
     const [appClipId, setAppClipId] = useState<string>('');
     const [productId, setProductId] = useState<string>('');
@@ -150,37 +153,64 @@ function CreateContent() {
         }
     }, [productType, productId]);
 
-    // Auto-generate script for physical products
+    // Fetch app clips linked to the selected digital product
+    useEffect(() => {
+        if (productType === 'digital' && productId) {
+            apiFetch<AppClip[]>(`/api/app-clips?product_id=${productId}`)
+                .then((clips) => {
+                    setLinkedClips(clips || []);
+                    if (clips && clips.length > 0) {
+                        setSelectedLinkedClip(clips[0].id);
+                        setAppClipId(clips[0].id);
+                    } else {
+                        setLinkedClips([]);
+                        setSelectedLinkedClip('');
+                        setAppClipId('auto');
+                    }
+                })
+                .catch(() => {
+                    setLinkedClips([]);
+                    setAppClipId('auto');
+                });
+        }
+    }, [productType, productId]);
+
+    // Auto-generate script when product + influencer are selected (both physical and digital)
     useEffect(() => {
         const generateScript = async () => {
-            if (productType === 'physical' && productId) {
-                setIsGeneratingScript(true);
-                setGeneratedScript(''); // Clear previous
-                try {
-                    const res = await fetch(`${API_URL}/api/scripts/generate`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ product_id: productId, duration }),
-                    });
-                    if (res.ok) {
-                        const data = await res.json();
-                        setGeneratedScript(data.script);
-                        // Auto-switch to custom source so the generated script is used
-                        setScriptSource('custom');
-                        setCustomScript(data.script);
-                    }
-                } catch (err) {
-                    console.error("Script generation failed", err);
-                } finally {
-                    setIsGeneratingScript(false);
+            if (!productId) return;
+
+            setIsGeneratingScript(true);
+            setGeneratedScript('');
+            try {
+                const res = await fetch(`${API_URL}/api/scripts/generate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        product_id: productId,
+                        duration,
+                        influencer_id: selectedInfluencer || undefined,
+                        product_type: productType,
+                    }),
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    const script = data.script || '';
+                    setGeneratedScript(script);
+                    setCustomScript(script);
+                    setScriptSource('custom');
                 }
+            } catch (err) {
+                console.error("Script generation failed", err);
+            } finally {
+                setIsGeneratingScript(false);
             }
         };
 
         // Debounce slightly to avoid rapid firing if user is clicking around
         const timer = setTimeout(generateScript, 500);
         return () => clearTimeout(timer);
-    }, [productType, productId, duration, API_URL]);
+    }, [productType, productId, duration, selectedInfluencer, API_URL]);
 
 
     // ... (render)
@@ -235,6 +265,30 @@ function CreateContent() {
         finally { setHookLoading(false); }
     }
 
+    // Generate AI script for digital products
+    async function generateDigitalScript() {
+        if (!productId || productType !== 'digital') return;
+        setIsGeneratingScript(true);
+        try {
+            const res = await fetch(`${API_URL}/api/scripts/generate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    product_id: productId,
+                    duration,
+                    product_type: 'digital',
+                }),
+            });
+            if (res.ok) {
+                const data = await res.json();
+                setGeneratedScript(data.script || '');
+                setCustomScript(data.script || '');
+                setScriptSource('custom');
+            }
+        } catch { /* silent */ }
+        finally { setIsGeneratingScript(false); }
+    }
+
     // Submit
     async function handleSubmit() {
         if (!selectedInfluencer) return;
@@ -278,7 +332,7 @@ function CreateContent() {
                         campaign_name: campaignName || undefined,
                         assistant_type: selectedInf?.style || 'Travel',
                         product_type: productType,
-                        product_id: productType === 'physical' ? productId : undefined,
+                        product_id: productId || undefined,
                         hook: effectiveHook,
                         cinematic_shot_ids: selectedCinematicShots.length > 0 ? selectedCinematicShots : undefined,
                         auto_transition_type: enableAutoTransitions ? autoTransitionType : undefined,
@@ -293,7 +347,7 @@ function CreateContent() {
                         influencer_id: selectedInfluencer,
                         script_id: scriptSource === 'specific' ? selectedScript : undefined,
                         app_clip_id: (productType === 'digital' && appClipId !== 'auto') ? appClipId : undefined,
-                        product_id: productType === 'physical' ? productId : undefined,
+                        product_id: productId || undefined,
                         product_type: productType,
                         hook: effectiveHook,
                         model_api: modelApi,
@@ -357,10 +411,10 @@ function CreateContent() {
 
                     {/* Product Type Pills */}
                     <div className="pill-group" style={{ marginTop: '10px' }}>
-                        <button className={`pill ${productType === 'digital' ? 'selected' : ''}`} onClick={() => setProductType('digital')}>
+                        <button className={`pill ${productType === 'digital' ? 'selected' : ''}`} onClick={() => { setProductType('digital'); setProductId(''); setCustomScript(''); setGeneratedScript(''); }}>
                             Digital App
                         </button>
-                        <button className={`pill ${productType === 'physical' ? 'selected' : ''}`} onClick={() => setProductType('physical')}>
+                        <button className={`pill ${productType === 'physical' ? 'selected' : ''}`} onClick={() => { setProductType('physical'); setProductId(''); setCustomScript(''); setGeneratedScript(''); }}>
                             Physical Product
                         </button>
                     </div>
@@ -368,45 +422,118 @@ function CreateContent() {
                     {/* Product Grid */}
                     {productType === 'digital' ? (
                         <div style={{ marginTop: '8px' }}>
-                            {appClips.length === 0 ? (
-                                <div style={{ fontSize: '12px', color: 'var(--text-3)' }}>No app clips found. Add one in App Clips.</div>
-                            ) : (
-                                <div className="product-selector-grid">
-                                    <div
-                                        className={`prod-card ${appClipId === 'auto' ? 'selected' : ''}`}
-                                        onClick={() => setAppClipId('auto')}
-                                    >
-                                        <div className="prod-thumb" style={{ background: 'var(--blue-light)' }}>
-                                            <svg viewBox="0 0 24 24"><polygon points="13,2 3,14 12,14 11,22 21,10 12,10" /></svg>
-                                        </div>
-                                        <div className="prod-card-name">Auto</div>
-                                        <div className="prod-card-type">Random</div>
-                                    </div>
-                                    {appClips.map((clip) => (
-                                        <div key={clip.id} className={`prod-card ${appClipId === clip.id ? 'selected' : ''}`} onClick={() => setAppClipId(clip.id)}>
-                                            <div className="prod-thumb" style={{ background: 'var(--blue-light)' }}>
-                                                <svg viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2" /><line x1="12" y1="18" x2="12.01" y2="18" /></svg>
+                            {/* Step 1: Select Digital Product */}
+                            <div style={{ marginBottom: '12px' }}>
+                                <div style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.6px', color: 'var(--text-3)', marginBottom: '8px' }}>
+                                    Select Digital Product
+                                </div>
+                                {products.filter(p => p.type === 'digital').length === 0 ? (
+                                    <div style={{ fontSize: '12px', color: 'var(--text-3)', fontStyle: 'italic' }}>No digital products found. Add one in Products.</div>
+                                ) : (
+                                    <div className="product-selector-grid">
+                                        {products.filter(p => p.type === 'digital').map((prod) => (
+                                            <div key={prod.id} className={`prod-card ${productId === prod.id ? 'selected' : ''}`} onClick={() => setProductId(prod.id)}>
+                                                <div className="prod-thumb" style={prod.image_url ? { backgroundImage: `url(${prod.image_url})`, backgroundSize: 'cover', backgroundPosition: 'center' } : { background: 'var(--blue-light)' }}>
+                                                    {!prod.image_url && <svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /></svg>}
+                                                </div>
+                                                <div className="prod-card-name">{prod.name}</div>
+                                                <div className="prod-card-type">Digital</div>
                                             </div>
-                                            <div className="prod-card-name">{clip.name}</div>
-                                            <div className="prod-card-type">{clip.category || 'Clip'}</div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Step 2: Generate Script (when product selected) */}
+                            {productId && (
+                                <div style={{ marginBottom: '12px' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                                        <span style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.6px', color: 'var(--blue)' }}>Script</span>
+                                        <button onClick={generateDigitalScript} disabled={isGeneratingScript} style={{ fontSize: '11px', color: 'var(--blue)', fontWeight: 600, cursor: 'pointer', background: 'none', border: 'none', opacity: isGeneratingScript ? 0.5 : 1 }}>
+                                            {isGeneratingScript ? 'Generating...' : 'Regenerate'}
+                                        </button>
+                                    </div>
+                                    <textarea
+                                        className="config-textarea"
+                                        rows={3}
+                                        value={customScript}
+                                        onChange={e => { setCustomScript(e.target.value); setScriptSource('custom'); }}
+                                        placeholder="AI will generate a script based on your product and website..."
+                                        disabled={isGeneratingScript}
+                                    />
+                                </div>
+                            )}
+
+                            {/* Step 3: Select Linked App Clip */}
+                            {productId && (
+                                <div>
+                                    <div style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.6px', color: 'var(--text-3)', marginBottom: '8px' }}>
+                                        App Clip
+                                        <span style={{ fontWeight: 400, marginLeft: '4px', color: 'var(--text-3)' }}>(linked to this product)</span>
+                                    </div>
+                                    {linkedClips.length === 0 ? (
+                                        <div>
+                                            <div style={{ fontSize: '12px', color: 'var(--text-3)', fontStyle: 'italic', marginBottom: '8px' }}>
+                                                No clips linked to this product. Using auto-selection.
+                                            </div>
+                                            <div className="product-selector-grid">
+                                                <div className={`prod-card ${appClipId === 'auto' ? 'selected' : ''}`} onClick={() => setAppClipId('auto')}>
+                                                    <div className="prod-thumb" style={{ background: 'var(--blue-light)' }}>
+                                                        <svg viewBox="0 0 24 24"><polygon points="13,2 3,14 12,14 11,22 21,10 12,10" /></svg>
+                                                    </div>
+                                                    <div className="prod-card-name">Auto</div>
+                                                    <div className="prod-card-type">Random</div>
+                                                </div>
+                                                {appClips.slice(0, 8).map((clip) => (
+                                                    <div key={clip.id} className={`prod-card ${appClipId === clip.id ? 'selected' : ''}`} onClick={() => setAppClipId(clip.id)}>
+                                                        <div className="prod-thumb" style={clip.video_url ? {} : { background: 'var(--blue-light)' }}>
+                                                            {clip.video_url ? (
+                                                                <video src={clip.video_url} muted loop playsInline autoPlay style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', top: 0, left: 0 }} />
+                                                            ) : (
+                                                                <svg viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2" /><line x1="12" y1="18" x2="12.01" y2="18" /></svg>
+                                                            )}
+                                                        </div>
+                                                        <div className="prod-card-name">{clip.name}</div>
+                                                        <div className="prod-card-type">{clip.category || 'Clip'}</div>
+                                                    </div>
+                                                ))}
+                                            </div>
                                         </div>
-                                    ))}
+                                    ) : (
+                                        <div className="product-selector-grid">
+                                            {linkedClips.map((clip) => (
+                                                <div key={clip.id} className={`prod-card ${selectedLinkedClip === clip.id ? 'selected' : ''}`} onClick={() => { setSelectedLinkedClip(clip.id); setAppClipId(clip.id); }}>
+                                                    <div className="prod-thumb" style={{}}>
+                                                        {clip.first_frame_url ? (
+                                                            <img src={clip.first_frame_url} alt={clip.name} style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', top: 0, left: 0 }} />
+                                                        ) : clip.video_url ? (
+                                                            <video src={clip.video_url} muted loop playsInline autoPlay style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', top: 0, left: 0 }} />
+                                                        ) : (
+                                                            <svg viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2" /><line x1="12" y1="18" x2="12.01" y2="18" /></svg>
+                                                        )}
+                                                    </div>
+                                                    <div className="prod-card-name">{clip.name}</div>
+                                                    <div className="prod-card-type">Linked</div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>
                     ) : (
                         <div style={{ marginTop: '8px' }}>
-                            {products.length === 0 ? (
-                                <div style={{ fontSize: '12px', color: 'var(--text-3)' }}>No products found. Add one in Products.</div>
+                            {products.filter(p => !p.type || p.type === 'physical').length === 0 ? (
+                                <div style={{ fontSize: '12px', color: 'var(--text-3)' }}>No physical products found. Add one in Products.</div>
                             ) : (
                                 <div className="product-selector-grid">
-                                    {products.map((prod) => (
+                                    {products.filter(p => !p.type || p.type === 'physical').map((prod) => (
                                         <div key={prod.id} className={`prod-card ${productId === prod.id ? 'selected' : ''}`} onClick={() => setProductId(prod.id)}>
                                             <div className="prod-thumb" style={prod.image_url ? { backgroundImage: `url(${prod.image_url})`, backgroundSize: 'cover', backgroundPosition: 'center' } : { background: 'var(--blue-light)' }}>
                                                 {!prod.image_url && <svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /></svg>}
                                             </div>
                                             <div className="prod-card-name">{prod.name}</div>
-                                            <div className="prod-card-type">{prod.product_type || 'Physical'}</div>
+                                            <div className="prod-card-type">Physical</div>
                                         </div>
                                     ))}
                                 </div>
@@ -545,10 +672,10 @@ function CreateContent() {
                     </div>
                 </div>
 
-                {/* Script Source */}
-                <div className="config-section">
-                    <div className="config-label">Script</div>
-                    {productType === 'physical' ? (
+                {/* Script Source — physical products only (digital scripts handled inline in Step 1) */}
+                {productType === 'physical' && (
+                    <div className="config-section">
+                        <div className="config-label">Script</div>
                         <div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                                 <span style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.6px', color: 'var(--blue)' }}>AI Generated</span>
@@ -557,7 +684,7 @@ function CreateContent() {
                                     fetch(`${API_URL}/api/scripts/generate`, {
                                         method: 'POST',
                                         headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ product_id: productId, duration }),
+                                        body: JSON.stringify({ product_id: productId, duration, influencer_id: selectedInfluencer || undefined }),
                                     })
                                         .then(res => res.json())
                                         .then(data => { setGeneratedScript(data.script); setCustomScript(data.script); setScriptSource('custom'); })
@@ -573,35 +700,8 @@ function CreateContent() {
                                 disabled={isGeneratingScript}
                             />
                         </div>
-                    ) : (
-                        <div>
-                            <div className="pill-group" style={{ marginBottom: '8px' }}>
-                                <button className={`pill ${scriptSource === 'random' ? 'selected' : ''}`} onClick={() => setScriptSource('random')}>Random</button>
-                                <button className={`pill ${scriptSource === 'specific' ? 'selected' : ''}`} onClick={() => setScriptSource('specific')}>Specific</button>
-                                <button className={`pill ${scriptSource === 'custom' ? 'selected' : ''}`} onClick={() => setScriptSource('custom')}>Custom</button>
-                            </div>
-                            {scriptSource === 'specific' && (
-                                <Select
-                                    className="filter-select"
-                                    style={{ width: '100%', marginBottom: '8px' }}
-                                    value={selectedScript}
-                                    onChange={setSelectedScript}
-                                    placeholder="Select a script..."
-                                    options={[
-                                        { value: '', label: 'Select a script...' },
-                                        ...scripts.map(s => ({
-                                            value: s.id,
-                                            label: `${s.text.substring(0, 60)}${s.text.length > 60 ? '...' : ''} (${s.category || 'General'})`
-                                        }))
-                                    ]}
-                                />
-                            )}
-                            {scriptSource === 'custom' && (
-                                <textarea className="config-textarea" rows={4} value={customScript} onChange={e => setCustomScript(e.target.value)} placeholder="Write your script here..." />
-                            )}
-                        </div>
-                    )}
-                </div>
+                    </div>
+                )}
 
                 {/* Advanced Settings */}
                 <div className="config-section">

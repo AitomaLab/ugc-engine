@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import './Select.css';
 
 interface SelectOption {
@@ -19,12 +20,30 @@ interface SelectProps {
 
 export default function Select({ value, onChange, options, className = '', style, placeholder = 'Select an option...' }: SelectProps) {
     const [isOpen, setIsOpen] = useState(false);
+    const triggerRef = useRef<HTMLButtonElement>(null);
     const dropdownRef = useRef<HTMLDivElement>(null);
+    const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
+
+    // Calculate dropdown position from trigger button
+    const updatePosition = useCallback(() => {
+        if (triggerRef.current) {
+            const rect = triggerRef.current.getBoundingClientRect();
+            setDropdownPos({
+                top: rect.bottom + 4,
+                left: rect.left,
+                width: rect.width,
+            });
+        }
+    }, []);
 
     // Close dropdown when clicking outside
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
-            if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+            const target = event.target as Node;
+            if (
+                triggerRef.current && !triggerRef.current.contains(target) &&
+                dropdownRef.current && !dropdownRef.current.contains(target)
+            ) {
                 setIsOpen(false);
             }
         };
@@ -37,11 +56,24 @@ export default function Select({ value, onChange, options, className = '', style
         };
     }, [isOpen]);
 
+    // Recalculate position on scroll/resize while open
+    useEffect(() => {
+        if (!isOpen) return;
+        updatePosition();
+        window.addEventListener('scroll', updatePosition, true);
+        window.addEventListener('resize', updatePosition);
+        return () => {
+            window.removeEventListener('scroll', updatePosition, true);
+            window.removeEventListener('resize', updatePosition);
+        };
+    }, [isOpen, updatePosition]);
+
     const selectedOption = options.find(opt => opt.value === value);
 
     return (
-        <div className={`custom-select-wrapper ${className}`} style={style} ref={dropdownRef}>
+        <div className={`custom-select-wrapper ${className}`} style={style}>
             <button
+                ref={triggerRef}
                 type="button"
                 className={`custom-select-trigger ${isOpen ? 'open' : ''}`}
                 onClick={() => setIsOpen(!isOpen)}
@@ -54,8 +86,17 @@ export default function Select({ value, onChange, options, className = '', style
                 </svg>
             </button>
 
-            {isOpen && (
-                <div className="custom-select-dropdown">
+            {isOpen && dropdownPos && createPortal(
+                <div
+                    ref={dropdownRef}
+                    className="custom-select-dropdown"
+                    style={{
+                        position: 'fixed',
+                        top: dropdownPos.top,
+                        left: dropdownPos.left,
+                        width: dropdownPos.width,
+                    }}
+                >
                     {options.length === 0 ? (
                         <div className="custom-select-empty">No options available</div>
                     ) : (
@@ -74,7 +115,8 @@ export default function Select({ value, onChange, options, className = '', style
                             ))}
                         </ul>
                     )}
-                </div>
+                </div>,
+                document.body
             )}
         </div>
     );

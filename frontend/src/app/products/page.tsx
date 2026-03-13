@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import Select from '@/components/ui/Select';
 import ProductModal from '@/components/ui/ProductModal';
+import MediaPreviewModal from '@/components/ui/MediaPreviewModal';
 import { apiFetch } from '@/lib/utils';
 import { Product } from '@/lib/types';
 
@@ -15,6 +16,15 @@ export default function ProductsPage() {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [previewAssetUrl, setPreviewAssetUrl] = useState<string | null>(null);
+
+  async function handleDelete(id: string) {
+    if (!confirm('Delete this product? This cannot be undone.')) return;
+    try {
+      await apiFetch(`/api/products/${id}`, { method: 'DELETE' });
+      setProducts(prev => prev.filter(p => p.id !== id));
+    } catch (err) { console.error('Delete error:', err); }
+  }
 
   const handleOpenModal = (product?: Product) => {
     setSelectedProduct(product || null);
@@ -81,7 +91,14 @@ export default function ProductsPage() {
         <div className='products-grid'>
           {filtered.map(product => (
             <div key={product.id} className='product-card'>
-              <div className='product-img'>
+              <div
+                className='product-img'
+                onClick={() => product.image_url && setPreviewAssetUrl(product.image_url)}
+                style={{ cursor: product.image_url ? 'zoom-in' : 'default', position: 'relative' }}
+              >
+                <button className="card-delete-btn" onClick={(e) => { e.stopPropagation(); handleDelete(product.id); }} title="Delete product">
+                  <svg viewBox="0 0 24 24"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
+                </button>
                 {product.image_url ? (
                   <img src={product.image_url} alt={product.name} />
                 ) : (
@@ -93,17 +110,17 @@ export default function ProductsPage() {
                 <div className='product-meta'>{product.type ?? 'Product'} · {product.job_count ?? 0} videos generated</div>
               </div>
               <div className='product-actions'>
-                <button onClick={() => handleOpenModal(product)} className='product-btn secondary' style={{ flex: '0 0 auto', padding: '10px' }} title="Edit Product Analysis & Settings">
-                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
-                </button>
-                <Link href={`/cinematic?product_id=${product.id}`} className='product-btn primary'>
-                  <svg viewBox='0 0 24 24'><path d='M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4' /><polyline points='10 17 15 12 10 7' /></svg>
+                <Link href={`/cinematic?product_id=${product.id}`} className='product-btn primary' style={{ textDecoration: 'none' }}>
+                  <svg viewBox='0 0 24 24'><rect x='2' y='2' width='20' height='20' rx='2.18' ry='2.18' /><line x1='7' y1='2' x2='7' y2='22' /><line x1='17' y1='2' x2='17' y2='22' /><line x1='2' y1='12' x2='22' y2='12' /><line x1='2' y1='7' x2='7' y2='7' /><line x1='2' y1='17' x2='7' y2='17' /><line x1='17' y1='7' x2='22' y2='7' /><line x1='17' y1='17' x2='22' y2='17' /></svg>
                   Cinematic
                 </Link>
-                <Link href={`/create?product_id=${product.id}`} className='product-btn secondary'>
+                <Link href={`/create?product_id=${product.id}`} className='product-btn secondary' style={{ textDecoration: 'none' }}>
                   <svg viewBox='0 0 24 24'><polygon points='5,3 19,12 5,21' /></svg>
                   Create
                 </Link>
+                <button onClick={() => handleOpenModal(product)} className='product-btn secondary' style={{ flex: '0 0 auto', padding: '10px' }} title="Edit Product">
+                  <svg viewBox="0 0 24 24"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" /></svg>
+                </button>
               </div>
             </div>
           ))}
@@ -118,6 +135,13 @@ export default function ProductsPage() {
           onSave={() => { fetchProducts(); }}
         />
       )}
+
+      <MediaPreviewModal
+        isOpen={!!previewAssetUrl}
+        onClose={() => setPreviewAssetUrl(null)}
+        src={previewAssetUrl || ''}
+        type="image"
+      />
     </div>
   );
 }

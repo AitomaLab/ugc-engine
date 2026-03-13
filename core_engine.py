@@ -391,6 +391,7 @@ def run_generation_pipeline(
         output_path=output_path,
         music_path=music_path,
         max_duration=config.get_max_duration(length),
+        scene_types=[s.get("type", "clip") for s in video_paths],
     )
     
     # 6. Cleanup temp files

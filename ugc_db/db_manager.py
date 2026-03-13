@@ -113,6 +113,21 @@ def delete_app_clip(clip_id: str):
     sb = get_supabase()
     sb.table("app_clips").delete().eq("id", clip_id).execute()
 
+# ---------------------------------------------------------------------------
+# NEW: App Clips — filtered by product
+# ---------------------------------------------------------------------------
+
+def list_app_clips_by_product(product_id: str):
+    """Returns all app clips linked to a specific digital product."""
+    sb = get_supabase()
+    return sb.table("app_clips").select("*").eq("product_id", product_id).execute().data
+
+def update_app_clip(clip_id: str, data: dict):
+    """Updates fields on an existing app clip record."""
+    sb = get_supabase()
+    result = sb.table("app_clips").update(data).eq("id", clip_id).execute()
+    return result.data[0] if result.data else None
+
 
 # ---------------------------------------------------------------------------
 # CRUD Helpers — Products
@@ -175,6 +190,10 @@ def update_job(job_id: str, data: dict):
     sb = get_supabase()
     result = sb.table("video_jobs").update(data).eq("id", job_id).execute()
     return result.data[0] if result.data else None
+
+def delete_job(job_id: str):
+    sb = get_supabase()
+    sb.table("video_jobs").delete().eq("id", job_id).execute()
 
 
 # ---------------------------------------------------------------------------

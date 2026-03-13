@@ -19,16 +19,9 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=Non
     """
     Build the scene structure from a Content Calendar row.
 
-    Args:
-        content_row: dict with fields from Content Calendar
-        influencer: dict from airtable_client.get_influencer()
-        app_clip: dict from airtable_client.get_app_clip()
-        app_clip_2: unused (kept for API compat)
-        product: dict from products table (optional, for physical flow)
-        product_type: "digital" or "physical"
-
-    Returns:
-        List of scene dicts
+    NEW: If product_type == 'digital' AND a product dict is provided AND
+    the app_clip has a first_frame_url, uses the new unified 2-scene digital
+    pipeline (build_digital_unified). Falls back to the original logic otherwise.
     """
     length = content_row.get("Length", "15s")
     if length not in config.VALID_LENGTHS:
@@ -36,7 +29,7 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=Non
 
     durations = config.get_scene_durations(length)
 
-    hook = content_row.get("Hook") or content_row.get("Script") or content_row.get("caption") or "¡Mira esto, te va a encantar!"
+    hook = content_row.get("Hook") or content_row.get("Script") or content_row.get("caption") or "Check this out!"
     assistant = content_row.get("AI Assistant", "Travel")
     theme = content_row.get("Theme", "")
     caption = content_row.get("Caption", "Link in bio!")
@@ -49,18 +42,15 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=Non
     energy = influencer.get("energy_level", "High")
     accent = influencer.get("accent", "Castilian Spanish (Spain)")
     tone = influencer.get("tone", "Enthusiastic")
-    # Voice ID for ElevenLabs
     voice_id = influencer.get("elevenlabs_voice_id", config.VOICE_MAP.get(person_name, config.VOICE_MAP["Meg"]))
     ref_image = influencer["reference_image_url"]
 
-    # Pronoun mapping
     p = {
         "subj": "He" if gender == "Male" else "She",
         "poss": "His" if gender == "Male" else "Her",
         "obj": "him" if gender == "Male" else "her",
     }
 
-    # Context context for builder
     ctx = {
         "name": person_name,
         "age": age,
@@ -75,10 +65,34 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=Non
         "ref_image": ref_image,
         "assistant": assistant,
         "hook": hook,
-        "caption": caption
+        "caption": caption,
+        "consistency_seed": random.randint(1, 1000000),
     }
 
-    # Fetch cinematic shots if IDs provided (physical products only)
+    # -----------------------------------------------------------------------
+    # NEW: Digital Product Unified Pipeline
+    # Triggered when: product_type is digital AND a product dict is provided
+    # AND the app_clip has a first_frame_url (set by the frame extractor).
+    # Falls back to the original logic if any of these conditions are not met.
+    # -----------------------------------------------------------------------
+    if (
+        product_type == "digital"
+        and product is not None
+        and app_clip is not None
+        and app_clip.get("first_frame_url")
+    ):
+        print(f"      🆕 Using unified digital pipeline for product: {product.get('name')}")
+        return digital_prompts.build_digital_unified(
+            influencer=influencer,
+            product=product,
+            app_clip=app_clip,
+            duration=int(length.replace("s", "")),
+            ctx=ctx,
+        )
+
+    # -----------------------------------------------------------------------
+    # Physical Product Pipeline (UNCHANGED)
+    # -----------------------------------------------------------------------
     cinematic_shot_ids = content_row.get("cinematic_shot_ids") or []
     cinematic_scenes = []
     if product_type == "physical" and cinematic_shot_ids:
@@ -92,25 +106,18 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=Non
                     "target_duration": 4.0,
                     "subtitle_text": "",
                 }
-                # Transition shots (Workflow B) have their xfade transition
-                # already baked into video_url by the generate_transition_shot task.
-                # Carry the flag so core_engine/assemble_video can handle them
-                # appropriately (e.g. skip trimming the overlap region).
                 if shot.get("transition_type"):
                     scene_data["transition_type"] = shot["transition_type"]
                 cinematic_scenes.append(scene_data)
 
     if product_type == "physical" and product:
         ctx["product"] = product
-        # When cinematic shots are included, reduce UGC scene count
-        # so total fits ~15s (1 UGC scene ~8s + 1 cinematic ~4-5s)
         max_ugc_scenes = max(1, 2 - len(cinematic_scenes)) if cinematic_scenes else None
         influencer_scenes = physical_prompts.build_physical_product_scenes(
             content_row, influencer, product, durations, ctx,
             max_scenes=max_ugc_scenes
         )
 
-        # Interleave cinematic scenes with influencer scenes if any exist
         if not cinematic_scenes:
             return influencer_scenes
 
@@ -125,6 +132,10 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=Non
                 cin_idx += 1
         return final_scenes
 
+    # -----------------------------------------------------------------------
+    # Original Digital Pipeline (FALLBACK — unchanged)
+    # Used when no product is linked or no first_frame_url exists.
+    # -----------------------------------------------------------------------
     elif length == "30s":
         return digital_prompts.build_30s(durations, app_clip, ctx)
     else:

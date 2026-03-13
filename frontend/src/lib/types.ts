@@ -23,6 +23,8 @@ export interface AppClipItem {
     description?: string;
     video_url: string;
     duration_seconds?: number;
+    product_id?: string;
+    first_frame_url?: string;
 }
 
 export interface Product {
@@ -30,7 +32,10 @@ export interface Product {
     name: string;
     type?: string;
     product_type?: string;
+    description?: string;
+    category?: string;
     image_url?: string;
+    website_url?: string;
     job_count?: number;
     visual_description?: any;
     created_at?: string;

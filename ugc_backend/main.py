@@ -19,10 +19,10 @@ from ugc_db.db_manager import (
     get_supabase,
     list_influencers, get_influencer, create_influencer, update_influencer, delete_influencer,
     list_scripts, create_script, delete_script, get_script,
-    list_app_clips, create_app_clip, delete_app_clip,
-    list_jobs, get_job, create_job, update_job,
+    list_app_clips, list_app_clips_by_product, update_app_clip, create_app_clip, delete_app_clip,
+    list_jobs, get_job, create_job, update_job, delete_job,
     get_stats,
-    list_products, create_product, delete_product,
+    list_products, create_product, delete_product, get_product, update_product,
     list_product_shots, get_product_shot, create_product_shot, update_product_shot, delete_product_shot,
 )
 
@@ -99,9 +99,9 @@ app.add_middleware(
 def startup_event():
     try:
         get_supabase()
-        print("🗄️  Connected to Supabase (REST API)")
+        print(">> Connected to Supabase (REST API)")
     except Exception as e:
-        print(f"⚠️  Supabase connection failed: {e}")
+        print(f"!! WARNING: Supabase connection failed: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -128,12 +128,22 @@ class AppClipCreate(BaseModel):
     description: Optional[str] = None
     video_url: str
     duration_seconds: Optional[int] = None
+    product_id: Optional[str] = None       # NEW: Link to a digital product
+    first_frame_url: Optional[str] = None  # NEW: Auto-populated on upload
 
 class ProductCreate(BaseModel):
     name: str
+    type: Optional[str] = None              # "physical" or "digital"
     description: Optional[str] = None
     category: Optional[str] = None
     image_url: str
+    website_url: Optional[str] = None      # NEW: For dual-source AI analysis
+
+class AppClipUpdate(BaseModel):            # NEW: For PATCH endpoint
+    product_id: Optional[str] = None
+    first_frame_url: Optional[str] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
 
 class ShotGenerateRequest(BaseModel):
     shot_type: str
@@ -320,58 +330,132 @@ def api_analyze_product(data: ProductAnalyzeRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/products/{product_id}/analyze-digital")
+def api_analyze_digital_product(product_id: str):
+    """
+    Runs dual-source analysis on a digital product:
+    1. Scrapes the website_url for marketing copy.
+    2. Runs vision analysis on the product image_url.
+    3. Synthesizes both into a visual_description JSON and saves it.
+    """
+    try:
+        from ugc_backend.llm_vision_client import LLMVisionClient
+        from ugc_backend.web_scraper import WebScraperClient
+
+        product = get_product(product_id)
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+
+        analysis = {}
+
+        # Step 1: Vision analysis on image_url
+        if product.get("image_url"):
+            try:
+                vision_client = LLMVisionClient()
+                analysis = vision_client.describe_product_image(product["image_url"]) or {}
+                print(f"      ✅ Vision analysis complete for product {product_id}")
+            except Exception as e:
+                print(f"      ⚠️ Vision analysis failed (non-fatal): {e}")
+
+        # Step 2: Website scraping
+        if product.get("website_url"):
+            try:
+                scraper = WebScraperClient()
+                website_text = scraper.scrape(product["website_url"])
+                if website_text:
+                    analysis["website_content_summary"] = website_text[:500]
+                    print(f"      ✅ Website scraping complete for product {product_id}")
+            except Exception as e:
+                print(f"      ⚠️ Website scraping failed (non-fatal): {e}")
+
+        if analysis:
+            update_product(product_id, {"visual_description": analysis})
+            return {"status": "analyzed", "product_id": product_id, "analysis": analysis}
+        else:
+            raise HTTPException(status_code=422, detail="Analysis returned no data. Check image_url and website_url.")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"ERROR in api_analyze_digital_product: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 class ScriptGenerateRequest(BaseModel):
     product_id: str
     duration: int = 15
     influencer_id: Optional[str] = None
+    product_type: str = "physical"         # NEW: "digital" or "physical"
 
 @app.post("/api/scripts/generate")
 def api_generate_script(data: ScriptGenerateRequest):
+    """
+    Generates a UGC script for a product.
+    - physical: Uses visual_description (image analysis) + influencer persona
+    - digital:  Uses dual-source analysis (image analysis + website scraping)
+    """
     try:
         from ugc_backend.ai_script_client import AIScriptClient
-        from ugc_db.db_manager import get_product, get_influencer
 
-        print(f"DEBUG: Generating script for product {data.product_id} ({data.duration}s)")
+        print(f"DEBUG: Generating {data.product_type} script for product {data.product_id} ({data.duration}s)")
 
-        # 1. Fetch Product
         product = get_product(data.product_id)
         if not product:
             raise HTTPException(status_code=404, detail="Product not found")
 
-        # 2. Fetch Influencer (optional — enables persona-driven generation)
-        influencer_data = None
-        if data.influencer_id:
-            influencer = get_influencer(data.influencer_id)
-            if influencer:
-                influencer_data = {
-                    "name": influencer.get("name", ""),
-                    "personality": influencer.get("personality", ""),
-                    "style": influencer.get("style", ""),
-                    "gender": influencer.get("gender", "Female"),
-                    "age": influencer.get("age", "25-year-old"),
-                    "accent": influencer.get("accent", "neutral English"),
-                    "tone": influencer.get("tone", "Enthusiastic"),
-                    "energy_level": influencer.get("energy_level", "High"),
-                }
-
-        # 3. Generate Script
         client = AIScriptClient()
-        visuals = product.get("visual_description") or {}
 
-        script = client.generate_physical_product_script(
-            product_analysis=visuals,
-            duration=data.duration,
-            product_name=product.get("name", "Product"),
-            influencer_data=influencer_data,
-        )
+        if data.product_type == "physical":
+            # Physical: persona-driven generation (preserved from v1)
+            influencer_data = None
+            if data.influencer_id:
+                influencer = get_influencer(data.influencer_id)
+                if influencer:
+                    influencer_data = {
+                        "name": influencer.get("name", ""),
+                        "personality": influencer.get("personality", ""),
+                        "style": influencer.get("style", ""),
+                        "gender": influencer.get("gender", "Female"),
+                        "age": influencer.get("age", "25-year-old"),
+                        "accent": influencer.get("accent", "neutral English"),
+                        "tone": influencer.get("tone", "Enthusiastic"),
+                        "energy_level": influencer.get("energy_level", "High"),
+                    }
 
-        return {"script": script}
+            visuals = product.get("visual_description") or {}
+            script = client.generate_physical_product_script(
+                product_analysis=visuals,
+                duration=data.duration,
+                product_name=product.get("name", "Product"),
+                influencer_data=influencer_data,
+            )
+        else:
+            # Digital product: dual-source analysis
+            visuals = product.get("visual_description") or {}
+            website_content = None
 
+            if product.get("website_url"):
+                try:
+                    from ugc_backend.web_scraper import WebScraperClient
+                    scraper = WebScraperClient()
+                    website_content = scraper.scrape(product["website_url"])
+                    print(f"      ✅ Scraped {len(website_content or '')} chars from {product['website_url']}")
+                except Exception as e:
+                    print(f"      ⚠️ Website scraping failed (non-fatal): {e}")
+
+            script = client.generate_digital_product_script(
+                product_name=product.get("name", "App"),
+                product_analysis=visuals,
+                website_content=website_content,
+                duration=data.duration,
+            )
+
+        return {"script": script, "product_id": data.product_id}
+
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"ERROR in api_generate_script: {e}")
-        import traceback
-        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -749,12 +833,97 @@ def api_list_app_clips():
 
 @app.post("/app-clips")
 def api_create_app_clip(data: AppClipCreate):
-    return create_app_clip(data.model_dump(exclude_none=True))
+    """
+    Creates a new app clip. If video_url is provided, automatically
+    triggers first-frame extraction in a background thread.
+    """
+    try:
+        clip_data = data.model_dump(exclude_none=True)
+        new_clip = create_app_clip(clip_data)
+        if not new_clip:
+            raise HTTPException(status_code=500, detail="Failed to create app clip")
+
+        # Auto-extract first frame in background (non-blocking)
+        if new_clip.get("video_url") and not new_clip.get("first_frame_url"):
+            import threading
+            def _extract_in_background():
+                try:
+                    from ugc_backend.frame_extractor import extract_first_frame
+                    frame_url = extract_first_frame(new_clip["video_url"])
+                    if frame_url:
+                        update_app_clip(new_clip["id"], {"first_frame_url": frame_url})
+                        print(f"      ✅ Auto-extracted first frame for clip {new_clip['id']}")
+                except Exception as e:
+                    print(f"      ⚠️ Auto frame extraction failed for clip {new_clip['id']}: {e}")
+            threading.Thread(target=_extract_in_background, daemon=True).start()
+
+        return new_clip
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/app-clips/{clip_id}")
 def api_delete_app_clip(clip_id: str):
     delete_app_clip(clip_id)
     return {"status": "deleted", "id": clip_id}
+
+
+@app.get("/api/app-clips")
+def api_list_app_clips_filtered(product_id: Optional[str] = None):
+    """
+    List app clips, optionally filtered by product_id.
+    GET /api/app-clips                    -> all clips (backwards compatible)
+    GET /api/app-clips?product_id={id}    -> clips linked to a specific product
+    """
+    try:
+        if product_id:
+            return list_app_clips_by_product(product_id)
+        return list_app_clips()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/api/app-clips/{clip_id}")
+def api_update_app_clip(clip_id: str, data: AppClipUpdate):
+    """Update an app clip's product_id or other fields."""
+    try:
+        result = update_app_clip(clip_id, data.model_dump(exclude_none=True))
+        if not result:
+            raise HTTPException(status_code=404, detail="App clip not found")
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/app-clips/{clip_id}/extract-frame")
+def api_extract_frame(clip_id: str):
+    """
+    Manually trigger first-frame extraction for an existing app clip.
+    Also called automatically on clip creation if video_url is present.
+    """
+    try:
+        sb = get_supabase()
+        result = sb.table("app_clips").select("*").eq("id", clip_id).execute()
+        if not result.data:
+            raise HTTPException(status_code=404, detail="App clip not found")
+        clip = result.data[0]
+        if not clip.get("video_url"):
+            raise HTTPException(status_code=400, detail="App clip has no video_url")
+
+        from ugc_backend.frame_extractor import extract_first_frame
+        frame_url = extract_first_frame(clip["video_url"])
+        if not frame_url:
+            raise HTTPException(status_code=500, detail="Frame extraction failed")
+
+        update_app_clip(clip_id, {"first_frame_url": frame_url})
+        return {"status": "success", "first_frame_url": frame_url}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ---------------------------------------------------------------------------
@@ -905,6 +1074,14 @@ def api_get_job(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
+
+@app.delete("/jobs/{job_id}")
+def api_delete_job(job_id: str):
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    delete_job(job_id)
+    return {"status": "deleted", "id": job_id}
 
 @app.get("/jobs/{job_id}/status")
 def api_get_job_status(job_id: str):

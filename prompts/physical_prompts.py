@@ -147,9 +147,37 @@ def build_physical_product_scenes(fields, influencer, product, durations, ctx, m
     consistency_seed = random.randint(1, 1000000)
 
     scenes = []
-    # ✨ FIX: Check multiple possible keys for the script, not just "Hook"
-    # The AI script generator might return "Script", "caption", or "Hook"
-    script = fields.get("Hook") or fields.get("Script") or fields.get("caption") or "Check this out!"
+
+    # ---------------------------------------------------------------
+    # Script Source: Manual override OR AI persona-driven generation
+    # ---------------------------------------------------------------
+    # Priority: 1) User-provided script from job.hook  2) AI persona generation  3) Fallback
+    manual_script = fields.get("Hook") or fields.get("Script") or fields.get("caption") or ""
+    is_manual_script = manual_script and manual_script.strip() not in ("", "Check this out!")
+
+    if is_manual_script:
+        script = manual_script
+        print(f"      [Script] Using manual/pre-generated script: {script[:60]}...")
+    else:
+        try:
+            from ugc_backend.ai_script_client import AIScriptClient
+
+            product_analysis = product.get("visual_description") or product.get("visual_analysis") or {}
+            if isinstance(product_analysis, str):
+                product_analysis = {"visual_description": product_analysis}
+            if not product_analysis.get("brand_name") and product.get("name"):
+                product_analysis = {**product_analysis, "brand_name": product.get("name")}
+
+            client = AIScriptClient()
+            script = client.generate_physical_product_script(
+                product_analysis=product_analysis,
+                duration=15,
+                influencer_data=influencer,
+            )
+            print(f"      [Script] AI persona-generated: {script[:60]}...")
+        except Exception as e:
+            script = manual_script or "Check this out!"
+            print(f"      [Script] AI generation failed ({e}), using fallback: {script[:60]}...")
     # Use correct pronoun based on influencer gender
     poss = "his" if ctx.get("gender", "Female") == "Male" else "her"
     

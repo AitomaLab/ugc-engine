@@ -90,7 +90,119 @@ def normalize_video(input_path, output_path, target_width=1080, target_height=19
     return str(output_path)
 
 
-def assemble_video(video_paths, output_path, music_path=None, max_duration=None):
+# ---------------------------------------------------------------------------
+# Scene Transition Generator
+# ---------------------------------------------------------------------------
+
+TRANSITION_DURATION = 0.5  # seconds — cross-dissolve between Veo scenes
+
+
+def apply_transitions_between_veo_scenes(video_paths, scene_types, work_dir):
+    """
+    Applies a cross-dissolve transition between consecutive scenes.
+
+    A transition is applied between scene[i] and scene[i+1] when scene[i]
+    is AI-generated (type in {'veo', 'physical_product_scene', 'digital_ugc'})
+    and scene[i+1] is AI-generated OR a clip (type 'clip').
+    This covers both AI↔AI transitions and the digital pipeline's UGC→app_clip
+    transition. Cinematic shots are never transitioned.
+
+    Args:
+        video_paths:  Ordered list of local file paths to the scene videos.
+        scene_types:  Ordered list of scene type strings (one per video).
+        work_dir:     Temporary directory for intermediate files.
+
+    Returns:
+        New ordered list of file paths with transitions baked in.
+        If no transitions are needed, returns the original list unchanged.
+    """
+    AI_SCENE_TYPES = {"veo", "physical_product_scene", "digital_ugc"}
+    # Scenes eligible to RECEIVE a transition from a preceding AI scene
+    TRANSITION_ELIGIBLE = AI_SCENE_TYPES | {"clip"}
+    td = TRANSITION_DURATION
+
+    # Check if any transitions are needed:
+    # Transition applies when an AI scene is followed by another AI scene OR a clip
+    needs_transition = any(
+        scene_types[i] in AI_SCENE_TYPES and scene_types[i + 1] in TRANSITION_ELIGIBLE
+        for i in range(len(scene_types) - 1)
+    )
+
+    if not needs_transition:
+        return video_paths
+
+    print(f"   🎞️ Applying cross-dissolve transitions between scenes...")
+
+    result_paths = list(video_paths)
+
+    i = 0
+    while i < len(result_paths) - 1:
+        if scene_types[i] not in AI_SCENE_TYPES or scene_types[i + 1] not in TRANSITION_ELIGIBLE:
+            i += 1
+            continue
+
+        clip_a = result_paths[i]
+        clip_b = result_paths[i + 1]
+        output = work_dir / f"transition_{i}_{i+1}.mp4"
+
+        # Get duration of clip A to calculate xfade offset
+        dur_a = get_video_duration(clip_a)
+        if dur_a <= td:
+            print(f"   ⚠️ Clip {i} too short for transition ({dur_a:.1f}s). Skipping.")
+            i += 1
+            continue
+
+        offset = dur_a - td
+
+        # Try video + audio crossfade first, fall back to video-only if audio fails
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(clip_a),
+            "-i", str(clip_b),
+            "-filter_complex",
+            (
+                f"[0:v][1:v]xfade=transition=fade:duration={td}:offset={offset:.3f}[xv];"
+                f"[0:a][1:a]acrossfade=d={td}[xa]"
+            ),
+            "-map", "[xv]",
+            "-map", "[xa]",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+            "-c:a", "aac", "-b:a", "128k",
+            str(output),
+        ]
+
+        result = subprocess.run(cmd, capture_output=True)
+        if result.returncode != 0:
+            # Audio crossfade may fail if a clip lacks audio — retry with video-only
+            cmd_vo = [
+                "ffmpeg", "-y",
+                "-i", str(clip_a),
+                "-i", str(clip_b),
+                "-filter_complex",
+                f"[0:v][1:v]xfade=transition=fade:duration={td}:offset={offset:.3f}[xv]",
+                "-map", "[xv]",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+                "-an",
+                str(output),
+            ]
+            result = subprocess.run(cmd_vo, capture_output=True)
+            if result.returncode != 0:
+                print(f"   ⚠️ Transition FFmpeg failed for clips {i}-{i+1}. Using hard cut.")
+                i += 1
+                continue
+
+        # Replace both clips with the merged transition output
+        result_paths[i] = str(output)
+        result_paths.pop(i + 1)
+        scene_types.pop(i + 1)
+
+        print(f"   ✅ Transition applied between scene {i+1} and scene {i+2}")
+        # Don't increment i — check merged clip against next
+
+    return result_paths
+
+
+def assemble_video(video_paths, output_path, music_path=None, max_duration=None, scene_types=None):
     """Assembles the final UGC video with word-perfect, transcription-based subtitles."""
     if output_path is None:
         output_path = config.OUTPUT_DIR / "final_ugc.mp4"
@@ -138,6 +250,18 @@ def assemble_video(video_paths, output_path, music_path=None, max_duration=None)
         
         actual_dur = get_video_duration(normalized)
         print(f"      Scene {i+1} ({scene_type}): {actual_dur:.1f}s")
+
+    # Apply cross-dissolve transitions between consecutive AI-generated scenes
+    if scene_types:
+        types_list = list(scene_types)
+        normalized_paths = apply_transitions_between_veo_scenes(
+            normalized_paths, types_list, work_dir,
+        )
+        # Rebuild scene_metadata to match the potentially reduced list
+        scene_metadata = [
+            {"index": i, "type": types_list[i] if i < len(types_list) else "clip", "path": p}
+            for i, p in enumerate(normalized_paths)
+        ]
 
     # Check if we have a mix of UGC and cinematic scenes
     has_cinematic = any(s["type"] == "cinematic_shot" for s in scene_metadata)

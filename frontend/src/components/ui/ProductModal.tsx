@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Product } from '@/lib/types';
 import Select from '@/components/ui/Select';
+import MediaPreviewModal from '@/components/ui/MediaPreviewModal';
 import { apiFetch } from '@/lib/utils';
 import './ProductModal.css';
 
@@ -17,11 +18,13 @@ export default function ProductModal({ isOpen, onClose, product, onSave }: Produ
     const [name, setName] = useState(product?.name || '');
     const [type, setType] = useState(product?.type || 'physical');
     const [imageUrl, setImageUrl] = useState(product?.image_url || '');
+    const [websiteUrl, setWebsiteUrl] = useState(product?.website_url || '');
     const [uploading, setUploading] = useState(false);
 
     // AI Analysis State
     const [analyzing, setAnalyzing] = useState(false);
     const [analysisResult, setAnalysisResult] = useState<any>(product?.visual_description || null);
+    const [previewAssetUrl, setPreviewAssetUrl] = useState<string | null>(null);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [mounted, setMounted] = useState(false);
@@ -101,7 +104,9 @@ export default function ProductModal({ isOpen, onClose, product, onSave }: Produ
                     method: 'POST',
                     body: JSON.stringify({
                         name,
-                        image_url: imageUrl
+                        type,
+                        image_url: imageUrl,
+                        website_url: websiteUrl || undefined,
                     }),
                 });
             } else {
@@ -110,7 +115,9 @@ export default function ProductModal({ isOpen, onClose, product, onSave }: Produ
                     method: 'PUT',
                     body: JSON.stringify({
                         name,
-                        image_url: imageUrl
+                        type,
+                        image_url: imageUrl,
+                        website_url: websiteUrl || undefined,
                     }),
                 });
             }
@@ -165,12 +172,27 @@ export default function ProductModal({ isOpen, onClose, product, onSave }: Produ
                             </div>
 
                             <div className="pm-form-group">
+                                <label className="pm-label">Website URL</label>
+                                <input
+                                    value={websiteUrl}
+                                    onChange={e => setWebsiteUrl(e.target.value)}
+                                    placeholder="https://yourproduct.com"
+                                    className="pm-input"
+                                    type="url"
+                                />
+                            </div>
+
+                            <div className="pm-form-group">
                                 <label className="pm-label">Preview Image</label>
                                 <div className="pm-image-upload">
                                     <input type="file" ref={fileInputRef} className="hidden" style={{ display: 'none' }} accept="image/*" onChange={handleFileChange} />
 
                                     {imageUrl ? (
-                                        <div className="pm-preview">
+                                        <div
+                                            className="pm-preview"
+                                            onClick={() => setPreviewAssetUrl(imageUrl)}
+                                            style={{ cursor: 'zoom-in' }}
+                                        >
                                             <img src={imageUrl} alt="Preview" />
                                             {uploading && (
                                                 <div className="pm-uploading-overlay">
@@ -299,6 +321,13 @@ export default function ProductModal({ isOpen, onClose, product, onSave }: Produ
                     </button>
                 </div>
             </div>
+
+            <MediaPreviewModal
+                isOpen={!!previewAssetUrl}
+                onClose={() => setPreviewAssetUrl(null)}
+                src={previewAssetUrl || ''}
+                type="image"
+            />
         </div>,
         document.body
     );

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { apiFetch, formatDate } from '@/lib/utils';
 import { VideoJob, Influencer } from '@/lib/types';
 import Select from '@/components/ui/Select';
+import MediaPreviewModal from '@/components/ui/MediaPreviewModal';
 
 export default function VideosPage() {
     const [jobs, setJobs] = useState<VideoJob[]>([]);
@@ -14,6 +15,7 @@ export default function VideosPage() {
     const [influencerFilter, setInfluencerFilter] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
     const [sortOrder, setSortOrder] = useState('newest');
+    const [previewAssetUrl, setPreviewAssetUrl] = useState<string | null>(null);
 
     const fetchData = useCallback(async () => {
         try {
@@ -31,6 +33,14 @@ export default function VideosPage() {
     }, []);
 
     useEffect(() => { fetchData(); }, [fetchData]);
+
+    async function handleDelete(jobId: string) {
+        if (!confirm('Delete this video? This cannot be undone.')) return;
+        try {
+            await apiFetch(`/jobs/${jobId}`, { method: 'DELETE' });
+            setJobs(prev => prev.filter(j => j.id !== jobId));
+        } catch (err) { console.error('Delete error:', err); }
+    }
 
     const influencerMap = new Map(influencers.map((i) => [i.id, i]));
 
@@ -132,11 +142,18 @@ export default function VideosPage() {
                         const statusLabel = job.status === 'success' ? 'Done' : job.status === 'processing' ? 'Processing...' : job.status === 'pending' ? 'Queued' : 'Failed';
                         return (
                             <div key={job.id} className='video-card'>
-                                <div className={`video-thumb grad-${(i % 5) + 1}`} style={job.final_video_url ? {} : {}}>
+                                <div
+                                    className={`video-thumb grad-${(i % 5) + 1}`}
+                                    style={{ cursor: job.final_video_url ? 'zoom-in' : 'default' }}
+                                    onClick={() => job.final_video_url && setPreviewAssetUrl(job.final_video_url)}
+                                >
                                     {job.final_video_url && (
                                         <video src={job.final_video_url} style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', inset: 0 }} muted loop playsInline />
                                     )}
                                     <span className={`status-pill ${statusClass}`} style={{ position: 'absolute', top: '8px', right: '8px', fontWeight: 700 }}>{statusLabel}</span>
+                                    <button className="card-delete-btn" onClick={(e) => { e.stopPropagation(); handleDelete(job.id); }} title="Delete video">
+                                        <svg viewBox="0 0 24 24"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
+                                    </button>
                                 </div>
                                 <div className='video-info' style={{ paddingBottom: '12px' }}>
                                     <div className='video-name' style={{ fontWeight: 700 }}>{influencerMap.get(job.influencer_id ?? '')?.name ?? 'Unknown'} — {job.campaign_name || 'Single'}</div>
@@ -146,7 +163,7 @@ export default function VideosPage() {
                                     {job.final_video_url ? (
                                         <>
                                             <button style={{ flex: 1, padding: '6px 0', backgroundColor: 'var(--surface-hover)', color: 'var(--blue)', borderRadius: '4px', fontSize: '12px', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px', border: '1px solid rgba(51,122,255,0.15)', cursor: 'pointer' }} onClick={() => window.open(job.final_video_url!)}>
-                                                <svg viewBox='0 0 24 24' style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><path d='M21 15v4a2 0 0 1-2 2H5a2 0 0 1-2-2v-4' /><polyline points='7 10 12 15 17 10' /><line x1='12' y1='15' x2='12' y2='3' /></svg>
+                                                <svg viewBox='0 0 24 24' style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' /><polyline points='7 10 12 15 17 10' /><line x1='12' y1='15' x2='12' y2='3' /></svg>
                                                 Save
                                             </button>
                                             <button style={{ flex: 1, padding: '6px 0', backgroundColor: 'transparent', color: 'var(--text-2)', borderRadius: '4px', fontSize: '12px', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px', border: '1px solid var(--border)', cursor: 'pointer' }}>
@@ -167,6 +184,13 @@ export default function VideosPage() {
                     })}
                 </div>
             )}
+
+            <MediaPreviewModal
+                isOpen={!!previewAssetUrl}
+                onClose={() => setPreviewAssetUrl(null)}
+                src={previewAssetUrl || ''}
+                type="mixed"
+            />
         </div>
     );
 }

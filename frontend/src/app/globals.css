@@ -717,7 +717,6 @@ a {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  overflow: hidden;
   box-shadow: var(--shadow);
   transition: all 0.2s;
   cursor: pointer;
@@ -729,10 +728,49 @@ a {
   border-color: rgba(51, 122, 255, 0.3);
 }
 
+.card-delete-btn {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 10;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(4px);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.video-card:hover .card-delete-btn,
+.icard:hover .card-delete-btn,
+.product-card:hover .card-delete-btn,
+.script-card:hover .card-delete-btn {
+  opacity: 1;
+}
+
+.card-delete-btn:hover {
+  background: rgba(239,68,68,0.85);
+}
+
+.card-delete-btn svg {
+  width: 14px;
+  height: 14px;
+  stroke: white;
+  fill: none;
+  stroke-width: 2;
+}
+
 .video-thumb {
   aspect-ratio: 9/16;
   position: relative;
   overflow: hidden;
+  border-radius: var(--radius) var(--radius) 0 0;
   background-size: cover;
   background-position: center;
 }
@@ -1030,11 +1068,13 @@ a {
 
 .prod-thumb {
   aspect-ratio: 1;
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   background-size: cover;
   background-position: center;
+  overflow: hidden;
 }
 
 .prod-thumb svg {
@@ -1800,7 +1840,7 @@ a {
   object-fit: cover;
 }
 
-.product-img svg {
+.product-img > svg {
   width: 48px;
   height: 48px;
   stroke: var(--text-3);
@@ -2038,18 +2078,17 @@ a {
 }
 
 .shot-type-card {
-  aspect-ratio: 1;
   border-radius: var(--radius-sm);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 4px;
   cursor: pointer;
   border: 2px solid var(--border);
   background: var(--surface);
   transition: all 0.15s;
-  padding: 8px;
+  padding: 10px 8px;
   text-align: center;
 }
 
@@ -2087,10 +2126,7 @@ a {
 
 .cinematic-workspace {
   padding: 32px 40px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  overflow-y: auto;
   min-height: calc(100vh - var(--header-h));
 }
 

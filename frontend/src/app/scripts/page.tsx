@@ -28,6 +28,14 @@ export default function ScriptsPage() {
 
   useEffect(() => { fetchScripts(); }, [fetchScripts]);
 
+  async function handleDelete(id: string) {
+    if (!confirm('Delete this script? This cannot be undone.')) return;
+    try {
+      await apiFetch(`/scripts/${id}`, { method: 'DELETE' });
+      setScripts(prev => prev.filter(s => s.id !== id));
+    } catch (err) { console.error('Delete error:', err); }
+  }
+
   const filtered = scripts.filter(s =>
     (s.name || '').toLowerCase().includes(search.toLowerCase()) ||
     (s.text || '').toLowerCase().includes(search.toLowerCase())
@@ -84,6 +92,9 @@ export default function ScriptsPage() {
               <div className='script-actions'>
                 <Link href={`/create?script_id=${script.id}`} className='script-action-btn primary' style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Use</Link>
                 <button className='script-action-btn ghost' onClick={() => window.alert('Editing functionality coming soon.')}>Edit</button>
+                <button className='script-action-btn ghost' onClick={() => handleDelete(script.id)} title="Delete script" style={{ color: 'var(--red)', padding: '6px 10px' }}>
+                  <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', stroke: 'currentColor', fill: 'none', strokeWidth: 2 }}><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
+                </button>
               </div>
             </div>
           ))}
