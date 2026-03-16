@@ -6,7 +6,7 @@ import config
 from prompts import sanitize_dialogue
 
 
-def build_scene_1_veo_prompt(ctx, script_part):
+def build_scene_1_veo_prompt(ctx, script_part, product_desc="product"):
     """Scene 1: Holding product up close to camera. Stringified YAML for Veo 3.1."""
     age_str = ctx.get('age', '25-year-old')
     visuals_str = ctx.get('visuals', 'casual style')
@@ -19,6 +19,7 @@ def build_scene_1_veo_prompt(ctx, script_part):
 
     return (
         f"dialogue: {dialogue}\n"
+        f"product: {product_desc}\n"
         f"anatomy: exactly one person with exactly two arms and two hands, "
         f"only one right hand holds the product, left hand rests naturally at side or on hip, "
         f"no third arm or hand appears at any time during the video\n"
@@ -32,16 +33,16 @@ def build_scene_1_veo_prompt(ctx, script_part):
         f"emotion: {energy_str}, genuine excitement, authentic reaction\n"
         f"voice_type: casual, {tone_str}, conversational {accent_str}\n"
         f"style: raw UGC realism, candid, not polished, imperfections intact\n"
-        f"speech_constraint: speak ONLY the exact dialogue words provided, do not add or improvise any words\n"
+        f"speech_constraint: start speaking immediately with no introductory filler, speak ONLY the exact dialogue words provided, do not add or improvise any words\n"
         f"motion_constraint: character has only two arms and two hands throughout the entire video, "
         f"never show a third hand or arm, no limbs appear from outside the frame\n"
-        f"negative: no third arm, no third hand, no extra limbs, no extra arms, no extra hands, "
+        f"negative: no auditory hallucinations, no spoken filler words, no introductory thanks or umm, no third arm, no third hand, no extra limbs, no extra arms, no extra hands, "
         f"no floating hands, no hands appearing from off-screen, no duplicate body parts, "
         f"no airbrushed skin, no studio lighting, no geometric distortion"
     )
 
 
-def build_scene_2_veo_prompt(ctx, script_part):
+def build_scene_2_veo_prompt(ctx, script_part, product_desc="product"):
     """Scene 2: Showing product close to face. Stringified YAML for Veo 3.1."""
     age_str = ctx.get('age', '25-year-old')
     visuals_str = ctx.get('visuals', 'casual style')
@@ -54,6 +55,7 @@ def build_scene_2_veo_prompt(ctx, script_part):
 
     return (
         f"dialogue: {dialogue}\n"
+        f"product: {product_desc}\n"
         f"anatomy: exactly one person with exactly two arms and two hands, "
         f"only one right hand holds the product near face, left hand is not visible or rests on chest, "
         f"no third arm or hand appears at any time during the video\n"
@@ -67,10 +69,46 @@ def build_scene_2_veo_prompt(ctx, script_part):
         f"emotion: {energy_str}, satisfied, genuine approval\n"
         f"voice_type: casual, {tone_str}, conversational {accent_str}\n"
         f"style: candid UGC look, no filters, realism, high detail, skin texture\n"
-        f"speech_constraint: speak ONLY the exact dialogue words provided, do not add or improvise any words\n"
+        f"speech_constraint: start speaking immediately with no introductory filler, speak ONLY the exact dialogue words provided, do not add or improvise any words\n"
         f"motion_constraint: character has only two arms and two hands throughout the entire video, "
         f"never show a third hand or arm, no limbs appear from outside the frame\n"
-        f"negative: no third arm, no third hand, no extra limbs, no extra arms, no extra hands, "
+        f"negative: no auditory hallucinations, no spoken filler words, no introductory thanks or umm, no third arm, no third hand, no extra limbs, no extra arms, no extra hands, "
+        f"no floating hands, no hands appearing from off-screen, no duplicate body parts, "
+        f"no extra fingers, no airbrushed skin, no studio backdrop, no geometric distortion"
+    )
+
+
+def build_scene_3_veo_prompt(ctx, script_part, product_desc="product"):
+    """Scene 3 (30s CTA): Pointing at product, warm call-to-action. Stringified YAML for Veo 3.1."""
+    age_str = ctx.get('age', '25-year-old')
+    visuals_str = ctx.get('visuals', 'casual style')
+    gender_str = ctx.get('gender', 'Female').lower()
+    energy_str = ctx.get('energy', 'High').lower()
+    accent_str = ctx.get('accent', 'neutral English')
+    tone_str = ctx.get('tone', 'Enthusiastic').lower()
+
+    dialogue = sanitize_dialogue(script_part) if script_part else "seriously you need to try this, link in my bio"
+
+    return (
+        f"dialogue: {dialogue}\n"
+        f"product: {product_desc}\n"
+        f"anatomy: exactly one person with exactly two arms and two hands, "
+        f"one hand points at product held in other hand, "
+        f"no third arm or hand appears at any time during the video\n"
+        f"action: character holds product in one hand at chest level, points at it with other hand, "
+        f"looks directly at camera with warm encouraging expression, nods while speaking\n"
+        f"character: {age_str} {gender_str}, {visuals_str}, natural skin texture with visible pores, "
+        f"not airbrushed, {energy_str} energy expression\n"
+        f"camera: amateur iPhone selfie video, slightly uneven framing, arm length distance, "
+        f"natural handheld shake\n"
+        f"setting: well-lit casual home environment, natural window light, slightly blurry background\n"
+        f"emotion: warm, encouraging, genuine recommendation, direct\n"
+        f"voice_type: casual, {tone_str}, conversational {accent_str}\n"
+        f"style: raw UGC realism, candid, not polished, imperfections intact\n"
+        f"speech_constraint: start speaking immediately with no introductory filler, speak ONLY the exact dialogue words provided, do not add or improvise any words\n"
+        f"motion_constraint: character has only two arms and two hands throughout the entire video, "
+        f"never show a third hand or arm, no limbs appear from outside the frame\n"
+        f"negative: no auditory hallucinations, no spoken filler words, no introductory thanks or umm, no third arm, no third hand, no extra limbs, no extra arms, no extra hands, "
         f"no floating hands, no hands appearing from off-screen, no duplicate body parts, "
         f"no extra fingers, no airbrushed skin, no studio backdrop, no geometric distortion"
     )
@@ -144,7 +182,7 @@ def build_physical_product_scenes(fields, influencer, product, durations, ctx, m
                     Use max_scenes=1 when cinematic shots will fill the remaining time.
     """
     # ✨ NEW: Generate a single seed for character consistency across all scenes
-    consistency_seed = random.randint(1, 1000000)
+    consistency_seed = random.randint(10000, 99999)
 
     scenes = []
 
@@ -168,10 +206,11 @@ def build_physical_product_scenes(fields, influencer, product, durations, ctx, m
             if not product_analysis.get("brand_name") and product.get("name"):
                 product_analysis = {**product_analysis, "brand_name": product.get("name")}
 
+            video_duration = int(str(fields.get("Length", "15s")).replace("s", ""))
             client = AIScriptClient()
             script = client.generate_physical_product_script(
                 product_analysis=product_analysis,
-                duration=15,
+                duration=video_duration,
                 influencer_data=influencer,
             )
             print(f"      [Script] AI persona-generated: {script[:60]}...")
@@ -181,11 +220,17 @@ def build_physical_product_scenes(fields, influencer, product, durations, ctx, m
     # Use correct pronoun based on influencer gender
     poss = "his" if ctx.get("gender", "Female") == "Male" else "her"
     
-    # 2 scenes for a 15s video (Hook + Showcase)
+    video_length = str(fields.get("Length", "15s"))
+
+    # 2 scenes for 15s (Hook + Showcase), 3 scenes for 30s (Hook + Showcase + CTA)
     scene_descriptions = [
         "holding the product up close to the camera with an excited expression",
         f"holding the product near {poss} face, tilting it to show the label with a warm smile",
     ]
+    if video_length == "30s":
+        scene_descriptions.append(
+            f"pointing at the product with one hand while looking directly at camera with a warm encouraging smile"
+        )
     
     # Limit scene count when cinematic shots will fill the remaining time
     if max_scenes and max_scenes < len(scene_descriptions):
@@ -201,21 +246,19 @@ def build_physical_product_scenes(fields, influencer, product, durations, ctx, m
         visual_desc_str = prod_desc.get("visual_description", "the product")
 
     # SPLIT SCRIPT LOGIC
-    # The AI script generator outputs "Part1 ||| Part2" for clean pre-split dialogue.
+    # The AI script generator outputs "Part1 ||| Part2" (15s) or
+    # "Part1 ||| Part2 ||| Part3" (30s) for clean pre-split dialogue.
     # Each part is timed to ~7s of speech (max ~17 words) to fit inside 8s Veo scenes.
     # NOTE: Split on ||| BEFORE sanitizing, since sanitize_dialogue strips | characters.
     import re
 
     num_scenes = len(scene_descriptions)
 
-    # Single scene mode: use only the FIRST HALF of the script (~7s of speech)
-    # The full script was written for ~15s (2 scenes), so using it all would
-    # make Veo cram too much dialogue into a single 8s clip.
+    # Single scene mode: use only the FIRST part of the script
     if num_scenes == 1:
         if "|||" in script:
             first_part = script.split("|||")[0].strip()
         else:
-            # No delimiter — take roughly the first half by sentence
             sanitized = sanitize_dialogue(script)
             sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', sanitized) if s.strip()]
             if len(sentences) >= 2:
@@ -224,39 +267,39 @@ def build_physical_product_scenes(fields, influencer, product, durations, ctx, m
             else:
                 first_part = sanitized
         script_parts = [sanitize_dialogue(first_part)]
-    # Strategy 0 (preferred): Split on ||| delimiter from GPT-4o
+    # Preferred: Split on ||| delimiter from AI script generator
     elif "|||" in script:
-        parts = [sanitize_dialogue(p) for p in script.split("|||") if p.strip()]
-        if len(parts) >= 2:
-            part1, part2 = parts[0], parts[1]
-        else:
-            part1 = parts[0] if parts else sanitize_dialogue(script)
-            part2 = part1
+        parts = [sanitize_dialogue(p.strip()) for p in script.split("|||") if p.strip()]
+        # Pad to num_scenes if fewer parts than scenes
+        while len(parts) < num_scenes:
+            parts.append(parts[-1] if parts else sanitize_dialogue(script))
+        script_parts = parts[:num_scenes]
     else:
-        # No delimiter — sanitize then try sentence/clause splitting
+        # No delimiter — sanitize then distribute across scenes
         script = sanitize_dialogue(script)
-
-        # Strategy 1: Split at sentence boundaries (. ! ?)
         sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', script) if s.strip()]
-        if len(sentences) >= 2:
+
+        if len(sentences) >= num_scenes:
+            chunk_size = len(sentences) // num_scenes
+            script_parts = []
+            for i in range(num_scenes):
+                start = i * chunk_size
+                end = start + chunk_size if i < num_scenes - 1 else len(sentences)
+                script_parts.append(" ".join(sentences[start:end]))
+        elif len(sentences) >= 2:
             mid = len(sentences) // 2
-            part1 = " ".join(sentences[:mid])
-            part2 = " ".join(sentences[mid:])
+            script_parts = [" ".join(sentences[:mid]), " ".join(sentences[mid:])]
+            while len(script_parts) < num_scenes:
+                script_parts.append(script_parts[-1])
         else:
-            # Strategy 2: Split at clause boundaries (, ;)
             clauses = [c.strip() for c in re.split(r'[,;]\s*', script) if c.strip()]
             if len(clauses) >= 2:
                 mid = len(clauses) // 2
-                part1 = ", ".join(clauses[:mid])
-                part2 = ", ".join(clauses[mid:])
+                script_parts = [", ".join(clauses[:mid]), ", ".join(clauses[mid:])]
+                while len(script_parts) < num_scenes:
+                    script_parts.append(script_parts[-1])
             else:
-                # Strategy 3: Script is too short to split — use full script for both scenes
-                part1 = script
-                part2 = script
-
-    # Only set script_parts for multi-scene mode (single-scene already set above)
-    if num_scenes > 1:
-        script_parts = [part1, part2]
+                script_parts = [script] * num_scenes
 
     # Generate Scenes
     for i, desc in enumerate(scene_descriptions):
@@ -279,12 +322,13 @@ def build_physical_product_scenes(fields, influencer, product, durations, ctx, m
         
         # ✨ FIX: Pass the script part to the prompt builders
         if i == 0:
-            visual_animation_prompt = build_scene_1_veo_prompt(ctx, scene_script)
+            visual_animation_prompt = build_scene_1_veo_prompt(ctx, scene_script, visual_desc_str)
         elif i == 1:
-            visual_animation_prompt = build_scene_2_veo_prompt(ctx, scene_script)
+            visual_animation_prompt = build_scene_2_veo_prompt(ctx, scene_script, visual_desc_str)
+        elif i == 2:
+            visual_animation_prompt = build_scene_3_veo_prompt(ctx, scene_script, visual_desc_str)
         else:
-            # Fallback for any additional scenes
-            visual_animation_prompt = build_scene_1_veo_prompt(ctx, scene_script)
+            visual_animation_prompt = build_scene_1_veo_prompt(ctx, scene_script, visual_desc_str)
         
         scene_script = script_parts[i] if i < len(script_parts) else ""
         

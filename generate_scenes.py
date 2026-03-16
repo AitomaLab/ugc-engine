@@ -108,10 +108,11 @@ def generate_video(prompt, reference_image_url=None, model_api=None):
             "aspect_ratio": "9:16",
             "enableFallback": False,
             "enableTranslation": False,
+            "watermark": "",
         }
         if reference_image_url:
-            payload["imageUrls"] = [reference_image_url]
-            payload["generationType"] = "FIRST_AND_LAST_FRAMES_2_VIDEO"
+            payload["imageUrls"] = [reference_image_url, reference_image_url]
+            payload["generationType"] = "IMAGE_2_VIDEO"
 
     resp = requests.post(endpoints["generate"], headers=config.KIE_HEADERS, json=payload)
     
@@ -163,8 +164,8 @@ def generate_video(prompt, reference_image_url=None, model_api=None):
                 if isinstance(result_urls, str):
                     result_urls = json.loads(result_urls)
                 if result_urls:
-                    print(f"      ✨ Generation complete! ({i * 10}s)")
-                    return result_urls[0]
+                    print(f"      [OK] Generation complete! ({i * 10}s)")
+                    return {"taskId": task_id, "videoUrl": result_urls[0]}
                 print(f"      ⚠️ Success but no resultUrls ({i * 10}s)")
                 print(f"      DEBUG data keys: {list(data.keys())}")
                 continue
@@ -184,8 +185,8 @@ def generate_video(prompt, reference_image_url=None, model_api=None):
                     result_data = json.loads(result_json_str)
                     video_url = result_data.get("resultUrls", [None])[0]
                     if video_url:
-                        print(f"      ✨ Generation complete! ({i * 10}s)")
-                        return video_url
+                        print(f"      [OK] Generation complete! ({i * 10}s)")
+                        return {"taskId": task_id, "videoUrl": video_url}
                 except Exception as e:
                     print(f"      ⚠️ Error parsing resultJson: {e}")
                     continue
@@ -203,20 +204,148 @@ def generate_video(prompt, reference_image_url=None, model_api=None):
 
 def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, max_retries=3):
     """
-    Generate video with automatic retry on 500/rate limit errors.
+    Generate video with automatic retry on transient errors.
+    Retries on: 500 errors, internal errors, timeouts, and unknown generation errors.
     """
+    RETRIABLE_PATTERNS = ("500", "internal error", "unknown generation error", "timed out", "timeout")
     for attempt in range(max_retries):
         try:
             return generate_video(prompt, reference_image_url, model_api)
         except RuntimeError as e:
-            # Check for 500 or known transient errors
             error_str = str(e).lower()
-            if "500" in error_str or "internal error" in error_str or "unknown generation error" in error_str:
-                if attempt < max_retries - 1:
+            is_retriable = any(p in error_str for p in RETRIABLE_PATTERNS)
+            if is_retriable and attempt < max_retries - 1:
+                # Longer wait for timeouts (server overload) vs regular errors
+                if "timed out" in error_str or "timeout" in error_str:
+                    wait_time = (2 ** attempt) * 15  # 15s, 30s
+                else:
+                    wait_time = (2 ** attempt) * 5   # 5s, 10s
+                print(f"      [RETRY] '{e}' — retrying in {wait_time}s (attempt {attempt + 2}/{max_retries})")
+                time.sleep(wait_time)
+                continue
+            raise
+
+
+def extend_video(task_id, prompt, seed=None, model="veo-3.1-fast"):
+    """
+    Extend an existing Veo 3.1 video using the Extend API.
+    The extended video is a single continuous file containing
+    the original content plus the new extension seamlessly joined.
+
+    Args:
+        task_id: The taskId from the original generate or previous extend call.
+        prompt:  Describes how the video should continue from where it left off.
+        seed:    Optional seed for character consistency across extensions.
+        model:   Friendly model name (e.g. 'veo-3.1-fast'). Resolved via MODEL_REGISTRY.
+
+    Returns:
+        dict with 'taskId' (str) and 'videoUrl' (str).
+    """
+    # Resolve friendly name to Kie.ai API identifier (e.g. "veo-3.1-fast" -> "veo3_fast")
+    model_api = config.MODEL_REGISTRY.get(model, model)
+
+    print(f"   [EXTEND] Extending video from task {task_id[:30]}... (model={model_api})")
+
+    endpoint = f"{config.KIE_API_URL}/api/v1/veo/extend"
+    poll_endpoint = MODEL_ENDPOINTS["veo"]["poll"]
+
+    payload = {
+        "taskId": task_id,
+        "prompt": prompt,
+        "model": model_api,
+        "watermark": "",
+    }
+    if seed is not None:
+        payload["seeds"] = seed
+
+    print(f"      [EXTEND] Payload: taskId={task_id[:30]}..., model={model_api}, prompt={prompt[:60]}...")
+    resp = requests.post(endpoint, headers=config.KIE_HEADERS, json=payload)
+
+    if resp.status_code != 200:
+        try:
+            err_data = resp.json()
+            err_msg = err_data.get("message", err_data.get("msg", str(err_data)))
+        except Exception:
+            err_msg = resp.text[:200]
+        raise RuntimeError(f"Veo Extend API error ({resp.status_code}): {err_msg}")
+
+    result = resp.json()
+    if result.get("code") != 200:
+        error_msg = result.get("message", result.get("msg", str(result)))
+        raise RuntimeError(f"Veo Extend API error: {error_msg}")
+
+    new_task_id = result["data"]["taskId"]
+    print(f"      [EXTEND] New task: {new_task_id[:30]}...")
+
+    # Poll for completion -- mirrors generate_video's Veo polling loop exactly
+    for i in range(120):  # 20 minutes max
+        time.sleep(10)
+
+        try:
+            resp = requests.get(
+                poll_endpoint,
+                headers=config.KIE_HEADERS,
+                params={"taskId": new_task_id},
+                timeout=30,
+            )
+            result = resp.json()
+        except Exception as poll_err:
+            print(f"      [EXTEND] Poll warning: {poll_err}")
+            continue
+
+        if result.get("code") != 200:
+            print(f"      [EXTEND] Poll error: {result.get('msg', '')} ({i * 10}s)")
+            continue
+
+        data = result.get("data", {})
+        flag = data.get("successFlag", 0)
+
+        if flag == 1:
+            # Same URL extraction as generate_video Veo branch
+            response_obj = data.get("response") or {}
+            if isinstance(response_obj, str):
+                try:
+                    response_obj = json.loads(response_obj)
+                except Exception:
+                    response_obj = {}
+            result_urls = response_obj.get("resultUrls") or data.get("resultUrls") or []
+            if isinstance(result_urls, str):
+                result_urls = json.loads(result_urls)
+            if result_urls:
+                print(f"      [EXTEND] Extension complete! ({i * 10}s)")
+                return {"taskId": new_task_id, "videoUrl": result_urls[0]}
+            print(f"      [EXTEND] Success but no resultUrls ({i * 10}s)")
+            continue
+        elif flag in (2, 3):
+            error_msg = data.get("failMsg", data.get("statusDescription", "Unknown extend error"))
+            raise RuntimeError(f"Veo Extend failed: {error_msg}")
+        else:
+            status_desc = data.get("statusDescription", "extending")
+            print(f"      [EXTEND] {status_desc}... ({i * 10}s)")
+
+    raise RuntimeError("Veo Extend generation timed out after 20 minutes")
+
+
+def extend_video_with_retry(task_id, prompt, seed=None, model="veo-3.1-fast", max_retries=3):
+    """
+    Extend video with automatic retry on transient errors.
+    Retries on: 500 errors, internal errors, timeouts, and unknown generation errors.
+    """
+    RETRIABLE_PATTERNS = ("500", "internal error", "unknown generation error", "timed out", "timeout")
+    for attempt in range(max_retries):
+        try:
+            return extend_video(task_id, prompt, seed, model)
+        except RuntimeError as e:
+            error_str = str(e).lower()
+            is_retriable = any(p in error_str for p in RETRIABLE_PATTERNS)
+            if is_retriable and attempt < max_retries - 1:
+                if "timed out" in error_str or "timeout" in error_str:
+                    wait_time = (2 ** attempt) * 15
+                else:
                     wait_time = (2 ** attempt) * 5
-                    print(f"      ⏳ Veo/API error ('{e}'). Retrying in {wait_time}s... (Attempt {attempt + 2}/{max_retries})")
-                    time.sleep(wait_time)
-                    continue
+                print(f"      [EXTEND RETRY] '{e}' — retrying in {wait_time}s (attempt {attempt + 2}/{max_retries})")
+                time.sleep(wait_time)
+                continue
             raise
 
 
@@ -371,10 +500,11 @@ def generate_all_scenes(scenes, project_name="video", record_id=None, status_cal
         try:
             if scene["type"] == "veo":
                 # Generate with AI model (Seedance / Veo / etc.)
-                video_url = generate_video_with_retry(
+                result = generate_video_with_retry(
                     prompt=scene["prompt"],
                     reference_image_url=scene.get("reference_image_url"),
                 )
+                video_url = result["videoUrl"]
                 download_video(video_url, output_path)
                 clip_cost = 0.28 if _get_model_family() == "seedance" else 0.30
                 total_cost += clip_cost
@@ -617,18 +747,20 @@ def generate_composite_image(scene: dict, influencer: dict, product: dict, seed:
     raise RuntimeError("Nano Banana generation timed out")
 
 
-def animate_image(image_url: str, scene: dict) -> str:
-    """Calls Veo 3.1 to animate a composite image."""
-    print("   🎞️ Animating composite image with Veo 3.1...")
-    
+def animate_image(image_url: str, scene: dict) -> dict:
+    """Calls Veo 3.1 to animate a composite image.
+    Returns dict with 'taskId' and 'videoUrl' keys."""
+    print("   [ANIM] Animating composite image with Veo 3.1...")
+
     # Use the script part as the prompt for animation
     prompt = scene.get("video_animation_prompt") or scene.get("prompt")
-    
-    return generate_video_with_retry(
+
+    result = generate_video_with_retry(
         prompt=prompt,
         reference_image_url=image_url,
         model_api="veo-3.1-fast"
     )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -708,8 +840,9 @@ def generate_cinematic_product_image(prompt: str, product_image_url: str, seed: 
 
 
 def animate_cinematic_still(image_url: str, shot_type: str) -> str:
-    """Calls Veo 3.1 to animate a still product shot into a short video."""
-    print("   Animating cinematic still with Veo 3.1...")
+    """Calls Veo 3.1 to animate a still product shot into a short video.
+    Returns a plain URL string (cinematic shots never use the Extend pipeline)."""
+    print("   [ANIM] Animating cinematic still with Veo 3.1...")
 
     motion_prompts = {
         "hero": "slowly push in on the product, subtle light glinting off the surface",
@@ -724,11 +857,12 @@ def animate_cinematic_still(image_url: str, shot_type: str) -> str:
 
     prompt = motion_prompts.get(shot_type, "subtle, slow camera movement to bring the still image to life")
 
-    return generate_video_with_retry(
+    result = generate_video_with_retry(
         prompt=prompt,
         reference_image_url=image_url,
         model_api="veo-3.1-fast"
     )
+    return result["videoUrl"]
 
 
 if __name__ == "__main__":
