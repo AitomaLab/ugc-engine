@@ -114,7 +114,10 @@ def generate_video(prompt, reference_image_url=None, model_api=None):
             payload["imageUrls"] = [reference_image_url, reference_image_url]
             payload["generationType"] = "IMAGE_2_VIDEO"
 
-    resp = requests.post(endpoints["generate"], headers=config.KIE_HEADERS, json=payload)
+    try:
+        resp = requests.post(endpoints["generate"], headers=config.KIE_HEADERS, json=payload, timeout=60)
+    except Exception as e:
+        raise RuntimeError(f"Veo API network error: {str(e)}")
     
     if resp.status_code != 200:
         try:
@@ -136,12 +139,17 @@ def generate_video(prompt, reference_image_url=None, model_api=None):
     for i in range(120):  # 20 minutes max
         time.sleep(10)
 
-        resp = requests.get(
-            endpoints["poll"],
-            headers=config.KIE_HEADERS,
-            params={"taskId": task_id},
-        )
-        result = resp.json()
+        try:
+            resp = requests.get(
+                endpoints["poll"],
+                headers=config.KIE_HEADERS,
+                params={"taskId": task_id},
+                timeout=30,
+            )
+            result = resp.json()
+        except Exception as poll_err:
+            print(f"      ⚠️ Poll network warning: {poll_err} (Continuing...)")
+            continue
 
         if result.get("code") != 200:
             print(f"      ⚠️ Poll error: {result.get('msg', '')} ({i * 10}s)")
@@ -259,7 +267,10 @@ def extend_video(task_id, prompt, seed=None, model="veo-3.1-fast"):
         payload["seeds"] = seed
 
     print(f"      [EXTEND] Payload: taskId={task_id[:30]}..., model={model_api}, prompt={prompt[:60]}...")
-    resp = requests.post(endpoint, headers=config.KIE_HEADERS, json=payload)
+    try:
+        resp = requests.post(endpoint, headers=config.KIE_HEADERS, json=payload, timeout=60)
+    except Exception as e:
+        raise RuntimeError(f"Veo Extend API network error: {str(e)}")
 
     if resp.status_code != 200:
         try:
