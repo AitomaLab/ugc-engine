@@ -11,11 +11,42 @@ export interface Influencer {
     elevenlabs_voice_id?: string;
 }
 
+export interface ScriptScene {
+    scene_number: number;
+    scene_title: string;
+    dialogue: string;
+    word_count: number;
+    estimated_duration_sec: number;
+    visual_cue?: string;
+    on_screen_text?: string;
+}
+
+export interface ScriptJSON {
+    name?: string;
+    target_duration_sec?: number;
+    target_platform?: string;
+    methodology?: string;
+    hook?: string;
+    scenes?: ScriptScene[];
+    _generated_hooks?: string[];
+}
+
 export interface Script {
     id: string;
-    text: string;
+    name?: string;
+    text?: string;                         // Legacy ||| delimited string
+    script_json?: ScriptJSON;               // New structured format
     category?: string;
+    methodology?: string;
+    video_length?: number;
+    product_id?: string;
+    influencer_id?: string;
+    source?: string;                        // 'manual' | 'ai_generated' | 'csv_upload' | 'web_scraped'
+    is_trending?: boolean;
+    times_used?: number;
+    created_at?: string;
 }
+
 
 export interface AppClipItem {
     id: string;

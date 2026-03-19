@@ -685,8 +685,13 @@ def generate_composite_image(scene: dict, influencer: dict, product: dict, seed:
     final_prompt = scene.get("nano_banana_prompt") or scene.get("prompt")
     
     # Define a strong negative prompt to prevent anatomical errors
-    negative_prompt = "(deformed, distorted, disfigured:1.3), poorly drawn, bad anatomy, wrong anatomy, (extra limb:1.5), (third arm:1.5), (third hand:1.5), (extra arm:1.5), (extra hand:1.5), missing limb, floating limbs, (mutated hands and fingers:1.4), disconnected limbs, mutation, mutated, ugly, disgusting, blurry, amputation, (3rd hand:1.5), multiple people, different person, airbrushed skin, studio backdrop, geometric distortion, text overlays, watermarks, extra fingers, hands appearing from off-screen"
-    
+    negative_prompt = (
+        "(deformed, distorted, disfigured:1.3), poorly drawn, bad anatomy, wrong anatomy, "
+        "(extra limb:1.5), (third arm:1.5), (third hand:1.5), (extra arm:1.5), (extra hand:1.5), "
+        "missing limb, floating limbs, (mutated hands and fingers:1.4), disconnected limbs, "
+        "mutation, mutated, ugly, disgusting, blurry, amputation, (3rd hand:1.5), multiple people, "
+        "different person, airbrushed skin, studio backdrop, geometric distortion, text overlays, watermarks, extra fingers"
+    )
     payload = {
         "model": "nano-banana-pro",
         "input": {

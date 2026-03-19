@@ -59,7 +59,7 @@ def trim_video(input_path, output_path, duration, mode="start"):
         "-i", str(input_path),
         "-t", str(duration),
         "-c:v", "libx264", "-c:a", "aac",
-        "-preset", "fast",
+        "-preset", "veryfast",
         str(output_path),
     ]
     subprocess.run(cmd, capture_output=True, check=True)
@@ -82,7 +82,7 @@ def normalize_video(input_path, output_path, target_width=1080, target_height=19
         "-c:v", "libx264",
         "-c:a", "aac",
         "-ar", "44100",
-        "-preset", "fast",
+        "-preset", "veryfast",
         "-r", "30",
         str(output_path),
     ]
@@ -95,6 +95,47 @@ def normalize_video(input_path, output_path, target_width=1080, target_height=19
 # ---------------------------------------------------------------------------
 
 TRANSITION_DURATION = 0.5  # seconds — cross-dissolve between Veo scenes
+
+
+def _has_audio_stream(video_path):
+    """Check if a video file has an audio stream using FFprobe."""
+    cmd = [
+        "ffprobe", "-v", "quiet",
+        "-select_streams", "a",
+        "-show_entries", "stream=codec_type",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        str(video_path),
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        return bool(result.stdout.strip())
+    except subprocess.CalledProcessError:
+        return False
+
+
+def ensure_audio_stream(video_path, work_dir):
+    """Add a silent audio track to a video if it doesn't have one.
+    Returns the path to the video with guaranteed audio stream."""
+    if _has_audio_stream(video_path):
+        return str(video_path)
+
+    output = Path(work_dir) / f"audio_padded_{Path(video_path).stem}.mp4"
+    dur = get_video_duration(video_path)
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", str(video_path),
+        "-f", "lavfi", "-i", f"anullsrc=channel_layout=stereo:sample_rate=44100",
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-t", f"{dur:.3f}",
+        "-shortest",
+        str(output),
+    ]
+    result = subprocess.run(cmd, capture_output=True)
+    if result.returncode == 0:
+        print(f"      [+] Added silent audio track to {Path(video_path).name}")
+        return str(output)
+    return str(video_path)
 
 
 def apply_transitions_between_veo_scenes(video_paths, scene_types, work_dir):
@@ -131,7 +172,7 @@ def apply_transitions_between_veo_scenes(video_paths, scene_types, work_dir):
     if not needs_transition:
         return video_paths
 
-    print(f"   🎞️ Applying cross-dissolve transitions between scenes...")
+    print(f"   [TRANS] Applying cross-dissolve transitions between scenes...")
 
     result_paths = list(video_paths)
 
@@ -148,32 +189,81 @@ def apply_transitions_between_veo_scenes(video_paths, scene_types, work_dir):
         # Get duration of clip A to calculate xfade offset
         dur_a = get_video_duration(clip_a)
         if dur_a <= td:
-            print(f"   ⚠️ Clip {i} too short for transition ({dur_a:.1f}s). Skipping.")
+            print(f"   !! Clip {i} too short for transition ({dur_a:.1f}s). Skipping.")
             i += 1
             continue
 
         offset = dur_a - td
 
-        # Try video + audio crossfade first, fall back to video-only if audio fails
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", str(clip_a),
-            "-i", str(clip_b),
-            "-filter_complex",
-            (
-                f"[0:v][1:v]xfade=transition=fade:duration={td}:offset={offset:.3f}[xv];"
-                f"[0:a][1:a]acrossfade=d={td}[xa]"
-            ),
-            "-map", "[xv]",
-            "-map", "[xa]",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
-            "-c:a", "aac", "-b:a", "128k",
-            str(output),
-        ]
+        # Probe which clips have audio streams
+        has_audio_a = _has_audio_stream(clip_a)
+        has_audio_b = _has_audio_stream(clip_b)
+
+        if has_audio_a and has_audio_b:
+            # Both have audio — full video + audio crossfade
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", str(clip_a),
+                "-i", str(clip_b),
+                "-filter_complex",
+                (
+                    f"[0:v][1:v]xfade=transition=fade:duration={td}:offset={offset:.3f}[xv];"
+                    f"[0:a][1:a]acrossfade=d={td}[xa]"
+                ),
+                "-map", "[xv]",
+                "-map", "[xa]",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+                "-c:a", "aac", "-b:a", "128k",
+                str(output),
+            ]
+        elif has_audio_a:
+            # Only clip_a has audio — visual crossfade + keep clip_a's audio
+            print(f"      Clip {i+2} has no audio — preserving audio from clip {i+1}")
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", str(clip_a),
+                "-i", str(clip_b),
+                "-filter_complex",
+                f"[0:v][1:v]xfade=transition=fade:duration={td}:offset={offset:.3f}[xv]",
+                "-map", "[xv]",
+                "-map", "0:a",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+                "-c:a", "aac", "-b:a", "128k",
+                str(output),
+            ]
+        elif has_audio_b:
+            # Only clip_b has audio — visual crossfade + keep clip_b's audio
+            print(f"      Clip {i+1} has no audio — preserving audio from clip {i+2}")
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", str(clip_a),
+                "-i", str(clip_b),
+                "-filter_complex",
+                f"[0:v][1:v]xfade=transition=fade:duration={td}:offset={offset:.3f}[xv]",
+                "-map", "[xv]",
+                "-map", "1:a",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+                "-c:a", "aac", "-b:a", "128k",
+                str(output),
+            ]
+        else:
+            # Neither has audio — video-only crossfade
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", str(clip_a),
+                "-i", str(clip_b),
+                "-filter_complex",
+                f"[0:v][1:v]xfade=transition=fade:duration={td}:offset={offset:.3f}[xv]",
+                "-map", "[xv]",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+                "-an",
+                str(output),
+            ]
 
         result = subprocess.run(cmd, capture_output=True)
         if result.returncode != 0:
-            # Audio crossfade may fail if a clip lacks audio — retry with video-only
+            # Last resort fallback: video-only (no audio)
+            print(f"      !! Transition audio failed for clips {i+1}-{i+2}, trying video-only")
             cmd_vo = [
                 "ffmpeg", "-y",
                 "-i", str(clip_a),
@@ -187,7 +277,7 @@ def apply_transitions_between_veo_scenes(video_paths, scene_types, work_dir):
             ]
             result = subprocess.run(cmd_vo, capture_output=True)
             if result.returncode != 0:
-                print(f"   ⚠️ Transition FFmpeg failed for clips {i}-{i+1}. Using hard cut.")
+                print(f"      !! Transition FFmpeg failed for clips {i+1}-{i+2}. Using hard cut.")
                 i += 1
                 continue
 
@@ -196,14 +286,18 @@ def apply_transitions_between_veo_scenes(video_paths, scene_types, work_dir):
         result_paths.pop(i + 1)
         scene_types.pop(i + 1)
 
-        print(f"   ✅ Transition applied between scene {i+1} and scene {i+2}")
+        print(f"   [OK] Transition applied between scene {i+1} and scene {i+2}")
         # Don't increment i — check merged clip against next
 
     return result_paths
 
 
-def assemble_video(video_paths, output_path, music_path=None, max_duration=None, scene_types=None):
-    """Assembles the final UGC video with word-perfect, transcription-based subtitles."""
+def assemble_video(video_paths, output_path, music_path=None, max_duration=None, scene_types=None, brand_names=None):
+    """Assembles the final UGC video with word-perfect, transcription-based subtitles.
+    
+    Args:
+        brand_names: Optional list of brand/product names to ensure correct spelling in subtitles.
+    """
     if output_path is None:
         output_path = config.OUTPUT_DIR / "final_ugc.mp4"
     output_path = Path(output_path)
@@ -213,10 +307,10 @@ def assemble_video(video_paths, output_path, music_path=None, max_duration=None,
     work_dir = config.TEMP_DIR / f"assembly_{assembly_id}"
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    print("\n🔧 Assembling final video...")
+    print("\n[BUILD] Assembling final video...")
 
     # Step 1: Normalize all clips to same resolution/codec (No Trimming)
-    print("   📐 Normalizing to 9:16...")
+    print("   [NORM] Normalizing to 9:16...")
     normalized_paths = []
     scene_metadata = []  # Track which scenes are UGC vs cinematic
     
@@ -229,7 +323,7 @@ def assemble_video(video_paths, output_path, music_path=None, max_duration=None,
             path = scene_data
             scene_type = "veo"
 
-        # ✨ FIX: For physical product scenes, use their actual duration and do not trim
+        # [*] FIX: For physical product scenes, use their actual duration and do not trim
         if scene_type == "physical_product_scene":
             # For physical scenes, we want the full generated output (usually ~7.5s - 8s)
             # Trimming it to a default "hook" duration (like 4s) ruins the video.
@@ -251,6 +345,13 @@ def assemble_video(video_paths, output_path, music_path=None, max_duration=None,
         actual_dur = get_video_duration(normalized)
         print(f"      Scene {i+1} ({scene_type}): {actual_dur:.1f}s")
 
+    # Ensure ALL clips have an audio stream BEFORE transitions.
+    # Without this, xfade between an audio clip (Veo) and a silent clip (app recording)
+    # maps only the first clip's audio, creating a mismatch (8s audio vs 14.5s video)
+    # that later gets truncated by the music-mixing step.
+    for idx in range(len(normalized_paths)):
+        normalized_paths[idx] = ensure_audio_stream(normalized_paths[idx], work_dir)
+
     # Apply cross-dissolve transitions between consecutive AI-generated scenes
     if scene_types:
         types_list = list(scene_types)
@@ -270,8 +371,8 @@ def assemble_video(video_paths, output_path, music_path=None, max_duration=None,
     cinematic_scenes_meta = [s for s in scene_metadata if s["type"] == "cinematic_shot"]
 
     if has_cinematic and ugc_scenes:
-        # ✨ SUBTITLE-SAFE ASSEMBLY: Burn subtitles on UGC portion only
-        print("   🎬 Cinematic mode: subtitles will only appear on UGC scenes")
+        # [*] SUBTITLE-SAFE ASSEMBLY: Burn subtitles on UGC portion only
+        print("   [CIN] Cinematic mode: subtitles will only appear on UGC scenes")
 
         # Step 2a: Concatenate only UGC scenes for transcription
         ugc_concat_list = work_dir / "ugc_concat.txt"
@@ -295,16 +396,16 @@ def assemble_video(video_paths, output_path, music_path=None, max_duration=None,
 
         # Step 2b: Transcribe and burn subtitles on UGC portion only
         ugc_input = str(ugc_combined)
-        transcription = extract_transcription_with_whisper(ugc_input)
+        transcription = extract_transcription_with_whisper(ugc_input, brand_names=brand_names)
         if transcription:
             subtitle_path = work_dir / "subtitles_synced.ass"
-            generate_subtitles_from_whisper(transcription, subtitle_path)
+            generate_subtitles_from_whisper(transcription, subtitle_path, brand_names=brand_names)
             
             if Path(subtitle_path).exists() and Path(subtitle_path).stat().st_size > 250:
-                print("   🔤 Burning subtitles on UGC portion only...")
+                print("   [SUB] Burning subtitles on UGC portion only...")
                 ugc_subtitled = work_dir / "ugc_subtitled.mp4"
                 sub_path_safe = str(Path(subtitle_path).resolve()).replace("\\", "/").replace(":", "\\:")
-                cmd = ["ffmpeg", "-y", "-i", ugc_input, "-vf", f"ass=\\'{sub_path_safe}\\'", "-c:v", "libx264", "-c:a", "copy", "-preset", "fast", str(ugc_subtitled)]
+                cmd = ["ffmpeg", "-y", "-i", ugc_input, "-vf", f"ass=\\'{sub_path_safe}\\'", "-c:v", "libx264", "-c:a", "copy", "-preset", "veryfast", str(ugc_subtitled)]
                 subprocess.run(cmd, capture_output=True, check=True)
                 ugc_input = str(ugc_subtitled)
 
@@ -313,7 +414,7 @@ def assemble_video(video_paths, output_path, music_path=None, max_duration=None,
         normalize_video(ugc_input, ugc_final)
 
         # Step 2d: Concatenate UGC-with-subtitles + cinematic clips in original order
-        print("   🔗 Concatenating UGC (with subs) + cinematic (no subs)...")
+        print("   [LINK] Concatenating UGC (with subs) + cinematic (no subs)...")
         final_concat_list = work_dir / "final_concat.txt"
         with open(final_concat_list, "w") as f:
             for s in scene_metadata:
@@ -342,7 +443,9 @@ def assemble_video(video_paths, output_path, music_path=None, max_duration=None,
 
     else:
         # Standard path: no cinematic scenes — concatenate and subtitle everything
-        print("   🔗 Concatenating scenes...")
+        # (Audio streams already ensured before transitions above)
+
+        print("   [LINK] Concatenating scenes...")
         concat_list = work_dir / "concat.txt"
         with open(concat_list, "w") as f:
             for path in normalized_paths:
@@ -364,22 +467,22 @@ def assemble_video(video_paths, output_path, music_path=None, max_duration=None,
 
         # Step 3: Generate and Burn Synchronized Subtitles
         current_input = str(combined)
-        transcription = extract_transcription_with_whisper(current_input)
+        transcription = extract_transcription_with_whisper(current_input, brand_names=brand_names)
         if transcription:
             subtitle_path = work_dir / "subtitles_synced.ass"
-            generate_subtitles_from_whisper(transcription, subtitle_path)
+            generate_subtitles_from_whisper(transcription, subtitle_path, brand_names=brand_names)
             
             if Path(subtitle_path).exists() and Path(subtitle_path).stat().st_size > 250:
-                print("   🔤 Burning in subtitles...")
+                print("   [SUB] Burning in subtitles...")
                 subtitled = work_dir / "subtitled.mp4"
                 sub_path_safe = str(Path(subtitle_path).resolve()).replace("\\", "/").replace(":", "\\:")
-                cmd = ["ffmpeg", "-y", "-i", current_input, "-vf", f"ass=\\'{sub_path_safe}\\'", "-c:v", "libx264", "-c:a", "copy", "-preset", "fast", str(subtitled)]
+                cmd = ["ffmpeg", "-y", "-i", current_input, "-vf", f"ass=\\'{sub_path_safe}\\'", "-c:v", "libx264", "-c:a", "copy", "-preset", "veryfast", str(subtitled)]
                 subprocess.run(cmd, capture_output=True, check=True)
                 current_input = str(subtitled)
 
     # Step 4: Add background music (if provided)
     if music_path and Path(music_path).exists():
-        print("   🎵 Adding background music...")
+        print("   [MUSIC] Adding background music...")
         final_dur = get_video_duration(current_input)
         fade_start = max(0, final_dur - 2)  # 2-second fade-out
 
@@ -401,6 +504,8 @@ def assemble_video(video_paths, output_path, music_path=None, max_duration=None,
 
         if has_audio:
             # Video HAS audio → mix video audio + background music
+            # Use duration=longest so audio isn't truncated if video audio
+            # is shorter than the video stream (e.g. after xfade transitions).
             cmd = [
                 "ffmpeg", "-y",
                 "-i", current_input,
@@ -408,19 +513,18 @@ def assemble_video(video_paths, output_path, music_path=None, max_duration=None,
                 "-filter_complex", (
                     f"[1:a]atrim=0:{final_dur},"
                     f"afade=t=out:st={fade_start}:d=2,"
-                    f"volume=0.15[bg];"
-                    f"[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2[a]"
+                    f"volume=0.25[bg];"
+                    f"[0:a][bg]amix=inputs=2:duration=longest:dropout_transition=2[a]"
                 ),
                 "-map", "0:v",
                 "-map", "[a]",
                 "-c:v", "copy",
                 "-c:a", "aac",
-                "-shortest",
                 str(with_music),
             ]
         else:
             # Video has NO audio → just overlay music as the only audio track
-            print("      ℹ️ Video has no audio stream, adding music as sole audio track")
+            print("      [i] Video has no audio stream, adding music as sole audio track")
             cmd = [
                 "ffmpeg", "-y",
                 "-i", current_input,
@@ -434,7 +538,6 @@ def assemble_video(video_paths, output_path, music_path=None, max_duration=None,
                 "-map", "[a]",
                 "-c:v", "copy",
                 "-c:a", "aac",
-                "-shortest",
                 str(with_music),
             ]
 
@@ -442,7 +545,7 @@ def assemble_video(video_paths, output_path, music_path=None, max_duration=None,
         current_input = str(with_music)
 
     # Step 5: Enforce max duration and copy to final output
-    print(f"   📦 Finalizing...")
+    print(f"   [FINAL] Finalizing...")
     final_dur = get_video_duration(current_input)
 
     limit = max_duration or config.VIDEO_MAX_DURATION
@@ -460,7 +563,7 @@ def assemble_video(video_paths, output_path, music_path=None, max_duration=None,
 
     final_dur = get_video_duration(output_path)
     size_mb = output_path.stat().st_size / (1024 * 1024)
-    print(f"\n✅ Final video: {output_path}")
+    print(f"\n[OK] Final video: {output_path}")
     print(f"   Duration: {final_dur:.1f}s | Size: {size_mb:.1f} MB")
 
     # Clean up this specific job's assembly folder
@@ -478,7 +581,7 @@ def cleanup_temp(project_name=None):
         temp = config.TEMP_DIR / project_name
         if temp.exists():
             shutil.rmtree(temp, ignore_errors=True)
-    print("   🧹 Temp files cleaned up (assembly dirs are self-cleaning)")
+    print("   [CLEAN] Temp files cleaned up (assembly dirs are self-cleaning)")
 
 
 if __name__ == "__main__":

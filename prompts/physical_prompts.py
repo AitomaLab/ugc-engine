@@ -6,7 +6,7 @@ import config
 from prompts import sanitize_dialogue
 
 
-def build_scene_1_veo_prompt(ctx, script_part, product_desc="product"):
+def build_scene_1_veo_prompt(ctx, script_part, product_desc="product", is_last_scene=False):
     """Scene 1: Holding product up close to camera. Stringified YAML for Veo 3.1."""
     age_str = ctx.get('age', '25-year-old')
     visuals_str = ctx.get('visuals', 'casual style')
@@ -14,104 +14,104 @@ def build_scene_1_veo_prompt(ctx, script_part, product_desc="product"):
     energy_str = ctx.get('energy', 'High').lower()
     accent_str = ctx.get('accent', 'neutral English')
     tone_str = ctx.get('tone', 'Enthusiastic').lower()
+    setting_str = ctx.get('setting', 'natural environment matching the background visible in the reference image')
 
     dialogue = sanitize_dialogue(script_part) if script_part else "oh my god you guys have to see this"
 
     return (
         f"dialogue: {dialogue}\n"
-        f"product: {product_desc}\n"
-        f"anatomy: exactly one person with exactly two arms and two hands, "
-        f"only one right hand holds the product, left hand rests naturally at side or on hip, "
-        f"no third arm or hand appears at any time during the video\n"
-        f"action: character holds product in right hand at chest level showing label to camera, "
-        f"left arm relaxed at side, slight natural body sway, maintains eye contact with camera\n"
-        f"character: {age_str} {gender_str}, {visuals_str}, natural skin texture with visible pores, "
-        f"not airbrushed, {energy_str} energy expression\n"
-        f"camera: amateur iPhone selfie video, slightly uneven framing, arm length distance, "
-        f"natural handheld shake\n"
-        f"setting: well-lit casual home environment, natural window light, slightly blurry background\n"
-        f"emotion: {energy_str}, genuine excitement, authentic reaction\n"
-        f"voice_type: casual, {tone_str}, conversational {accent_str}\n"
-        f"style: raw UGC realism, candid, not polished, imperfections intact\n"
-        f"speech_constraint: start speaking immediately with no introductory filler, speak ONLY the exact dialogue words provided, do not add or improvise any words\n"
-        f"motion_constraint: character has only two arms and two hands throughout the entire video, "
-        f"never show a third hand or arm, no limbs appear from outside the frame\n"
-        f"negative: no auditory hallucinations, no spoken filler words, no introductory thanks or umm, no third arm, no third hand, no extra limbs, no extra arms, no extra hands, "
-        f"no floating hands, no hands appearing from off-screen, no duplicate body parts, "
-        f"no airbrushed skin, no studio lighting, no geometric distortion"
+        f"action: person holds product at chest level showing it to camera, excited expression, eye contact\n"
+        f"character: {age_str} {gender_str}, {visuals_str}, natural skin texture with visible pores and fine details, realistic imperfections\n"
+        f"camera: amateur iPhone selfie video, slightly uneven framing, handheld\n"
+        f"setting: {setting_str}, natural lighting\n"
+        f"emotion: {energy_str}, genuine excitement\n"
+        f"voice_type: clear confident pronunciation, casual, {tone_str}, conversational {accent_str}, consistent medium-fast pacing\n"
+        f"style: raw UGC, candid, not polished\n"
+        f"speech_constraint: {'speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, speaking pace is consistent, MUST finish speaking all words entirely 1 second before the end of the video, character remains completely silent and just smiles warmly during the final 1-2 seconds' if is_last_scene else 'speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, speak at a relaxed unhurried natural pace filling the full duration of the video, do not rush'}\n"
+        f"negative: no auditory hallucinations, no filler words, no repeated words, no stuttering, no repeated syllables, no extra limbs, no smooth skin, no poreless skin, no beauty filter, no airbrushed skin, no extra fingers, no mutated hands"
     )
 
 
-def build_scene_2_veo_prompt(ctx, script_part, product_desc="product"):
-    """Scene 2: Showing product close to face. Stringified YAML for Veo 3.1."""
+def build_scene_2_veo_prompt(ctx, script_part, product_desc="product", is_last_scene=False):
+    """Scene 2 (30s Benefits): Tilting product to show details. Stringified YAML for Veo 3.1."""
     age_str = ctx.get('age', '25-year-old')
     visuals_str = ctx.get('visuals', 'casual style')
     gender_str = ctx.get('gender', 'Female').lower()
     energy_str = ctx.get('energy', 'High').lower()
     accent_str = ctx.get('accent', 'neutral English')
     tone_str = ctx.get('tone', 'Enthusiastic').lower()
+    setting_str = ctx.get('setting', 'natural environment matching the background visible in the reference image')
+
+    dialogue = sanitize_dialogue(script_part) if script_part else "the quality on this is honestly insane"
+
+    return (
+        f"dialogue: {dialogue}\n"
+        f"action: person continues exactly the same pose and position as previous shot, still holding product at the exact same height and angle as Scene 1, product remains fully visible throughout, slight nod, maintains eye contact\n"
+        f"product: person is holding the exact same {product_desc} product as in the reference image, product appearance must not change\n"
+        f"character: {age_str} {gender_str}, {visuals_str}, natural skin texture with visible pores and fine details, realistic imperfections\n"
+        f"camera: amateur iPhone selfie video, slightly uneven framing, handheld\n"
+        f"setting: {setting_str}, natural lighting\n"
+        f"emotion: {energy_str}, genuine excitement\n"
+        f"voice_type: clear confident pronunciation, casual, {tone_str}, conversational {accent_str}, consistent medium-fast pacing\n"
+        f"style: raw UGC, candid, not polished\n"
+        f"speech_constraint: {'speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, speaking pace is consistent, MUST finish speaking all words entirely 1 second before the end of the video, character remains completely silent and just smiles warmly during the final 1-2 seconds' if is_last_scene else 'speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, speak at a relaxed unhurried natural pace filling the full duration of the video, do not rush'}\n"
+        f"negative: no auditory hallucinations, no filler words, no repeated words, no stuttering, no repeated syllables, no extra limbs, no product disappearing, no change in product position, no dropping the product, no smooth skin, no poreless skin, no beauty filter, no airbrushed skin, no extra fingers, no mutated hands"
+    )
+
+
+def build_scene_3_veo_prompt(ctx, script_part, product_desc="product", is_last_scene=False):
+    """Scene 3 (30s Reaction): Holding product near face, genuine amazement. Stringified YAML for Veo 3.1."""
+    age_str = ctx.get('age', '25-year-old')
+    visuals_str = ctx.get('visuals', 'casual style')
+    gender_str = ctx.get('gender', 'Female').lower()
+    energy_str = ctx.get('energy', 'High').lower()
+    accent_str = ctx.get('accent', 'neutral English')
+    tone_str = ctx.get('tone', 'Enthusiastic').lower()
+    setting_str = ctx.get('setting', 'natural environment matching the background visible in the reference image')
 
     dialogue = sanitize_dialogue(script_part) if script_part else "and the texture is seriously so good"
 
     return (
         f"dialogue: {dialogue}\n"
-        f"product: {product_desc}\n"
-        f"anatomy: exactly one person with exactly two arms and two hands, "
-        f"only one right hand holds the product near face, left hand is not visible or rests on chest, "
-        f"no third arm or hand appears at any time during the video\n"
-        f"action: character holds product up near face with one hand, tilts it slightly to show label, "
-        f"smiles warmly and nods while speaking directly to camera, other arm stays down out of frame\n"
-        f"character: {age_str} {gender_str}, {visuals_str}, natural skin texture with visible pores "
-        f"and subtle grain, not airbrushed\n"
-        f"camera: amateur iPhone selfie video, slightly uneven framing, warm tones, "
-        f"natural daylight, upper body framing\n"
-        f"setting: casual home environment, soft diffused window light, lived-in background\n"
-        f"emotion: {energy_str}, satisfied, genuine approval\n"
-        f"voice_type: casual, {tone_str}, conversational {accent_str}\n"
-        f"style: candid UGC look, no filters, realism, high detail, skin texture\n"
-        f"speech_constraint: start speaking immediately with no introductory filler, speak ONLY the exact dialogue words provided, do not add or improvise any words\n"
-        f"motion_constraint: character has only two arms and two hands throughout the entire video, "
-        f"never show a third hand or arm, no limbs appear from outside the frame\n"
-        f"negative: no auditory hallucinations, no spoken filler words, no introductory thanks or umm, no third arm, no third hand, no extra limbs, no extra arms, no extra hands, "
-        f"no floating hands, no hands appearing from off-screen, no duplicate body parts, "
-        f"no extra fingers, no airbrushed skin, no studio backdrop, no geometric distortion"
+        f"action: person continues exactly the same pose and position as previous shot, still holding product at the exact same height and angle as Scene 1, product remains fully visible throughout, gentle smile and nod while speaking\n"
+        f"product: person is holding the exact same {product_desc} product as in the reference image, product appearance must not change\n"
+        f"character: {age_str} {gender_str}, {visuals_str}, natural skin texture with visible pores and fine details, realistic imperfections\n"
+        f"camera: amateur iPhone selfie video, slightly uneven framing, handheld\n"
+        f"setting: {setting_str}, natural lighting\n"
+        f"emotion: {energy_str}, genuine excitement\n"
+        f"voice_type: clear confident pronunciation, casual, {tone_str}, conversational {accent_str}, consistent medium-fast pacing\n"
+        f"style: raw UGC, candid, not polished\n"
+        f"speech_constraint: {'speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, speaking pace is consistent, MUST finish speaking all words entirely 1 second before the end of the video, character remains completely silent and just smiles warmly during the final 1-2 seconds' if is_last_scene else 'speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, speak at a relaxed unhurried natural pace filling the full duration of the video, do not rush'}\n"
+        f"negative: no auditory hallucinations, no filler words, no repeated words, no stuttering, no repeated syllables, no extra limbs, no product disappearing, no change in product position, no dropping the product, no smooth skin, no poreless skin, no beauty filter, no airbrushed skin, no extra fingers, no mutated hands"
     )
 
 
-def build_scene_3_veo_prompt(ctx, script_part, product_desc="product"):
-    """Scene 3 (30s CTA): Pointing at product, warm call-to-action. Stringified YAML for Veo 3.1."""
+def build_scene_4_veo_prompt(ctx, script_part, product_desc="product", is_last_scene=False):
+    """Scene 4 (30s CTA): Pointing at product, warm call-to-action. Stringified YAML for Veo 3.1."""
     age_str = ctx.get('age', '25-year-old')
     visuals_str = ctx.get('visuals', 'casual style')
     gender_str = ctx.get('gender', 'Female').lower()
     energy_str = ctx.get('energy', 'High').lower()
     accent_str = ctx.get('accent', 'neutral English')
     tone_str = ctx.get('tone', 'Enthusiastic').lower()
+    setting_str = ctx.get('setting', 'natural environment matching the background visible in the reference image')
 
     dialogue = sanitize_dialogue(script_part) if script_part else "seriously you need to try this, link in my bio"
 
     return (
         f"dialogue: {dialogue}\n"
-        f"product: {product_desc}\n"
-        f"anatomy: exactly one person with exactly two arms and two hands, "
-        f"one hand points at product held in other hand, "
-        f"no third arm or hand appears at any time during the video\n"
-        f"action: character holds product in one hand at chest level, points at it with other hand, "
-        f"looks directly at camera with warm encouraging expression, nods while speaking\n"
-        f"character: {age_str} {gender_str}, {visuals_str}, natural skin texture with visible pores, "
-        f"not airbrushed, {energy_str} energy expression\n"
-        f"camera: amateur iPhone selfie video, slightly uneven framing, arm length distance, "
-        f"natural handheld shake\n"
-        f"setting: well-lit casual home environment, natural window light, slightly blurry background\n"
-        f"emotion: warm, encouraging, genuine recommendation, direct\n"
-        f"voice_type: casual, {tone_str}, conversational {accent_str}\n"
-        f"style: raw UGC realism, candid, not polished, imperfections intact\n"
-        f"speech_constraint: start speaking immediately with no introductory filler, speak ONLY the exact dialogue words provided, do not add or improvise any words\n"
-        f"motion_constraint: character has only two arms and two hands throughout the entire video, "
-        f"never show a third hand or arm, no limbs appear from outside the frame\n"
-        f"negative: no auditory hallucinations, no spoken filler words, no introductory thanks or umm, no third arm, no third hand, no extra limbs, no extra arms, no extra hands, "
-        f"no floating hands, no hands appearing from off-screen, no duplicate body parts, "
-        f"no extra fingers, no airbrushed skin, no studio backdrop, no geometric distortion"
+        f"action: person continues exactly the same pose and position as previous shot, still holding product at the exact same height and angle as Scene 1, product remains fully visible throughout, warm encouraging expression\n"
+        f"product: person is holding the exact same {product_desc} product as in the reference image, product appearance must not change\n"
+        f"character: {age_str} {gender_str}, {visuals_str}, natural skin texture with visible pores and fine details, realistic imperfections\n"
+        f"camera: amateur iPhone selfie video, slightly uneven framing, handheld\n"
+        f"setting: {setting_str}, natural lighting\n"
+        f"emotion: warm, encouraging, genuine recommendation\n"
+        f"voice_type: clear confident pronunciation, casual, {tone_str}, conversational {accent_str}, consistent medium-fast pacing\n"
+        f"style: raw UGC, candid, not polished\n"
+        f"speech_constraint: {'speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, speaking pace is consistent, MUST finish speaking all words entirely 1 second before the end of the video, character remains completely silent and just smiles warmly during the final 1-2 seconds' if is_last_scene else 'speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, speak at a relaxed unhurried natural pace filling the full duration of the video, do not rush'}\n"
+        f"negative: no auditory hallucinations, no filler words, no repeated words, no stuttering, no repeated syllables, no extra limbs, no product disappearing, no change in product position, no dropping the product, no smooth skin, no poreless skin, no beauty filter, no airbrushed skin, no extra fingers, no mutated hands"
     )
+
 
 
 def generate_nano_banana_prompt(influencer_name: str, product_description: str, scene_description: str) -> str:
@@ -120,17 +120,12 @@ def generate_nano_banana_prompt(influencer_name: str, product_description: str, 
     Note: influencer_name kept for signature compat but not used in prompt text.
     """
     return (
-        f"action: character {scene_description}\n"
-        f"anatomy: exactly one person with exactly two arms and two hands, "
-        f"one hand holds product, other hand relaxed at side or not visible\n"
-        f"character: infer from reference image, preserve exact facial features and appearance\n"
-        f"product: holding a {product_description} in one hand, show product with all visible text clear and accurate\n"
-        f"setting: well-lit casual home environment, natural lighting\n"
-        f"camera: amateur iPhone photo, casual selfie, slightly uneven framing\n"
-        f"style: candid UGC look, no filters, realism, high detail, natural skin texture with visible pores\n"
-        f"text_accuracy: preserve all visible product text exactly as in reference image\n"
-        f"negative: no third arm, no third hand, no extra limbs, no extra arms, no extra hands, "
-        f"no extra fingers, no airbrushed skin, no studio backdrop, no geometric distortion"
+        f"a single person {scene_description}, "
+        f"casually presenting a {product_description}, "
+        f"candid iPhone selfie, natural skin texture, UGC style, "
+        f"all product text clearly readable, "
+        f"natural environment with warm lighting, slightly blurry background\n"
+        f"negative: deformed, disfigured, blurry, watermark, text overlay"
     )
 
 
@@ -165,7 +160,7 @@ def generate_physical_image_prompt(ctx, close_up=False):
             f"character: {ctx['age']} {ctx['gender'].lower()}, {ctx['visuals']}, "
             f"natural skin texture with visible pores, subtle grain, not airbrushed\n"
             f"product: {desc}, featuring colors {colors}, all visible text clear and accurate\n"
-            f"setting: {ctx.get('assistant', 'indoor')} environment, natural lighting\n"
+            f"setting: {ctx.get('setting', 'natural environment matching the background visible in the reference image')}, natural lighting\n"
             f"camera: amateur iPhone selfie, slightly uneven framing, warm tones\n"
             f"style: candid UGC look, no filters, realism, high detail, skin texture\n"
             f"text_accuracy: preserve all visible product text exactly as in reference image\n"
@@ -192,6 +187,18 @@ def build_physical_product_scenes(fields, influencer, product, durations, ctx, m
     # Priority: 1) User-provided script from job.hook  2) AI persona generation  3) Fallback
     manual_script = fields.get("Hook") or fields.get("Script") or fields.get("caption") or ""
     is_manual_script = manual_script and manual_script.strip() not in ("", "Check this out!")
+
+    # Validate manual script length for 30s videos — each scene needs ~17 words
+    # Scripts like "Meet Phebus." (2 words) are way too short for 4 scenes
+    video_length = str(fields.get("Length", "15s"))
+    min_words_for_30s = 30  # 4 scenes × ~8 words minimum = 32, with some slack
+    min_words_for_15s = 12  # 2 scenes × ~8 words minimum = 16, with some slack
+    if is_manual_script:
+        word_count = len(manual_script.split())
+        min_words = min_words_for_30s if video_length == "30s" else min_words_for_15s
+        if word_count < min_words:
+            print(f"      [Script] Manual script too short ({word_count} words, need {min_words}+ for {video_length}). Forcing AI generation.")
+            is_manual_script = False
 
     if is_manual_script:
         script = manual_script
@@ -222,15 +229,19 @@ def build_physical_product_scenes(fields, influencer, product, durations, ctx, m
     
     video_length = str(fields.get("Length", "15s"))
 
-    # 2 scenes for 15s (Hook + Showcase), 3 scenes for 30s (Hook + Showcase + CTA)
-    scene_descriptions = [
-        "holding the product up close to the camera with an excited expression",
-        f"holding the product near {poss} face, tilting it to show the label with a warm smile",
-    ]
+    # 2 scenes for 15s (Hook + Showcase), 4 scenes for 30s (Hook + Benefits + Reaction + CTA)
     if video_length == "30s":
-        scene_descriptions.append(
-            f"pointing at the product with one hand while looking directly at camera with a warm encouraging smile"
-        )
+        scene_descriptions = [
+            "holding the product up close to the camera with an excited expression",
+            f"tilting the product to show different angles while nodding with genuine satisfaction",
+            f"holding the product near {poss} face, tilting it to show the label with a warm smile",
+            f"pointing at the product with one hand while looking directly at camera with a warm encouraging smile",
+        ]
+    else:
+        scene_descriptions = [
+            "holding the product up close to the camera with an excited expression",
+            f"holding the product near {poss} face, tilting it to show the label with a warm smile",
+        ]
     
     # Limit scene count when cinematic shots will fill the remaining time
     if max_scenes and max_scenes < len(scene_descriptions):
@@ -247,7 +258,7 @@ def build_physical_product_scenes(fields, influencer, product, durations, ctx, m
 
     # SPLIT SCRIPT LOGIC
     # The AI script generator outputs "Part1 ||| Part2" (15s) or
-    # "Part1 ||| Part2 ||| Part3" (30s) for clean pre-split dialogue.
+    # "Part1 ||| Part2 ||| Part3 ||| Part4" (30s) for clean pre-split dialogue.
     # Each part is timed to ~7s of speech (max ~17 words) to fit inside 8s Veo scenes.
     # NOTE: Split on ||| BEFORE sanitizing, since sanitize_dialogue strips | characters.
     import re
@@ -270,65 +281,98 @@ def build_physical_product_scenes(fields, influencer, product, durations, ctx, m
     # Preferred: Split on ||| delimiter from AI script generator
     elif "|||" in script:
         parts = [sanitize_dialogue(p.strip()) for p in script.split("|||") if p.strip()]
-        # Pad to num_scenes if fewer parts than scenes
-        while len(parts) < num_scenes:
-            parts.append(parts[-1] if parts else sanitize_dialogue(script))
         script_parts = parts[:num_scenes]
     else:
         # No delimiter — sanitize then distribute across scenes
         script = sanitize_dialogue(script)
         sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', script) if s.strip()]
 
-        if len(sentences) >= num_scenes:
-            chunk_size = len(sentences) // num_scenes
-            script_parts = []
-            for i in range(num_scenes):
-                start = i * chunk_size
-                end = start + chunk_size if i < num_scenes - 1 else len(sentences)
-                script_parts.append(" ".join(sentences[start:end]))
-        elif len(sentences) >= 2:
-            mid = len(sentences) // 2
-            script_parts = [" ".join(sentences[:mid]), " ".join(sentences[mid:])]
-            while len(script_parts) < num_scenes:
-                script_parts.append(script_parts[-1])
-        else:
-            clauses = [c.strip() for c in re.split(r'[,;]\s*', script) if c.strip()]
-            if len(clauses) >= 2:
-                mid = len(clauses) // 2
-                script_parts = [", ".join(clauses[:mid]), ", ".join(clauses[mid:])]
-                while len(script_parts) < num_scenes:
-                    script_parts.append(script_parts[-1])
+        # Combine sentences to reach a minimum word count per part (~12 words)
+        combined_parts = []
+        current_part = ""
+        for s in sentences:
+            if current_part:
+                current_part += " " + s
             else:
-                script_parts = [script] * num_scenes
+                current_part = s
+            if len(current_part.split()) >= 12:
+                combined_parts.append(current_part)
+                current_part = ""
+        if current_part:
+            if combined_parts:
+                combined_parts[-1] += " " + current_part
+            else:
+                combined_parts.append(current_part)
+
+        # Now we have parts roughly 12+ words. If we have more than num_scenes, combine the extras into the last part.
+        if len(combined_parts) > num_scenes:
+            extra = " ".join(combined_parts[num_scenes-1:])
+            combined_parts = combined_parts[:num_scenes-1] + [extra]
+            
+        script_parts = combined_parts
+
+    if num_scenes > 1:
+        # Pad to num_scenes with distinct fallbacks (never duplicate the last part)
+        brand = product.get("name", "this")
+        _fallbacks = [
+            f"You guys, I literally just discovered {brand} and honestly it is so incredible, you seriously have to see this.",
+            f"The quality on {brand} is seriously next level, I was honestly not expecting this at all, it really impressed me.",
+            f"I have been using {brand} nonstop lately and I am genuinely obsessed with it, my life is so much better now.",
+            f"Seriously, go check out {brand} right now, the link is in my bio, I promise you will thank me later.",
+        ]
+        while len(script_parts) < num_scenes:
+            script_parts.append(_fallbacks[len(script_parts) % len(_fallbacks)])
+        
+        script_parts = script_parts[:num_scenes]
+
+        # POST-SPLIT VALIDATION: Replace any part that's too short or too long for a 7s scene
+        MIN_WORDS_PER_PART = 17  # ~7 seconds of speech needs at least 17 words
+        MAX_WORDS_PER_PART = 23  # Cap to prevent speed-talking
+        for idx, part in enumerate(script_parts):
+            word_count = len(part.split())
+            if word_count < MIN_WORDS_PER_PART:
+                old_part = part
+                script_parts[idx] = _fallbacks[idx % len(_fallbacks)]
+                print(f"      [Script] Part {idx+1} too short ({len(old_part.split())} words: '{old_part}'). Replaced with fallback.")
+            elif word_count > MAX_WORDS_PER_PART:
+                old_part = part
+                script_parts[idx] = _fallbacks[idx % len(_fallbacks)]
+                print(f"      [Script] Part {idx+1} too long ({len(old_part.split())} words). Replaced with fallback.")
 
     # Generate Scenes
     for i, desc in enumerate(scene_descriptions):
         nano_banana_prompt = (
-            f"action: character {desc}, maintaining eye contact with camera\n"
+            f"action: character {desc}, casually presenting the product\n"
             f"anatomy: exactly one person with exactly two arms and two hands, "
-            f"one hand holds product, other hand relaxed at side or not visible\n"
+            f"one hand explicitly holds the product, other arm rests naturally TO THE PERSON'S SIDE\n"
             f"character: infer exact appearance from reference image, preserve facial features and skin tone, "
-            f"natural skin texture with visible pores, not airbrushed\n"
-            f"product: holding a {visual_desc_str} in one hand, show product with all visible text clear and accurate\n"
-            f"setting: well-lit casual home environment, natural window light\n"
-            f"camera: amateur iPhone photo, casual selfie, slightly uneven framing\n"
-            f"style: candid UGC look, no filters, realism, high detail, skin texture\n"
-            f"text_accuracy: preserve all visible product text exactly as in reference image\n"
-            f"negative: no third arm, no third hand, no extra limbs, no extra arms, no extra hands, "
-            f"no extra fingers, no airbrushed skin, no studio backdrop, no geometric distortion"
+            f"natural skin texture with visible pores and subtle grain, fine lines, skin imperfections, unretouched complexion, not airbrushed\n"
+            f"product: the {visual_desc_str} is clearly visible, "
+            f"preserve all visible text and logos exactly as in reference image\n"
+            f"setting: {ctx.get('setting', 'natural environment matching the background visible in the reference image')}, natural lighting\n"
+            f"camera: amateur iPhone selfie, slightly uneven framing\n"
+            f"style: candid UGC look, no filters, realism, high detail, skin texture, visible pores, micro skin texture, raw unedited photo quality\n"
+            f"negative: no smooth skin, no poreless skin, no beauty filter, no skin retouching, "
+            f"no third arm, no third hand, no extra limbs, no extra fingers, "
+            f"no airbrushed skin, no studio backdrop, no geometric distortion, "
+            f"no mutated hands, no floating limbs, disconnected limbs, mutation, "
+            f"no arm crossing screen, no unnatural arm position"
         )
         
         scene_script = script_parts[i] if i < len(script_parts) else ""
         
         # ✨ FIX: Pass the script part to the prompt builders
+        is_last = (i == len(scene_descriptions) - 1)
         if i == 0:
-            visual_animation_prompt = build_scene_1_veo_prompt(ctx, scene_script, visual_desc_str)
+            visual_animation_prompt = build_scene_1_veo_prompt(ctx, scene_script, visual_desc_str, is_last_scene=is_last)
         elif i == 1:
-            visual_animation_prompt = build_scene_2_veo_prompt(ctx, scene_script, visual_desc_str)
+            visual_animation_prompt = build_scene_2_veo_prompt(ctx, scene_script, visual_desc_str, is_last_scene=is_last)
         elif i == 2:
-            visual_animation_prompt = build_scene_3_veo_prompt(ctx, scene_script, visual_desc_str)
+            visual_animation_prompt = build_scene_3_veo_prompt(ctx, scene_script, visual_desc_str, is_last_scene=is_last)
+        elif i == 3:
+            visual_animation_prompt = build_scene_4_veo_prompt(ctx, scene_script, visual_desc_str, is_last_scene=is_last)
         else:
-            visual_animation_prompt = build_scene_1_veo_prompt(ctx, scene_script, visual_desc_str)
+            visual_animation_prompt = build_scene_1_veo_prompt(ctx, scene_script, visual_desc_str, is_last_scene=is_last)
         
         scene_script = script_parts[i] if i < len(script_parts) else ""
         

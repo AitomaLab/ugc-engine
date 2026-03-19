@@ -34,7 +34,7 @@ class NanoBananaClient:
         influencer_image_url: str,
         prompt: str,
         seed: Optional[int] = None,
-        negative_prompt: str = "(deformed, distorted, disfigured:1.3), poorly drawn, bad anatomy, wrong anatomy, extra limb, missing limb, floating limbs, (mutated hands and fingers:1.4), disconnected limbs, mutation, mutated, ugly, disgusting, blurry, amputation, (3rd hand:1.5)"
+        negative_prompt: str = "(deformed, distorted, disfigured:1.3), poorly drawn, bad anatomy, wrong anatomy, mutation, mutated, ugly, disgusting, blurry, amputation, multiple people, different person"
     ) -> str:
         """
         Generate a composite image of the influencer interacting with the product.

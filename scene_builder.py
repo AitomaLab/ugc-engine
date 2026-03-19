@@ -13,15 +13,80 @@ import random
 import config
 from prompts import digital_prompts, physical_prompts
 from ugc_db.db_manager import get_product_shot
+def _extract_visual_appearance(influencer: dict) -> str:
+    """Extract only the visual/physical appearance from the influencer data.
+    
+    The full influencer 'description' can be hundreds of words (personality,
+    voice style, target audience, style guide, etc.). Veo 3.1 Extend has a
+    prompt length limit and rejects oversized prompts with a 400 error.
+    
+    This function extracts just the physical appearance info (build, hair,
+    skin, clothing) — typically 1-2 sentences, ~100-200 chars.
+    """
+    # Prefer a dedicated short visual description if available
+    short_desc = influencer.get("visual_description", "")
+    if short_desc and len(short_desc) < 300:
+        return short_desc
+    
+    full_desc = influencer.get("description", "")
+    if not full_desc:
+        return "casual style"
+    
+    # If the description is already short, use it as-is
+    if len(full_desc) < 300:
+        return full_desc
+    
+    # Extract from the "Style Guide:" section which contains physical appearance
+    import re
+    
+    # Try to find the Style Guide section
+    style_match = re.search(r'Style Guide[:\s]*(.*?)(?:\n\n|\Z)', full_desc, re.DOTALL | re.IGNORECASE)
+    if style_match:
+        style_text = style_match.group(1).strip()
+        # Extract sentences about physical appearance (build, hair, skin, clothing)
+        appearance_keywords = ['build', 'hair', 'skin', 'height', 'complexion', 'wear', 
+                              'clothing', 'shirt', 'dress', 'stocky', 'athletic', 'slender',
+                              'blonde', 'brunette', 'stubble', 'jawline', 'muscular',
+                              'ponytail', 'coily', 'fade']
+        sentences = re.split(r'(?<=[.!])\s+', style_text)
+        appearance_sentences = []
+        for sent in sentences:
+            if any(kw in sent.lower() for kw in appearance_keywords):
+                appearance_sentences.append(sent.strip())
+        if appearance_sentences:
+            result = ' '.join(appearance_sentences)
+            # Cap at ~250 chars
+            if len(result) > 250:
+                result = result[:247] + '...'
+            return result
+    
+    # Fallback: extract just the Summary section (first paragraph)
+    summary_match = re.search(r'Summary[:\s]*(.*?)(?:\n\n|\Z)', full_desc, re.DOTALL | re.IGNORECASE)
+    if summary_match:
+        summary = summary_match.group(1).strip()
+        # Take first sentence only
+        first_sent = summary.split('.')[0] + '.'
+        if len(first_sent) > 250:
+            first_sent = first_sent[:247] + '...'
+        return first_sent
+    
+    # Last resort: take first 200 chars of description
+    return full_desc[:200].rsplit(' ', 1)[0] + '...'
 
 
-def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=None, product_type="digital"):
+
+
+def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=None, product_type="digital", script_json=None):
     """
     Build the scene structure from a Content Calendar row.
 
     NEW: If product_type == 'digital' AND a product dict is provided AND
     the app_clip has a first_frame_url, uses the new unified 2-scene digital
     pipeline (build_digital_unified). Falls back to the original logic otherwise.
+
+    script_json (optional): When provided, scene dialogues are extracted from
+    this structured object instead of splitting content_row["Hook"] on |||.
+    All existing callers pass no script_json, so they hit the unchanged path.
     """
     length = content_row.get("Length", "15s")
     if length not in config.VALID_LENGTHS:
@@ -37,13 +102,15 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=Non
     person_name = influencer.get("name", "Sofia")
     age = influencer.get("age", "25-year-old")
     gender = influencer.get("gender", "Female")
-    visuals = influencer.get("visual_description", "casual style")
+    visuals = _extract_visual_appearance(influencer)
     personality = influencer.get("personality", "friendly influencer")
     energy = influencer.get("energy_level", "High")
     accent = influencer.get("accent", "Castilian Spanish (Spain)")
     tone = influencer.get("tone", "Enthusiastic")
     voice_id = influencer.get("elevenlabs_voice_id", config.VOICE_MAP.get(person_name, config.VOICE_MAP["Meg"]))
     ref_image = influencer["reference_image_url"]
+    # Influencer-specific background/environment -- falls back to reference-image matching
+    setting = influencer.get("setting", "").strip()
 
     p = {
         "subj": "He" if gender == "Male" else "She",
@@ -66,22 +133,67 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=Non
         "assistant": assistant,
         "hook": hook,
         "caption": caption,
-        "consistency_seed": random.randint(1, 1000000),
+        "consistency_seed": random.randint(10000, 99999),
+        "setting": setting or "natural environment matching the background visible in the reference image",
     }
 
     # -----------------------------------------------------------------------
-    # NEW: Digital Product Unified Pipeline
+    # NEW: If a structured script_json object is provided, extract scene
+    # dialogues from it and populate ctx fields directly. This bypasses the
+    # ||| split logic below while keeping all downstream consumers working.
+    # -----------------------------------------------------------------------
+    if script_json and script_json.get("scenes"):
+        scenes_data = script_json["scenes"]
+        dialogues = [s.get("dialogue", "") for s in scenes_data]
+        # Populate the standard ctx keys from the structured data
+        if len(dialogues) >= 1:
+            ctx["hook"] = dialogues[0]
+        if len(dialogues) >= 2:
+            ctx["reaction_text"] = dialogues[1]
+        if len(dialogues) >= 3:
+            ctx["caption"] = dialogues[2]
+        # Store full scene dialogues list for consumers that need it
+        ctx["scene_dialogues"] = dialogues
+        # Also set the legacy hook field to ||| string for any downstream
+        # consumer that might still split on it (belt and suspenders)
+        from ugc_backend.ai_script_client import AIScriptClient
+        content_row["Hook"] = AIScriptClient.script_json_to_legacy(script_json)
+        hook = content_row["Hook"]
+        print(f"      [scene_builder] Using script_json ({len(dialogues)} scenes)")
+
+    # -----------------------------------------------------------------------
+    # LEGACY: For 30s videos, split the ||| -delimited script into separate
+    # ctx keys so generate_ultra_prompt picks up the correct dialogue:
+    #   hook scene  -> ctx['hook']
+    #   reaction    -> ctx['reaction_text']
+    #   cta         -> ctx['caption']
+    # Skipped when script_json was already processed above.
+    # -----------------------------------------------------------------------
+    elif length == "30s" and "|||" in hook:
+        parts = [p.strip() for p in hook.split("|||") if p.strip()]
+        if len(parts) >= 3:
+            ctx["hook"] = parts[0]
+            ctx["reaction_text"] = parts[1]
+            ctx["caption"] = parts[2]
+        elif len(parts) == 2:
+            ctx["hook"] = parts[0]
+            ctx["reaction_text"] = parts[1]
+
+    # -----------------------------------------------------------------------
+    # NEW: Digital Product Unified Pipeline (15s ONLY)
     # Triggered when: product_type is digital AND a product dict is provided
-    # AND the app_clip has a first_frame_url (set by the frame extractor).
-    # Falls back to the original logic if any of these conditions are not met.
+    # AND the app_clip has a first_frame_url AND length is 15s.
+    # 30s digital videos use build_30s which produces multiple Veo scenes
+    # for the Extend pipeline (seamless chaining via Veo 3.1 Extend API).
     # -----------------------------------------------------------------------
     if (
         product_type == "digital"
         and product is not None
         and app_clip is not None
         and app_clip.get("first_frame_url")
+        and length == "15s"
     ):
-        print(f"      🆕 Using unified digital pipeline for product: {product.get('name')}")
+        print(f"      [SCENE] Using unified digital pipeline (15s) for product: {product.get('name')}")
         return digital_prompts.build_digital_unified(
             influencer=influencer,
             product=product,
@@ -112,7 +224,15 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=Non
 
     if product_type == "physical" and product:
         ctx["product"] = product
-        max_ugc_scenes = max(1, 2 - len(cinematic_scenes)) if cinematic_scenes else None
+        if cinematic_scenes:
+            if length == "30s":
+                # 30s: preserve >= 2 UGC scenes for extend pipeline activation
+                max_ugc_scenes = max(2, 3 - len(cinematic_scenes))
+            else:
+                # 15s: original formula (2 total scene slots)
+                max_ugc_scenes = max(1, 2 - len(cinematic_scenes))
+        else:
+            max_ugc_scenes = None
         influencer_scenes = physical_prompts.build_physical_product_scenes(
             content_row, influencer, product, durations, ctx,
             max_scenes=max_ugc_scenes
@@ -121,23 +241,29 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=Non
         if not cinematic_scenes:
             return influencer_scenes
 
-        final_scenes = []
-        inf_idx, cin_idx = 0, 0
-        while inf_idx < len(influencer_scenes) or cin_idx < len(cinematic_scenes):
-            if inf_idx < len(influencer_scenes):
-                final_scenes.append(influencer_scenes[inf_idx])
-                inf_idx += 1
-            if cin_idx < len(cinematic_scenes):
-                final_scenes.append(cinematic_scenes[cin_idx])
-                cin_idx += 1
-        return final_scenes
+        if length == "30s":
+            # 30s: all UGC scenes first (enables extend pipeline), cinematics appended
+            return influencer_scenes + cinematic_scenes
+        else:
+            # 15s: interleave for visual variety
+            final_scenes = []
+            inf_idx, cin_idx = 0, 0
+            while inf_idx < len(influencer_scenes) or cin_idx < len(cinematic_scenes):
+                if inf_idx < len(influencer_scenes):
+                    final_scenes.append(influencer_scenes[inf_idx])
+                    inf_idx += 1
+                if cin_idx < len(cinematic_scenes):
+                    final_scenes.append(cinematic_scenes[cin_idx])
+                    cin_idx += 1
+            return final_scenes
 
     # -----------------------------------------------------------------------
-    # Original Digital Pipeline (FALLBACK — unchanged)
-    # Used when no product is linked or no first_frame_url exists.
+    # Digital Pipeline — 30s uses Extend-optimised build_30s,
+    # 15s uses basic 2-scene build_15s.
     # -----------------------------------------------------------------------
     elif length == "30s":
-        return digital_prompts.build_30s(durations, app_clip, ctx)
+        print(f"      [SCENE] Using 30s Extend pipeline (build_30s) — {len(config.get_scene_durations(length))} scene slots")
+        return digital_prompts.build_30s(durations, app_clip, ctx, product=product, influencer=influencer)
     else:
         return digital_prompts.build_15s(durations, app_clip, ctx)
 

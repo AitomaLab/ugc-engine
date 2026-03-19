@@ -9,7 +9,7 @@ class LLMVisionClient:
     def __init__(self):
         self.api_key = os.getenv("OPENAI_API_KEY")
         if not self.api_key:
-            print("⚠️ OPENAI_API_KEY not found. Vision analysis will fail.")
+            print("!! OPENAI_API_KEY not found. Vision analysis will fail.")
         self.client = OpenAI(api_key=self.api_key)
 
     def describe_product_image(self, image_url: str) -> Dict[str, Any]:
@@ -66,7 +66,58 @@ Only return the YAML. Do not explain or add any other comments.
             return yaml.safe_load(content.strip())
 
         except Exception as e:
-            print(f"❌ LLM Vision Analysis Failed: {e}")
+            print(f"[FAIL] LLM Vision Analysis Failed: {e}")
             import traceback
             traceback.print_exc()
             return {}
+
+    def analyze_influencer_setting(self, image_url: str) -> str:
+        """
+        Analyzes an influencer reference image to extract a concise
+        background/environment description for use in Veo video prompts.
+        Returns a short setting string (e.g. "outdoor garden with trees and natural sunlight").
+        """
+        if not self.api_key:
+            return ""
+
+        prompt_text = (
+            "Look at this image of a person. Describe ONLY the background and environment "
+            "visible behind the person in 10-20 words. Focus on: location (indoor/outdoor), "
+            "key objects, lighting quality, and atmosphere. Do NOT describe the person, their "
+            "clothing, or appearance. Return ONLY the short description, no explanation.\n\n"
+            "Examples of good responses:\n"
+            "- outdoor garden with lush green trees and warm natural sunlight\n"
+            "- modern home office with dual monitors and soft blue ambient lighting\n"
+            "- cozy kitchen with open wooden shelves and warm pendant lighting\n"
+            "- urban rooftop overlooking city skyline at golden hour"
+        )
+
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt_text},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": image_url,
+                                    "detail": "low"
+                                },
+                            },
+                        ],
+                    }
+                ],
+                max_tokens=100
+            )
+
+            content = response.choices[0].message.content.strip()
+            # Clean up: remove leading "- " or quotes if present
+            content = content.lstrip("- ").strip('"').strip("'")
+            return content
+
+        except Exception as e:
+            print(f"[FAIL] Influencer setting analysis failed: {e}")
+            return ""

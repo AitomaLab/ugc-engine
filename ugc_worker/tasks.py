@@ -14,6 +14,12 @@ load_dotenv(".env.saas")
 import sys
 from pathlib import Path
 
+# Fix Windows cp1252 console encoding — allows emoji/unicode in print() calls
+if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 # Add project root to path so we can import core_engine
 sys.path.append(str(Path(__file__).parent.parent))
 
@@ -232,6 +238,7 @@ def generate_ugc_video(self, job_id: str):
             "image_url": influencer.get("image_url", ""),
             "reference_image_url": influencer.get("image_url", ""),  # Compat for core_engine / scene_builder
             "elevenlabs_voice_id": influencer.get("elevenlabs_voice_id", ""),
+            "setting": influencer.get("setting", ""),
         }
         print(f"      📦 Influencer Dict for Engine: {influencer_dict}")
 

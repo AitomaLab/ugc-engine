@@ -4,37 +4,18 @@ Prompt builder for Digital Products (App Clips).
 import config
 from prompts import sanitize_dialogue
 
-def generate_ultra_prompt(scene_type, ctx):
+def generate_ultra_prompt(scene_type, ctx, script_override=None, is_last_scene=False):
     """
     Generates a structured stringified-YAML prompt for Seedance/Veo.
-    Uses the user's script text verbatim as dialogue.
+    Uses the provided script verbatim as dialogue.
     Returns (prompt, script_text) tuple.
-
-    SAFETY BUFFER: All script text is capped at 17 words (approx 7s of speech)
-    to ensure dialogue finishes 1 second before the 8s scene ends.
     """
-    MAX_WORDS = 17
 
-    def _cap_words(text, max_words=MAX_WORDS):
-        """Truncate text to max_words words at a sentence boundary if possible."""
-        words = text.split()
-        if len(words) <= max_words:
-            return text
-        truncated = " ".join(words[:max_words])
-        if not truncated.endswith((".", "!", "?")):
-            truncated = truncated.rstrip(",;") + "."
-        return truncated
-
-    # Environment based on Assistant
-    env_map = {
-        "Travel": "cozy bedroom with a bookshelf and a travel map on the wall",
-        "Shop": "modern living room with a shopping bag and clothes visible in the background",
-        "Fitness": "bright home gym setting with a yoga mat and weights",
-    }
-    env = env_map.get(ctx['assistant'], "cozy, lived-in apartment")
+    # Environment: use influencer-specific setting from ctx, fall back to reference image match
+    env = ctx.get("setting", "natural environment matching the background visible in the reference image")
 
     if scene_type == "hook":
-        script = _cap_words(sanitize_dialogue(ctx['hook']))
+        script = script_override if script_override else sanitize_dialogue(ctx.get('hook', ''))
         action = (
             "character looks directly at camera with wide eyes and raised eyebrows in disbelief, "
             "transitions to a genuine smile showing teeth, places hand on chest then points at viewer, "
@@ -42,7 +23,7 @@ def generate_ultra_prompt(scene_type, ctx):
         )
         emotion = "disbelief turning to excitement, high energy, genuine amazement"
     elif scene_type == "reaction":
-        script = _cap_words(sanitize_dialogue(ctx.get('reaction_text', ctx.get('caption', 'This is amazing!'))))
+        script = script_override if script_override else sanitize_dialogue(ctx.get('reaction_text', ctx.get('caption', 'This is amazing!')))
         action = (
             "character shakes head slightly in amazement, hand to cheek, transitions to a huge "
             "crinkly-eyed smile, both hands palms up in a can-you-believe-it gesture, "
@@ -50,13 +31,17 @@ def generate_ultra_prompt(scene_type, ctx):
         )
         emotion = "total amazement, joy, genuine warmth"
     else:  # cta / b-roll
-        script = _cap_words(sanitize_dialogue(ctx.get('caption', 'Check the link in bio!')))
+        script = script_override if script_override else sanitize_dialogue(ctx.get('caption', 'Check the link in bio!'))
         action = (
             "character gives a warm encouraging smile, points to the side towards bio, "
             "friendly wave or heart gesture, direct eye contact with a wink, "
             "enthusiastic final nod"
         )
         emotion = "warm, encouraging, friendly, direct"
+
+    speech_constraint = "speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, no duplicate syllables"
+    if is_last_scene:
+        speech_constraint += ", speaking pace is consistent, MUST finish speaking all words entirely 1 second before the end of the video, character remains completely silent and just smiles warmly during the final 1-2 seconds"
 
     prompt = (
         f"dialogue: {script}\n"
@@ -67,13 +52,12 @@ def generate_ultra_prompt(scene_type, ctx):
         f"slightly uneven framing\n"
         f"setting: {env}, slightly blurry background, bright natural light from window\n"
         f"emotion: {emotion}\n"
-        f"voice_type: casual, conversational {ctx['accent']}, {ctx['tone'].lower()} tone, "
-        f"fast start with dramatic micro-pauses\n"
+        f"voice_type: clear confident pronunciation, casual, conversational {ctx['accent']}, {ctx['tone'].lower()} tone, consistent medium-fast pacing\n"
         f"style: raw authentic TikTok/Reels UGC, spontaneous not polished, "
         f"candid UGC look, realism, high detail, skin texture\n"
-        f"speech_constraint: speak ONLY the exact dialogue words provided, do not add or improvise any words\n"
+        f"speech_constraint: {speech_constraint}\n"
         f"negative: no airbrushed skin, no studio lighting, no ring light reflection in eyes, "
-        f"no geometric distortion, no extra fingers"
+        f"no geometric distortion, no extra fingers, no word repetition, no stuttering, no repeated syllables"
     )
     return prompt, script
 
@@ -126,25 +110,284 @@ def build_15s(dur, app_clip, ctx):
     return scenes
 
 
-def build_30s(dur, app_clip, ctx):
-    """Full 4-scene structure with ultra-realistic performance logic."""
+def build_30s(dur, app_clip, ctx, product=None, influencer=None):
+    """
+    30s structure optimised for the Veo 3.1 Extend pipeline.
+
+    All Veo scenes are placed FIRST (so they can be chained via extend),
+    followed by the app clip at the end.
+
+    When a product with first_frame_url is available, Scene 1 uses a Nano Banana
+    composite (influencer holding device with app on screen) to anchor the visual.
+    Subsequent scenes extend from that established visual context.
+
+    Scene count adapts to clip duration:
+      - clip <= 10s  -> 3 Veo scenes (hook + reaction + cta) + clip
+      - clip > 10s   -> 2 Veo scenes (hook + reaction) + clip
+      - no clip      -> 3 Veo scenes (hook + reaction + cta), no clip
+    """
+    from prompts import sanitize_dialogue
+
     scenes = []
 
-    # Scene 1: HOOK
-    prompt, script_text = generate_ultra_prompt("hook", ctx)
-    scenes.append({
-        "name": "hook",
-        "type": "veo",
-        "prompt": prompt,
-        "reference_image_url": ctx["ref_image"],
-        "video_url": None,
-        "target_duration": dur["hook"],
-        "subtitle_text": script_text,
-        "voice_id": ctx["voice_id"],
-        "trim_mode": "start",
-    })
+    # Determine how many Veo scenes based on app clip duration
+    clip_duration = (app_clip.get("duration") or 8) if app_clip else 0
+    if not app_clip:
+        num_veo_scenes = 3
+    elif clip_duration <= 10:
+        num_veo_scenes = 3
+    else:
+        num_veo_scenes = 2
 
-    # Scene 2: APP DEMO (or Fallback)
+    import re
+    
+    parts = []
+    if ctx.get("hook"): parts.append(ctx["hook"])
+    if ctx.get("reaction_text"): parts.append(ctx["reaction_text"])
+    if ctx.get("caption"): parts.append(ctx["caption"])
+    full_script = " ||| ".join(parts) if parts else "Okay you guys, I found this app and I am obsessed. You need to check it out."
+
+    if ctx.get("scene_dialogues"):
+        script_parts = ctx["scene_dialogues"]
+    elif "|||" in full_script:
+        parts = [sanitize_dialogue(p.strip()) for p in full_script.split("|||") if p.strip()]
+        script_parts = parts[:num_veo_scenes]
+    else:
+        sanitized = sanitize_dialogue(full_script)
+        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', sanitized) if s.strip()]
+
+        # Instead of a strict 15-word minimum that drains the script into 1 chunk,
+        # we evenly divide the available sentences across num_veo_scenes.
+        num_sentences = len(sentences)
+        sentences_per_scene = max(1, num_sentences // num_veo_scenes)
+        
+        script_parts = []
+        for i in range(num_veo_scenes):
+            if i == num_veo_scenes - 1:
+                chunk = " ".join(sentences[i * sentences_per_scene :])
+            else:
+                chunk = " ".join(sentences[i * sentences_per_scene : (i + 1) * sentences_per_scene])
+            script_parts.append(chunk)
+
+    brand = product.get("name", "this") if product else "this app"
+    fallbacks = [
+        f"Honestly, {brand} is a total game changer for me, I use it literally every single day now.",
+        f"You have got to try {brand} for yourself, I promise it makes everything so much easier and faster.",
+        f"I cannot stop using {brand}, it is genuinely that good, trust me you are going to love it.",
+        f"Seriously, go check out {brand} right now, it is going to save you so much time and stress."
+    ]
+    
+    # Pad if necessary
+    while len(script_parts) < num_veo_scenes:
+        script_parts.append(fallbacks[len(script_parts) % len(fallbacks)])
+
+    # POST-SPLIT VALIDATION: Ensure time boundary (18-22 words ≈ 6-7s at 3 words/sec)
+    MIN_WORDS = 18
+    MAX_WORDS = 22
+    for idx, part in enumerate(script_parts):
+        word_count = len(part.split())
+        if word_count < MIN_WORDS or word_count > MAX_WORDS:
+            script_parts[idx] = fallbacks[idx % len(fallbacks)]
+
+    # Check if we can use composite image for Scene 1 (digital product with first frame)
+    first_frame_url = app_clip.get("first_frame_url") if app_clip else None
+    use_composite = bool(product and influencer and first_frame_url)
+
+    if use_composite:
+        # Determine device type from product visual_description
+        visual_desc = product.get("visual_description") or {}
+        if isinstance(visual_desc, str):
+            app_type = "mobile"
+        else:
+            app_type = visual_desc.get("app_type", "mobile").lower()
+        is_mobile = "desktop" not in app_type and "web" not in app_type
+
+        device_str = "iPhone" if is_mobile else "laptop screen"
+        product_name = product.get("name") or product.get("brand_name") or "the app"
+        device_action = (
+            "standing naturally in front of the camera, PHYSICALLY holding an iPhone in one hand with the FRONT screen facing directly toward the camera and viewer, pointing at the phone screen with the other hand"
+            if is_mobile else
+            "sitting at a desk, pointing at a laptop screen facing the camera"
+        )
+
+    # --- Veo Scene 1: HOOK (always present) ---
+    prompt, script_text = generate_ultra_prompt("hook", ctx, script_override=script_parts[0])
+
+    if use_composite:
+        # Scene 1 uses Nano Banana composite (influencer holding device with app)
+        env = ctx.get("setting", "natural environment matching the background visible in the reference image")
+        nano_banana_prompt = (
+            f"action: character {device_action}, maintaining eye contact with camera\n"
+            f"anatomy: exactly one person with exactly two arms and two hands, "
+            f"one hand holds {device_str}, other hand points at the screen or rests naturally AT THE PERSON'S SIDE\n"
+            f"character: infer exact appearance from reference image, preserve facial features and skin tone, "
+            f"natural skin texture with visible pores and subtle grain, fine lines, skin imperfections, unretouched complexion, not airbrushed\n"
+            f"device: the {device_str} is PHYSICALLY held by the character, the FRONT screen faces the camera, the screen is fully visible to the viewer "
+            f"showing the {product_name} app interface from the provided product image physically ON the screen of the device, "
+            f"the app interface is NOT floating in mid-air, it is physically embedded in the device screen, "
+            f"the viewer can clearly read and see the screen content, "
+            f"the back of the phone is NOT visible, only the front glass screen faces outward\n"
+            f"setting: {env}, natural lighting\n"
+            f"camera: amateur UGC video, stationary camera on tripod, character does NOT hold the filming camera, locked off, NO camera movement, NO panning, slightly uneven framing\n"
+            f"style: candid UGC look, no filters, realism, high detail, skin texture, visible pores, micro skin texture, raw unedited photo quality\n"
+            f"negative: no smooth skin, no poreless skin, no beauty filter, no skin retouching, "
+            f"no floating screens, no screens in mid-air, no floating app interface, no disconnected screens, "
+            f"no third arm, no third hand, no extra limbs, no extra fingers, no camera panning, no scene wipe, no transitions, "
+            f"no airbrushed skin, no studio backdrop, no geometric distortion, "
+            f"no back of phone, no phone case visible, no rear camera lenses visible, "
+            f"no phone held backwards, no screen facing away from camera, "
+            f"no mutated hands, no floating limbs, no disconnected limbs, "
+            f"no arm crossing screen, no unnatural arm position, no character holding the filming camera"
+        )
+
+        veo_animation_prompt = (
+            f"dialogue: {script_text}\n"
+            f"action: character {device_action}, slight natural body movement, "
+            f"genuine excited expression, maintains eye contact with camera\n"
+            f"character: {ctx['age']} {ctx['gender'].lower()}, {ctx['visuals']}, "
+            f"natural skin texture with visible pores, not airbrushed\n"
+            f"device: the {device_str} is PHYSICALLY held by the character, the FRONT screen faces the camera, the screen is fully visible to the viewer showing the app interface from the provided product image physically ON the screen of the device, the app interface is NOT floating in mid-air\n"
+            f"camera: amateur UGC video, stationary camera on tripod, character does NOT hold the filming camera, locked camera, NO camera movement, NO panning\n"
+            f"setting: {env}, slightly blurry background\n"
+            f"emotion: genuine excitement, authentic discovery reaction\n"
+            f"voice_type: casual, conversational {ctx['accent']}, {ctx['tone'].lower()} tone\n"
+            f"audio: character speaks clearly and audibly\n"
+            f"style: raw authentic TikTok/Reels UGC, candid, not polished\n"
+            f"speech_constraint: speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, speak at a relaxed unhurried natural pace filling the full duration of the video, do not rush\n"
+            f"negative: no airbrushed skin, no studio lighting, no camera panning, no scene wipe, no transitions, "
+            f"no extra fingers, no silent video, no mutated hands, no stuttering"
+        )
+
+        scenes.append({
+            "name": "digital_ugc_hook",
+            "type": "physical_product_scene",
+            "nano_banana_prompt": nano_banana_prompt,
+            "video_animation_prompt": veo_animation_prompt,
+            "reference_image_url": influencer["reference_image_url"],
+            "product_image_url": first_frame_url,
+            "target_duration": config.AI_CLIP_DURATION,
+            "subtitle_text": script_text,
+            "voice_id": ctx["voice_id"],
+            "seed": ctx.get("consistency_seed"),
+        })
+    else:
+        # Fallback: pure Veo scene (no product context available)
+        scenes.append({
+            "name": "hook",
+            "type": "veo",
+            "prompt": prompt,
+            "reference_image_url": ctx["ref_image"],
+            "video_url": None,
+            "target_duration": config.AI_CLIP_DURATION,
+            "subtitle_text": script_text,
+            "voice_id": ctx["voice_id"],
+            "seed": ctx.get("consistency_seed"),
+            "trim_mode": "start",
+        })
+
+    # --- Veo Scene 2: REACTION (always present) ---
+    is_scene_2_last = (num_veo_scenes == 2)
+    prompt, script_text = generate_ultra_prompt("reaction", ctx, script_override=script_parts[1], is_last_scene=is_scene_2_last)
+
+    if use_composite:
+        # Extension scene: prompt includes device context so Veo maintains it
+        env = ctx.get("setting", "natural environment matching the background visible in the reference image")
+        if is_scene_2_last:
+            speech_constraint = "speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, speaking pace is consistent, MUST finish speaking all words entirely 1.5 seconds before the end of the video, character remains completely silent and just smiles warmly during the final 1.5 seconds"
+        else:
+            speech_constraint = "speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, speak at a relaxed unhurried natural pace filling the full duration of the video, do not rush"
+
+        veo_prompt_with_device = (
+                f"dialogue: {script_text}\n"
+                f"action: character continues exactly the same pose and position as previous shot, "
+                f"still holding {device_str} showing the app, natural subtle movements, maintains eye contact with camera\n"
+                f"character: {ctx['age']} {ctx['gender'].lower()}, {ctx['visuals']}, "
+                f"natural skin texture with visible pores\n"
+                f"camera: amateur UGC video, same camera angle, stationary camera, locked off, NO panning, NO movement\n"
+                f"setting: {env}, slightly blurry background\n"
+                f"emotion: total amazement, joy, genuine warmth\n"
+                f"voice_type: clear confident pronunciation, casual, conversational {ctx['accent']}, {ctx['tone'].lower()} tone, consistent medium pacing\n"
+                f"style: raw authentic TikTok/Reels UGC, candid, not polished\n"
+                f"speech_constraint: {speech_constraint}\n"
+                f"negative: no airbrushed skin, no studio lighting, no camera movement, no panning, no scene wipe, no cuts, no transitions, no extra fingers, no stuttering, no extra limbs"
+            )
+        scenes.append({
+            "name": "reaction",
+            "type": "veo",
+            "prompt": veo_prompt_with_device,
+            "video_animation_prompt": veo_prompt_with_device,
+            "reference_image_url": ctx["ref_image"],
+            "video_url": None,
+            "target_duration": config.AI_CLIP_DURATION,
+            "subtitle_text": script_text,
+            "voice_id": ctx["voice_id"],
+            "seed": ctx.get("consistency_seed"),
+            "trim_mode": "start",
+        })
+    else:
+        scenes.append({
+            "name": "reaction",
+            "type": "veo",
+            "prompt": prompt,
+            "reference_image_url": ctx["ref_image"],
+            "video_url": None,
+            "target_duration": config.AI_CLIP_DURATION,
+            "subtitle_text": script_text,
+            "voice_id": ctx["voice_id"],
+            "seed": ctx.get("consistency_seed"),
+            "trim_mode": "start",
+        })
+
+    # --- Veo Scene 3: CTA (only when 3 Veo scenes) ---
+    if num_veo_scenes >= 3:
+        prompt, script_text = generate_ultra_prompt("cta", ctx, script_override=script_parts[2], is_last_scene=True)
+
+        if use_composite:
+            env = ctx.get("setting", "natural environment matching the background visible in the reference image")
+            speech_constraint_3 = "speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, speaking pace is consistent, MUST finish speaking all words entirely 1.5 seconds before the end of the video, character remains completely silent and just smiles warmly during the final 1.5 seconds"
+            
+            veo_prompt_with_device = (
+                f"dialogue: {script_text}\n"
+                f"action: character continues exactly the same pose and position as previous shot, "
+                f"still holding {device_str} showing the app, gentle smile, maintains eye contact with camera\n"
+                f"character: {ctx['age']} {ctx['gender'].lower()}, {ctx['visuals']}, "
+                f"natural skin texture with visible pores\n"
+                f"camera: amateur UGC video, same camera angle, stationary camera, locked off, NO panning, NO movement\n"
+                f"setting: {env}, slightly blurry background\n"
+                f"emotion: warm, encouraging, friendly, direct\n"
+                f"voice_type: clear confident pronunciation, casual, conversational {ctx['accent']}, {ctx['tone'].lower()} tone, consistent medium pacing\n"
+                f"style: raw authentic TikTok/Reels UGC, candid, not polished\n"
+                f"speech_constraint: {speech_constraint_3}\n"
+                f"negative: no airbrushed skin, no studio lighting, no camera movement, no panning, no scene wipe, no cuts, no transitions, no extra fingers, no stuttering, no extra limbs"
+            )
+            scenes.append({
+                "name": "cta",
+                "type": "veo",
+                "prompt": veo_prompt_with_device,
+                "video_animation_prompt": veo_prompt_with_device,
+                "reference_image_url": ctx["ref_image"],
+                "video_url": None,
+                "target_duration": config.AI_CLIP_DURATION,
+                "subtitle_text": script_text,
+                "voice_id": ctx["voice_id"],
+                "seed": ctx.get("consistency_seed"),
+                "trim_mode": "start",
+            })
+        else:
+            scenes.append({
+                "name": "cta",
+                "type": "veo",
+                "prompt": prompt,
+                "reference_image_url": ctx["ref_image"],
+                "video_url": None,
+                "target_duration": config.AI_CLIP_DURATION,
+                "subtitle_text": script_text,
+                "voice_id": ctx["voice_id"],
+                "seed": ctx.get("consistency_seed"),
+                "trim_mode": "start",
+            })
+
+    # --- Last Scene: APP DEMO clip (or fallback) ---
     if app_clip:
         scenes.append({
             "name": "app_demo",
@@ -152,7 +395,7 @@ def build_30s(dur, app_clip, ctx):
             "prompt": None,
             "reference_image_url": None,
             "video_url": app_clip["video_url"],
-            "target_duration": dur["app_demo"],
+            "target_duration": app_clip.get("duration", dur.get("app_demo", 8)),
             "subtitle_text": "",
             "trim_mode": "end",
         })
@@ -165,39 +408,12 @@ def build_30s(dur, app_clip, ctx):
             "prompt": f"{prompt_b} -- close up of phone screen showing app interface",
             "reference_image_url": ctx["ref_image"],
             "video_url": None,
-            "target_duration": dur["app_demo"],
+            "target_duration": dur.get("app_demo", 8),
             "subtitle_text": "Check out the link in bio!",
             "voice_id": ctx["voice_id"],
+            "seed": ctx.get("consistency_seed"),
             "trim_mode": "start",
         })
-
-    # Scene 3: REACTION
-    prompt, script_text = generate_ultra_prompt("reaction", ctx)
-    scenes.append({
-        "name": "reaction",
-        "type": "veo",
-        "prompt": prompt,
-        "reference_image_url": ctx["ref_image"],
-        "video_url": None,
-        "target_duration": dur["reaction"],
-        "subtitle_text": script_text,
-        "voice_id": ctx["voice_id"],
-        "trim_mode": "start",
-    })
-
-    # Scene 4: CTA
-    prompt, script_text = generate_ultra_prompt("cta", ctx)
-    scenes.append({
-        "name": "cta",
-        "type": "veo",
-        "prompt": prompt,
-        "reference_image_url": ctx["ref_image"],
-        "video_url": None,
-        "target_duration": dur["cta"],
-        "subtitle_text": script_text,
-        "voice_id": ctx["voice_id"],
-        "trim_mode": "start",
-    })
 
     return scenes
 
@@ -234,7 +450,8 @@ def build_digital_unified(influencer: dict, product: dict, app_clip: dict, durat
 
     device_str = "iPhone" if is_mobile else "laptop screen"
     device_action = (
-        "holding an iPhone up to the camera, screen facing viewer, pointing at the screen with one finger"
+        "standing naturally in front of the camera, holding an iPhone in one hand with the FRONT screen facing directly toward the camera and viewer, "
+        "pointing at the phone screen with the other hand"
         if is_mobile else
         "sitting at a desk, pointing at a laptop screen facing the camera"
     )
@@ -257,21 +474,29 @@ def build_digital_unified(influencer: dict, product: dict, app_clip: dict, durat
 
     # Scene 1: Nano Banana + Veo (Influencer with device)
     # The first_frame_url is used as the product image composited onto the device screen
+    product_name = product.get("name") or product.get("brand_name") or "the app"
     first_frame_url = app_clip.get("first_frame_url") or app_clip.get("video_url")
 
     nano_banana_prompt = (
         f"action: character {device_action}, maintaining eye contact with camera\n"
         f"anatomy: exactly one person with exactly two arms and two hands, "
-        f"one hand holds {device_str}, other hand points at screen or rests naturally\n"
+        f"one hand holds {device_str}, other hand points at the screen or rests naturally AT THE PERSON'S SIDE\n"
         f"character: infer exact appearance from reference image, preserve facial features and skin tone, "
-        f"natural skin texture with visible pores, not airbrushed\n"
-        f"device: {device_str} with a clearly visible app interface on screen, "
-        f"screen content matches the provided product image exactly\n"
-        f"setting: well-lit casual home environment, natural window light\n"
-        f"camera: amateur iPhone selfie, slightly uneven framing, warm tones\n"
-        f"style: candid UGC look, no filters, realism, high detail, skin texture\n"
-        f"negative: no third arm, no third hand, no extra limbs, no extra fingers, "
-        f"no airbrushed skin, no studio backdrop, no geometric distortion"
+        f"natural skin texture with visible pores and subtle grain, fine lines, skin imperfections, unretouched complexion, not airbrushed\n"
+        f"device: the {device_str} FRONT screen faces the camera, the screen is fully visible to the viewer "
+        f"showing the {product_name} app interface from the provided product image, "
+        f"the viewer can clearly read and see the screen content, "
+        f"the back of the phone is NOT visible, only the front glass screen faces outward\n"
+        f"setting: {ctx.get('setting', 'natural environment matching the background visible in the reference image')}, natural lighting\n"
+        f"camera: amateur UGC video, stationary camera on tripod, character does NOT hold the filming camera, slightly uneven framing\n"
+        f"style: candid UGC look, no filters, realism, high detail, skin texture, visible pores, micro skin texture, raw unedited photo quality\n"
+        f"negative: no smooth skin, no poreless skin, no beauty filter, no skin retouching, "
+        f"no third arm, no third hand, no extra limbs, no extra fingers, "
+        f"no airbrushed skin, no studio backdrop, no geometric distortion, "
+        f"no back of phone, no phone case visible, no rear camera lenses visible, "
+        f"no phone held backwards, no screen facing away from camera, "
+        f"no mutated hands, no floating limbs, no disconnected limbs, "
+        f"no arm crossing screen, no unnatural arm position, no character holding the filming camera"
     )
 
     veo_animation_prompt = (
@@ -280,13 +505,15 @@ def build_digital_unified(influencer: dict, product: dict, app_clip: dict, durat
         f"genuine excited expression, maintains eye contact with camera\n"
         f"character: {ctx['age']} {ctx['gender'].lower()}, {ctx['visuals']}, "
         f"natural skin texture with visible pores, not airbrushed\n"
-        f"camera: amateur iPhone selfie video, arms length, slight natural handheld shake\n"
-        f"setting: cozy home environment, natural window light, slightly blurry background\n"
+        f"camera: amateur UGC video, stationary camera on tripod, character does NOT hold the filming camera, slight natural handheld shake\n"
+        f"setting: {ctx.get('setting', 'natural environment matching the background visible in the reference image')}, slightly blurry background\n"
         f"emotion: genuine excitement, authentic discovery reaction\n"
         f"voice_type: casual, conversational {ctx['accent']}, {ctx['tone'].lower()} tone\n"
+        f"audio: character speaks clearly and audibly, voice must be present in the generated video\n"
         f"style: raw authentic TikTok/Reels UGC, candid, not polished\n"
-        f"speech_constraint: speak ONLY the exact dialogue words provided, do not add or improvise any words\n"
-        f"negative: no airbrushed skin, no studio lighting, no geometric distortion, no extra fingers"
+        f"speech_constraint: speak ONLY the exact dialogue words provided, do not add or improvise any words, never repeat or stutter any word, each word must be spoken exactly once, speak at a relaxed unhurried natural pace filling the full duration of the video, do not rush\n"
+        f"negative: no airbrushed skin, no studio lighting, no geometric distortion, no extra fingers, "
+        f"no silent video, no muted audio, no word repetition, no stuttering, no repeated syllables"
     )
 
     scene_1 = {

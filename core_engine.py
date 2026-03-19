@@ -201,30 +201,51 @@ def run_generation_pipeline(
             # To cure the millisecond lag AND stop FFmpeg from desynchronizing the A/V streams,
             # we MUST pre-trim and re-encode each chunk individually BEFORE concatenating them!
             print(f"      [EXTEND] Trimming and re-encoding {len(extend_chunks)} extended chunks individually...")
-            from assemble_video import get_video_duration
+            from assemble_video import get_video_duration, ensure_audio_stream
             
             processed_chunks = []
             for i, chunk_path in enumerate(extend_chunks):
+                chunk_path = ensure_audio_stream(chunk_path, output_dir)
                 safe_path = str(Path(chunk_path).resolve()).replace("\\", "/")
                 if i < len(extend_chunks) - 1:
                     dur = get_video_duration(chunk_path)
                     trim_dur = max(0.1, dur - 1.0)
                     trimmed_path = safe_path.replace(".mp4", "_trimmed.mp4")
+                    # Build audio filter: fade-in (non-first) + fade-out at trim boundary
+                    af_parts = []
+                    if i > 0:
+                        af_parts.append("afade=t=in:st=0:d=0.3")
+                    af_parts.append(f"afade=t=out:st={max(0, trim_dur - 0.15):.3f}:d=0.15")
+                    af_filter = ",".join(af_parts)
                     cmd_trim = [
                         "ffmpeg", "-y", "-i", safe_path,
                         "-t", f"{trim_dur:.3f}",
                         "-c:v", "libx264", "-preset", "fast",
+                        "-g", "30", "-keyint_min", "1",
+                        "-af", af_filter,
                         "-c:a", "aac",
+                        "-movflags", "+faststart",
                         trimmed_path
                     ]
                     subprocess.run(cmd_trim, capture_output=True, check=True)
                     processed_chunks.append(trimmed_path)
                 else:
                     encoded_path = safe_path.replace(".mp4", "_encoded.mp4")
+                    final_dur = get_video_duration(chunk_path)
+                    fade_start = max(0, final_dur - 1.5)
+                    # Build audio filter: fade-in (non-first) + fade-out at end
+                    af_parts = []
+                    if i > 0:
+                        af_parts.append("afade=t=in:st=0:d=0.3")
+                    af_parts.append(f"afade=t=out:st={fade_start:.3f}:d=1.5")
+                    af_filter = ",".join(af_parts)
                     cmd_enc = [
                         "ffmpeg", "-y", "-i", safe_path,
                         "-c:v", "libx264", "-preset", "fast",
+                        "-g", "30", "-keyint_min", "1",
+                        "-af", af_filter,
                         "-c:a", "aac",
+                        "-movflags", "+faststart",
                         encoded_path
                     ]
                     subprocess.run(cmd_enc, capture_output=True, check=True)
@@ -240,7 +261,10 @@ def run_generation_pipeline(
                 "ffmpeg", "-y",
                 "-f", "concat", "-safe", "0",
                 "-i", str(concat_list),
-                "-c", "copy",
+                "-c:v", "libx264", "-preset", "fast",
+                "-crf", "18",
+                "-c:a", "aac", "-b:a", "192k",
+                "-movflags", "+faststart",
                 str(extended_video_path),
             ]
             subprocess.run(cmd, capture_output=True, check=True)
@@ -573,6 +597,8 @@ def run_generation_pipeline(
             music_file = output_dir / "music.mp3"
             generate_scenes.download_video(music_url, music_file)
             music_path = str(music_file)
+        else:
+            print("      [MUSIC] ⚠️ Music generation failed — video will have no background music")
 
     # 5. Assemble final video
     if status_callback:
@@ -583,12 +609,24 @@ def run_generation_pipeline(
     durations = [s["target_duration"] for s in scenes]
     length = fields.get("Length", "15s")
 
+    # Build brand names list for subtitle correction
+    brand_names = []
+    if product:
+        if product.get("name"):
+            brand_names.append(product["name"])
+        visuals = product.get("visual_description") or {}
+        if visuals.get("brand_name") and visuals["brand_name"] not in brand_names:
+            brand_names.append(visuals["brand_name"])
+    if brand_names:
+        print(f"      [BRAND] Brand names for subtitle correction: {brand_names}")
+
     final_path = assemble_video.assemble_video(
         video_paths=video_paths,
         output_path=output_path,
         music_path=music_path,
         max_duration=config.get_max_duration(length),
         scene_types=[s.get("type", "clip") for s in video_paths],
+        brand_names=brand_names or None,
     )
     
     # 6. Cleanup temp files

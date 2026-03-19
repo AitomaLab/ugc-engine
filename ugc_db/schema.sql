@@ -49,3 +49,34 @@ CREATE TABLE IF NOT EXISTS video_jobs (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- Products Table
+CREATE TABLE IF NOT EXISTS products (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    type TEXT,
+    description TEXT,
+    image_url TEXT,
+    website_url TEXT,
+    visual_description JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Scripts Table (v2 -- structured JSON format)
+CREATE TABLE IF NOT EXISTS scripts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+    name TEXT,
+    text TEXT,                          -- Legacy |||delimited string (kept for backward compat)
+    script_json JSONB,                  -- New structured format (see blueprint Section 3.3)
+    category TEXT DEFAULT 'General',
+    methodology TEXT NOT NULL DEFAULT 'Hook/Benefit/CTA',
+    video_length INTEGER NOT NULL DEFAULT 15,
+    product_id UUID REFERENCES products(id) ON DELETE SET NULL,
+    influencer_id UUID REFERENCES influencers(id) ON DELETE SET NULL,
+    source TEXT NOT NULL DEFAULT 'manual',
+    is_trending BOOLEAN NOT NULL DEFAULT false,
+    times_used INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);

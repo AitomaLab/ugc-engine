@@ -4,6 +4,13 @@ UGC Engine v3 — FastAPI Backend (Supabase REST API)
 Production API using Supabase REST API for all database operations.
 No raw PostgreSQL TCP connections needed.
 """
+# Fix Windows cp1252 console encoding — allows emoji/unicode in print() calls
+import sys
+if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from typing import List, Optional
@@ -18,7 +25,8 @@ from ugc_backend.cost_service import cost_service
 from ugc_db.db_manager import (
     get_supabase,
     list_influencers, get_influencer, create_influencer, update_influencer, delete_influencer,
-    list_scripts, create_script, delete_script, get_script,
+    list_scripts, create_script, update_script, delete_script, get_script,
+    bulk_create_scripts, increment_script_usage,
     list_app_clips, list_app_clips_by_product, update_app_clip, create_app_clip, delete_app_clip,
     list_jobs, get_job, create_job, update_job, delete_job,
     get_stats,
@@ -52,28 +60,28 @@ def _dispatch_worker(job_id: str) -> bool:
         try:
             from ugc_worker.tasks import generate_ugc_video
             generate_ugc_video.delay(job_id)
-            print(f"✅ Job {job_id} dispatched to Celery worker")
+            print(f"[OK] Job {job_id} dispatched to Celery worker")
             return True
         except Exception as e:
-            print(f"⚠️ Celery dispatch failed: {e}, falling back to in-process")
+            print(f"!! Celery dispatch failed: {e}, falling back to in-process")
 
     # Fallback: run the task directly in a background thread
     import threading
 
     def _run_in_background():
         try:
-            print(f"🔧 Running job {job_id} in-process (no Redis)...")
+            print(f"[RUN] Running job {job_id} in-process (no Redis)...")
             from ugc_worker.tasks import generate_ugc_video
             # Call the underlying function directly (not as a Celery task)
             generate_ugc_video(job_id)
         except Exception as e:
-            print(f"❌ In-process job {job_id} failed: {e}")
+            print(f"[FAIL] In-process job {job_id} failed: {e}")
             from ugc_db.db_manager import update_job
             update_job(job_id, {"status": "failed", "error_message": str(e)})
 
     thread = threading.Thread(target=_run_in_background, daemon=True)
     thread.start()
-    print(f"🚀 Job {job_id} started in background thread (no Redis)")
+    print(f"[START] Job {job_id} started in background thread (no Redis)")
     return True
 
 # ---------------------------------------------------------------------------
@@ -118,10 +126,39 @@ class InfluencerCreate(BaseModel):
     target_audience: Optional[str] = None
     image_url: Optional[str] = None
     elevenlabs_voice_id: Optional[str] = None
+    setting: Optional[str] = None  # Background/environment description (e.g. "outdoor garden with trees")
 
 class ScriptCreate(BaseModel):
-    text: str
+    """Create a script. Supports both legacy (text only) and v2 (structured JSON)."""
+    text: Optional[str] = None             # Legacy ||| delimited string
+    name: Optional[str] = None
+    script_json: Optional[dict] = None     # New structured format
+    category: Optional[str] = "General"
+    methodology: Optional[str] = "Hook/Benefit/CTA"
+    video_length: Optional[int] = 15
+    product_id: Optional[str] = None
+    influencer_id: Optional[str] = None
+    source: Optional[str] = "manual"
+
+class ScriptUpdate(BaseModel):
+    """Partial update for a script."""
+    name: Optional[str] = None
+    text: Optional[str] = None
+    script_json: Optional[dict] = None
     category: Optional[str] = None
+    methodology: Optional[str] = None
+    video_length: Optional[int] = None
+    product_id: Optional[str] = None
+    influencer_id: Optional[str] = None
+
+class ScriptBulkItem(BaseModel):
+    name: Optional[str] = None
+    script_json: dict
+    category: str = "General"
+    methodology: str = "Hook/Benefit/CTA"
+    video_length: int = 15
+    source: str = "csv_upload"
+
 
 class AppClipCreate(BaseModel):
     name: str
@@ -353,9 +390,9 @@ def api_analyze_digital_product(product_id: str):
             try:
                 vision_client = LLMVisionClient()
                 analysis = vision_client.describe_product_image(product["image_url"]) or {}
-                print(f"      ✅ Vision analysis complete for product {product_id}")
+                print(f"      [OK] Vision analysis complete for product {product_id}")
             except Exception as e:
-                print(f"      ⚠️ Vision analysis failed (non-fatal): {e}")
+                print(f"      !! Vision analysis failed (non-fatal): {e}")
 
         # Step 2: Website scraping
         if product.get("website_url"):
@@ -364,9 +401,9 @@ def api_analyze_digital_product(product_id: str):
                 website_text = scraper.scrape(product["website_url"])
                 if website_text:
                     analysis["website_content_summary"] = website_text[:500]
-                    print(f"      ✅ Website scraping complete for product {product_id}")
+                    print(f"      [OK] Website scraping complete for product {product_id}")
             except Exception as e:
-                print(f"      ⚠️ Website scraping failed (non-fatal): {e}")
+                print(f"      !! Website scraping failed (non-fatal): {e}")
 
         if analysis:
             update_product(product_id, {"visual_description": analysis})
@@ -385,19 +422,23 @@ class ScriptGenerateRequest(BaseModel):
     product_id: str
     duration: int = 15
     influencer_id: Optional[str] = None
-    product_type: str = "physical"         # NEW: "digital" or "physical"
+    product_type: str = "physical"         # "digital" or "physical"
+    output_format: str = "json"            # "json" (new) or "legacy" (||| string)
+    methodology: Optional[str] = None      # Force a specific methodology
+    context: Optional[str] = None          # Additional user instructions
 
 @app.post("/api/scripts/generate")
 def api_generate_script(data: ScriptGenerateRequest):
     """
     Generates a UGC script for a product.
-    - physical: Uses visual_description (image analysis) + influencer persona
-    - digital:  Uses dual-source analysis (image analysis + website scraping)
+
+    output_format="json" -> Uses three-call prompt chain, returns script_json.
+    output_format="legacy" -> Uses the original single-call method, returns ||| string.
     """
     try:
         from ugc_backend.ai_script_client import AIScriptClient
 
-        print(f"DEBUG: Generating {data.product_type} script for product {data.product_id} ({data.duration}s)")
+        print(f"DEBUG: Generating {data.product_type} script for product {data.product_id} ({data.duration}s, format={data.output_format})")
 
         product = get_product(data.product_id)
         if not product:
@@ -405,23 +446,41 @@ def api_generate_script(data: ScriptGenerateRequest):
 
         client = AIScriptClient()
 
-        if data.product_type == "physical":
-            # Physical: persona-driven generation (preserved from v1)
-            influencer_data = None
-            if data.influencer_id:
-                influencer = get_influencer(data.influencer_id)
-                if influencer:
-                    influencer_data = {
-                        "name": influencer.get("name", ""),
-                        "personality": influencer.get("personality", ""),
-                        "style": influencer.get("style", ""),
-                        "gender": influencer.get("gender", "Female"),
-                        "age": influencer.get("age", "25-year-old"),
-                        "accent": influencer.get("accent", "neutral English"),
-                        "tone": influencer.get("tone", "Enthusiastic"),
-                        "energy_level": influencer.get("energy_level", "High"),
-                    }
+        # Build influencer data dict (used by both paths)
+        influencer_data = None
+        if data.influencer_id:
+            influencer = get_influencer(data.influencer_id)
+            if influencer:
+                influencer_data = {
+                    "name": influencer.get("name", ""),
+                    "personality": influencer.get("personality", ""),
+                    "style": influencer.get("style", ""),
+                    "gender": influencer.get("gender", "Female"),
+                    "age": influencer.get("age", "25-year-old"),
+                    "accent": influencer.get("accent", "neutral English"),
+                    "tone": influencer.get("tone", "Enthusiastic"),
+                    "energy_level": influencer.get("energy_level", "High"),
+                }
 
+        # === NEW: Structured JSON output via three-call prompt chain ===
+        if data.output_format == "json":
+            product_data = {
+                "name": product.get("name", "Product"),
+                "brand_name": product.get("name", "Product"),
+                "category": product.get("category", data.product_type),
+                **(product.get("visual_description") or {}),
+            }
+            script_json = client.generate_structured_script(
+                product_data=product_data,
+                influencer_data=influencer_data or {"name": "Creator"},
+                video_length=data.duration,
+                methodology=data.methodology,
+                context=data.context,
+            )
+            return {"script_json": script_json, "product_id": data.product_id}
+
+        # === LEGACY FALLBACK: ||| delimited string ===
+        if data.product_type == "physical":
             visuals = product.get("visual_description") or {}
             script = client.generate_physical_product_script(
                 product_analysis=visuals,
@@ -430,7 +489,6 @@ def api_generate_script(data: ScriptGenerateRequest):
                 influencer_data=influencer_data,
             )
         else:
-            # Digital product: dual-source analysis
             visuals = product.get("visual_description") or {}
             website_content = None
 
@@ -439,9 +497,9 @@ def api_generate_script(data: ScriptGenerateRequest):
                     from ugc_backend.web_scraper import WebScraperClient
                     scraper = WebScraperClient()
                     website_content = scraper.scrape(product["website_url"])
-                    print(f"      ✅ Scraped {len(website_content or '')} chars from {product['website_url']}")
+                    print(f"      [OK] Scraped {len(website_content or '')} chars from {product['website_url']}")
                 except Exception as e:
-                    print(f"      ⚠️ Website scraping failed (non-fatal): {e}")
+                    print(f"      !! Website scraping failed (non-fatal): {e}")
 
             script = client.generate_digital_product_script(
                 product_name=product.get("name", "App"),
@@ -564,7 +622,11 @@ def api_create_job(data: JobCreate):
         unknown_keys = [k for k in list(job_data.keys()) if k not in db_columns]
         for k in unknown_keys:
             val = job_data.pop(k)
-            print(f"   ⚠️ Stripped unknown column '{k}' (value: {str(val)[:80]})")
+            try:
+                safe_val = str(val).encode('ascii', 'ignore').decode('ascii')[:80]
+                print(f"   !! Stripped unknown column '{k}' (value: {safe_val})")
+            except:
+                pass
 
         print(f"DEBUG api_create_job: inserting keys={list(job_data.keys())}")
 
@@ -621,23 +683,23 @@ def _dispatch_shot_task(task_func, shot_id: str, task_name: str):
     if redis_available:
         try:
             task_func.delay(shot_id)
-            print(f"✅ Shot task '{task_name}' dispatched to Celery for {shot_id}")
+            print(f"[OK] Shot task '{task_name}' dispatched to Celery for {shot_id}")
             return
         except Exception as e:
-            print(f"⚠️ Celery dispatch failed: {e}, falling back to in-process")
+            print(f"!! Celery dispatch failed: {e}, falling back to in-process")
 
     # Fallback: run directly in a background thread (no Redis needed)
     def _run():
         try:
-            print(f"🔧 Running shot task '{task_name}' in-process for {shot_id}...")
+            print(f"[RUN] Running shot task '{task_name}' in-process for {shot_id}...")
             task_func(shot_id)
         except Exception as e:
-            print(f"❌ Shot task '{task_name}' failed: {e}")
+            print(f"[FAIL] Shot task '{task_name}' failed: {e}")
             update_product_shot(shot_id, {"status": "failed", "error_message": str(e)})
 
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
-    print(f"🚀 Shot task '{task_name}' started in background thread for {shot_id}")
+    print(f"[START] Shot task '{task_name}' started in background thread for {shot_id}")
 
 
 @app.post("/api/products/{product_id}/shots")
@@ -782,6 +844,22 @@ def api_get_influencer(influencer_id: str):
 def api_create_influencer(data: InfluencerCreate):
     try:
         result = create_influencer(data.model_dump(exclude_none=True))
+
+        # Auto-analyze background setting from reference image (non-blocking)
+        if result and result.get("image_url") and not result.get("setting"):
+            import threading
+            def _analyze_setting():
+                try:
+                    from ugc_backend.llm_vision_client import LLMVisionClient
+                    client = LLMVisionClient()
+                    setting = client.analyze_influencer_setting(result["image_url"])
+                    if setting:
+                        update_influencer(result["id"], {"setting": setting})
+                        print(f"      [OK] Auto-analyzed setting for {result.get('name')}: {setting}")
+                except Exception as e:
+                    print(f"      !! Setting analysis failed for {result.get('name')}: {e}")
+            threading.Thread(target=_analyze_setting, daemon=True).start()
+
         return result
     except Exception as e:
         if "duplicate" in str(e).lower() or "unique" in str(e).lower():
@@ -793,7 +871,25 @@ def api_update_influencer(influencer_id: str, data: InfluencerCreate):
     inf = get_influencer(influencer_id)
     if not inf:
         raise HTTPException(status_code=404, detail="Influencer not found")
-    result = update_influencer(influencer_id, data.model_dump(exclude_none=True))
+    update_data = data.model_dump(exclude_none=True)
+    result = update_influencer(influencer_id, update_data)
+
+    # Re-analyze setting if image_url changed and no explicit setting was provided
+    image_changed = update_data.get("image_url") and update_data["image_url"] != inf.get("image_url")
+    if image_changed and "setting" not in update_data:
+        import threading
+        def _analyze_setting():
+            try:
+                from ugc_backend.llm_vision_client import LLMVisionClient
+                client = LLMVisionClient()
+                setting = client.analyze_influencer_setting(update_data["image_url"])
+                if setting:
+                    update_influencer(influencer_id, {"setting": setting})
+                    print(f"      [OK] Re-analyzed setting for {inf.get('name')}: {setting}")
+            except Exception as e:
+                print(f"      !! Setting re-analysis failed for {inf.get('name')}: {e}")
+        threading.Thread(target=_analyze_setting, daemon=True).start()
+
     return result
 
 @app.delete("/influencers/{influencer_id}")
@@ -805,22 +901,161 @@ def api_delete_influencer(influencer_id: str):
     return {"status": "deleted", "id": influencer_id}
 
 
+@app.post("/influencers/analyze-settings")
+def api_analyze_all_influencer_settings():
+    """Batch-analyze background/environment settings for all influencers that have an image but no setting."""
+    from ugc_backend.llm_vision_client import LLMVisionClient
+
+    all_influencers = list_influencers()
+    if not all_influencers:
+        return {"status": "no_influencers", "updated": 0, "skipped": 0, "failed": 0}
+
+    client = LLMVisionClient()
+    updated, skipped, failed = 0, 0, 0
+    results = []
+
+    for inf in all_influencers:
+        name = inf.get("name", "Unknown")
+        image_url = inf.get("image_url") or inf.get("reference_image_url")
+
+        if not image_url:
+            skipped += 1
+            results.append({"name": name, "status": "skipped", "reason": "no image_url"})
+            continue
+
+        try:
+            setting = client.analyze_influencer_setting(image_url)
+            if setting:
+                update_influencer(inf["id"], {"setting": setting})
+                updated += 1
+                results.append({"name": name, "status": "updated", "setting": setting})
+                print(f"      [OK] Setting for {name}: {setting}")
+            else:
+                failed += 1
+                results.append({"name": name, "status": "failed", "reason": "empty response"})
+        except Exception as e:
+            failed += 1
+            results.append({"name": name, "status": "failed", "reason": str(e)})
+            print(f"      !! Setting analysis failed for {name}: {e}")
+
+    return {"status": "done", "updated": updated, "skipped": skipped, "failed": failed, "details": results}
+
+
 # ---------------------------------------------------------------------------
-# Scripts CRUD
+# Scripts CRUD (v2 with structured JSON support)
+# Legacy routes (/scripts) kept for backward compatibility.
+# New routes (/api/scripts/*) for the new frontend.
 # ---------------------------------------------------------------------------
 
 @app.get("/scripts")
-def api_list_scripts(category: Optional[str] = None):
-    return list_scripts(category)
+@app.get("/api/scripts")
+def api_list_scripts(
+    category: Optional[str] = None,
+    methodology: Optional[str] = None,
+    video_length: Optional[int] = None,
+    influencer_id: Optional[str] = None,
+    product_id: Optional[str] = None,
+    source: Optional[str] = None,
+    is_trending: Optional[bool] = None,
+    sort_by: Optional[str] = None,
+    search: Optional[str] = None,
+):
+    filters = {}
+    if methodology: filters["methodology"] = methodology
+    if video_length: filters["video_length"] = video_length
+    if influencer_id: filters["influencer_id"] = influencer_id
+    if product_id: filters["product_id"] = product_id
+    if source: filters["source"] = source
+    if is_trending is not None: filters["is_trending"] = is_trending
+    if sort_by: filters["sort_by"] = sort_by
+    if search: filters["search"] = search
+    return list_scripts(category, **filters)
 
 @app.post("/scripts")
+@app.post("/api/scripts")
 def api_create_script(data: ScriptCreate):
-    return create_script(data.model_dump(exclude_none=True))
+    payload = data.model_dump(exclude_none=True)
+    # Auto-generate name from hook if not provided
+    if not payload.get("name"):
+        if payload.get("script_json") and payload["script_json"].get("hook"):
+            payload["name"] = payload["script_json"]["hook"][:80]
+        elif payload.get("text"):
+            payload["name"] = payload["text"][:80]
+    return create_script(payload)
+
+@app.put("/scripts/{script_id}")
+@app.put("/api/scripts/{script_id}")
+def api_update_script(script_id: str, data: ScriptUpdate):
+    payload = data.model_dump(exclude_none=True)
+    if not payload:
+        raise HTTPException(status_code=400, detail="No fields to update.")
+    result = update_script(script_id, payload)
+    if not result:
+        raise HTTPException(status_code=404, detail="Script not found.")
+    return result
 
 @app.delete("/scripts/{script_id}")
+@app.delete("/api/scripts/{script_id}")
 def api_delete_script(script_id: str):
     delete_script(script_id)
     return {"status": "deleted", "id": script_id}
+
+@app.post("/api/scripts/bulk")
+def api_bulk_create_scripts(items: List[ScriptBulkItem]):
+    """Insert multiple scripts at once (for CSV upload)."""
+    scripts_data = []
+    for item in items:
+        d = item.model_dump(exclude_none=True)
+        # Auto-generate name from hook
+        if not d.get("name") and d.get("script_json", {}).get("hook"):
+            d["name"] = d["script_json"]["hook"][:80]
+        scripts_data.append(d)
+    result = bulk_create_scripts(scripts_data)
+    return {"imported": len(result), "scripts": result}
+
+@app.post("/api/scripts/{script_id}/use")
+def api_use_script(script_id: str):
+    """Increment the times_used counter for a script."""
+    new_count = increment_script_usage(script_id)
+    return {"script_id": script_id, "times_used": new_count}
+
+class FindTrendingRequest(BaseModel):
+    topic: str = "UGC ads"
+    max_scripts: int = 5
+    sources: list[str] | None = None
+
+@app.post("/api/scripts/find-trending")
+def api_find_trending(data: FindTrendingRequest):
+    """Trigger trending script discovery in the background."""
+    import threading
+
+    def _run_scraper():
+        try:
+            from ugc_backend.trending_scraper import scrape_trending_scripts
+            scripts_data = scrape_trending_scripts(
+                topic=data.topic,
+                sources=data.sources,
+                max_scripts=data.max_scripts,
+            )
+            # Save each extracted script
+            for s in scripts_data:
+                create_script({
+                    "name": s.get("name", "Trending Script"),
+                    "script_json": s,
+                    "category": data.topic if data.topic != "UGC ads" else "General",
+                    "methodology": s.get("methodology", "Hook/Benefit/CTA"),
+                    "video_length": s.get("target_duration_sec", 15),
+                    "source": "web_scraped",
+                    "is_trending": True,
+                })
+            print(f"      [Trending] Saved {len(scripts_data)} scripts to database.")
+        except Exception as e:
+            import traceback
+            print(f"      [Trending] Background job failed: {e}")
+            traceback.print_exc()
+
+    threading.Thread(target=_run_scraper, daemon=True).start()
+    return {"status": "started", "message": f"Finding trending scripts for '{data.topic}'. Check back in a few seconds."}
 
 
 # ---------------------------------------------------------------------------
@@ -852,9 +1087,9 @@ def api_create_app_clip(data: AppClipCreate):
                     frame_url = extract_first_frame(new_clip["video_url"])
                     if frame_url:
                         update_app_clip(new_clip["id"], {"first_frame_url": frame_url})
-                        print(f"      ✅ Auto-extracted first frame for clip {new_clip['id']}")
+                        print(f"      [OK] Auto-extracted first frame for clip {new_clip['id']}")
                 except Exception as e:
-                    print(f"      ⚠️ Auto frame extraction failed for clip {new_clip['id']}: {e}")
+                    print(f"      !! Auto frame extraction failed for clip {new_clip['id']}: {e}")
             threading.Thread(target=_extract_in_background, daemon=True).start()
 
         return new_clip
@@ -1013,6 +1248,7 @@ def api_create_bulk_jobs(data: BulkJobCreate):
                 "product_id": data.product_id,
                 "model_api": data.model_api,
                 "campaign_name": data.campaign_name,
+                "length": data.duration,
                 "status": "pending",
                 "progress": 0,
                 **costs,
@@ -1041,7 +1277,12 @@ def api_create_bulk_jobs(data: BulkJobCreate):
             # Strip unknown columns
             unknown_keys = [k for k in list(job_data.keys()) if k not in db_columns]
             for k in unknown_keys:
-                job_data.pop(k)
+                val = job_data.pop(k)
+                try:
+                    safe_val = str(val).encode('ascii', 'ignore').decode('ascii')[:80]
+                    print(f"   !! [Bulk] Stripped unknown column '{k}' (value: {safe_val})")
+                except:
+                    pass
 
             job = create_job(job_data)
             if not job:

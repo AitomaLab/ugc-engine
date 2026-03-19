@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 import subprocess
 import json
+from difflib import SequenceMatcher
 from openai import OpenAI
 import os
 
@@ -35,8 +36,84 @@ POWER_WORDS = {
 }
 
 
-def extract_transcription_with_whisper(video_path):
-    """Extracts word-level timestamps using the OpenAI Whisper API."""
+def _correct_brand_in_text(text, brand_names):
+    """
+    Fix misspelled brand/product names in transcribed text.
+    Uses fuzzy matching to catch common Whisper mistakes like
+    'Phoebus' instead of 'Phebus', 'Naira' instead of 'Naiara', etc.
+    """
+    if not brand_names:
+        return text
+
+    words = text.split()
+    corrected = []
+    for word in words:
+        # Strip punctuation for comparison, preserve it for output
+        stripped = re.sub(r'[^\w]', '', word)
+        if not stripped:
+            corrected.append(word)
+            continue
+
+        best_match = None
+        best_ratio = 0.0
+        for brand in brand_names:
+            # Compare case-insensitively
+            ratio = SequenceMatcher(None, stripped.lower(), brand.lower()).ratio()
+            # Threshold: 0.7 means ~70% similar (catches Phoebus/Phebus, Naira/Naiara)
+            # But only if the lengths are somewhat similar (avoid matching short words)
+            if ratio >= 0.7 and len(stripped) >= 3 and abs(len(stripped) - len(brand)) <= 3:
+                if ratio > best_ratio and stripped.lower() != brand.lower():
+                    best_ratio = ratio
+                    best_match = brand
+
+        if best_match:
+            # Preserve any surrounding punctuation from the original word
+            prefix = ''
+            suffix = ''
+            m = re.match(r'^([^\w]*)(\w+)([^\w]*)$', word)
+            if m:
+                prefix, _, suffix = m.groups()
+            corrected.append(f"{prefix}{best_match}{suffix}")
+            print(f"      [BRAND FIX] '{stripped}' → '{best_match}'")
+        else:
+            corrected.append(word)
+
+    return " ".join(corrected)
+
+
+def _correct_brand_in_words(words_list, brand_names):
+    """
+    Fix misspelled brand names in Whisper's word-level output.
+    Modifies the 'word' field of each word dict in place.
+    """
+    if not brand_names or not words_list:
+        return words_list
+
+    for w in words_list:
+        original = w.get("word", "").strip()
+        stripped = re.sub(r'[^\w]', '', original)
+        if not stripped or len(stripped) < 3:
+            continue
+
+        for brand in brand_names:
+            ratio = SequenceMatcher(None, stripped.lower(), brand.lower()).ratio()
+            if ratio >= 0.7 and abs(len(stripped) - len(brand)) <= 3:
+                if stripped.lower() != brand.lower():
+                    print(f"      [BRAND FIX] '{stripped}' → '{brand}'")
+                    # Preserve leading/trailing whitespace from original
+                    w["word"] = original.replace(stripped, brand)
+                    break
+    return words_list
+
+
+def extract_transcription_with_whisper(video_path, brand_names=None):
+    """
+    Extracts word-level timestamps using the OpenAI Whisper API.
+    
+    Args:
+        video_path: Path to the video file
+        brand_names: Optional list of brand/product names to guide Whisper spelling
+    """
     try:
         print(f"   🎤 Extracting audio and transcribing with Whisper API...")
         audio_path = Path(video_path).parent / f"{Path(video_path).stem}.mp3"
@@ -44,23 +121,40 @@ def extract_transcription_with_whisper(video_path):
         subprocess.run(ffmpeg_cmd, check=True, capture_output=True)
 
         client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        
+        # Build Whisper prompt with brand names to guide correct spelling
+        whisper_prompt = None
+        if brand_names:
+            whisper_prompt = f"Brand names mentioned: {', '.join(brand_names)}."
+            print(f"      [BRAND] Guiding Whisper with: {whisper_prompt}")
+
         with open(audio_path, "rb") as audio_file:
-            response = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=audio_file,
-                response_format="verbose_json",
-                timestamp_granularities=["word"]
-            )
+            kwargs = {
+                "model": "whisper-1",
+                "file": audio_file,
+                "response_format": "verbose_json",
+                "timestamp_granularities": ["word"],
+            }
+            if whisper_prompt:
+                kwargs["prompt"] = whisper_prompt
+            response = client.audio.transcriptions.create(**kwargs)
         
         os.remove(audio_path)
+        
+        result = response.model_dump()
+        
+        # Post-process: fix any remaining brand misspellings in word-level data
+        if brand_names and result and result.get("words"):
+            _correct_brand_in_words(result["words"], brand_names)
+        
         print("   ✅ Whisper transcription successful.")
-        return response.model_dump()
+        return result
     except Exception as e:
         print(f"   ❌ Error during Whisper transcription: {e}")
         return None
 
 
-def generate_subtitles_from_whisper(transcription, output_path, max_words=3):
+def generate_subtitles_from_whisper(transcription, output_path, max_words=3, brand_names=None):
     """Generates an ASS subtitle file from a Whisper API verbose_json response."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -72,13 +166,27 @@ def generate_subtitles_from_whisper(transcription, output_path, max_words=3):
         return None
 
     all_words = transcription["words"]
+    
+    # Apply brand name corrections if not already done during extraction
+    if brand_names:
+        _correct_brand_in_words(all_words, brand_names)
+    
+    MAX_CHUNK_DURATION = 2.5  # seconds — Hormozi-style subtitles should flash quickly
+
     chunks = []
     for i in range(0, len(all_words), max_words):
         chunk_words = all_words[i:i + max_words]
         text = " ".join([word["word"].strip() for word in chunk_words])
         start_time = chunk_words[0]["start"]
         end_time = chunk_words[-1]["end"]
+        # Cap duration to prevent long-lingering subtitles
+        if end_time - start_time > MAX_CHUNK_DURATION:
+            end_time = start_time + MAX_CHUNK_DURATION
         chunks.append({"text": text, "start": start_time, "end": end_time})
+
+    # Shift first subtitle to start at 0.0s if it begins within 1.5s
+    if chunks and chunks[0]["start"] > 0 and chunks[0]["start"] < 2.0:
+        chunks[0]["start"] = 0.0
 
     for chunk in chunks:
         start = _format_ass_time(chunk["start"])
@@ -163,6 +271,12 @@ def generate_subtitles(scenes, output_path):
         if transcription and transcription.get("words"):
             # ✨ SYNCED LOGIC: Use Whisper timestamps
             words = transcription["words"]
+            
+            # Apply brand name corrections from scene data
+            scene_brand_names = scene.get("brand_names", [])
+            if scene_brand_names:
+                _correct_brand_in_words(words, scene_brand_names)
+            
             chunk_size = 3
             
             for i in range(0, len(words), chunk_size):

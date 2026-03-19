@@ -71,19 +71,79 @@ def delete_influencer(influencer_id: str):
 
 
 # ---------------------------------------------------------------------------
-# CRUD Helpers — Scripts
+# CRUD Helpers — Scripts (v2 with structured JSON support)
 # ---------------------------------------------------------------------------
 
-def list_scripts(category: str = None):
+def list_scripts(category: str = None, **filters):
+    """List scripts with optional filtering, search, and sort.
+
+    Backward-compatible: calling list_scripts() or list_scripts(category)
+    works exactly as before. New callers can pass keyword args:
+      methodology, video_length, influencer_id, product_id,
+      source, is_trending, sort_by, search
+    """
     sb = get_supabase()
     q = sb.table("scripts").select("*")
     if category:
         q = q.eq("category", category)
+    if filters.get("methodology"):
+        q = q.eq("methodology", filters["methodology"])
+    if filters.get("video_length"):
+        q = q.eq("video_length", filters["video_length"])
+    if filters.get("influencer_id"):
+        q = q.eq("influencer_id", filters["influencer_id"])
+    if filters.get("product_id"):
+        q = q.eq("product_id", filters["product_id"])
+    if filters.get("source"):
+        q = q.eq("source", filters["source"])
+    if filters.get("is_trending") is not None:
+        q = q.eq("is_trending", filters["is_trending"])
+    if filters.get("search"):
+        term = filters["search"]
+        q = q.or_(f"name.ilike.%{term}%,text.ilike.%{term}%")
+
+    sort_by = filters.get("sort_by", "created_at_desc")
+    if sort_by == "created_at_desc":
+        q = q.order("created_at", desc=True)
+    elif sort_by == "times_used_desc":
+        q = q.order("times_used", desc=True)
+    elif sort_by == "name_asc":
+        q = q.order("name", desc=False)
+
     return q.execute().data
 
 def create_script(data: dict):
     sb = get_supabase()
-    result = sb.table("scripts").insert(data).execute()
+    # Known columns in the scripts table (strip anything else)
+    VALID_COLS = {
+        "id", "name", "text", "script_json", "category", "methodology",
+        "video_length", "product_id", "influencer_id", "source",
+        "is_trending", "times_used", "created_at",
+    }
+    # If name was provided, store it inside script_json
+    if "name" in data and data.get("script_json"):
+        if isinstance(data["script_json"], dict):
+            data["script_json"]["name"] = data["name"]
+    # Also store name as legacy text fallback if text not provided
+    if "name" in data and not data.get("text"):
+        data["text"] = data["name"]
+    clean = {k: v for k, v in data.items() if k in VALID_COLS}
+    result = sb.table("scripts").insert(clean).execute()
+    return result.data[0] if result.data else None
+
+def update_script(script_id: str, data: dict):
+    """Update a script by ID. Supports partial updates."""
+    sb = get_supabase()
+    VALID_COLS = {
+        "name", "text", "script_json", "category", "methodology",
+        "video_length", "product_id", "influencer_id", "source",
+        "is_trending", "times_used",
+    }
+    if "name" in data and data.get("script_json"):
+        if isinstance(data["script_json"], dict):
+            data["script_json"]["name"] = data["name"]
+    clean = {k: v for k, v in data.items() if k in VALID_COLS}
+    result = sb.table("scripts").update(clean).eq("id", script_id).execute()
     return result.data[0] if result.data else None
 
 def delete_script(script_id: str):
@@ -94,6 +154,37 @@ def get_script(script_id: str):
     sb = get_supabase()
     result = sb.table("scripts").select("*").eq("id", script_id).execute()
     return result.data[0] if result.data else None
+
+def bulk_create_scripts(scripts_list: list):
+    """Insert multiple scripts in a single call (for CSV upload)."""
+    if not scripts_list:
+        return []
+    sb = get_supabase()
+    VALID_COLS = {
+        "id", "name", "text", "script_json", "category", "methodology",
+        "video_length", "product_id", "influencer_id", "source",
+        "is_trending", "times_used", "created_at",
+    }
+    cleaned = []
+    for item in scripts_list:
+        if "name" in item and item.get("script_json"):
+            if isinstance(item["script_json"], dict):
+                item["script_json"]["name"] = item["name"]
+        if "name" in item and not item.get("text"):
+            item["text"] = item["name"]
+        cleaned.append({k: v for k, v in item.items() if k in VALID_COLS})
+    result = sb.table("scripts").insert(cleaned).execute()
+    return result.data
+
+def increment_script_usage(script_id: str):
+    """Increment the times_used counter for a script."""
+    sb = get_supabase()
+    script = get_script(script_id)
+    if script:
+        new_count = (script.get("times_used") or 0) + 1
+        sb.table("scripts").update({"times_used": new_count}).eq("id", script_id).execute()
+        return new_count
+    return 0
 
 
 # ---------------------------------------------------------------------------

@@ -64,8 +64,8 @@ class WebScraperClient:
             return combined[:self.MAX_CHARS] if combined else None
 
         except requests.RequestException as e:
-            print(f"      ⚠️ WebScraperClient: Failed to fetch {url}: {e}")
+            print(f"      !! WebScraperClient: Failed to fetch {url}: {e}")
             return None
         except Exception as e:
-            print(f"      ⚠️ WebScraperClient: Parsing error for {url}: {e}")
+            print(f"      !! WebScraperClient: Parsing error for {url}: {e}")
             return None

@@ -20,8 +20,24 @@ interface Influencer {
 
 interface Script {
     id: string;
+    name?: string;
     text: string;
     category?: string;
+    script_json?: {
+        hook?: string;
+        methodology?: string;
+        target_duration_sec?: number;
+        scenes?: { scene_number: number; scene_title?: string; dialogue: string; visual_cue?: string; word_count?: number; estimated_duration_sec?: number; on_screen_text?: string }[];
+        name?: string;
+    };
+    methodology?: string;
+    video_length?: number;
+    influencer_id?: string;
+    product_id?: string;
+    source?: string;
+    is_trending?: boolean;
+    times_used?: number;
+    created_at?: string;
 }
 
 interface AppClip {
@@ -87,6 +103,8 @@ function CreateContent() {
     const [customScript, setCustomScript] = useState('');
     const [generatedScript, setGeneratedScript] = useState('');
     const [isGeneratingScript, setIsGeneratingScript] = useState(false);
+    const [scriptTab, setScriptTab] = useState<'ai'|'library'>('ai');
+    const [scriptMethodology, setScriptMethodology] = useState<string>('');
     const [linkedClips, setLinkedClips] = useState<AppClip[]>([]);
     const [selectedLinkedClip, setSelectedLinkedClip] = useState<string>('');
     const [modelApi, setModelApi] = useState('seedance-1.5-pro');
@@ -128,7 +146,11 @@ function CreateContent() {
             const targetInfId = searchParams.get('influencer_id');
             if (targetInfId) setSelectedInfluencer(targetInfId);
             const targetScrId = searchParams.get('script_id');
-            if (targetScrId) setSelectedScript(targetScrId);
+            if (targetScrId) {
+                setSelectedScript(targetScrId);
+                setScriptTab('library');
+                setScriptSource('specific');
+            }
         });
         return () => { mounted = false; };
     }, [searchParams]);
@@ -191,11 +213,18 @@ function CreateContent() {
                         duration,
                         influencer_id: selectedInfluencer || undefined,
                         product_type: productType,
+                        methodology: scriptMethodology || undefined,
                     }),
                 });
                 if (res.ok) {
                     const data = await res.json();
-                    const script = data.script || '';
+                    // Handle both new script_json and legacy script response
+                    let script = '';
+                    if (data.script_json && data.script_json.scenes) {
+                        script = data.script_json.scenes.map((s: {dialogue:string}) => s.dialogue).join(' ||| ');
+                    } else if (data.script) {
+                        script = data.script;
+                    }
                     setGeneratedScript(script);
                     setCustomScript(script);
                     setScriptSource('custom');
@@ -210,7 +239,7 @@ function CreateContent() {
         // Debounce slightly to avoid rapid firing if user is clicking around
         const timer = setTimeout(generateScript, 500);
         return () => clearTimeout(timer);
-    }, [productType, productId, duration, selectedInfluencer, API_URL]);
+    }, [productType, productId, duration, selectedInfluencer, API_URL, scriptMethodology]);
 
 
     // ... (render)
@@ -277,12 +306,19 @@ function CreateContent() {
                     product_id: productId,
                     duration,
                     product_type: 'digital',
+                    methodology: scriptMethodology || undefined,
                 }),
             });
             if (res.ok) {
                 const data = await res.json();
-                setGeneratedScript(data.script || '');
-                setCustomScript(data.script || '');
+                let script = '';
+                if (data.script_json && data.script_json.scenes) {
+                    script = data.script_json.scenes.map((s: {dialogue:string}) => s.dialogue).join(' ||| ');
+                } else if (data.script) {
+                    script = data.script;
+                }
+                setGeneratedScript(script);
+                setCustomScript(script);
                 setScriptSource('custom');
             }
         } catch { /* silent */ }
@@ -447,20 +483,90 @@ function CreateContent() {
                             {/* Step 2: Generate Script (when product selected) */}
                             {productId && (
                                 <div style={{ marginBottom: '12px' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                                        <span style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.6px', color: 'var(--blue)' }}>Script</span>
-                                        <button onClick={generateDigitalScript} disabled={isGeneratingScript} style={{ fontSize: '11px', color: 'var(--blue)', fontWeight: 600, cursor: 'pointer', background: 'none', border: 'none', opacity: isGeneratingScript ? 0.5 : 1 }}>
-                                            {isGeneratingScript ? 'Generating...' : 'Regenerate'}
-                                        </button>
+                                    <div style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.6px', color: 'var(--blue)', marginBottom: '8px' }}>Script</div>
+                                    <div className="pill-group" style={{marginBottom:'10px'}}>
+                                        <button className={`pill ${scriptTab === 'ai' ? 'selected' : ''}`} onClick={() => { setScriptTab('ai'); setScriptSource('custom'); }}>AI Generated</button>
+                                        <button className={`pill ${scriptTab === 'library' ? 'selected' : ''}`} onClick={() => setScriptTab('library')}>From Library ({(() => { const sp = products.find(p => p.id === productId); const sc = sp?.category || ''; return scripts.filter(s => { const mp = s.product_id === productId; const mc = sc && s.category && s.category.toLowerCase() === sc.toLowerCase(); if (!mp && !mc) return false; if (s.video_length && s.video_length !== duration) return false; return true; }).length; })()})</button>
                                     </div>
-                                    <textarea
-                                        className="config-textarea"
-                                        rows={3}
-                                        value={customScript}
-                                        onChange={e => { setCustomScript(e.target.value); setScriptSource('custom'); }}
-                                        placeholder="AI will generate a script based on your product and website..."
-                                        disabled={isGeneratingScript}
-                                    />
+                                    {scriptTab === 'ai' ? (
+                                        <div>
+                                            <div style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-3)', marginBottom: '6px' }}>Script Style</div>
+                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginBottom: '10px' }}>
+                                                {['', 'Hook/Benefit/CTA', 'Problem/Agitate/Solve', 'Contrarian/Shock', 'Social Proof', 'Aspiration/Dream', 'Curiosity/Cliffhanger'].map(m => (
+                                                    <button key={m} className={`pill ${scriptMethodology === m ? 'selected' : ''}`} onClick={() => setScriptMethodology(m)} style={{fontSize:'11px',padding:'5px 10px'}}>
+                                                        {m || '🎲 Random'}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '6px' }}>
+                                                <button onClick={generateDigitalScript} disabled={isGeneratingScript} style={{ fontSize: '11px', color: 'var(--blue)', fontWeight: 600, cursor: 'pointer', background: 'none', border: 'none', opacity: isGeneratingScript ? 0.5 : 1 }}>
+                                                    {isGeneratingScript ? 'Generating...' : 'Regenerate'}
+                                                </button>
+                                            </div>
+                                            <textarea
+                                                className="config-textarea"
+                                                rows={6}
+                                                value={customScript}
+                                                onChange={e => { setCustomScript(e.target.value); setScriptSource('custom'); }}
+                                                placeholder="AI will generate a script based on your product and website..."
+                                                disabled={isGeneratingScript}
+                                                style={{ fontSize: '13px', lineHeight: '1.5' }}
+                                            />
+                                        </div>
+                                    ) : (() => {
+                                        const selectedProduct = products.find(p => p.id === productId);
+                                        const selectedCategory = selectedProduct?.category || '';
+                                        const filtered = scripts.filter(s => {
+                                            // Only show scripts linked to this product or matching its category
+                                            const matchesProduct = s.product_id === productId;
+                                            const matchesCategory = selectedCategory && s.category && s.category.toLowerCase() === selectedCategory.toLowerCase();
+                                            if (!matchesProduct && !matchesCategory) return false;
+                                            if (s.video_length && s.video_length !== duration) return false;
+                                            return true;
+                                        }).sort((a, b) => {
+                                            const aMatch = a.product_id === productId ? 1 : 0;
+                                            const bMatch = b.product_id === productId ? 1 : 0;
+                                            return bMatch - aMatch;
+                                        });
+                                        return (
+                                        <div style={{maxHeight:'250px',overflowY:'auto',display:'flex',flexDirection:'column',gap:'6px'}}>
+                                            {filtered.length === 0 ? (
+                                                <div style={{fontSize:'12px',color:'var(--text-3)',padding:'20px 12px',textAlign:'center',lineHeight:1.6}}>
+                                                    <div style={{marginBottom:'8px'}}>No scripts found for this product or category{duration ? ` (${duration}s)` : ''}.</div>
+                                                    <div style={{display:'flex',gap:'8px',justifyContent:'center',flexWrap:'wrap'}}>
+                                                        <button onClick={() => { setScriptTab('ai'); setScriptSource('custom'); }} style={{fontSize:'11px',color:'var(--blue)',fontWeight:600,cursor:'pointer',background:'var(--blue-light)',border:'1px solid var(--blue)',borderRadius:'var(--radius-sm)',padding:'6px 12px'}}>Use AI Generated</button>
+                                                        <button onClick={() => window.open('/scripts','_blank')} style={{fontSize:'11px',color:'var(--text-2)',fontWeight:600,cursor:'pointer',background:'var(--bg-2)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',padding:'6px 12px'}}>Go to Scripts Page →</button>
+                                                    </div>
+                                                </div>
+                                            ) : filtered.map(scr => {
+                                                const scrHook = scr.script_json?.hook || scr.text?.split('|||')[0]?.trim() || scr.name || 'Untitled';
+                                                const isSel = selectedScript === scr.id;
+                                                return (
+                                                    <div key={scr.id} onClick={() => {
+                                                        setSelectedScript(scr.id);
+                                                        setScriptSource('specific');
+                                                        const scenes = scr.script_json?.scenes || [];
+                                                        const fullText = scenes.map(s => s.dialogue).join('\n\n') || scr.text || '';
+                                                        setCustomScript(fullText);
+                                                    }} style={{
+                                                        padding:'10px 12px',borderRadius:'var(--radius-sm)',cursor:'pointer',transition:'all 0.15s',
+                                                        border: isSel ? '2px solid var(--blue)' : '1px solid var(--border)',
+                                                        background: isSel ? 'var(--blue-light)' : 'var(--bg-2)',
+                                                    }}>
+                                                        <div style={{fontSize:'12px',fontWeight:600,color:'var(--text-1)',marginBottom:'4px',lineHeight:1.3}}>&ldquo;{scrHook.slice(0,80)}{scrHook.length>80?'...':''}&rdquo;</div>
+                                                        <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
+                                                            {scr.category && <span style={{fontSize:'10px',padding:'2px 6px',borderRadius:'4px',background:'rgba(51,122,255,0.1)',color:'var(--blue)',fontWeight:500}}>{scr.category}</span>}
+                                                            {scr.methodology && <span style={{fontSize:'10px',padding:'2px 6px',borderRadius:'4px',background:'rgba(139,92,246,0.1)',color:'#8B5CF6',fontWeight:500}}>{scr.methodology}</span>}
+                                                            {scr.video_length && <span style={{fontSize:'10px',padding:'2px 6px',borderRadius:'4px',background:'rgba(245,158,11,0.1)',color:'#F59E0B',fontWeight:500}}>{scr.video_length}s</span>}
+                                                            {scr.is_trending && <span style={{fontSize:'10px',padding:'2px 6px',borderRadius:'4px',background:'rgba(22,163,74,0.1)',color:'#16A34A',fontWeight:500}}>Trending</span>}
+                                                            {scr.product_id === productId && <span style={{fontSize:'10px',padding:'2px 6px',borderRadius:'4px',background:'rgba(51,122,255,0.15)',color:'var(--blue)',fontWeight:600}}>This Product</span>}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                        );
+                                    })()}
                                 </div>
                             )}
 
@@ -526,7 +632,7 @@ function CreateContent() {
                             {products.filter(p => !p.type || p.type === 'physical').length === 0 ? (
                                 <div style={{ fontSize: '12px', color: 'var(--text-3)' }}>No physical products found. Add one in Products.</div>
                             ) : (
-                                <div className="product-selector-grid">
+                                <div className="product-selector-grid" style={{ maxHeight: '120px', overflowY: 'auto', paddingRight: '4px' }}>
                                     {products.filter(p => !p.type || p.type === 'physical').map((prod) => (
                                         <div key={prod.id} className={`prod-card ${productId === prod.id ? 'selected' : ''}`} onClick={() => setProductId(prod.id)}>
                                             <div className="prod-thumb" style={prod.image_url ? { backgroundImage: `url(${prod.image_url})`, backgroundSize: 'cover', backgroundPosition: 'center' } : { background: 'var(--blue-light)' }}>
@@ -676,31 +782,108 @@ function CreateContent() {
                 {productType === 'physical' && (
                     <div className="config-section">
                         <div className="config-label">Script</div>
+                    <div className="pill-group" style={{marginBottom:'10px'}}>
+                        <button className={`pill ${scriptTab === 'ai' ? 'selected' : ''}`} onClick={() => { setScriptTab('ai'); setScriptSource('custom'); }}>AI Generated</button>
+                        <button className={`pill ${scriptTab === 'library' ? 'selected' : ''}`} onClick={() => setScriptTab('library')}>From Library ({(() => { const sp = products.find(p => p.id === productId); const sc = sp?.category || ''; return scripts.filter(s => { const mp = s.product_id === productId; const mc = sc && s.category && s.category.toLowerCase() === sc.toLowerCase(); if (!mp && !mc) return false; if (s.video_length && s.video_length !== duration) return false; return true; }).length; })()})</button>
+                    </div>
+                    {scriptTab === 'ai' ? (
                         <div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                                <span style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.6px', color: 'var(--blue)' }}>AI Generated</span>
+                            <div style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-3)', marginBottom: '6px' }}>Script Style</div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginBottom: '10px' }}>
+                                {['', 'Hook/Benefit/CTA', 'Problem/Agitate/Solve', 'Contrarian/Shock', 'Social Proof', 'Aspiration/Dream', 'Curiosity/Cliffhanger'].map(m => (
+                                    <button key={m} className={`pill ${scriptMethodology === m ? 'selected' : ''}`} onClick={() => setScriptMethodology(m)} style={{fontSize:'11px',padding:'5px 10px'}}>
+                                        {m || '🎲 Random'}
+                                    </button>
+                                ))}
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '6px' }}>
                                 <button onClick={() => {
                                     setIsGeneratingScript(true);
                                     fetch(`${API_URL}/api/scripts/generate`, {
                                         method: 'POST',
                                         headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ product_id: productId, duration, influencer_id: selectedInfluencer || undefined }),
+                                        body: JSON.stringify({ product_id: productId, duration, influencer_id: selectedInfluencer || undefined, methodology: scriptMethodology || undefined }),
                                     })
                                         .then(res => res.json())
-                                        .then(data => { setGeneratedScript(data.script); setCustomScript(data.script); setScriptSource('custom'); })
+                                        .then(data => {
+                                            let script = '';
+                                            if (data.script_json && data.script_json.scenes) {
+                                                script = data.script_json.scenes.map((s: {dialogue:string}) => s.dialogue).join(' ||| ');
+                                            } else if (data.script) {
+                                                script = data.script;
+                                            }
+                                            setGeneratedScript(script); setCustomScript(script); setScriptSource('custom');
+                                        })
                                         .finally(() => setIsGeneratingScript(false));
                                 }} disabled={isGeneratingScript || !productId} style={{ fontSize: '11px', color: 'var(--blue)', fontWeight: 600, cursor: 'pointer', background: 'none', border: 'none' }}>
                                     {isGeneratingScript ? 'Generating...' : 'Regenerate'}
                                 </button>
                             </div>
-                            <textarea className="config-textarea" rows={5}
+                            <textarea className="config-textarea" rows={8}
                                 value={isGeneratingScript ? 'Generating compelling script...' : (scriptSource === 'custom' ? customScript : generatedScript)}
                                 onChange={e => { setCustomScript(e.target.value); setScriptSource('custom'); }}
                                 placeholder="Select a product to generate a script..."
                                 disabled={isGeneratingScript}
+                                style={{ fontSize: '13px', lineHeight: '1.5' }}
                             />
                         </div>
-                    </div>
+                    ) : (() => {
+                        // Smart filtering: match by product + category relevance
+                        const selectedProduct = products.find(p => p.id === productId);
+                        const selectedCategory = selectedProduct?.category || '';
+                        const filtered = scripts.filter(s => {
+                            // Only show scripts linked to this product or matching its category
+                            const matchesProduct = s.product_id === productId;
+                            const matchesCategory = selectedCategory && s.category && s.category.toLowerCase() === selectedCategory.toLowerCase();
+                            if (!matchesProduct && !matchesCategory) return false;
+                            if (s.video_length && s.video_length !== duration) return false;
+                            return true;
+                        }).sort((a, b) => {
+                            // Scripts linked to the current product come first
+                            const aMatch = a.product_id === productId ? 1 : 0;
+                            const bMatch = b.product_id === productId ? 1 : 0;
+                            return bMatch - aMatch;
+                        });
+                        return (
+                        <div style={{maxHeight:'300px',overflowY:'auto',display:'flex',flexDirection:'column',gap:'6px'}}>
+                            {filtered.length === 0 ? (
+                                <div style={{fontSize:'12px',color:'var(--text-3)',padding:'20px 12px',textAlign:'center',lineHeight:1.6}}>
+                                    <div style={{marginBottom:'8px'}}>No scripts found for this product or category{duration ? ` (${duration}s)` : ''}.</div>
+                                    <div style={{display:'flex',gap:'8px',justifyContent:'center',flexWrap:'wrap'}}>
+                                        <button onClick={() => { setScriptTab('ai'); setScriptSource('custom'); }} style={{fontSize:'11px',color:'var(--blue)',fontWeight:600,cursor:'pointer',background:'var(--blue-light)',border:'1px solid var(--blue)',borderRadius:'var(--radius-sm)',padding:'6px 12px'}}>Use AI Generated</button>
+                                        <button onClick={() => window.open('/scripts','_blank')} style={{fontSize:'11px',color:'var(--text-2)',fontWeight:600,cursor:'pointer',background:'var(--bg-2)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',padding:'6px 12px'}}>Go to Scripts Page →</button>
+                                    </div>
+                                </div>
+                            ) : filtered.map(scr => {
+                                const hook = scr.script_json?.hook || scr.text?.split('|||')[0]?.trim() || scr.name || 'Untitled';
+                                const isSelected = selectedScript === scr.id;
+                                return (
+                                    <div key={scr.id} onClick={() => {
+                                        setSelectedScript(scr.id);
+                                        setScriptSource('specific');
+                                        const scenes = scr.script_json?.scenes || [];
+                                        const fullText = scenes.map(s => s.dialogue).join('\n\n') || scr.text || '';
+                                        setCustomScript(fullText);
+                                    }} style={{
+                                        padding:'10px 12px',borderRadius:'var(--radius-sm)',cursor:'pointer',transition:'all 0.15s',
+                                        border: isSelected ? '2px solid var(--blue)' : '1px solid var(--border)',
+                                        background: isSelected ? 'var(--blue-light)' : 'var(--bg-2)',
+                                    }}>
+                                        <div style={{fontSize:'12px',fontWeight:600,color:'var(--text-1)',marginBottom:'4px',lineHeight:1.3}}>&ldquo;{hook.slice(0,80)}{hook.length>80?'...':''}&rdquo;</div>
+                                        <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
+                                            {scr.category && <span style={{fontSize:'10px',padding:'2px 6px',borderRadius:'4px',background:'rgba(51,122,255,0.1)',color:'var(--blue)',fontWeight:500}}>{scr.category}</span>}
+                                            {scr.methodology && <span style={{fontSize:'10px',padding:'2px 6px',borderRadius:'4px',background:'rgba(139,92,246,0.1)',color:'#8B5CF6',fontWeight:500}}>{scr.methodology}</span>}
+                                            {scr.video_length && <span style={{fontSize:'10px',padding:'2px 6px',borderRadius:'4px',background:'rgba(245,158,11,0.1)',color:'#F59E0B',fontWeight:500}}>{scr.video_length}s</span>}
+                                            {scr.is_trending && <span style={{fontSize:'10px',padding:'2px 6px',borderRadius:'4px',background:'rgba(22,163,74,0.1)',color:'#16A34A',fontWeight:500}}>Trending</span>}
+                                            {scr.product_id === productId && <span style={{fontSize:'10px',padding:'2px 6px',borderRadius:'4px',background:'rgba(51,122,255,0.15)',color:'var(--blue)',fontWeight:600}}>This Product</span>}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                        );
+                    })()}
+                </div>
                 )}
 
                 {/* Advanced Settings */}

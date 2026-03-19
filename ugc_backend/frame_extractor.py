@@ -36,14 +36,14 @@ def extract_first_frame(video_url: str) -> Optional[str]:
 
         # Step 1: Download the video
         try:
-            print(f"      🎞️ Downloading clip for frame extraction: {video_url[:60]}...")
+            print(f"      [FRAME] Downloading clip for frame extraction: {video_url[:60]}...")
             response = requests.get(video_url, timeout=30, stream=True)
             response.raise_for_status()
             with open(video_file, "wb") as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
         except Exception as e:
-            print(f"      ❌ Frame extractor: Failed to download video: {e}")
+            print(f"      [FAIL] Frame extractor: Failed to download video: {e}")
             return None
 
         # Step 2: Extract the first frame with FFmpeg
@@ -57,10 +57,10 @@ def extract_first_frame(video_url: str) -> Optional[str]:
             ]
             result = subprocess.run(cmd, capture_output=True, timeout=30)
             if result.returncode != 0:
-                print(f"      ❌ Frame extractor: FFmpeg failed: {result.stderr.decode()[-500:]}")
+                print(f"      [FAIL] Frame extractor: FFmpeg failed: {result.stderr.decode()[-500:]}")
                 return None
         except Exception as e:
-            print(f"      ❌ Frame extractor: FFmpeg error: {e}")
+            print(f"      [FAIL] Frame extractor: FFmpeg error: {e}")
             return None
 
         # Step 3: Upload to Supabase Storage
@@ -77,9 +77,9 @@ def extract_first_frame(video_url: str) -> Optional[str]:
                 )
 
             public_url = sb.storage.from_(bucket).get_public_url(filename)
-            print(f"      ✅ First frame extracted and uploaded: {public_url}")
+            print(f"      [OK] First frame extracted and uploaded: {public_url}")
             return public_url
 
         except Exception as e:
-            print(f"      ❌ Frame extractor: Supabase upload failed: {e}")
+            print(f"      [FAIL] Frame extractor: Supabase upload failed: {e}")
             return None
