@@ -1,9 +1,10 @@
 /**
  * UGC Engine v3 — Utility Functions
  *
- * Clean utility helpers. No more proxy hacks — Supabase Storage provides
- * direct, public URLs for all assets.
+ * Clean utility helpers with auth-scoped API calls.
  */
+
+import { supabase } from '@/lib/supabaseClient';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -15,7 +16,21 @@ export function getApiUrl(): string {
 }
 
 /**
+ * Get the current auth token from Supabase session.
+ * Returns the JWT access_token or null if not authenticated.
+ */
+async function getAuthToken(): Promise<string | null> {
+    try {
+        const { data: { session } } = await supabase.auth.getSession();
+        return session?.access_token ?? null;
+    } catch {
+        return null;
+    }
+}
+
+/**
  * Fetch wrapper for backend API calls.
+ * Automatically includes the auth token so the backend can scope data by user.
  */
 export async function apiFetch<T = unknown>(
     path: string,
@@ -27,6 +42,20 @@ export async function apiFetch<T = unknown>(
     // Only add Content-Type for requests that have a body (POST, PUT, PATCH)
     if (method !== 'GET' && method !== 'DELETE') {
         headers['Content-Type'] = 'application/json';
+    }
+
+    // Auto-attach auth token
+    const token = await getAuthToken();
+    if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    // Send active project ID so the backend scopes assets to the correct project
+    if (typeof window !== 'undefined') {
+        const projectId = localStorage.getItem('activeProjectId');
+        if (projectId) {
+            headers['X-Project-Id'] = projectId;
+        }
     }
 
     const res = await fetch(`${API_URL}${path}`, {

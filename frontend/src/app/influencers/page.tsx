@@ -6,6 +6,7 @@ import { apiFetch } from '@/lib/utils';
 import { Influencer } from '@/lib/types';
 import { InfluencerModal } from '@/app/library/InfluencerModal';
 import Select from '@/components/ui/Select';
+import { useProgressiveList } from '@/hooks/useProgressiveList';
 
 export default function InfluencersPage() {
   const [influencers, setInfluencers] = useState<Influencer[]>([]);
@@ -25,6 +26,13 @@ export default function InfluencersPage() {
 
   useEffect(() => { fetchInfluencers(); }, [fetchInfluencers]);
 
+  // Re-fetch when user switches projects
+  useEffect(() => {
+    const handler = () => { setLoading(true); fetchInfluencers(); };
+    window.addEventListener('projectChanged', handler);
+    return () => window.removeEventListener('projectChanged', handler);
+  }, [fetchInfluencers]);
+
   async function handleDelete(id: string) {
     if (!confirm('Delete this influencer? This cannot be undone.')) return;
     try {
@@ -37,6 +45,8 @@ export default function InfluencersPage() {
     inf.name.toLowerCase().includes(search.toLowerCase()) &&
     (genderFilter === '' || inf.gender === genderFilter)
   );
+
+  const { visibleItems: visibleInfluencers, sentinelRef, hasMore } = useProgressiveList(filtered, 16);
 
   return (
     <div className='content-area'>
@@ -78,8 +88,9 @@ export default function InfluencersPage() {
           <button className='btn-primary' onClick={() => { setEditTarget(null); setModalOpen(true); }}>Add Influencer</button>
         </div>
       ) : (
+        <>
         <div className='influencers-grid'>
-          {filtered.map(inf => (
+          {visibleInfluencers.map(inf => (
             <div key={inf.id} className='icard' style={{ cursor: 'default' }}>
               <div className='icard-thumb' style={inf.image_url ? { backgroundImage: `url(${inf.image_url})`, position: 'relative' } : { background: 'linear-gradient(160deg,#1a1a2e,#0f3460)', position: 'relative' }}>
                 <span className='icard-name'>{inf.name}</span>
@@ -106,6 +117,8 @@ export default function InfluencersPage() {
             </div>
           ))}
         </div>
+        {hasMore && <div ref={sentinelRef} style={{ height: '1px', marginTop: '8px' }} />}
+        </>
       )}
 
       <InfluencerModal

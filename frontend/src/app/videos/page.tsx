@@ -6,6 +6,7 @@ import { apiFetch, formatDate } from '@/lib/utils';
 import { VideoJob, Influencer } from '@/lib/types';
 import Select from '@/components/ui/Select';
 import MediaPreviewModal from '@/components/ui/MediaPreviewModal';
+import { useProgressiveList } from '@/hooks/useProgressiveList';
 
 export default function VideosPage() {
     const [jobs, setJobs] = useState<VideoJob[]>([]);
@@ -33,6 +34,13 @@ export default function VideosPage() {
     }, []);
 
     useEffect(() => { fetchData(); }, [fetchData]);
+
+    // Re-fetch when user switches projects
+    useEffect(() => {
+        const handler = () => { setLoading(true); fetchData(); };
+        window.addEventListener('projectChanged', handler);
+        return () => window.removeEventListener('projectChanged', handler);
+    }, [fetchData]);
 
     async function handleDelete(jobId: string) {
         if (!confirm('Delete this video? This cannot be undone.')) return;
@@ -68,6 +76,8 @@ export default function VideosPage() {
         const db = new Date(b.created_at || 0).getTime();
         return sortOrder === 'newest' ? db - da : da - db;
     });
+
+    const { visibleItems: visibleJobs, sentinelRef, hasMore } = useProgressiveList(filteredJobs, 12);
 
     if (loading) {
         return <div className='content-area'><div className='text-[#94A3B8] text-sm italic animate-pulse py-12 text-center'>Loading videos...</div></div>;
@@ -135,9 +145,9 @@ export default function VideosPage() {
                     <div className='empty-sub'>Create your first video to get started.</div>
                     <Link href='/create' className='btn-primary'>Create Video</Link>
                 </div>
-            ) : (
+            ) : (<>
                 <div className='video-grid'>
-                    {filteredJobs.map((job, i) => {
+                    {visibleJobs.map((job, i) => {
                         const statusClass = job.status === 'success' ? 'done' : job.status === 'processing' ? 'processing' : job.status === 'pending' ? 'queued' : 'failed';
                         const statusLabel = job.status === 'success' ? 'Done' : job.status === 'processing' ? 'Processing...' : job.status === 'pending' ? 'Queued' : 'Failed';
                         return (
@@ -148,7 +158,7 @@ export default function VideosPage() {
                                     onClick={() => job.final_video_url && setPreviewAssetUrl(job.final_video_url)}
                                 >
                                     {job.final_video_url && (
-                                        <video src={job.final_video_url} style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', inset: 0 }} muted loop playsInline />
+                                        <video src={job.final_video_url} style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', inset: 0 }} muted loop playsInline preload="metadata" />
                                     )}
                                     <span className={`status-pill ${statusClass}`} style={{ position: 'absolute', top: '8px', right: '8px', fontWeight: 700 }}>{statusLabel}</span>
                                     <button className="card-delete-btn" onClick={(e) => { e.stopPropagation(); handleDelete(job.id); }} title="Delete video">
@@ -183,7 +193,10 @@ export default function VideosPage() {
                         );
                     })}
                 </div>
-            )}
+                {hasMore && (
+                    <div ref={sentinelRef} style={{ height: '1px', marginTop: '8px' }} />
+                )}
+            </>)}
 
             <MediaPreviewModal
                 isOpen={!!previewAssetUrl}

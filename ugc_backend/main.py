@@ -11,7 +11,7 @@ if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
 if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Depends, Request
 from pydantic import BaseModel
 from typing import List, Optional
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,17 +21,27 @@ import random
 from datetime import datetime, timezone
 
 from ugc_backend.cost_service import cost_service
+from ugc_backend.auth import get_current_user, get_optional_user
+from ugc_backend.credit_cost_service import get_video_credit_cost, get_shot_credit_cost
 
 from ugc_db.db_manager import (
     get_supabase,
+    get_stats,
     list_influencers, get_influencer, create_influencer, update_influencer, delete_influencer,
+    list_projects,
     list_scripts, create_script, update_script, delete_script, get_script,
     bulk_create_scripts, increment_script_usage,
     list_app_clips, list_app_clips_by_product, update_app_clip, create_app_clip, delete_app_clip,
     list_jobs, get_job, create_job, update_job, delete_job,
-    get_stats,
     list_products, create_product, delete_product, get_product, update_product,
     list_product_shots, get_product_shot, create_product_shot, update_product_shot, delete_product_shot,
+    # SaaS layer
+    get_profile, update_profile,
+    create_project as db_create_project, update_project as db_update_project, delete_project as db_delete_project,
+    get_subscription, get_wallet, list_transactions, deduct_credits, refund_credits,
+    list_influencers_scoped, list_scripts_scoped, list_products_scoped,
+    list_app_clips_scoped, list_jobs_scoped, list_product_shots_scoped,
+    get_stats_scoped,
 )
 
 # Lazy Celery import — avoids blocking the backend if Redis isn't running
@@ -89,6 +99,19 @@ def _dispatch_worker(job_id: str) -> bool:
 # ---------------------------------------------------------------------------
 
 app = FastAPI(title="UGC Engine SaaS API v3")
+
+
+def _resolve_project_id(request: Request, user: dict | None) -> str | None:
+    """Read X-Project-Id header sent by the frontend.
+    Falls back to the user's default project if the header is missing."""
+    pid = request.headers.get("x-project-id")
+    if pid:
+        return pid
+    if user:
+        user_projects = list_projects(user["id"])
+        default_proj = next((p for p in (user_projects or []) if p.get("is_default")), (user_projects or [None])[0])
+        return default_proj["id"] if default_proj else None
+    return None
 
 app.add_middleware(
     CORSMiddleware,
@@ -237,10 +260,17 @@ class CostEstimateRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/products")
-def api_list_products(category: Optional[str] = None):
+def api_list_products(request: Request, category: Optional[str] = None, user: dict = Depends(get_optional_user)):
     try:
-        print(f"DEBUG: api_list_products called with category={category}")
-        return list_products(category)
+        if user:
+            pid = _resolve_project_id(request, user)
+            if pid:
+                products = list_products_scoped(user["id"], pid, category)
+            else:
+                products = []
+        else:
+            products = list_products(category)
+        return products
     except Exception as e:
         print(f"ERROR in api_list_products: {e}")
         import traceback
@@ -522,12 +552,32 @@ def api_generate_script(data: ScriptGenerateRequest):
 # ---------------------------------------------------------------------------
 
 @app.post("/jobs")
-def api_create_job(data: JobCreate):
+def api_create_job(request: Request, data: JobCreate, user: dict = Depends(get_optional_user)):
     """
     Creates a new video generation job.
     Supports both digital (app demo) and physical product flows.
     """
     try:
+        # 0. Credit Gate (only for authenticated users)
+        if user:
+            try:
+                credit_cost = get_video_credit_cost(data.product_type, data.length)
+                wallet = get_wallet(user["id"])
+                if not wallet:
+                    raise HTTPException(status_code=402, detail="Credit wallet not found. Please contact support.")
+                if wallet["balance"] < credit_cost:
+                    raise HTTPException(
+                        status_code=402,
+                        detail=f"Insufficient credits. Current balance: {wallet['balance']}. Required: {credit_cost}."
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                print(f"      [Credit] Warning: credit check failed ({e}), proceeding anyway")
+                credit_cost = None
+        else:
+            credit_cost = None
+
         # 1. Validate Influencer
         inf = get_influencer(data.influencer_id)
         if not inf:
@@ -601,6 +651,13 @@ def api_create_job(data: JobCreate):
         job_data["status"] = "pending"
         job_data["progress"] = 0
 
+        # Inject user_id and project_id if authenticated
+        if user:
+            job_data["user_id"] = user["id"]
+            pid = _resolve_project_id(request, user)
+            if pid and "project_id" in db_columns:
+                job_data["project_id"] = pid
+
         # Extract transition info for the worker (stored in job_data if column exists)
         auto_trans = job_data.pop("auto_transition_type", None)
         if auto_trans and "auto_transition_type" in db_columns:
@@ -630,15 +687,30 @@ def api_create_job(data: JobCreate):
 
         print(f"DEBUG api_create_job: inserting keys={list(job_data.keys())}")
 
-        # 7. Create in DB
+        # 7. Deduct credits (before creating job, so failed creation doesn't lose credits)
+        deduction_result = None
+        if user and credit_cost:
+            try:
+                deduction_result = deduct_credits(user["id"], credit_cost, {
+                    "product_type": data.product_type,
+                    "length": data.length,
+                })
+                print(f"      [Credit] Deducted {credit_cost} credits. New balance: {deduction_result['balance']}")
+            except ValueError as e:
+                raise HTTPException(status_code=402, detail=str(e))
+
+        # 8. Create in DB
         job = create_job(job_data)
         if not job:
+            # Refund if job creation failed
+            if deduction_result and user:
+                refund_credits(user["id"], credit_cost, {"reason": "job_creation_failed"})
             raise HTTPException(status_code=500, detail="Job creation returned empty result")
 
-        # 8. Dispatch to Worker (non-blocking)
+        # 9. Dispatch to Worker (non-blocking)
         worker_dispatched = _dispatch_worker(job["id"])
 
-        return {**job, "worker_dispatched": worker_dispatched}
+        return {**job, "worker_dispatched": worker_dispatched, "credits_deducted": credit_cost}
 
     except HTTPException:
         raise
@@ -830,7 +902,12 @@ def health():
 # ---------------------------------------------------------------------------
 
 @app.get("/influencers")
-def api_list_influencers():
+def api_list_influencers(request: Request, user: dict = Depends(get_optional_user)):
+    if user:
+        pid = _resolve_project_id(request, user)
+        if pid:
+            return list_influencers_scoped(user["id"], pid)
+        return []
     return list_influencers()
 
 @app.get("/influencers/{influencer_id}")
@@ -841,9 +918,20 @@ def api_get_influencer(influencer_id: str):
     return inf
 
 @app.post("/influencers")
-def api_create_influencer(data: InfluencerCreate):
+def api_create_influencer(data: InfluencerCreate, request: Request, user: dict = Depends(get_optional_user)):
     try:
-        result = create_influencer(data.model_dump(exclude_none=True))
+        payload = data.model_dump(exclude_none=True)
+        # Inject ownership so the influencer appears in scoped queries
+        if user:
+            payload["user_id"] = user["id"]
+            pid = _resolve_project_id(request, user)
+            if pid:
+                payload["project_id"] = pid
+            print(f"  [DEBUG] CREATE INFLUENCER: user={user['id']}, project_id={pid}, payload_keys={list(payload.keys())}")
+        else:
+            print(f"  [DEBUG] CREATE INFLUENCER: NO USER (unauthenticated)")
+        result = create_influencer(payload)
+        print(f"  [DEBUG] CREATED: id={result.get('id')}, user_id={result.get('user_id')}, project_id={result.get('project_id')}")
 
         # Auto-analyze background setting from reference image (non-blocking)
         if result and result.get("image_url") and not result.get("setting"):
@@ -950,6 +1038,7 @@ def api_analyze_all_influencer_settings():
 @app.get("/scripts")
 @app.get("/api/scripts")
 def api_list_scripts(
+    request: Request,
     category: Optional[str] = None,
     methodology: Optional[str] = None,
     video_length: Optional[int] = None,
@@ -959,6 +1048,7 @@ def api_list_scripts(
     is_trending: Optional[bool] = None,
     sort_by: Optional[str] = None,
     search: Optional[str] = None,
+    user: dict = Depends(get_optional_user),
 ):
     filters = {}
     if methodology: filters["methodology"] = methodology
@@ -969,6 +1059,11 @@ def api_list_scripts(
     if is_trending is not None: filters["is_trending"] = is_trending
     if sort_by: filters["sort_by"] = sort_by
     if search: filters["search"] = search
+    if user:
+        pid = _resolve_project_id(request, user)
+        if pid:
+            return list_scripts_scoped(user["id"], pid, **filters)
+        return []
     return list_scripts(category, **filters)
 
 @app.post("/scripts")
@@ -1063,7 +1158,12 @@ def api_find_trending(data: FindTrendingRequest):
 # ---------------------------------------------------------------------------
 
 @app.get("/app-clips")
-def api_list_app_clips():
+def api_list_app_clips(request: Request, user: dict = Depends(get_optional_user)):
+    if user:
+        pid = _resolve_project_id(request, user)
+        if pid:
+            return list_app_clips_scoped(user["id"], pid)
+        return []
     return list_app_clips()
 
 @app.post("/app-clips")
@@ -1306,7 +1406,10 @@ def api_create_bulk_jobs(data: BulkJobCreate):
 # ---------------------------------------------------------------------------
 
 @app.get("/jobs")
-def api_list_jobs(status: Optional[str] = None, limit: int = Query(default=50, le=200)):
+def api_list_jobs(request: Request, status: Optional[str] = None, limit: int = Query(default=50, le=200), user: dict = Depends(get_optional_user)):
+    if user:
+        pid = _resolve_project_id(request, user)
+        return list_jobs_scoped(user["id"], project_id=pid, status=status, limit=limit)
     return list_jobs(status, limit)
 
 @app.get("/jobs/{job_id}")
@@ -1343,7 +1446,13 @@ def api_get_job_status(job_id: str):
 # ---------------------------------------------------------------------------
 
 @app.get("/stats")
-def api_get_stats():
+def api_get_stats(user: dict = Depends(get_optional_user)):
+    if user:
+        stats = get_stats_scoped(user["id"])
+        # Add projects count for the dashboard KPI
+        user_projects = list_projects(user["id"])
+        stats["projects"] = len(user_projects or [])
+        return stats
     return get_stats()
 
 
@@ -1354,11 +1463,14 @@ def api_estimate_cost(data: CostEstimateRequest):
 
 
 @app.get("/stats/costs")
-def api_get_cost_stats():
-    """Aggregate spend stats for the Activity page."""
+def api_get_cost_stats(user: dict = Depends(get_optional_user)):
+    """Aggregate spend stats for the Activity page — scoped per user when authenticated."""
     sb = get_supabase()
-    # All jobs with costs
-    all_jobs = sb.table("video_jobs").select("total_cost,created_at").not_.is_("total_cost", "null").execute()
+    # Build query — scope by user if authenticated
+    q = sb.table("video_jobs").select("total_cost,created_at").not_.is_("total_cost", "null")
+    if user:
+        q = q.eq("user_id", user["id"])
+    all_jobs = q.execute()
     rows = all_jobs.data or []
 
     total_all = sum(float(r.get("total_cost", 0) or 0) for r in rows)
@@ -1453,3 +1565,158 @@ def api_generate_hook(data: HookRequest):
     hook = random.choice(templates)
     return {"hook": hook, "category": category}
 
+
+# ===========================================================================
+# SaaS ENDPOINTS — Authentication, Projects, Subscriptions, Credits
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Profile
+# ---------------------------------------------------------------------------
+
+@app.get("/api/profile")
+def api_get_profile(user: dict = Depends(get_current_user)):
+    profile = get_profile(user["id"])
+    if not profile:
+        return {"id": user["id"], "email": user["email"], "name": None, "avatar_url": None}
+    return profile
+
+class ProfileUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    avatar_url: Optional[str] = None
+
+@app.put("/api/profile")
+def api_update_profile(data: ProfileUpdateRequest, user: dict = Depends(get_current_user)):
+    payload = data.model_dump(exclude_none=True)
+    if not payload:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    result = update_profile(user["id"], payload)
+    if not result:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Projects CRUD
+# ---------------------------------------------------------------------------
+
+class ProjectCreate(BaseModel):
+    name: str
+
+class ProjectUpdate(BaseModel):
+    name: str
+
+@app.get("/api/projects")
+def api_list_projects(user: dict = Depends(get_current_user)):
+    return list_projects(user["id"])
+
+@app.post("/api/projects")
+def api_create_project(data: ProjectCreate, user: dict = Depends(get_current_user)):
+    result = db_create_project(user["id"], data.name)
+    if not result:
+        raise HTTPException(status_code=500, detail="Failed to create project")
+    return result
+
+@app.put("/api/projects/{project_id}")
+def api_update_project(project_id: str, data: ProjectUpdate, user: dict = Depends(get_current_user)):
+    result = db_update_project(project_id, user["id"], {"name": data.name})
+    if not result:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return result
+
+@app.delete("/api/projects/{project_id}")
+def api_delete_project_endpoint(project_id: str, user: dict = Depends(get_current_user)):
+    try:
+        db_delete_project(project_id, user["id"])
+        return {"status": "deleted", "id": project_id}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Subscription
+# ---------------------------------------------------------------------------
+
+@app.get("/api/plans")
+def api_list_plans():
+    """Return all active subscription plans from the database."""
+    sb = get_supabase()
+    result = sb.table("subscription_plans").select("*").eq("is_active", True).order("price_monthly", desc=False).execute()
+    return result.data or []
+
+@app.get("/api/subscription")
+def api_get_subscription(user: dict = Depends(get_current_user)):
+    sub = get_subscription(user["id"])
+    if not sub:
+        return {"status": "none", "plan": {"name": "Free", "credits_monthly": 0}}
+    return sub
+
+
+# ---------------------------------------------------------------------------
+# Credit Wallet & Transactions
+# ---------------------------------------------------------------------------
+
+@app.get("/api/wallet")
+def api_get_wallet(user: dict = Depends(get_current_user)):
+    wallet = get_wallet(user["id"])
+    if not wallet:
+        return {"balance": 0, "user_id": user["id"]}
+    return wallet
+
+@app.get("/api/wallet/transactions")
+def api_get_transactions(user: dict = Depends(get_current_user), limit: int = Query(default=50, le=200)):
+    return list_transactions(user["id"], limit)
+
+
+# ---------------------------------------------------------------------------
+# Credit Costs Reference
+# ---------------------------------------------------------------------------
+
+@app.get("/api/credits/costs")
+def api_get_credit_costs():
+    """Return the full credit cost table for frontend display."""
+    return {
+        "digital_15s": 39,
+        "digital_30s": 77,
+        "physical_15s": 100,
+        "physical_30s": 199,
+        "cinematic_image_1k": 13,
+        "cinematic_image_2k": 13,
+        "cinematic_image_4k": 16,
+        "cinematic_video_8s": 51,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Job Refund (for failed generations)
+# ---------------------------------------------------------------------------
+
+@app.post("/jobs/{job_id}/refund")
+def api_refund_job(job_id: str, user: dict = Depends(get_current_user)):
+    """Refund credits for a failed generation job."""
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Only refund failed jobs
+    if job.get("status") not in ("failed",):
+        raise HTTPException(status_code=400, detail="Can only refund failed jobs")
+
+    # Determine the credit cost to refund
+    try:
+        credit_cost = get_video_credit_cost(
+            job.get("product_type", "digital"),
+            job.get("length", 15)
+        )
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Cannot determine credit cost for this job type")
+
+    try:
+        result = refund_credits(user["id"], credit_cost, {
+            "job_id": job_id,
+            "reason": "failed_generation",
+        })
+        return {"status": "refunded", "amount": credit_cost, "new_balance": result["balance"]}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))

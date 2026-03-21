@@ -166,7 +166,7 @@ function ShotCard({
                             disabled={isAnimating}
                             className="flex-1 bg-[#337AFF] text-white hover:bg-blue-600 px-2 py-1.5 rounded-lg text-[10px] font-bold shadow-sm transition-colors disabled:opacity-50"
                         >
-                            {isAnimating ? 'Queuing...' : ' Animate'}
+                            {isAnimating ? 'Queuing...' : <><span>▶ Animate</span><span style={{ marginLeft: '4px', fontSize: '9px', opacity: 0.85 }}>51 cr</span></>}
                         </button>
                     )}
                     <button

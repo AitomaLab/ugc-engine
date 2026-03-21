@@ -363,3 +363,226 @@ def delete_product_shot(shot_id: str):
     sb = get_supabase()
     sb.table("product_shots").delete().eq("id", shot_id).execute()
 
+
+# ===========================================================================
+# SaaS LAYER — User-scoped functions for the authenticated API
+# ===========================================================================
+# IMPORTANT: The functions above remain untouched. They are used by the worker
+# pipeline (core_engine.py, scene_builder.py) which runs with the service key
+# and has no user context. The functions below are used ONLY by main.py
+# endpoints that have an authenticated user.
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Profiles
+# ---------------------------------------------------------------------------
+
+def get_profile(user_id: str):
+    sb = get_supabase()
+    result = sb.table("profiles").select("*").eq("id", user_id).execute()
+    return result.data[0] if result.data else None
+
+def update_profile(user_id: str, data: dict):
+    sb = get_supabase()
+    result = sb.table("profiles").update(data).eq("id", user_id).execute()
+    return result.data[0] if result.data else None
+
+
+# ---------------------------------------------------------------------------
+# Projects
+# ---------------------------------------------------------------------------
+
+def list_projects(user_id: str):
+    sb = get_supabase()
+    result = sb.table("projects").select("*").eq("user_id", user_id).order("created_at", desc=False).execute()
+    return result.data
+
+def create_project(user_id: str, name: str):
+    sb = get_supabase()
+    # Ensure the user has a profile row (FK target) — handles cases where
+    # the handle_new_user trigger was missing when the user signed up.
+    existing = sb.table("profiles").select("id").eq("id", user_id).execute()
+    if not existing.data:
+        sb.table("profiles").insert({"id": user_id}).execute()
+    result = sb.table("projects").insert({
+        "user_id": user_id,
+        "name": name,
+        "is_default": False,
+    }).execute()
+    return result.data[0] if result.data else None
+
+def update_project(project_id: str, user_id: str, data: dict):
+    sb = get_supabase()
+    result = sb.table("projects").update(data).eq("id", project_id).eq("user_id", user_id).execute()
+    return result.data[0] if result.data else None
+
+def delete_project(project_id: str, user_id: str):
+    sb = get_supabase()
+    # Don't allow deleting the default project
+    project = sb.table("projects").select("is_default").eq("id", project_id).eq("user_id", user_id).execute()
+    if project.data and project.data[0].get("is_default"):
+        raise ValueError("Cannot delete the default project")
+    sb.table("projects").delete().eq("id", project_id).eq("user_id", user_id).execute()
+
+
+# ---------------------------------------------------------------------------
+# Subscriptions
+# ---------------------------------------------------------------------------
+
+def get_subscription(user_id: str):
+    """Get user's subscription with joined plan details."""
+    sb = get_supabase()
+    result = sb.table("subscriptions").select(
+        "*, plan:subscription_plans(name, credits_monthly, price_monthly)"
+    ).eq("user_id", user_id).execute()
+    return result.data[0] if result.data else None
+
+
+# ---------------------------------------------------------------------------
+# Credit Wallet & Transactions
+# ---------------------------------------------------------------------------
+
+def get_wallet(user_id: str):
+    sb = get_supabase()
+    result = sb.table("credit_wallets").select("*").eq("user_id", user_id).execute()
+    return result.data[0] if result.data else None
+
+def list_transactions(user_id: str, limit: int = 50):
+    """Get credit transactions for a user (via their wallet)."""
+    sb = get_supabase()
+    wallet = get_wallet(user_id)
+    if not wallet:
+        return []
+    result = sb.table("credit_transactions").select("*").eq(
+        "wallet_id", wallet["id"]
+    ).order("created_at", desc=True).limit(limit).execute()
+    return result.data
+
+def deduct_credits(user_id: str, amount: int, metadata: dict = None):
+    """Atomically deduct credits: update wallet balance + insert transaction log.
+
+    Returns the updated wallet or raises an exception if balance insufficient.
+    """
+    sb = get_supabase()
+    wallet = get_wallet(user_id)
+    if not wallet:
+        raise ValueError("Credit wallet not found")
+
+    new_balance = wallet["balance"] - amount
+    if new_balance < 0:
+        raise ValueError(
+            f"Insufficient credits. Balance: {wallet['balance']}, Required: {amount}"
+        )
+
+    # Update balance
+    sb.table("credit_wallets").update({
+        "balance": new_balance
+    }).eq("id", wallet["id"]).execute()
+
+    # Insert transaction log
+    sb.table("credit_transactions").insert({
+        "wallet_id": wallet["id"],
+        "amount": -amount,
+        "type": "generation_deduction",
+        "description": f"Video generation ({amount} credits)",
+        "metadata": metadata or {},
+    }).execute()
+
+    return {"balance": new_balance, "deducted": amount}
+
+def refund_credits(user_id: str, amount: int, metadata: dict = None):
+    """Refund credits back to user's wallet (e.g., failed generation)."""
+    sb = get_supabase()
+    wallet = get_wallet(user_id)
+    if not wallet:
+        raise ValueError("Credit wallet not found")
+
+    new_balance = wallet["balance"] + amount
+
+    sb.table("credit_wallets").update({
+        "balance": new_balance
+    }).eq("id", wallet["id"]).execute()
+
+    sb.table("credit_transactions").insert({
+        "wallet_id": wallet["id"],
+        "amount": amount,
+        "type": "refund",
+        "description": f"Refund for failed generation ({amount} credits)",
+        "metadata": metadata or {},
+    }).execute()
+
+    return {"balance": new_balance, "refunded": amount}
+
+
+# ---------------------------------------------------------------------------
+# Scoped Asset Queries — user_id + project_id filtered
+# ---------------------------------------------------------------------------
+
+def list_influencers_scoped(user_id: str, project_id: str):
+    sb = get_supabase()
+    return sb.table("influencers").select("*").eq("user_id", user_id).eq("project_id", project_id).execute().data
+
+def list_scripts_scoped(user_id: str, project_id: str, **filters):
+    sb = get_supabase()
+    q = sb.table("scripts").select("*").eq("user_id", user_id).eq("project_id", project_id)
+    if filters.get("category"):
+        q = q.eq("category", filters["category"])
+    if filters.get("methodology"):
+        q = q.eq("methodology", filters["methodology"])
+    if filters.get("video_length"):
+        q = q.eq("video_length", filters["video_length"])
+    sort_by = filters.get("sort_by", "created_at_desc")
+    if sort_by == "created_at_desc":
+        q = q.order("created_at", desc=True)
+    elif sort_by == "times_used_desc":
+        q = q.order("times_used", desc=True)
+    return q.execute().data
+
+def list_products_scoped(user_id: str, project_id: str, category: str = None):
+    sb = get_supabase()
+    q = sb.table("products").select("*").eq("user_id", user_id).eq("project_id", project_id)
+    if category:
+        q = q.eq("category", category)
+    return q.execute().data
+
+def list_app_clips_scoped(user_id: str, project_id: str):
+    sb = get_supabase()
+    return sb.table("app_clips").select("*").eq("user_id", user_id).eq("project_id", project_id).execute().data
+
+def list_jobs_scoped(user_id: str, project_id: str = None, status: str = None, limit: int = 50):
+    sb = get_supabase()
+    q = sb.table("video_jobs").select("*").eq("user_id", user_id).order("created_at", desc=True).limit(limit)
+    if project_id:
+        q = q.eq("project_id", project_id)
+    if status:
+        q = q.eq("status", status)
+    return q.execute().data
+
+def list_product_shots_scoped(user_id: str, product_id: str):
+    sb = get_supabase()
+    return sb.table("product_shots").select("*").eq("product_id", product_id).order("created_at", desc=True).execute().data
+
+
+def get_stats_scoped(user_id: str):
+    """Get dashboard stats scoped to a specific user."""
+    sb = get_supabase()
+    total = len(sb.table("video_jobs").select("id").eq("user_id", user_id).execute().data)
+    pending = len(sb.table("video_jobs").select("id").eq("user_id", user_id).eq("status", "pending").execute().data)
+    processing = len(sb.table("video_jobs").select("id").eq("user_id", user_id).eq("status", "processing").execute().data)
+    success = len(sb.table("video_jobs").select("id").eq("user_id", user_id).eq("status", "success").execute().data)
+    failed = len(sb.table("video_jobs").select("id").eq("user_id", user_id).eq("status", "failed").execute().data)
+    influencers = len(sb.table("influencers").select("id").eq("user_id", user_id).execute().data)
+    scripts = len(sb.table("scripts").select("id").eq("user_id", user_id).execute().data)
+    app_clips = len(sb.table("app_clips").select("id").eq("user_id", user_id).execute().data)
+
+    return {
+        "total_jobs": total,
+        "pending": pending,
+        "processing": processing,
+        "success": success,
+        "failed": failed,
+        "influencers": influencers,
+        "scripts": scripts,
+        "app_clips": app_clips,
+    }

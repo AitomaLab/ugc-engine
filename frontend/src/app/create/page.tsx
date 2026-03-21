@@ -2,6 +2,7 @@
 
 import { Suspense, useState, useRef, useEffect, useMemo } from 'react';
 import { apiFetch, formatDate, getApiUrl } from '@/lib/utils';
+import { useApp } from '@/providers/AppProvider';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { ProductShot } from '@/lib/types';
 
@@ -88,6 +89,13 @@ function CreateContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const API_URL = getApiUrl();
+    const { refreshWallet } = useApp();
+
+    // Credit costs from backend
+    const [creditCosts, setCreditCosts] = useState<Record<string, number>>({});
+    useEffect(() => {
+        apiFetch<Record<string, number>>('/api/credits/costs').then(setCreditCosts).catch(() => {});
+    }, []);
 
     // Data
     const [influencers, setInfluencers] = useState<Influencer[]>([]);
@@ -154,6 +162,27 @@ function CreateContent() {
         });
         return () => { mounted = false; };
     }, [searchParams]);
+
+    // Re-fetch when user switches projects
+    useEffect(() => {
+        const handler = () => {
+            setLoading(true);
+            Promise.all([
+                apiFetch<Influencer[]>('/influencers').catch(() => []),
+                apiFetch<Script[]>('/scripts').catch(() => []),
+                apiFetch<AppClip[]>('/app-clips').catch(() => []),
+                apiFetch<any[]>('/api/products').catch(() => [])
+            ]).then(([infRes, scRes, clipRes, prodRes]) => {
+                setInfluencers(infRes || []);
+                setScripts(scRes || []);
+                setAppClips(clipRes || []);
+                setProducts(prodRes || []);
+                setLoading(false);
+            });
+        };
+        window.addEventListener('projectChanged', handler);
+        return () => window.removeEventListener('projectChanged', handler);
+    }, []);
 
     // Cinematic Product Shots (Step 14)
     const [cinematicShots, setCinematicShots] = useState<ProductShot[]>([]);
@@ -395,6 +424,9 @@ function CreateContent() {
                 });
                 setSuccessMessage(' Video generation started!');
             }
+
+            // Refresh wallet balance so the header credits bar updates
+            refreshWallet();
 
             // Reset after short delay
             setTimeout(() => {
@@ -905,59 +937,103 @@ function CreateContent() {
                     )}
                 </div>
 
-                {/* Cost Summary */}
-                {costEstimate && (
-                    <div className="gen-summary">
-                        <div className="gen-summary-title">Cost Estimate</div>
-                        <div className="gen-summary-row"><span>Video</span><span>${costEstimate.cost_video?.toFixed(3) ?? '0.000'}</span></div>
-                        <div className="gen-summary-row"><span>Voice</span><span>${costEstimate.cost_voice?.toFixed(3) ?? '0.000'}</span></div>
-                        <div className="gen-summary-row"><span>Music</span><span>${costEstimate.cost_music?.toFixed(3) ?? '0.000'}</span></div>
-                        <div className="gen-summary-row"><span>Processing</span><span>${costEstimate.cost_processing?.toFixed(3) ?? '0.000'}</span></div>
-                        <div className="gen-summary-divider" />
-                        <div className="gen-summary-total"><span>Per Video</span><span>${costEstimate.total_cost?.toFixed(3) ?? '0.000'}</span></div>
-                        {isCampaignMode && (
-                            <div className="gen-summary-total" style={{ marginTop: '4px' }}><span>Campaign ({quantity})</span><span>${(costEstimate.total_cost * quantity).toFixed(2)}</span></div>
-                        )}
-                    </div>
-                )}
+                {/* Credit Cost Summary */}
+                {(() => {
+                    const costKey = `${productType}_${duration}s`;
+                    const creditCost = creditCosts[costKey] || 0;
+                    return creditCost > 0 ? (
+                        <div className="gen-summary">
+                            <div className="gen-summary-title">Credit Cost</div>
+                            <div className="gen-summary-row"><span>Video Type</span><span style={{ textTransform: 'capitalize' }}>{productType} {duration}s</span></div>
+                            <div className="gen-summary-divider" />
+                            <div className="gen-summary-total"><span>Per Video</span><span style={{ color: 'var(--blue)', fontWeight: 700 }}>{creditCost} credits</span></div>
+                            {isCampaignMode && (
+                                <div className="gen-summary-total" style={{ marginTop: '4px' }}><span>Campaign ({quantity})</span><span style={{ color: 'var(--blue)', fontWeight: 700 }}>{creditCost * quantity} credits</span></div>
+                            )}
+                        </div>
+                    ) : null;
+                })()}
 
                 {/* Generate Button */}
                 <button className="btn-generate" onClick={handleSubmit} disabled={!selectedInfluencer || submitting}>
                     <svg style={{ width: 16, height: 16, stroke: 'white', fill: 'none', strokeWidth: 2 }} viewBox="0 0 24 24"><polygon points="13,2 3,14 12,14 11,22 21,10 12,10" /></svg>
                     {submitting ? 'Launching...' : isCampaignMode ? `Launch Campaign (${quantity})` : 'Generate Video'}
-                    {costEstimate && <span className="credit-cost">${costEstimate.total_cost?.toFixed(2) ?? '0.00'}</span>}
+                    {creditCosts[`${productType}_${duration}s`] && <span className="credit-cost">{creditCosts[`${productType}_${duration}s`]} credits</span>}
                 </button>
             </div>
 
             {/* ──── RIGHT PANEL: Workspace ──── */}
             <div className="workspace">
-                {/* Influencer Selector */}
+                {/* Influencer Selector / Onboarding Tutorial */}
                 <div className="config-section">
-                    <div className="section-title">Select Influencer</div>
                     {influencers.length === 0 ? (
-                        <div className="empty-state" style={{ padding: '40px 20px' }}>
-                            <div className="empty-icon">
-                                <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4" /><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" /></svg>
+                        <div style={{ padding: '28px 16px' }}>
+                            <div style={{ textAlign: 'center', marginBottom: '32px' }}>
+                                <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--text-1)', lineHeight: 1.2, letterSpacing: '-0.5px' }}>
+                                    CREATE YOUR FIRST VIDEO
+                                </div>
+                                <div style={{ fontSize: '16px', color: 'var(--text-2)', marginTop: '8px' }}>
+                                    Get started <span style={{ color: 'var(--blue)', fontWeight: 700 }}>in 3 easy steps</span>
+                                </div>
                             </div>
-                            <div className="empty-title">No influencers yet</div>
-                            <div className="empty-sub">Add an AI influencer profile to get started.</div>
+
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '20px' }}>
+                                {/* Step 1 */}
+                                <a href="/influencers" style={{ textDecoration: 'none', color: 'inherit', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', cursor: 'pointer' }}>
+                                    <div style={{ position: 'relative', width: '100%', aspectRatio: '4/5', borderRadius: '16px', overflow: 'hidden', marginBottom: '14px', transition: 'transform 0.2s, box-shadow 0.2s' }} onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = '0 12px 32px rgba(99,102,241,0.3)'; }} onMouseLeave={e => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = ''; }}>
+                                        <div style={{ position: 'absolute', top: '12px', left: '12px', width: '34px', height: '34px', borderRadius: '50%', background: '#22c55e', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '16px', zIndex: 2, boxShadow: '0 2px 8px rgba(34,197,94,0.4)' }}>1</div>
+                                        <img src="/tutorial_step1.jpg" alt="Create Influencer" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                    </div>
+                                    <div style={{ fontWeight: 700, fontSize: '16px', color: 'var(--text-1)', marginBottom: '6px' }}>Create Influencer</div>
+                                    <div style={{ fontSize: '13px', color: 'var(--text-3)', lineHeight: 1.5 }}>Upload a photo to create your AI influencer</div>
+                                </a>
+
+                                {/* Step 2 */}
+                                <a href="/products" style={{ textDecoration: 'none', color: 'inherit', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', cursor: 'pointer' }}>
+                                    <div style={{ position: 'relative', width: '100%', aspectRatio: '4/5', borderRadius: '16px', overflow: 'hidden', marginBottom: '14px', transition: 'transform 0.2s, box-shadow 0.2s' }} onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = '0 12px 32px rgba(245,158,11,0.3)'; }} onMouseLeave={e => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = ''; }}>
+                                        <div style={{ position: 'absolute', top: '12px', left: '12px', width: '34px', height: '34px', borderRadius: '50%', background: '#22c55e', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '16px', zIndex: 2, boxShadow: '0 2px 8px rgba(34,197,94,0.4)' }}>2</div>
+                                        <img src="/tutorial_step2.png" alt="Add Product" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                    </div>
+                                    <div style={{ fontWeight: 700, fontSize: '16px', color: 'var(--text-1)', marginBottom: '6px' }}>Add Product</div>
+                                    <div style={{ fontSize: '13px', color: 'var(--text-3)', lineHeight: 1.5 }}>Add your app or physical product to promote</div>
+                                </a>
+
+                                {/* Step 3 */}
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
+                                    <div style={{ position: 'relative', width: '100%', aspectRatio: '4/5', borderRadius: '16px', overflow: 'hidden', marginBottom: '14px' }}>
+                                        <div style={{ position: 'absolute', top: '12px', left: '12px', width: '34px', height: '34px', borderRadius: '50%', background: '#22c55e', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '16px', zIndex: 2, boxShadow: '0 2px 8px rgba(34,197,94,0.4)' }}>3</div>
+                                        <img src="/tutorial_step3.jpg" alt="Create Video" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                    </div>
+                                    <div style={{ fontWeight: 700, fontSize: '16px', color: 'var(--text-1)', marginBottom: '6px' }}>Create Video</div>
+                                    <div style={{ fontSize: '13px', color: 'var(--text-3)', lineHeight: 1.5 }}>Generate UGC videos with AI — it&apos;s that simple!</div>
+                                </div>
+                            </div>
+
+                            <div style={{ textAlign: 'center', marginTop: '28px' }}>
+                                <a href="/influencers" style={{ display: 'inline-block', padding: '12px 36px', background: 'linear-gradient(135deg, var(--blue) 0%, var(--blue-dark) 100%)', color: 'white', borderRadius: '12px', fontSize: '15px', fontWeight: 700, textDecoration: 'none', boxShadow: '0 4px 16px rgba(51,122,255,0.3)', transition: 'all 0.2s' }}>
+                                    Create Influencer →
+                                </a>
+                            </div>
                         </div>
                     ) : (
-                        <div className="influencer-grid">
-                            {influencers.map(inf => (
-                                <div key={inf.id}
-                                    className={`inf-card ${selectedInfluencer === inf.id ? 'selected' : ''}`}
-                                    onClick={() => setSelectedInfluencer(inf.id)}
-                                >
-                                    <div className="inf-thumb" style={inf.image_url ? { backgroundImage: `url(${inf.image_url})` } : { background: 'linear-gradient(135deg, var(--blue) 0%, #6B4EFF 100%)' }}>
-                                        <div className="inf-name">{inf.name}</div>
+                        <>
+                            <div className="section-title">Select Influencer</div>
+                            <div className="influencer-grid">
+                                {influencers.map(inf => (
+                                    <div key={inf.id}
+                                        className={`inf-card ${selectedInfluencer === inf.id ? 'selected' : ''}`}
+                                        onClick={() => setSelectedInfluencer(inf.id)}
+                                    >
+                                        <div className="inf-thumb" style={inf.image_url ? { backgroundImage: `url(${inf.image_url})` } : { background: 'linear-gradient(135deg, var(--blue) 0%, #6B4EFF 100%)' }}>
+                                            <div className="inf-name">{inf.name}</div>
+                                        </div>
+                                        <div className="inf-check">
+                                            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" /></svg>
+                                        </div>
                                     </div>
-                                    <div className="inf-check">
-                                        <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" /></svg>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
+                                ))}
+                            </div>
+                        </>
                     )}
                 </div>
 

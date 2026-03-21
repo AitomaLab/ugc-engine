@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { Suspense, useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -23,7 +23,7 @@ function CinematicContent() {
   const searchParams = useSearchParams();
   const [products, setProducts] = useState<any[]>([]);
   const [selectedProductId, setSelectedProductId] = useState<string>('');
-  const [selectedStyle, setSelectedStyle] = useState('hero');
+  const [selectedStyles, setSelectedStyles] = useState<Set<string>>(new Set(['hero']));
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [prompt, setPrompt] = useState('');
@@ -53,6 +53,19 @@ function CinematicContent() {
   }, [searchParams]);
 
   useEffect(() => { fetchProducts(); }, [fetchProducts]);
+
+  // Re-fetch when user switches projects
+  useEffect(() => {
+    const handler = () => {
+      setProducts([]);
+      setProductShots([]);
+      setSelectedProductId('');
+      setUploadedImage(null);
+      fetchProducts();
+    };
+    window.addEventListener('projectChanged', handler);
+    return () => window.removeEventListener('projectChanged', handler);
+  }, [fetchProducts]);
 
   const fetchShots = useCallback(async (pid: string) => {
     if (!pid) {
@@ -123,14 +136,20 @@ function CinematicContent() {
       setError("Please select a product first.");
       return;
     }
+    if (selectedStyles.size === 0) {
+      setError("Please select at least one shot style.");
+      return;
+    }
     setGenerating(true);
     setError(null);
     try {
-      const payload = { shot_type: selectedStyle, variations: 1 };
-      await apiFetch(`/api/products/${selectedProductId}/shots`, {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      });
+      // Generate one shot per selected style
+      for (const style of selectedStyles) {
+        await apiFetch(`/api/products/${selectedProductId}/shots`, {
+          method: 'POST',
+          body: JSON.stringify({ shot_type: style, variations: 1 }),
+        });
+      }
       // Refresh shots
       await fetchShots(selectedProductId);
     } catch (e: any) {
@@ -226,8 +245,18 @@ function CinematicContent() {
             {SHOT_STYLES.map(style => (
               <div
                 key={style.key}
-                className={`shot-type-card ${selectedStyle === style.key ? 'selected' : ''}`}
-                onClick={() => setSelectedStyle(style.key)}
+                className={`shot-type-card ${selectedStyles.has(style.key) ? 'selected' : ''}`}
+                onClick={() => {
+                  setSelectedStyles(prev => {
+                    const next = new Set(prev);
+                    if (next.has(style.key)) {
+                      next.delete(style.key);
+                    } else {
+                      next.add(style.key);
+                    }
+                    return next;
+                  });
+                }}
               >
                 <div className="shot-icon">{style.icon}</div>
                 <div className="shot-label">{style.label}</div>
@@ -257,11 +286,11 @@ function CinematicContent() {
         <button
           className="btn-generate"
           onClick={handleGenerate}
-          disabled={generating || !selectedProductId}
+          disabled={generating || !selectedProductId || selectedStyles.size === 0}
         >
           <svg style={{ width: 16, height: 16, stroke: 'white', fill: 'none', strokeWidth: 2 }} viewBox="0 0 24 24"><polygon points="13,2 3,14 12,14 11,22 21,10 12,10" /></svg>
-          {generating ? 'Queuing Generation...' : 'Generate New Shot'}
-          <span className="credit-cost">50 cr</span>
+          {generating ? 'Generating...' : `Generate ${selectedStyles.size} Shot${selectedStyles.size !== 1 ? 's' : ''}`}
+          <span className="credit-cost">{selectedStyles.size * 13} cr</span>
         </button>
       </div>
 
@@ -351,6 +380,7 @@ function CinematicContent() {
                             >
                               <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><polygon points="5 3 19 12 5 21 5 3" /></svg>
                               {animatingIds.has(shot.id) ? 'Queuing...' : 'Animate'}
+                              <span style={{ marginLeft: '4px', fontSize: '10px', opacity: 0.85 }}>51 cr</span>
                             </button>
                           )}
                         </div>

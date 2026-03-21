@@ -1,12 +1,13 @@
 /**
- * UGC Engine v3 — Supabase Client
+ * UGC Engine v3 — Supabase Client (Cookie-based)
  *
- * Singleton Supabase client for frontend data fetching and storage operations.
- * Uses the anon key (safe for client-side use).
+ * Uses @supabase/ssr's createBrowserClient which stores auth tokens
+ * in cookies instead of localStorage. This is required for the
+ * Next.js middleware to detect the session on the server side.
  */
-import { createClient } from '@supabase/supabase-js';
+import { createBrowserClient } from '@supabase/ssr';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = createBrowserClient(supabaseUrl, supabaseAnonKey);

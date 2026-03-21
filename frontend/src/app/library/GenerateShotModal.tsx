@@ -63,7 +63,7 @@ export default function GenerateShotModal({
         }
     }
 
-    const estimatedCost = costs ? (costs.image_generation_cost * variations).toFixed(2) : '...';
+
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -139,11 +139,11 @@ export default function GenerateShotModal({
                     {/* Cost Estimate */}
                     <div className="bg-white/80 rounded-xl p-3 border border-[#E8ECF4]">
                         <div className="flex justify-between items-center">
-                            <span className="text-xs text-[#4A5568]">Estimated cost</span>
-                            <span className="text-sm font-mono text-green-600 font-bold">${estimatedCost}</span>
+                            <span className="text-xs text-[#4A5568]">Credit cost</span>
+                            <span className="text-sm font-mono text-blue-600 font-bold">{variations * 13} credits</span>
                         </div>
                         <p className="text-[10px] text-[#94A3B8] mt-1">
-                            {variations} image{variations > 1 ? 's' : ''} x ${costs?.image_generation_cost?.toFixed(2) ?? '...'}/image. Animation billed separately.
+                            {variations} image{variations > 1 ? 's' : ''} × 13 credits/image (2K). Animation billed separately (51 cr).
                         </p>
                     </div>
 
@@ -158,7 +158,7 @@ export default function GenerateShotModal({
                         disabled={submitting}
                         className="w-full py-3 rounded-xl bg-gradient-to-r from-blue-500 to-purple-500 text-white font-medium text-sm hover:opacity-90 transition-opacity disabled:opacity-50"
                     >
-                        {submitting ? 'Generating...' : `Generate ${variations} Shot${variations > 1 ? 's' : ''}`}
+                        {submitting ? 'Generating...' : `Generate ${variations} Shot${variations > 1 ? 's' : ''} · ${variations * 13} cr`}
                     </button>
                 </div>
             </div>

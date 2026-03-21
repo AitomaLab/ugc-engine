@@ -1,7 +1,8 @@
-﻿"use client";
+"use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { apiFetch } from "@/lib/utils";
+import { useApp } from "@/providers/AppProvider";
 import Link from "next/link";
 
 // ---------------------------------------------------------------------------
@@ -17,6 +18,7 @@ interface Stats {
   influencers: number;
   scripts: number;
   app_clips: number;
+  projects?: number;
 }
 
 interface Job {
@@ -80,6 +82,8 @@ export default function StudioPage() {
   const [loading, setLoading] = useState(true);
   const [expandedCampaign, setExpandedCampaign] = useState<string | null>(null);
   const carouselRef = useRef<HTMLDivElement>(null);
+  const { profile } = useApp();
+  const userName = profile?.name || profile?.email?.split('@')[0] || 'Creator';
 
   const fetchData = useCallback(async () => {
     try {
@@ -166,7 +170,7 @@ export default function StudioPage() {
     <div className="content-area">
       <div className="page-header">
         <h1 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          Good morning, <span style={{ color: 'var(--blue)' }}>Max</span>
+          Good morning, <span style={{ color: 'var(--blue)' }}>{userName}</span>
         </h1>
         <p>{welcome.subtitle}</p>
       </div>
@@ -201,10 +205,15 @@ export default function StudioPage() {
           <div className="stat-value">{stats?.scripts ?? 0}</div>
           <div className="stat-sub">In library</div>
         </div>
+        <div className="stat-card">
+          <div className="stat-label">Projects</div>
+          <div className="stat-value">{stats?.projects ?? 0}</div>
+          <div className="stat-sub">Active</div>
+        </div>
       </div>
 
       {/* Campaign Tracker */}
-      {campaigns.length > 0 && (
+      {campaigns.length > 0 ? (
         <div className="tracker-card">
           <div className="section-title">
             Campaign Tracker
@@ -236,10 +245,24 @@ export default function StudioPage() {
             })}
           </div>
         </div>
+      ) : (
+        <div className="tracker-card">
+          <div className="section-title">Campaign Tracker</div>
+          <div className="empty-state" style={{ padding: '32px 20px' }}>
+            <div className="empty-icon">
+              <svg viewBox="0 0 24 24"><polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" /></svg>
+            </div>
+            <div className="empty-title">No campaigns yet</div>
+            <div className="empty-sub">Launch your first video campaign to track progress here.</div>
+            <Link href="/create" style={{ display: 'inline-block', marginTop: '12px', padding: '8px 20px', background: 'var(--blue)', color: 'white', borderRadius: '8px', fontSize: '13px', fontWeight: 600, textDecoration: 'none' }}>
+              + Create Your First Video
+            </Link>
+          </div>
+        </div>
       )}
 
       {/* Recent Videos */}
-      {recentVideos.length > 0 && (
+      {recentVideos.length > 0 ? (
         <>
           <div className="section-title">
             Recent Videos
@@ -270,6 +293,20 @@ export default function StudioPage() {
                 </div>
               </div>
             ))}
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="section-title">Recent Videos</div>
+          <div className="empty-state" style={{ padding: '32px 20px', background: 'white', borderRadius: '12px', border: '1px solid var(--border)' }}>
+            <div className="empty-icon">
+              <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18" /><line x1="7" y1="2" x2="7" y2="22" /><line x1="17" y1="2" x2="17" y2="22" /><line x1="2" y1="12" x2="22" y2="12" /><line x1="2" y1="7" x2="7" y2="7" /><line x1="2" y1="17" x2="7" y2="17" /><line x1="17" y1="7" x2="22" y2="7" /><line x1="17" y1="17" x2="22" y2="17" /></svg>
+            </div>
+            <div className="empty-title">No videos yet</div>
+            <div className="empty-sub">Your generated videos will appear here. Create your first one!</div>
+            <Link href="/create" style={{ display: 'inline-block', marginTop: '12px', padding: '8px 20px', background: 'var(--blue)', color: 'white', borderRadius: '8px', fontSize: '13px', fontWeight: 600, textDecoration: 'none' }}>
+              + Create Your First Video
+            </Link>
           </div>
         </>
       )}

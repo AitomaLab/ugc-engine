@@ -3,6 +3,9 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
+import { useApp } from '@/providers/AppProvider';
+import { ProjectSwitcher } from '@/components/layout/ProjectSwitcher';
+import { supabase } from '@/lib/supabaseClient';
 
 // SVG icon components — no emoji allowed
 const IconGrid = () => <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></svg>;
@@ -45,45 +48,80 @@ function NavItem({ href, label, Icon }: { href: string; label: string; Icon: Rea
 
 function ProfileDropdown() {
     const [open, setOpen] = useState(false);
+    const { profile, subscription, wallet } = useApp();
+
+    const initials = profile?.name
+        ? profile.name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
+        : profile?.email
+            ? profile.email[0].toUpperCase()
+            : 'U';
+
+    const planName = subscription?.plan?.name || 'Free';
+    const balance = wallet?.balance ?? 0;
+    const monthlyCredits = subscription?.plan?.credits_monthly ?? 0;
+    const used = monthlyCredits > 0 ? monthlyCredits - balance : 0;
+    const percentage = monthlyCredits > 0 ? Math.round((balance / monthlyCredits) * 100) : 0;
+
+    const handleSignOut = async () => {
+        await supabase.auth.signOut();
+        window.location.href = '/login';
+    };
+
     return (
         <div className={`profile-wrapper ${open ? 'open' : ''}`} onClick={() => setOpen(!open)}>
-            <div className="avatar">AS</div>
+            <div className="avatar">{initials}</div>
             <div className="profile-dropdown" onClick={e => e.stopPropagation()}>
                 <div className="pd-header">
-                    <div className="pd-avatar">AS</div>
+                    <div className="pd-avatar">{initials}</div>
                     <div>
-                        <div className="pd-name">Studio Logo</div>
-                        <div className="pd-plan">Creator Plan</div>
+                        <div className="pd-name">{profile?.name || profile?.email || 'User'}</div>
+                        <div className="pd-plan">{planName} Plan</div>
                     </div>
                 </div>
                 <div className="pd-credits">
                     <div className="pd-credits-label">Monthly Credits</div>
                     <div className="pd-credits-row">
-                        <span className="pd-credits-value">1,860</span>
-                        <span className="pd-credits-total">of 3,000</span>
+                        <span className="pd-credits-value">{balance.toLocaleString()}</span>
+                        {monthlyCredits > 0 && <span className="pd-credits-total">of {monthlyCredits.toLocaleString()}</span>}
                     </div>
-                    <div className="pd-bar-bg"><div className="pd-bar-fill" /></div>
-                    <div className="pd-bar-labels"><span>Used: 1,140</span><span>62% remaining</span></div>
-                    <button className="pd-topup">Top Up Credits</button>
+                    {monthlyCredits > 0 && (
+                        <>
+                            <div className="pd-bar-bg"><div className="pd-bar-fill" style={{ width: `${percentage}%` }} /></div>
+                            <div className="pd-bar-labels"><span>Used: {used.toLocaleString()}</span><span>{percentage}% remaining</span></div>
+                        </>
+                    )}
+                    <button className="pd-topup" onClick={() => { window.location.href = '/manage?topup=1'; }}>Top Up Credits</button>
                 </div>
-                <div className="pd-menu-item"><IconUser />View Profile</div>
+                <Link href="/profile" className="pd-menu-item"><IconUser />View Profile</Link>
+                <Link href="/projects" className="pd-menu-item"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /></svg>My Projects</Link>
                 <Link href="/manage" className="pd-menu-item"><IconSettings />Manage Account</Link>
-                <div className="pd-menu-item"><IconStar />Upgrade Plan</div>
+                <Link href="/upgrade" className="pd-menu-item"><IconStar />Upgrade Plan</Link>
                 <div className="pd-divider" />
-                <div className="pd-menu-item danger"><IconLogOut />Sign Out</div>
+                <div className="pd-menu-item danger" onClick={handleSignOut}><IconLogOut />Sign Out</div>
             </div>
         </div>
     );
 }
 
 export function Header() {
+    const [menuOpen, setMenuOpen] = useState(false);
     return (
         <header className="header">
             <Link href="/" className="logo">
                 <img src="/StudioLogo_Black.svg" alt="Studio Logo" style={{ height: '32px' }} />
             </Link>
 
-            <nav className="main-nav">
+            <button className="menu-toggle" onClick={() => setMenuOpen(!menuOpen)} aria-label="Toggle menu">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2">
+                    {menuOpen ? (
+                        <><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></>
+                    ) : (
+                        <><line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" /></>
+                    )}
+                </svg>
+            </button>
+
+            <nav className={`main-nav ${menuOpen ? 'open' : ''}`}>
                 {NAV_ITEMS.map((item, i) =>
                     'divider' in item ? (
                         <div key={`div-${i}`} className="nav-divider" />
@@ -94,15 +132,16 @@ export function Header() {
             </nav>
 
             <div className="header-actions">
+                <ProjectSwitcher />
                 <Link href="/cinematic" className="btn-cinematic">
                     <IconArrowRight />
-                    Cinematic Shots
+                    <span className="btn-label">Cinematic Shots</span>
                 </Link>
                 <Link href="/create" className="btn-create">
                     <IconPlus />
-                    Create Video
+                    <span className="btn-label">Create Video</span>
                 </Link>
-                <div className="nav-divider" />
+                <div className="nav-divider hide-mobile" />
                 <button className="icon-btn">
                     <IconBell />
                     <span className="notif-dot" />

@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
@@ -7,6 +7,7 @@ import ProductModal from '@/components/ui/ProductModal';
 import MediaPreviewModal from '@/components/ui/MediaPreviewModal';
 import { apiFetch } from '@/lib/utils';
 import { Product } from '@/lib/types';
+import { useProgressiveList } from '@/hooks/useProgressiveList';
 
 export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -41,10 +42,19 @@ export default function ProductsPage() {
 
   useEffect(() => { fetchProducts(); }, [fetchProducts]);
 
+  // Re-fetch when user switches projects
+  useEffect(() => {
+    const handler = () => { setLoading(true); fetchProducts(); };
+    window.addEventListener('projectChanged', handler);
+    return () => window.removeEventListener('projectChanged', handler);
+  }, [fetchProducts]);
+
   const filtered = products.filter(p =>
     (p.name || '').toLowerCase().includes(search.toLowerCase()) &&
     (typeFilter === '' || (p.type ?? '').toLowerCase() === typeFilter.toLowerCase())
   );
+
+  const { visibleItems: visibleProducts, sentinelRef, hasMore } = useProgressiveList(filtered, 12);
 
   return (
     <div className='content-area'>
@@ -88,8 +98,9 @@ export default function ProductsPage() {
           <button className='btn-primary' onClick={() => handleOpenModal()}>Add Product</button>
         </div>
       ) : (
+        <>
         <div className='products-grid'>
-          {filtered.map(product => (
+          {visibleProducts.map(product => (
             <div key={product.id} className='product-card'>
               <div
                 className='product-img'
@@ -125,6 +136,8 @@ export default function ProductsPage() {
             </div>
           ))}
         </div>
+        {hasMore && <div ref={sentinelRef} style={{ height: '1px', marginTop: '8px' }} />}
+        </>
       )}
 
       {isModalOpen && (

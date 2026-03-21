@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { apiFetch } from '@/lib/utils';
 import { Script, Influencer, Product, ScriptJSON, ScriptScene } from '@/lib/types';
+import { useProgressiveList } from '@/hooks/useProgressiveList';
 
 /* ── constants ─────────────────────────────────────────────── */
 const METHODOLOGIES = [
@@ -167,6 +168,22 @@ export default function ScriptsPage() {
     })();
   }, []);
 
+  // Re-fetch when user switches projects
+  useEffect(() => {
+    const handler = () => {
+      setLoading(true);
+      fetchScripts();
+      (async () => {
+        try {
+          const [inf, prod] = await Promise.all([apiFetch<Influencer[]>('/influencers'), apiFetch<Product[]>('/api/products')]);
+          setInfluencers(inf); setProducts(prod);
+        } catch (e) { console.error(e); }
+      })();
+    };
+    window.addEventListener('projectChanged', handler);
+    return () => window.removeEventListener('projectChanged', handler);
+  }, [fetchScripts]);
+
   // Adjust manual scenes when length changes
   useEffect(() => {
     setManScenes(prev => {
@@ -306,6 +323,7 @@ export default function ScriptsPage() {
   const uniqueMeths = [...new Set(scripts.map(s => s.methodology).filter(Boolean))].length;
   const usedInVideos = scripts.filter(s => (s.times_used||0) > 0).length;
   const trendingCount = scripts.filter(s => s.is_trending).length;
+  const { visibleItems: visibleScripts, sentinelRef, hasMore } = useProgressiveList(scripts, 15);
 
   // Scene title helper
   const sceneTitle = (i: number, total: number) => {
@@ -454,8 +472,9 @@ export default function ScriptsPage() {
             <button className="btn-primary" onClick={() => { setModalOpen(true); setModalTab('ai'); }}>Create Script</button>
           </div>
         ) : (
+          <>
           <div className="sp-list">
-            {scripts.map(script => {
+            {visibleScripts.map(script => {
               const isExp = expandedId === script.id;
               const hook = getHook(script);
               const scenes = script.script_json?.scenes || [];
@@ -523,7 +542,8 @@ export default function ScriptsPage() {
               );
             })}
           </div>
-        )}
+          {hasMore && <div ref={sentinelRef} style={{ height: '1px', marginTop: '8px' }} />}
+          </>)}
       </main>
 
       {/* ═══ NEW SCRIPT MODAL ═══ */}
