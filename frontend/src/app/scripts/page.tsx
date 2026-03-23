@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { apiFetch } from '@/lib/utils';
 import { Script, Influencer, Product, ScriptJSON, ScriptScene } from '@/lib/types';
 import { useProgressiveList } from '@/hooks/useProgressiveList';
+import Select from '@/components/ui/Select';
 
 /* ── constants ─────────────────────────────────────────────── */
 const METHODOLOGIES = [
@@ -348,51 +349,40 @@ export default function ScriptsPage() {
         </div>
         <div className="sb-section">
           <div className="sb-label">Category</div>
-          <div className="filter-group">
-            <button className={`fc${!catFilter?' active':''}`} onClick={() => setCatFilter('')}>
-              <span className="fc-left">All Scripts</span><span className="fc-count">{totalScripts}</span>
-            </button>
-            {categories.map(c => (
-              <button key={c} className={`fc${catFilter===c?' active':''}`} onClick={() => setCatFilter(catFilter===c?'':c)}>
-                <span className="fc-left">{c}</span><span className="fc-count">{scripts.filter(s=>s.category===c).length}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="sb-section">
-          <div className="sb-label">Methodology</div>
-          <div className="filter-group">
-            <button className={`mp${!methFilter?' active':''}`} onClick={() => setMethFilter('')}>
-              <div className="mp-dot" style={{background:'var(--blue)'}} /> All Methods
-            </button>
-            {METHODOLOGIES.map(m => (
-              <button key={m.id} className={`mp${methFilter===m.id?' active':''}`} onClick={() => setMethFilter(methFilter===m.id?'':m.id)}>
-                <div className="mp-dot" style={{background:m.color}} /> {m.label}
-              </button>
-            ))}
-          </div>
+          <Select
+            value={catFilter}
+            onChange={setCatFilter}
+            placeholder={`All Categories (${totalScripts})`}
+            options={[
+              { value: '', label: `All Categories (${totalScripts})` },
+              ...categories.map(c => ({ value: c, label: `${c} (${scripts.filter(s=>s.category===c).length})` })),
+            ]}
+          />
         </div>
         <div className="sb-section">
           <div className="sb-label">Video Length</div>
-          <div className="filter-group">
-            <button className={`fc${lenFilter==='15'?' active':''}`} onClick={() => setLenFilter(lenFilter==='15'?'':'15')}>
-              <span className="fc-left"><IconClock /> 15 seconds</span><span className="fc-count">{scripts.filter(s=>(s.video_length||15)===15).length}</span>
-            </button>
-            <button className={`fc${lenFilter==='30'?' active':''}`} onClick={() => setLenFilter(lenFilter==='30'?'':'30')}>
-              <span className="fc-left"><IconClock /> 30 seconds</span><span className="fc-count">{scripts.filter(s=>s.video_length===30).length}</span>
-            </button>
-          </div>
+          <Select
+            value={lenFilter}
+            onChange={setLenFilter}
+            placeholder="All Lengths"
+            options={[
+              { value: '', label: 'All Lengths' },
+              { value: '15', label: '15 Seconds' },
+              { value: '30', label: '30 Seconds' },
+            ]}
+          />
         </div>
         <div className="sb-section">
           <div className="sb-label">Influencer</div>
-          <div className="filter-group">
-            {influencers.map(inf => (
-              <button key={inf.id} className={`fc${infFilter===inf.id?' active':''}`} onClick={() => setInfFilter(infFilter===inf.id?'':inf.id)}>
-                <span className="fc-left"><IconUser /> {inf.name}</span>
-                <span className="fc-count">{scripts.filter(s=>s.influencer_id===inf.id).length}</span>
-              </button>
-            ))}
-          </div>
+          <Select
+            value={infFilter}
+            onChange={setInfFilter}
+            placeholder="All Influencers"
+            options={[
+              { value: '', label: 'All Influencers' },
+              ...influencers.map(inf => ({ value: inf.id, label: inf.name })),
+            ]}
+          />
         </div>
       </aside>
 
@@ -403,7 +393,7 @@ export default function ScriptsPage() {
           <div><h1>Scripts</h1><p>Your library of structured UGC video scripts, organised by methodology and category.</p></div>
           <div className="sp-header-actions">
             <button className="btn-find-trending" onClick={() => { setTrendModalOpen(true); setTrendPhase('config'); }}>
-              <IconTrend /> Find Trending Scripts
+              <IconTrend /> Scan Trending Scripts
             </button>
             <button className="btn-new-script" onClick={() => { setModalOpen(true); setModalTab('ai'); setAiPreview(null); }}>
               <IconPlus /> New Script
@@ -411,41 +401,13 @@ export default function ScriptsPage() {
           </div>
         </div>
 
-        {/* Stats */}
-        <div className="sp-stats">
-          <div className="sp-stat"><span className="sp-stat-val">{totalScripts}</span><span className="sp-stat-lbl">Total Scripts</span></div>
-          <div className="sp-stat-div" />
-          <div className="sp-stat"><span className="sp-stat-val">{uniqueCats}</span><span className="sp-stat-lbl">Categories</span></div>
-          <div className="sp-stat-div" />
-          <div className="sp-stat"><span className="sp-stat-val">{uniqueMeths}</span><span className="sp-stat-lbl">Methodologies</span></div>
-          <div className="sp-stat-div" />
-          <div className="sp-stat"><span className="sp-stat-val">{usedInVideos}</span><span className="sp-stat-lbl">Used in Videos</span></div>
-          <div className="sp-stat-div" />
-          <div className="sp-stat"><span className="sp-stat-val" style={{color:'var(--green)'}}>{trendingCount}</span><span className="sp-stat-lbl">Trending Added</span></div>
-        </div>
-
-        {/* Trending banner */}
-        <div className="sp-trending-banner">
-          <div className="sp-trending-left">
-            <div className="sp-trending-icon"><IconTrend /></div>
-            <div className="sp-trending-text">
-              {trendingCount > 0 && !trendingDismissed ? (
-                <><h3>{trendingCount} new trending script{trendingCount!==1?'s':''} discovered this week</h3>
-                <p>AI scraped TikTok, Instagram Reels and YouTube Shorts for the latest high-performing hooks in E-commerce and Mobile Apps.</p></>
-              ) : (
-                <><h3>Discover trending scripts from top-performing ads</h3>
-                <p>Scan TikTok, Instagram Reels, YouTube Shorts and ad intelligence blogs for high-performing hooks.</p></>
-              )}
-            </div>
-          </div>
-          <button className="btn-trending" onClick={trendingCount > 0 && !trendingDismissed ? () => {
-            setTrendingDismissed(true);
-            setToast({msg: `${trendingCount} trending script${trendingCount!==1?'s are':' is'} already in your library below. Look for the green "Trending" tag.`, visible: true});
-            setTimeout(() => setToast(t => ({...t, visible: false})), 4000);
-            window.scrollTo({top: 0, behavior: 'smooth'});
-          } : () => { setTrendModalOpen(true); setTrendPhase('config'); }}>
-            <IconTrend /> {trendingCount > 0 && !trendingDismissed ? 'View Trending' : 'Scan Now'}
-          </button>
+        {/* Stats Row */}
+        <div className="stats-row">
+          <div className="stat-card"><div className="stat-value">{totalScripts}</div><div className="stat-label">Total Scripts</div></div>
+          <div className="stat-card"><div className="stat-value">{uniqueCats}</div><div className="stat-label">Categories</div></div>
+          <div className="stat-card"><div className="stat-value">{uniqueMeths}</div><div className="stat-label">Methodologies</div></div>
+          <div className="stat-card"><div className="stat-value">{usedInVideos}</div><div className="stat-label">Used in Videos</div></div>
+          <div className="stat-card"><div className="stat-value" style={{color:'var(--green)'}}>{trendingCount}</div><div className="stat-label">Trending Added</div></div>
         </div>
 
         {/* Toolbar */}
@@ -457,11 +419,26 @@ export default function ScriptsPage() {
           <select className="sp-sort" value={sortBy} onChange={e => setSortBy(e.target.value)}>
             <option value="created_at_desc">Newest First</option>
             <option value="times_used_desc">Most Used</option>
-            <option value="name_asc">A -- Z</option>
+            <option value="name_asc">A — Z</option>
           </select>
         </div>
 
-        {/* Script list */}
+        {/* Methodology Pills */}
+        <div className="sp-meth-pills">
+          <button className={`sp-meth-pill ${!methFilter ? 'active' : ''}`} onClick={() => setMethFilter('')}>All</button>
+          {METHODOLOGIES.map(m => (
+            <button
+              key={m.id}
+              className={`sp-meth-pill ${methFilter === m.id ? 'active' : ''}`}
+              onClick={() => setMethFilter(methFilter === m.id ? '' : m.id)}
+            >
+              <div className="mp-dot" style={{background: m.color}} />
+              {m.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Script Card Grid */}
         {loading ? (
           <div className="empty-state"><div className="empty-title">Loading scripts...</div></div>
         ) : scripts.length === 0 ? (
@@ -473,71 +450,83 @@ export default function ScriptsPage() {
           </div>
         ) : (
           <>
-          <div className="sp-list">
+          <div className="sc-grid">
             {visibleScripts.map(script => {
               const isExp = expandedId === script.id;
               const hook = getHook(script);
               const scenes = script.script_json?.scenes || [];
-              const prod = products.find(p => p.id === script.product_id);
-              const inf = influencers.find(i => i.id === script.influencer_id);
               return (
-                <div key={script.id} className={`sp-card${isExp?' expanded':''}${script.is_trending?' trending':''}`}>
-                  <div className="sp-card-head" onClick={() => setExpandedId(isExp ? null : script.id)}>
-                    <div className="sp-card-icon" style={{background: script.is_trending ? '#F0FDF4' : 'var(--blue-light)', color: script.is_trending ? '#16A34A' : 'var(--blue)'}}>
-                      {script.is_trending ? <IconTrend /> : <IconDoc />}
+                <div key={script.id} className={`sc-card ${script.is_trending ? 'sc-trending' : ''} ${isExp ? 'sc-open' : ''}`}>
+                  {/* Card header row */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                      {script.methodology && (
+                        <span className="sc-pill" style={{ background: getMethodColor(script.methodology), color: 'white' }}>
+                          {script.methodology}
+                        </span>
+                      )}
+                      {script.is_trending && <span className="sc-pill sc-pill-trend"><IconTrend /> Trending</span>}
                     </div>
-                    <div className="sp-card-meta">
-                      <div className="sp-card-hook">&ldquo;{hook}&rdquo;</div>
-                      <div className="sp-card-tags">
-                        {script.category && <span className="sp-tag sp-tag-cat">{script.category}</span>}
-                        {script.methodology && <span className="sp-tag sp-tag-method">{script.methodology}</span>}
-                        <span className="sp-tag sp-tag-len">{script.video_length || 15}s</span>
-                        {inf && <span className="sp-tag sp-tag-inf">{inf.name}</span>}
-                        {prod && <span className="sp-tag sp-tag-prod">{prod.name}</span>}
-                        {script.is_trending && <span className="sp-tag sp-tag-trending"><IconTrend /> Trending</span>}
-                      </div>
-                    </div>
-                    <div className="sp-card-actions" onClick={e => e.stopPropagation()}>
-                      <span className="sp-card-date">{fmtDate(script.created_at)}</span>
-                      <button className="btn-use" onClick={() => handleUse(script.id)}>Use</button>
-                      <button className="btn-edit" onClick={() => openEdit(script)}>Edit</button>
-                      <button className="btn-icon-del" onClick={() => handleDelete(script.id)}><IconTrash /></button>
-                      <button className={`sp-expand${isExp?' open':''}`} onClick={() => setExpandedId(isExp ? null : script.id)}>
-                        <IconChevDown />
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      <button className="sc-icon-btn" onClick={() => handleDelete(script.id)} title="Delete">
+                        <IconTrash />
+                      </button>
+                      <button className="sc-icon-btn" onClick={() => setExpandedId(isExp ? null : script.id)} title="Expand">
+                        <span style={{ transform: isExp ? 'rotate(180deg)' : 'none', display: 'inline-flex', transition: 'transform 0.15s' }}>
+                          <IconChevDown />
+                        </span>
                       </button>
                     </div>
                   </div>
-                  <div className={`sp-body${isExp?' open':''}`}>
-                    {scenes.length > 0 ? (
-                      <>
-                        <div className="sp-body-grid">
+
+                  {/* Hook text */}
+                  <p style={{ fontSize: '13px', color: 'var(--text-1)', lineHeight: 1.5,
+                    display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                    &ldquo;{hook}&rdquo;
+                  </p>
+
+                  {/* Card footer row */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                      {script.category && <span className="sc-pill sc-pill-cat">{script.category}</span>}
+                      <span className="sc-pill sc-pill-dur">{script.video_length || 15}s</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button className="sc-btn-edit" onClick={() => openEdit(script)}>Edit</button>
+                      <button className="sc-btn-use" onClick={() => handleUse(script.id)}>Use</button>
+                    </div>
+                  </div>
+
+                  {/* Expanded body */}
+                  {isExp && (
+                    <div className="sc-body">
+                      {scenes.length > 0 && (
+                        <div className="sc-scenes">
                           {scenes.map((sc: ScriptScene, i: number) => (
-                            <div key={i} className="sp-scene">
-                              <div className="sp-scene-head">
-                                <span className="sp-scene-label">Scene {sc.scene_number} -- {sc.scene_title || sceneTitle(i, scenes.length)}</span>
-                                <span className="sp-scene-badge">{i*7} -- {i*7+7}s</span>
+                            <div key={i} className="sc-scene">
+                              <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-3)' }}>
+                                Scene {sc.scene_number} · {sc.estimated_duration_sec || 7}s
                               </div>
-                              <div className="sp-scene-text">&ldquo;{sc.dialogue}&rdquo;</div>
-                              {sc.visual_cue && <div className="sp-scene-cue"><strong>Visual:</strong> {sc.visual_cue}</div>}
+                              <p style={{ fontSize: '13px', fontStyle: 'italic', margin: '4px 0 0' }}>
+                                &ldquo;{sc.dialogue}&rdquo;
+                              </p>
+                              {sc.visual_cue && <div style={{ fontSize: '11px', color: 'var(--text-3)', marginTop: '2px' }}>{sc.visual_cue}</div>}
                             </div>
                           ))}
                         </div>
-                        {script.methodology && (
-                          <div className="sp-methodology">
-                            <div className="sp-m-title">Methodology: {script.methodology}</div>
-                            <p>{METHODOLOGIES.find(m=>m.id===script.methodology)?.desc || 'Custom methodology applied to this script.'}</p>
+                      )}
+                      {script.methodology && (
+                        <div className="sc-meth-block">
+                          <div style={{ fontSize: '11px', fontWeight: 700, color: '#7c3aed', marginBottom: '4px' }}>
+                            {script.methodology}
                           </div>
-                        )}
-                      </>
-                    ) : script.text ? (
-                      <div>{script.text.split('|||').map((part,i) => (
-                        <div key={i} className="sp-scene" style={{marginBottom:'10px'}}>
-                          <div className="sp-scene-label">Part {i+1}</div>
-                          <div className="sp-scene-text">&ldquo;{part.trim()}&rdquo;</div>
+                          <div style={{ fontSize: '12px', color: 'var(--text-2)' }}>
+                            {METHODOLOGIES.find(m=>m.id===script.methodology)?.desc || 'Custom methodology applied to this script.'}
+                          </div>
                         </div>
-                      ))}</div>
-                    ) : <div style={{color:'var(--text-3)',fontSize:'13px'}}>No scene data available.</div>}
-                  </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}

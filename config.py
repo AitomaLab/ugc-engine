@@ -7,17 +7,20 @@ All modules import from here instead of reading env vars directly.
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+import platform as _plat
 
-# Ensure the local virtual environment scripts folder (containing portable ffmpeg) is in PATH
-venv_scripts_path = Path(__file__).parent / ".venv" / "Scripts"
-os.environ["PATH"] = f"{venv_scripts_path}{os.pathsep}{os.environ.get('PATH', '')}"
+# Extend PATH with local venv scripts (dev only — skipped if dir doesn't exist)
+_venv_sub = "Scripts" if _plat.system() == "Windows" else "bin"
+_venv_scripts_path = Path(__file__).parent / ".venv" / _venv_sub
+if _venv_scripts_path.exists():
+    os.environ["PATH"] = f"{_venv_scripts_path}{os.pathsep}{os.environ.get('PATH', '')}"
 
 
-# Load .env from project root
+# Load .env from project root (override=False so platform env vars always win in production)
 PROJECT_ROOT = Path(__file__).parent
-load_dotenv(PROJECT_ROOT / ".env")
-# Also load .env.saas to supplement/override (e.g. for SAAS specific keys like OpenAI)
-load_dotenv(PROJECT_ROOT / ".env.saas")
+load_dotenv(PROJECT_ROOT / ".env", override=False)
+# Also load .env.saas to supplement (e.g. for SAAS specific keys like OpenAI)
+load_dotenv(PROJECT_ROOT / ".env.saas", override=False)
 
 # ---------------------------------------------------------------------------
 # API Keys

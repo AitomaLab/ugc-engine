@@ -18,3 +18,4 @@ numpy
 httpx
 supabase
 PyYAML
+modal

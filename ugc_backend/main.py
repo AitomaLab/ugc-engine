@@ -42,13 +42,37 @@ from ugc_db.db_manager import (
     list_influencers_scoped, list_scripts_scoped, list_products_scoped,
     list_app_clips_scoped, list_jobs_scoped, list_product_shots_scoped,
     get_stats_scoped,
+    get_notifications,
 )
 
 # Lazy Celery import — avoids blocking the backend if Redis isn't running
 def _dispatch_worker(job_id: str) -> bool:
-    """Try to dispatch a job to the Celery worker. Returns True if successful.
-    First checks if Redis is reachable to avoid blocking.
-    Falls back to running the task directly in a background thread."""
+    """Try to dispatch a job to a worker. Returns True if successful.
+
+    Priority order:
+    1. Modal serverless worker (if USE_MODAL_WORKER=true)
+    2. Celery via Redis (if Redis is reachable)
+    3. In-process background thread (always-available fallback)
+    """
+
+    # --- Option 1: Modal serverless worker ---
+    if os.getenv("USE_MODAL_WORKER", "").lower() == "true":
+        modal_url = os.getenv("MODAL_WEBHOOK_URL")
+        if modal_url:
+            try:
+                import requests as _req
+                resp = _req.post(modal_url, json={"job_id": job_id}, timeout=10)
+                if resp.status_code < 300:
+                    print(f"[OK] Job {job_id} dispatched to Modal worker")
+                    return True
+                else:
+                    print(f"!! Modal dispatch returned {resp.status_code}: {resp.text}")
+            except Exception as e:
+                print(f"!! Modal dispatch failed: {e}, falling back to Celery/in-process")
+        else:
+            print("!! USE_MODAL_WORKER=true but MODAL_WEBHOOK_URL not set, falling back")
+
+    # --- Option 2: Celery via Redis ---
     import socket
     from urllib.parse import urlparse
 
@@ -75,7 +99,7 @@ def _dispatch_worker(job_id: str) -> bool:
         except Exception as e:
             print(f"!! Celery dispatch failed: {e}, falling back to in-process")
 
-    # Fallback: run the task directly in a background thread
+    # --- Option 3: Fallback — run in background thread ---
     import threading
 
     def _run_in_background():
@@ -113,9 +137,13 @@ def _resolve_project_id(request: Request, user: dict | None) -> str | None:
         return default_proj["id"] if default_proj else None
     return None
 
+# CORS — allow origins from environment (comma-separated), defaulting to localhost
+_cors_env = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
+_cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1463,27 +1491,34 @@ def api_estimate_cost(data: CostEstimateRequest):
 
 
 @app.get("/stats/costs")
-def api_get_cost_stats(user: dict = Depends(get_optional_user)):
-    """Aggregate spend stats for the Activity page — scoped per user when authenticated."""
+def api_get_cost_stats(request: Request, user: dict = Depends(get_optional_user)):
+    """Aggregate spend stats for the Activity page — scoped per user and project."""
     sb = get_supabase()
     # Build query — scope by user if authenticated
-    q = sb.table("video_jobs").select("total_cost,created_at").not_.is_("total_cost", "null")
+    q = sb.table("video_jobs").select("total_cost,created_at,status,product_type").not_.is_("total_cost", "null")
     if user:
         q = q.eq("user_id", user["id"])
+        pid = _resolve_project_id(request, user)
+        if pid:
+            q = q.eq("project_id", pid)
     all_jobs = q.execute()
     rows = all_jobs.data or []
 
-    total_all = sum(float(r.get("total_cost", 0) or 0) for r in rows)
-
-    # This month
-    now = datetime.now(timezone.utc)
-    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
-    month_rows = [r for r in rows if r.get("created_at", "") >= month_start]
-    total_month = sum(float(r.get("total_cost", 0) or 0) for r in month_rows)
+    total_credits = 0
+    for r in rows:
+        if r.get("status") == "success":
+            cost = float(r.get("total_cost", 0) or 0)
+            ptype = r.get("product_type")
+            is_digital = ptype != "physical"
+            is_30s = cost > 0.75
+            
+            if is_digital:
+                total_credits += (77 if is_30s else 39)
+            else:
+                total_credits += (199 if is_30s else 100)
 
     return {
-        "total_spend_month": round(total_month, 2),
-        "total_spend_all": round(total_all, 2),
+        "total_spend_all": total_credits,
     }
 
 
@@ -1667,6 +1702,16 @@ def api_get_wallet(user: dict = Depends(get_current_user)):
 @app.get("/api/wallet/transactions")
 def api_get_transactions(user: dict = Depends(get_current_user), limit: int = Query(default=50, le=200)):
     return list_transactions(user["id"], limit)
+
+
+# ---------------------------------------------------------------------------
+# Notifications
+# ---------------------------------------------------------------------------
+
+@app.get("/api/notifications")
+def api_get_notifications(limit: int = Query(default=20, le=50), user: dict = Depends(get_current_user)):
+    """Return recent activity notifications for the authenticated user."""
+    return get_notifications(user["id"], limit)
 
 
 # ---------------------------------------------------------------------------

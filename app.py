@@ -19,6 +19,7 @@ def validate_dependencies():
     """Validate that all required external dependencies are available."""
     print("\n🔎 Validating external dependencies...")
     system = platform.system()
+    is_production = bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_SERVICE_NAME"))
     
     if not shutil.which("ffmpeg"):
         error_msg = (
@@ -28,7 +29,10 @@ def validate_dependencies():
             "   Windows Installation Guide: https://www.wikihow.com/Install-FFmpeg-on-Windows"
         )
         print(error_msg)
-        raise RuntimeError(error_msg)
+        if not is_production:
+            raise RuntimeError(error_msg)
+        else:
+            print("⚠️  Running on Railway — ffmpeg may be available at runtime via nixpacks.")
     
     if not shutil.which("ffprobe"):
         error_msg = (
@@ -36,7 +40,10 @@ def validate_dependencies():
             "   FFprobe is included with FFmpeg. Ensure the bin directory is in your PATH."
         )
         print(error_msg)
-        raise RuntimeError(error_msg)
+        if not is_production:
+            raise RuntimeError(error_msg)
+        else:
+            print("⚠️  Running on Railway — ffprobe may be available at runtime via nixpacks.")
     
     print(f"   ✅ FFmpeg and FFprobe validated (Platform: {system})")
 
