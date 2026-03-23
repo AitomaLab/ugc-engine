@@ -85,7 +85,7 @@ def process_video(job_id: str):
     image=worker_image,
     timeout=10,  # Webhook handler responds fast, spawns the real work
 )
-@modal.web_endpoint(method="POST")
+@modal.fastapi_endpoint(method="POST")
 def trigger_job(request: dict):
     """
     HTTP webhook endpoint.
