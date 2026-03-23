@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useApp } from '@/providers/AppProvider';
 import { supabase } from '@/lib/supabaseClient';
 import Link from 'next/link';
@@ -13,7 +13,15 @@ const CREDIT_PACKAGES = [
   { name: 'XL Top-Up',     credits: 5000, price: 139, perCredit: '2.8¢' },
 ];
 
-export default function ManagePage() {
+export default function ManagePageWrapper() {
+  return (
+    <Suspense fallback={<div className="content-area"><p>Loading...</p></div>}>
+      <ManagePage />
+    </Suspense>
+  );
+}
+
+function ManagePage() {
   const { profile, subscription, wallet } = useApp();
   const [topUpOpen, setTopUpOpen] = useState(false);
   const searchParams = useSearchParams();
