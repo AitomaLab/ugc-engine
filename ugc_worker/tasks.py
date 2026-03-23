@@ -259,8 +259,10 @@ def generate_ugc_video(self, job_id: str):
         update_job(job_id, {"status": "failed", "error_message": f"Data fetch failed: {str(e)}"})
         raise
 
-    # 2. Update status to processing
-    update_job(job_id, {"status": "processing", "progress": 5})
+    # 2. Update status to processing — record actual start time in metadata
+    from datetime import datetime, timezone as tz
+    job_metadata["processing_started_at"] = datetime.now(tz.utc).isoformat()
+    update_job(job_id, {"status": "processing", "progress": 5, "metadata": job_metadata})
 
     # 3. Status callback for progress tracking
     def status_callback(msg):

@@ -6,6 +6,7 @@ This avoids IPv6/TCP connection issues from Windows by using
 the Supabase REST API (PostgREST) instead of raw PostgreSQL.
 """
 import os
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 # Load SaaS production environment
@@ -279,6 +280,7 @@ def create_job(data: dict):
 
 def update_job(job_id: str, data: dict):
     sb = get_supabase()
+    data["updated_at"] = datetime.now(timezone.utc).isoformat()
     result = sb.table("video_jobs").update(data).eq("id", job_id).execute()
     return result.data[0] if result.data else None
 
@@ -562,6 +564,79 @@ def list_jobs_scoped(user_id: str, project_id: str = None, status: str = None, l
 def list_product_shots_scoped(user_id: str, product_id: str):
     sb = get_supabase()
     return sb.table("product_shots").select("*").eq("product_id", product_id).order("created_at", desc=True).execute().data
+
+
+def get_notifications(user_id: str, limit: int = 20):
+    """Fetch recent activity as notifications for the authenticated user.
+
+    Pulls from video_jobs and scripts tables, maps each row to a
+    notification dict, and returns a unified list sorted by timestamp DESC.
+    """
+    sb = get_supabase()
+    notifications = []
+
+    # --- Video Jobs ---
+    jobs = (
+        sb.table("video_jobs")
+        .select("id,status,campaign_name,final_video_url,error_message,created_at,updated_at,progress")
+        .eq("user_id", user_id)
+        .order("updated_at", desc=True)
+        .limit(limit)
+        .execute()
+        .data
+    )
+    status_map = {
+        "success": ("Video Ready", "job_success"),
+        "failed": ("Generation Failed", "job_failed"),
+        "processing": ("Generating Video", "job_processing"),
+        "pending": ("Job Queued", "job_pending"),
+    }
+    for job in (jobs or []):
+        status = job.get("status", "pending")
+        title, ntype = status_map.get(status, ("Job Update", "job_pending"))
+        name = job.get("campaign_name") or "Video"
+        if status == "success":
+            message = f"{name} completed successfully"
+        elif status == "failed":
+            err = job.get("error_message") or "Unknown error"
+            message = f"{name} failed: {err[:80]}"
+        elif status == "processing":
+            pct = job.get("progress") or 0
+            message = f"{name} is generating ({pct}%)"
+        else:
+            message = f"{name} is queued for generation"
+        notifications.append({
+            "id": job["id"],
+            "type": ntype,
+            "title": title,
+            "message": message,
+            "timestamp": job.get("updated_at") or job.get("created_at"),
+            "video_url": job.get("final_video_url"),
+        })
+
+    # --- Scripts ---
+    scripts = (
+        sb.table("scripts")
+        .select("id,name,created_at")
+        .eq("user_id", user_id)
+        .order("created_at", desc=True)
+        .limit(5)
+        .execute()
+        .data
+    )
+    for s in (scripts or []):
+        notifications.append({
+            "id": f"script_{s['id']}",
+            "type": "script_created",
+            "title": "Script Created",
+            "message": s.get("name") or "New script",
+            "timestamp": s.get("created_at"),
+            "video_url": None,
+        })
+
+    # Sort all notifications by timestamp DESC
+    notifications.sort(key=lambda n: n.get("timestamp") or "", reverse=True)
+    return notifications[:limit]
 
 
 def get_stats_scoped(user_id: str):

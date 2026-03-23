@@ -362,13 +362,13 @@ function CinematicContent() {
                           <div className="video-name" style={{ fontWeight: 700 }}>{shot.shot_type.replace(/_/g, ' ')}</div>
                           <div className="video-date" style={{ marginTop: '4px' }}>{new Date(shot.created_at).toLocaleDateString()}</div>
                         </div>
-                        <div className="video-info" style={{ display: 'flex', gap: '8px', paddingTop: 0, paddingBottom: '12px', marginTop: 'auto' }}>
+                        <div className="video-info" style={{ display: 'flex', gap: '8px', paddingTop: 0, paddingBottom: '12px', marginTop: 'auto', flexWrap: 'wrap' }}>
                           {shot.image_url && (
                             <button
                               style={{ flex: 1, padding: '6px 0', backgroundColor: 'var(--surface-hover)', color: 'var(--blue)', borderRadius: '4px', fontSize: '12px', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px', border: '1px solid rgba(51,122,255,0.15)', cursor: 'pointer' }}
                               onClick={() => handleDownload(shot.image_url!)}
                             >
-                              <svg viewBox='0 0 24 24' style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' /><polyline points='7 10 12 15 17 10' /><line x1='12' y1='15' x2='12' y2='3' /></svg>
+                              <svg viewBox='0 0 24 24' style={{ width: '12px', height: '12px', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' /><polyline points='7 10 12 15 17 10' /><line x1='12' y1='15' x2='12' y2='3' /></svg>
                               Download
                             </button>
                           )}
@@ -378,7 +378,7 @@ function CinematicContent() {
                               onClick={() => handleAnimate(shot.id)}
                               disabled={animatingIds.has(shot.id)}
                             >
-                              <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><polygon points="5 3 19 12 5 21 5 3" /></svg>
+                              <svg viewBox="0 0 24 24" style={{ width: '12px', height: '12px', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><polygon points="5 3 19 12 5 21 5 3" /></svg>
                               {animatingIds.has(shot.id) ? 'Queuing...' : 'Animate'}
                               <span style={{ marginLeft: '4px', fontSize: '10px', opacity: 0.85 }}>51 cr</span>
                             </button>
@@ -441,22 +441,22 @@ function CinematicContent() {
                           <div className="video-name" style={{ fontWeight: 700 }}>{shot.shot_type.replace(/_/g, ' ')}</div>
                           <div className="video-date" style={{ marginTop: '4px' }}>{new Date(shot.created_at).toLocaleDateString()}</div>
                         </div>
-                        <div className="video-info" style={{ display: 'flex', gap: '8px', paddingTop: 0, paddingBottom: '12px', marginTop: 'auto' }}>
+                        <div className="video-info" style={{ display: 'flex', gap: '8px', paddingTop: 0, paddingBottom: '12px', marginTop: 'auto', flexWrap: 'wrap' }}>
                           {shot.video_url ? (
                             <>
                               <button
                                 style={{ flex: 1, padding: '6px 0', backgroundColor: 'var(--surface-hover)', color: 'var(--blue)', borderRadius: '4px', fontSize: '12px', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px', border: '1px solid rgba(51,122,255,0.15)', cursor: 'pointer' }}
                                 onClick={() => handleDownload(shot.video_url!)}
                               >
-                                <svg viewBox='0 0 24 24' style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' /><polyline points='7 10 12 15 17 10' /><line x1='12' y1='15' x2='12' y2='3' /></svg>
+                                <svg viewBox='0 0 24 24' style={{ width: '12px', height: '12px', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' /><polyline points='7 10 12 15 17 10' /><line x1='12' y1='15' x2='12' y2='3' /></svg>
                                 Download
                               </button>
                               <button
                                 style={{ flex: 1, padding: '6px 0', backgroundColor: 'transparent', color: 'var(--text-2)', borderRadius: '4px', fontSize: '12px', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px', border: '1px solid var(--border)', cursor: 'pointer' }}
                                 onClick={() => router.push(`/create?product_id=${shot.product_id}`)}
                               >
-                                <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
-                                Use in Video
+                                <svg viewBox="0 0 24 24" style={{ width: '12px', height: '12px', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
+                                Use
                               </button>
                             </>
                           ) : (

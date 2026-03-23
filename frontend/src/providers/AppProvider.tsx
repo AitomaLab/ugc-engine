@@ -123,7 +123,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const refreshProjects = useCallback(async () => {
     if (!token) return;
     const projectsData = await authFetch<Project[]>('/api/projects', token);
-    if (projectsData) setProjects(projectsData);
+    if (projectsData) {
+      setProjects(projectsData);
+      // Sync activeProject so header name updates after edits
+      setActiveProjectState(prev => {
+        if (!prev) return prev;
+        const updated = projectsData.find(p => p.id === prev.id);
+        return updated || prev;
+      });
+    }
   }, [token]);
 
   const getAuthHeaders = useCallback((): Record<string, string> => {

@@ -103,14 +103,14 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=Non
     age = influencer.get("age", "25-year-old")
     gender = influencer.get("gender", "Female")
     visuals = _extract_visual_appearance(influencer)
-    personality = influencer.get("personality", "friendly influencer")
+    personality = influencer.get("personality") or "friendly influencer"
     energy = influencer.get("energy_level", "High")
     accent = influencer.get("accent", "Castilian Spanish (Spain)")
     tone = influencer.get("tone", "Enthusiastic")
     voice_id = influencer.get("elevenlabs_voice_id", config.VOICE_MAP.get(person_name, config.VOICE_MAP["Meg"]))
     ref_image = influencer["reference_image_url"]
     # Influencer-specific background/environment -- falls back to reference-image matching
-    setting = influencer.get("setting", "").strip()
+    setting = (influencer.get("setting") or "").strip()
 
     p = {
         "subj": "He" if gender == "Male" else "She",

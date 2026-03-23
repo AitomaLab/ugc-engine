@@ -479,10 +479,10 @@ function CreateContent() {
 
                     {/* Product Type Pills */}
                     <div className="pill-group" style={{ marginTop: '10px' }}>
-                        <button className={`pill ${productType === 'digital' ? 'selected' : ''}`} onClick={() => { setProductType('digital'); setProductId(''); setCustomScript(''); setGeneratedScript(''); }}>
+                        <button className={`btn-secondary ${productType === 'digital' ? 'active' : ''}`} onClick={() => { setProductType('digital'); setProductId(''); setCustomScript(''); setGeneratedScript(''); }}>
                             Digital App
                         </button>
-                        <button className={`pill ${productType === 'physical' ? 'selected' : ''}`} onClick={() => { setProductType('physical'); setProductId(''); setCustomScript(''); setGeneratedScript(''); }}>
+                        <button className={`btn-secondary ${productType === 'physical' ? 'active' : ''}`} onClick={() => { setProductType('physical'); setProductId(''); setCustomScript(''); setGeneratedScript(''); }}>
                             Physical Product
                         </button>
                     </div>
@@ -517,15 +517,15 @@ function CreateContent() {
                                 <div style={{ marginBottom: '12px' }}>
                                     <div style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.6px', color: 'var(--blue)', marginBottom: '8px' }}>Script</div>
                                     <div className="pill-group" style={{marginBottom:'10px'}}>
-                                        <button className={`pill ${scriptTab === 'ai' ? 'selected' : ''}`} onClick={() => { setScriptTab('ai'); setScriptSource('custom'); }}>AI Generated</button>
-                                        <button className={`pill ${scriptTab === 'library' ? 'selected' : ''}`} onClick={() => setScriptTab('library')}>From Library ({(() => { const sp = products.find(p => p.id === productId); const sc = sp?.category || ''; return scripts.filter(s => { const mp = s.product_id === productId; const mc = sc && s.category && s.category.toLowerCase() === sc.toLowerCase(); if (!mp && !mc) return false; if (s.video_length && s.video_length !== duration) return false; return true; }).length; })()})</button>
+                                        <button className={`btn-secondary ${scriptTab === 'ai' ? 'active' : ''}`} onClick={() => { setScriptTab('ai'); setScriptSource('custom'); }}>AI Generated</button>
+                                        <button className={`btn-secondary ${scriptTab === 'library' ? 'active' : ''}`} onClick={() => setScriptTab('library')}>From Library ({(() => { const sp = products.find(p => p.id === productId); const sc = sp?.category || ''; return scripts.filter(s => { const mp = s.product_id === productId; const mc = sc && s.category && s.category.toLowerCase() === sc.toLowerCase(); if (!mp && !mc) return false; if (s.video_length && s.video_length !== duration) return false; return true; }).length; })()})</button>
                                     </div>
                                     {scriptTab === 'ai' ? (
                                         <div>
                                             <div style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-3)', marginBottom: '6px' }}>Script Style</div>
                                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginBottom: '10px' }}>
                                                 {['', 'Hook/Benefit/CTA', 'Problem/Agitate/Solve', 'Contrarian/Shock', 'Social Proof', 'Aspiration/Dream', 'Curiosity/Cliffhanger'].map(m => (
-                                                    <button key={m} className={`pill ${scriptMethodology === m ? 'selected' : ''}`} onClick={() => setScriptMethodology(m)} style={{fontSize:'11px',padding:'5px 10px'}}>
+                                                    <button key={m} className={`btn-secondary ${scriptMethodology === m ? 'active' : ''}`} onClick={() => setScriptMethodology(m)} style={{fontSize:'11px',padding:'5px 10px'}}>
                                                         {m || '🎲 Random'}
                                                     </button>
                                                 ))}
@@ -736,7 +736,7 @@ function CreateContent() {
                                     { value: 'whip_pan', label: 'Whip Pan' },
                                     { value: 'focus_pull', label: 'Focus Pull' },
                                 ].map((tt) => (
-                                    <button key={tt.value} className={`pill ${autoTransitionType === tt.value ? 'selected' : ''}`}
+                                    <button key={tt.value} className={`btn-secondary ${autoTransitionType === tt.value ? 'active' : ''}`}
                                         onClick={() => setAutoTransitionType(tt.value)}>
                                         {tt.label}
                                     </button>
@@ -774,7 +774,7 @@ function CreateContent() {
                             <div className="config-label">Content Strategy</div>
                             <div className="pill-group">
                                 {CONTENT_STRATEGIES.map(s => (
-                                    <button key={s.value} className={`pill ${contentStrategy === s.value ? 'selected' : ''}`} onClick={() => setContentStrategy(s.value)}>
+                                    <button key={s.value} className={`btn-secondary ${contentStrategy === s.value ? 'active' : ''}`} onClick={() => setContentStrategy(s.value)}>
                                         {s.label}
                                     </button>
                                 ))}
@@ -791,7 +791,7 @@ function CreateContent() {
                     </div>
                     <div className="pill-group">
                         {AI_MODELS.map(model => (
-                            <button key={model.value} className={`pill ${modelApi === model.value ? 'selected' : ''}`} onClick={() => setModelApi(model.value)}>
+                            <button key={model.value} className={`btn-secondary ${modelApi === model.value ? 'active' : ''}`} onClick={() => setModelApi(model.value)} style={{padding:'8px 16px'}}>
                                 {model.label}
                             </button>
                         ))}
@@ -803,7 +803,7 @@ function CreateContent() {
                     <div className="config-label">Duration</div>
                     <div className="pill-group">
                         {[15, 30].map(d => (
-                            <button key={d} className={`pill ${duration === d ? 'selected' : ''}`} onClick={() => setDuration(d)}>
+                            <button key={d} className={`btn-secondary ${duration === d ? 'active' : ''}`} onClick={() => setDuration(d)}>
                                 {d}s
                             </button>
                         ))}
@@ -815,15 +815,15 @@ function CreateContent() {
                     <div className="config-section">
                         <div className="config-label">Script</div>
                     <div className="pill-group" style={{marginBottom:'10px'}}>
-                        <button className={`pill ${scriptTab === 'ai' ? 'selected' : ''}`} onClick={() => { setScriptTab('ai'); setScriptSource('custom'); }}>AI Generated</button>
-                        <button className={`pill ${scriptTab === 'library' ? 'selected' : ''}`} onClick={() => setScriptTab('library')}>From Library ({(() => { const sp = products.find(p => p.id === productId); const sc = sp?.category || ''; return scripts.filter(s => { const mp = s.product_id === productId; const mc = sc && s.category && s.category.toLowerCase() === sc.toLowerCase(); if (!mp && !mc) return false; if (s.video_length && s.video_length !== duration) return false; return true; }).length; })()})</button>
+                        <button className={`btn-secondary ${scriptTab === 'ai' ? 'active' : ''}`} onClick={() => { setScriptTab('ai'); setScriptSource('custom'); }}>AI Generated</button>
+                        <button className={`btn-secondary ${scriptTab === 'library' ? 'active' : ''}`} onClick={() => setScriptTab('library')}>From Library ({(() => { const sp = products.find(p => p.id === productId); const sc = sp?.category || ''; return scripts.filter(s => { const mp = s.product_id === productId; const mc = sc && s.category && s.category.toLowerCase() === sc.toLowerCase(); if (!mp && !mc) return false; if (s.video_length && s.video_length !== duration) return false; return true; }).length; })()})</button>
                     </div>
                     {scriptTab === 'ai' ? (
                         <div>
                             <div style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-3)', marginBottom: '6px' }}>Script Style</div>
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginBottom: '10px' }}>
                                 {['', 'Hook/Benefit/CTA', 'Problem/Agitate/Solve', 'Contrarian/Shock', 'Social Proof', 'Aspiration/Dream', 'Curiosity/Cliffhanger'].map(m => (
-                                    <button key={m} className={`pill ${scriptMethodology === m ? 'selected' : ''}`} onClick={() => setScriptMethodology(m)} style={{fontSize:'11px',padding:'5px 10px'}}>
+                                    <button key={m} className={`btn-secondary ${scriptMethodology === m ? 'active' : ''}`} onClick={() => setScriptMethodology(m)} style={{fontSize:'11px',padding:'5px 10px'}}>
                                         {m || '🎲 Random'}
                                     </button>
                                 ))}

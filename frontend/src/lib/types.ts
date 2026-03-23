@@ -91,6 +91,15 @@ export interface VideoJob {
     total_cost?: number;
 }
 
+export interface Notification {
+    id: string;
+    type: 'job_success' | 'job_failed' | 'job_processing' | 'job_pending' | 'script_created';
+    title: string;
+    message: string;
+    timestamp: string;
+    video_url?: string | null;
+}
+
 export interface ProductShot {
     id: string;
     product_id: string;
