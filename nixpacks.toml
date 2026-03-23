@@ -1,11 +1,13 @@
 # Railway Nixpacks configuration
-# Forces Python provider (repo has both package.json and requirements.txt)
+# Force Python provider (repo has package.json + requirements.txt, Nixpacks defaults to Node)
+
+providers = ["python"]
 
 [phases.setup]
-nixPkgs = ["python311", "python311Packages.pip", "ffmpeg"]
+nixPkgs = ["ffmpeg"]
 
-[phases.install]
-cmds = ["python -m pip install -r requirements.txt"]
+[variables]
+NIXPACKS_PYTHON_VERSION = "3.11"
 
 [start]
 cmd = "PYTHONPATH=. python -m uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000}"
