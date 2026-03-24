@@ -17,6 +17,8 @@ export default function VideosPage() {
     const [statusFilter, setStatusFilter] = useState('');
     const [sortOrder, setSortOrder] = useState('newest');
     const [previewAssetUrl, setPreviewAssetUrl] = useState<string | null>(null);
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const [copiedFeedback, setCopiedFeedback] = useState(false);
 
     const fetchData = useCallback(async () => {
         try {
@@ -47,7 +49,26 @@ export default function VideosPage() {
         try {
             await apiFetch(`/jobs/${jobId}`, { method: 'DELETE' });
             setJobs(prev => prev.filter(j => j.id !== jobId));
+            setSelectedIds(prev => { const next = new Set(prev); next.delete(jobId); return next; });
         } catch (err) { console.error('Delete error:', err); }
+    }
+
+    function toggleSelect(id: string) {
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            next.has(id) ? next.delete(id) : next.add(id);
+            return next;
+        });
+    }
+    function clearSelection() { setSelectedIds(new Set()); }
+    function bulkDownload() {
+        jobs.filter(j => selectedIds.has(j.id) && j.final_video_url).forEach(j => window.open(j.final_video_url!));
+    }
+    async function bulkShare() {
+        const urls = jobs.filter(j => selectedIds.has(j.id) && j.final_video_url).map(j => j.final_video_url!);
+        await navigator.clipboard.writeText(urls.join('\n'));
+        setCopiedFeedback(true);
+        setTimeout(() => setCopiedFeedback(false), 2000);
     }
 
     const influencerMap = new Map(influencers.map((i) => [i.id, i]));
@@ -146,9 +167,25 @@ export default function VideosPage() {
                     <Link href='/create' className='btn-primary'>Create Video</Link>
                 </div>
             ) : (<>
+                {selectedIds.size > 0 && (
+                    <div className="bulk-bar">
+                        <span className="bulk-bar-count">{selectedIds.size} selected</span>
+                        <div className="bulk-bar-actions">
+                            <button className="btn-secondary" onClick={() => setSelectedIds(new Set(filteredJobs.filter(j => j.final_video_url).map(j => j.id)))}>Select All</button>
+                            <button className="btn-secondary" onClick={bulkDownload}>
+                                <svg viewBox="0 0 24 24" style={{ width: 14, height: 14, fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
+                                Download
+                            </button>
+                            <button className="btn-secondary" onClick={bulkShare}>
+                                <svg viewBox="0 0 24 24" style={{ width: 14, height: 14, fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" /></svg>
+                                {copiedFeedback ? 'Copied!' : 'Share Links'}
+                            </button>
+                            <button className="btn-secondary" onClick={clearSelection} style={{ color: 'var(--text-3)' }}>Cancel</button>
+                        </div>
+                    </div>
+                )}
                 <div className='video-grid'>
                     {visibleJobs.map((job, i) => {
-                        const statusClass = job.status === 'success' ? 'done' : job.status === 'processing' ? 'processing' : job.status === 'pending' ? 'queued' : 'failed';
                         const statusLabel = job.status === 'success' ? 'Done' : job.status === 'processing' ? 'Processing...' : job.status === 'pending' ? 'Queued' : 'Failed';
                         return (
                             <div key={job.id} className='video-card'>
@@ -160,7 +197,9 @@ export default function VideosPage() {
                                     {job.final_video_url && (
                                         <video src={job.final_video_url} style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', inset: 0 }} muted loop playsInline preload="metadata" />
                                     )}
-                                    <span className={`status-pill ${statusClass}`} style={{ position: 'absolute', top: '8px', right: '8px', fontWeight: 700 }}>{statusLabel}</span>
+                                    <button className={`card-select-btn ${selectedIds.has(job.id) ? 'selected' : ''}`} onClick={(e) => { e.stopPropagation(); toggleSelect(job.id); }} title="Select video">
+                                        {selectedIds.has(job.id) && <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" /></svg>}
+                                    </button>
                                     <button className="card-delete-btn" onClick={(e) => { e.stopPropagation(); handleDelete(job.id); }} title="Delete video">
                                         <svg viewBox="0 0 24 24"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
                                     </button>

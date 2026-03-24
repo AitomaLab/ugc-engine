@@ -864,6 +864,41 @@ a {
   color: var(--red);
 }
 
+/* Bulk action bar (multi-select) */
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  margin-bottom: 12px;
+  background: var(--blue-light);
+  border: 1px solid rgba(51,122,255,0.25);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.bulk-bar-count {
+  color: var(--blue);
+  margin-right: 4px;
+}
+
+.bulk-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.bulk-bar-actions .btn-secondary {
+  padding: 6px 14px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 /* Recent videos grid */
 .video-grid {
   display: grid;
@@ -922,6 +957,53 @@ a {
   stroke: white;
   fill: none;
   stroke-width: 2;
+}
+
+/* Select checkbox button (top-right of card) */
+.card-select-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 10;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(4px);
+  border: 2px solid rgba(255,255,255,0.6);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.video-card:hover .card-select-btn {
+  opacity: 1;
+}
+
+.card-select-btn.selected {
+  opacity: 1;
+  background: var(--blue);
+  border-color: var(--blue);
+}
+
+.card-select-btn:hover {
+  background: rgba(51,122,255,0.7);
+  border-color: rgba(51,122,255,0.9);
+}
+
+.card-select-btn.selected:hover {
+  background: rgba(51,122,255,0.85);
+}
+
+.card-select-btn svg {
+  width: 14px;
+  height: 14px;
+  stroke: white;
+  fill: none;
+  stroke-width: 3;
 }
 
 .video-thumb {

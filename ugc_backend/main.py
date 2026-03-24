@@ -306,10 +306,16 @@ def api_list_products(request: Request, category: Optional[str] = None, user: di
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/products")
-def api_create_product(data: ProductCreate):
+def api_create_product(data: ProductCreate, request: Request, user: dict = Depends(get_optional_user)):
     try:
-        print(f"DEBUG: api_create_product called with {data}")
-        result = create_product(data.model_dump(exclude_none=True))
+        payload = data.model_dump(exclude_none=True)
+        if user:
+            payload["user_id"] = user["id"]
+            pid = _resolve_project_id(request, user)
+            if pid:
+                payload["project_id"] = pid
+        print(f"DEBUG: api_create_product called with {payload}")
+        result = create_product(payload)
         print(f"DEBUG: create_product result: {result}")
         return result
     except Exception as e:

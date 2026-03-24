@@ -59,6 +59,19 @@ def _upload_to_storage(file_path: str, bucket: str, filename: str) -> str:
         return f"file:///{file_path}"
 
 
+def _upload_url_to_storage(url: str, bucket: str, filename: str, content_type: str = "image/png") -> str:
+    """Download a remote URL and re-upload to Supabase Storage. Returns permanent public URL."""
+    import requests as _req
+    from ugc_db.db_manager import get_supabase
+    resp = _req.get(url, timeout=120)
+    resp.raise_for_status()
+    sb = get_supabase()
+    sb.storage.from_(bucket).upload(filename, resp.content, file_options={"content-type": content_type})
+    public_url = sb.storage.from_(bucket).get_public_url(filename)
+    print(f"      ☁️ Re-uploaded to Supabase Storage: {public_url}")
+    return public_url
+
+
 # ---------------------------------------------------------------------------
 # Main Video Generation Task
 # ---------------------------------------------------------------------------
@@ -436,7 +449,13 @@ def generate_product_shot_image(shot_id: str):
             product_image_url=product["image_url"]
         )
 
-        # 3. Update DB with result
+        # 3. Re-upload to Supabase Storage for permanent URL
+        try:
+            image_url = _upload_url_to_storage(image_url, "cinematic-shots", f"shot_{shot_id}.png", "image/png")
+        except Exception as e:
+            print(f"      ⚠️ Storage re-upload failed, using raw URL: {e}")
+
+        # 4. Update DB with result
         update_product_shot(shot_id, {
             "status": "image_completed",
             "image_url": image_url
@@ -471,6 +490,12 @@ def animate_product_shot_video(shot_id: str):
             image_url=shot["image_url"],
             shot_type=shot["shot_type"]
         )
+
+        # Re-upload to Supabase Storage for permanent URL
+        try:
+            video_url = _upload_url_to_storage(video_url, "cinematic-shots", f"shot_{shot_id}_video.mp4", "video/mp4")
+        except Exception as e:
+            print(f"      ⚠️ Storage re-upload failed, using raw URL: {e}")
 
         # Update DB with result
         update_product_shot(shot_id, {
