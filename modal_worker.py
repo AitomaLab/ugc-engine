@@ -26,11 +26,31 @@ app = modal.App(
     ],
 )
 
-# Container image with all dependencies
+# Container image with all dependencies + project source code
 worker_image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("ffmpeg")
     .pip_install_from_requirements("requirements.txt")
+    # Root-level Python modules the pipeline needs
+    .add_local_python_source(
+        "config",
+        "core_engine",
+        "generate_scenes",
+        "scene_builder",
+        "subtitle_engine",
+        "assemble_video",
+        "elevenlabs_client",
+        "storage_helper",
+        "social_media_poster",
+        # Packages (directories with __init__.py)
+        "ugc_worker",
+        "ugc_db",
+        "ugc_backend",
+        "kie_ai",
+    )
+    # Non-Python data files the pipeline needs
+    .add_local_dir("prompts", remote_path="/root/project/prompts")
+    .add_local_file("ugc_backend/cost_config.json", remote_path="/root/project/ugc_backend/cost_config.json")
 )
 
 
@@ -56,10 +76,10 @@ def process_video(job_id: str):
     This mirrors exactly what the Celery worker does in
     ugc_worker/tasks.py -> generate_ugc_video(job_id).
     """
-    # Ensure project root is in path
-    root = str(Path(__file__).parent.absolute())
-    if root not in sys.path:
-        sys.path.insert(0, root)
+    # Ensure project root is in path so imports resolve
+    project_root = "/root/project"
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
 
     # Import the Celery task's core logic (not the Celery decorator)
     from ugc_worker.tasks import generate_ugc_video

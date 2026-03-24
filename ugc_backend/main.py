@@ -1217,7 +1217,19 @@ def api_create_app_clip(data: AppClipCreate, request: Request, user: dict = Depe
         if not new_clip:
             raise HTTPException(status_code=500, detail="Failed to create app clip")
 
-        # Auto-extract first frame in background (non-blocking)
+        # Immediately create a linked digital product (image added async)
+        product_data = {"name": new_clip["name"], "type": "digital", "image_url": ""}
+        if new_clip.get("user_id"):
+            product_data["user_id"] = new_clip["user_id"]
+        if new_clip.get("project_id"):
+            product_data["project_id"] = new_clip["project_id"]
+        new_product = create_product(product_data)
+        if new_product:
+            update_app_clip(new_clip["id"], {"product_id": new_product["id"]})
+            new_clip["product_id"] = new_product["id"]
+            print(f"      [OK] Auto-created digital product {new_product['id']} for clip {new_clip['id']}")
+
+        # Extract first frame in background, then update clip + product image
         if new_clip.get("video_url") and not new_clip.get("first_frame_url"):
             import threading
             def _extract_in_background():
@@ -1226,6 +1238,8 @@ def api_create_app_clip(data: AppClipCreate, request: Request, user: dict = Depe
                     frame_url = extract_first_frame(new_clip["video_url"])
                     if frame_url:
                         update_app_clip(new_clip["id"], {"first_frame_url": frame_url})
+                        if new_product:
+                            update_product(new_product["id"], {"image_url": frame_url})
                         print(f"      [OK] Auto-extracted first frame for clip {new_clip['id']}")
                 except Exception as e:
                     print(f"      !! Auto frame extraction failed for clip {new_clip['id']}: {e}")
@@ -1776,3 +1790,363 @@ def api_refund_job(job_id: str, user: dict = Depends(get_current_user)):
         return {"status": "refunded", "amount": credit_cost, "new_balance": result["balance"]}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ===========================================================================
+# Schedule & Post (Ayrshare) — Social Media Scheduling
+# ===========================================================================
+
+import hashlib
+import hmac
+from ugc_backend import ayrshare_client
+
+
+# ---------------------------------------------------------------------------
+# JWT — Generate Ayrshare OAuth popup URL
+# ---------------------------------------------------------------------------
+
+@app.post("/api/ayrshare/jwt")
+async def api_ayrshare_jwt(user: dict = Depends(get_current_user)):
+    """Generate a JWT URL to open the Ayrshare social-account linking popup."""
+    sb = get_supabase()
+    user_id = user["id"]
+
+    # Check if user already has an Ayrshare profile
+    row = sb.table("ayrshare_profiles").select("ayrshare_profile_key").eq("user_id", user_id).execute()
+
+    if row.data:
+        profile_key = row.data[0]["ayrshare_profile_key"]
+        print(f"[Ayrshare] Found existing profile key: {profile_key[:20]}...")
+    else:
+        # Create a new Ayrshare sub-profile
+        try:
+            print(f"[Ayrshare] Creating new profile for user {user_id}")
+            profile_resp = await ayrshare_client.create_profile(user_id)
+            print(f"[Ayrshare] create_profile response: {profile_resp}")
+            profile_key = profile_resp.get("profileKey")
+            if not profile_key:
+                raise HTTPException(status_code=502, detail=f"Ayrshare did not return a profileKey. Response: {profile_resp}")
+            sb.table("ayrshare_profiles").insert({
+                "user_id": user_id,
+                "ayrshare_profile_key": profile_key,
+            }).execute()
+            print(f"[Ayrshare] Saved profile key: {profile_key}")
+        except HTTPException:
+            raise
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            raise HTTPException(status_code=502, detail=f"Failed to create Ayrshare profile: {e}")
+
+    # Generate JWT URL
+    try:
+        print(f"[Ayrshare] Generating JWT for profile_key: {profile_key[:20]}...")
+        jwt_resp = await ayrshare_client.generate_jwt(profile_key)
+        print(f"[Ayrshare] generate_jwt response: {jwt_resp}")
+        url = jwt_resp.get("url")
+        if not url:
+            raise HTTPException(status_code=502, detail=f"Ayrshare did not return a JWT URL. Response: {jwt_resp}")
+        return {"url": url}
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=502, detail=f"Failed to generate JWT: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Connections — List connected social accounts
+# ---------------------------------------------------------------------------
+
+@app.get("/api/connections")
+async def api_get_connections(user: dict = Depends(get_current_user)):
+    """Return the user's connected social media accounts."""
+    sb = get_supabase()
+    row = sb.table("ayrshare_profiles").select("ayrshare_profile_key").eq("user_id", user["id"]).execute()
+
+    if not row.data:
+        return {"socials": []}
+
+    profile_key = row.data[0]["ayrshare_profile_key"]
+
+    # Fetch live from Ayrshare
+    try:
+        socials = await ayrshare_client.get_user_socials(profile_key)
+        return {"socials": socials}
+    except Exception as e:
+        print(f"[Ayrshare] Failed to fetch socials: {e}")
+        return {"socials": []}
+
+
+# ---------------------------------------------------------------------------
+# Bulk Schedule — Create scheduled posts
+# ---------------------------------------------------------------------------
+
+class SchedulePostItem(BaseModel):
+    video_job_id: str
+    platforms: List[str]
+    caption: Optional[str] = None
+    hashtags: Optional[List[str]] = None
+    scheduled_at: str  # ISO 8601 UTC
+
+class BulkScheduleRequest(BaseModel):
+    posts: List[SchedulePostItem]
+
+@app.post("/api/schedule/bulk")
+async def api_schedule_bulk(data: BulkScheduleRequest, user: dict = Depends(get_current_user)):
+    """Schedule one or more videos for social media posting."""
+    sb = get_supabase()
+    user_id = user["id"]
+
+    # Get the user's Ayrshare profile key
+    profile_row = sb.table("ayrshare_profiles").select("ayrshare_profile_key").eq("user_id", user_id).execute()
+    if not profile_row.data:
+        raise HTTPException(status_code=400, detail="No social accounts connected. Visit Connections page first.")
+    profile_key = profile_row.data[0]["ayrshare_profile_key"]
+
+    results = []
+    scheduled_count = 0
+    failed_count = 0
+
+    for post in data.posts:
+        # Validate the video job belongs to this user and has a video URL
+        job = get_job(post.video_job_id)
+        if not job or job.get("user_id") != user_id:
+            results.append({"video_job_id": post.video_job_id, "status": "failed", "error": "Video not found"})
+            failed_count += 1
+            continue
+        if not job.get("final_video_url"):
+            results.append({"video_job_id": post.video_job_id, "status": "failed", "error": "Video not ready"})
+            failed_count += 1
+            continue
+
+        # Create one social_posts record per platform
+        for platform in post.platforms:
+            try:
+                post_record = sb.table("social_posts").insert({
+                    "user_id": user_id,
+                    "video_job_id": post.video_job_id,
+                    "status": "scheduled",
+                    "platform": platform,
+                    "caption": post.caption,
+                    "hashtags": post.hashtags,
+                    "scheduled_at": post.scheduled_at,
+                }).execute()
+
+                social_post_id = post_record.data[0]["id"] if post_record.data else None
+
+                # Send to Ayrshare
+                ayrshare_data = {
+                    "post": post.caption or "",
+                    "platforms": [platform],
+                    "mediaUrls": [job["final_video_url"]],
+                    "scheduleDate": post.scheduled_at,
+                }
+                if post.hashtags:
+                    ayrshare_data["hashTags"] = post.hashtags
+
+                ayrshare_resp = await ayrshare_client.create_post(profile_key, ayrshare_data)
+                ayrshare_post_id = ayrshare_resp.get("id")
+
+                if social_post_id and ayrshare_post_id:
+                    sb.table("social_posts").update({
+                        "ayrshare_post_id": ayrshare_post_id,
+                    }).eq("id", social_post_id).execute()
+
+                results.append({"video_job_id": post.video_job_id, "platform": platform, "social_post_id": social_post_id, "status": "scheduled"})
+                scheduled_count += 1
+
+            except Exception as e:
+                if social_post_id:
+                    sb.table("social_posts").update({
+                        "status": "failed",
+                        "error_message": str(e),
+                    }).eq("id", social_post_id).execute()
+                results.append({"video_job_id": post.video_job_id, "platform": platform, "status": "failed", "error": str(e)})
+                failed_count += 1
+
+    return {"status": "success", "scheduled": scheduled_count, "failed": failed_count, "results": results}
+
+
+# ---------------------------------------------------------------------------
+# Schedule List — Get posts for calendar view
+# ---------------------------------------------------------------------------
+
+@app.get("/api/schedule")
+def api_get_schedule(
+    start_date: str = Query(...),
+    end_date: str = Query(...),
+    user: dict = Depends(get_current_user),
+):
+    """Return all social posts for the user within the given date range."""
+    sb = get_supabase()
+    rows = (
+        sb.table("social_posts")
+        .select("*")
+        .eq("user_id", user["id"])
+        .gte("scheduled_at", start_date)
+        .lte("scheduled_at", end_date)
+        .order("scheduled_at", desc=False)
+        .execute()
+    )
+    return rows.data or []
+
+
+# ---------------------------------------------------------------------------
+# Cancel a scheduled post
+# ---------------------------------------------------------------------------
+
+@app.delete("/api/schedule/{post_id}")
+async def api_cancel_schedule(post_id: str, user: dict = Depends(get_current_user)):
+    """Cancel a scheduled post (only permitted for status='scheduled')."""
+    sb = get_supabase()
+    row = sb.table("social_posts").select("*").eq("id", post_id).eq("user_id", user["id"]).execute()
+    if not row.data:
+        raise HTTPException(status_code=404, detail="Post not found")
+
+    post = row.data[0]
+    if post["status"] != "scheduled":
+        raise HTTPException(status_code=400, detail="Can only cancel scheduled posts")
+
+    # Cancel in Ayrshare
+    if post.get("ayrshare_post_id"):
+        profile_row = sb.table("ayrshare_profiles").select("ayrshare_profile_key").eq("user_id", user["id"]).execute()
+        if profile_row.data:
+            try:
+                await ayrshare_client.delete_post(profile_row.data[0]["ayrshare_profile_key"], post["ayrshare_post_id"])
+            except Exception:
+                pass  # Best effort — still cancel locally
+
+    sb.table("social_posts").update({
+        "status": "cancelled",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("id", post_id).execute()
+
+    return {"status": "cancelled", "id": post_id}
+
+
+# ---------------------------------------------------------------------------
+# AI Caption Generation for Social Posts
+# ---------------------------------------------------------------------------
+
+class CaptionRequest(BaseModel):
+    video_job_id: str
+    platform: str = "instagram"
+
+@app.post("/api/schedule/generate-caption")
+async def api_generate_caption(data: CaptionRequest, user: dict = Depends(get_current_user)):
+    """Generate 3 AI caption suggestions for a video, optimised for the target platform."""
+    job = get_job(data.video_job_id)
+    if not job or job.get("user_id") != user["id"]:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    # Gather context from job metadata
+    product_name = ""
+    product_desc = ""
+    influencer_name = ""
+    if job.get("product_id"):
+        product = get_product(job["product_id"])
+        if product:
+            product_name = product.get("name", "")
+            product_desc = product.get("description", "")
+    if job.get("influencer_id"):
+        inf = get_influencer(job["influencer_id"])
+        if inf:
+            influencer_name = inf.get("name", "")
+
+    platform = data.platform.capitalize()
+    prompt = f"""Generate exactly 3 distinct, engaging social media captions for {platform}.
+
+Context:
+- Product: {product_name or 'Unknown product'}
+- Description: {product_desc or 'AI-generated UGC video'}
+- Influencer: {influencer_name or 'AI creator'}
+
+Requirements:
+- Each caption should have a different angle (e.g. storytelling, CTA, question)
+- Include relevant emojis
+- Keep under 200 characters for TikTok, 2200 for Instagram, 500 for YouTube
+- Include 3-5 relevant hashtags at the end
+- Sound natural and authentic, not salesy
+
+Return ONLY a JSON array of 3 strings, nothing else."""
+
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.8,
+        )
+        import json
+        raw = response.choices[0].message.content.strip()
+        # Strip markdown code fence if present
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        captions = json.loads(raw)
+        if not isinstance(captions, list):
+            captions = [raw]
+        return {"captions": captions[:3]}
+    except Exception as e:
+        return {"captions": [
+            f"Check out this amazing {product_name or 'product'}! 🔥 #ugc #ai",
+            f"You need to see this! {product_name or 'This product'} is incredible ✨ #viral",
+            f"POV: You just found your new favourite {product_name or 'thing'} 👀 #trending",
+        ]}
+
+
+# ---------------------------------------------------------------------------
+# Ayrshare Webhook Handler (publicly accessible — no auth)
+# ---------------------------------------------------------------------------
+
+@app.post("/api/webhooks/ayrshare")
+async def api_ayrshare_webhook(request: Request):
+    """Handle incoming Ayrshare webhook events (post status, social account changes)."""
+    webhook_secret = os.getenv("AYRSHARE_WEBHOOK_SECRET", "")
+
+    # Validate HMAC signature
+    body = await request.body()
+    if webhook_secret:
+        expected_sig = request.headers.get("X-Authorization-Content-SHA256", "")
+        computed_sig = hmac.new(webhook_secret.encode(), body, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(computed_sig, expected_sig):
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    import json
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    sb = get_supabase()
+    action = payload.get("action", "")
+
+    # ── Post status update ──────────────────────────────────────────────
+    if action == "post":
+        ayrshare_id = payload.get("id")
+        status = payload.get("status", "")
+        if ayrshare_id:
+            update_data = {"updated_at": datetime.now(timezone.utc).isoformat()}
+            if status == "success":
+                update_data["status"] = "posted"
+                update_data["posted_at"] = datetime.now(timezone.utc).isoformat()
+            elif status == "error":
+                update_data["status"] = "failed"
+                update_data["error_message"] = payload.get("errorMessage", "Unknown error")
+            if "status" in update_data:
+                sb.table("social_posts").update(update_data).eq("ayrshare_post_id", ayrshare_id).execute()
+
+    # ── Social account change ───────────────────────────────────────────
+    elif action == "social":
+        profile_key = payload.get("profileKey")
+        accounts = payload.get("activeSocialAccounts", [])
+        if profile_key:
+            sb.table("ayrshare_profiles").update({
+                "connected_accounts": accounts,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("ayrshare_profile_key", profile_key).execute()
+
+    return {"status": "ok"}
+

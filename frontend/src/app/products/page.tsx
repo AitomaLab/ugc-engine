@@ -487,7 +487,7 @@ function ProductsContent() {
           <AppClipModal
             isOpen={clipModalOpen}
             onClose={() => setClipModalOpen(false)}
-            onSaved={() => { fetchClips(); setClipModalOpen(false); }}
+            onSaved={() => { fetchClips(); fetchProducts(); setClipModalOpen(false); }}
           />
         </>
       )}

@@ -112,3 +112,26 @@ export interface ProductShot {
     transition_type?: string;
     created_at: string;
 }
+
+export interface SocialPost {
+    id: string;
+    user_id: string;
+    video_job_id: string;
+    ayrshare_post_id?: string;
+    status: 'scheduled' | 'posting' | 'posted' | 'failed' | 'cancelled';
+    platform: string;
+    caption?: string;
+    hashtags?: string[];
+    scheduled_at: string;
+    posted_at?: string;
+    error_message?: string;
+    created_at: string;
+    // Joined from video_jobs
+    video_thumbnail_url?: string;
+}
+
+export interface SocialConnection {
+    platform: string;
+    username?: string;
+    profilePic?: string;
+}
