@@ -1201,13 +1201,18 @@ def api_list_app_clips(request: Request, user: dict = Depends(get_optional_user)
     return list_app_clips()
 
 @app.post("/app-clips")
-def api_create_app_clip(data: AppClipCreate):
+def api_create_app_clip(data: AppClipCreate, request: Request, user: dict = Depends(get_optional_user)):
     """
     Creates a new app clip. If video_url is provided, automatically
     triggers first-frame extraction in a background thread.
     """
     try:
         clip_data = data.model_dump(exclude_none=True)
+        if user:
+            clip_data["user_id"] = user["id"]
+            pid = _resolve_project_id(request, user)
+            if pid:
+                clip_data["project_id"] = pid
         new_clip = create_app_clip(clip_data)
         if not new_clip:
             raise HTTPException(status_code=500, detail="Failed to create app clip")
