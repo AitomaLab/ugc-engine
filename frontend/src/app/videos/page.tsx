@@ -16,6 +16,7 @@ export default function VideosPage() {
     const [search, setSearch] = useState('');
     const [influencerFilter, setInfluencerFilter] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
+    const [campaignFilter, setCampaignFilter] = useState('');
     const [sortOrder, setSortOrder] = useState('newest');
     const [previewAssetUrl, setPreviewAssetUrl] = useState<string | null>(null);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -74,6 +75,7 @@ export default function VideosPage() {
     }
 
     const influencerMap = new Map(influencers.map((i) => [i.id, i]));
+    const campaignNames = [...new Set(jobs.map(j => j.campaign_name).filter(Boolean))] as string[];
 
     let filteredJobs = jobs;
 
@@ -92,6 +94,10 @@ export default function VideosPage() {
 
     if (statusFilter) {
         filteredJobs = filteredJobs.filter(job => job.status === statusFilter);
+    }
+
+    if (campaignFilter) {
+        filteredJobs = filteredJobs.filter(job => job.campaign_name === campaignFilter);
     }
 
     filteredJobs.sort((a, b) => {
@@ -141,6 +147,17 @@ export default function VideosPage() {
                             { value: 'processing', label: 'Processing' },
                             { value: 'pending', label: 'Queued' },
                             { value: 'failed', label: 'Failed' }
+                        ]}
+                    />
+
+                    <Select
+                        className="filter-select"
+                        value={campaignFilter}
+                        onChange={setCampaignFilter}
+                        placeholder="All Campaigns"
+                        options={[
+                            { value: '', label: 'All Campaigns' },
+                            ...campaignNames.map(name => ({ value: name, label: name }))
                         ]}
                     />
 

@@ -255,6 +255,13 @@ def generate_ugc_video(self, job_id: str):
         }
         print(f"      📦 Influencer Dict for Engine: {influencer_dict}")
 
+        # Pass variation_prompt from job into influencer_dict (if set)
+        # This overrides the influencer's default setting in the scene builder
+        if job.get("variation_prompt"):
+            influencer_dict["variation_prompt"] = job["variation_prompt"]
+            print(f"      🎲 Variation prompt applied: {job['variation_prompt']}")
+
+
         # Read auto_transition_type from metadata JSONB (where api stores it)
         job_metadata = job.get("metadata") or {}
         auto_trans_type = job_metadata.get("auto_transition_type") or job.get("auto_transition_type")

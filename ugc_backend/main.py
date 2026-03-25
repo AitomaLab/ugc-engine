@@ -224,7 +224,7 @@ class ProductCreate(BaseModel):
     type: Optional[str] = None              # "physical" or "digital"
     description: Optional[str] = None
     category: Optional[str] = None
-    image_url: str
+    image_url: Optional[str] = None      # Optional for digital products (auto-populated from clip frame)
     website_url: Optional[str] = None      # NEW: For dual-source AI analysis
 
 class AppClipUpdate(BaseModel):            # NEW: For PATCH endpoint
@@ -314,6 +314,10 @@ def api_create_product(data: ProductCreate, request: Request, user: dict = Depen
             pid = _resolve_project_id(request, user)
             if pid:
                 payload["project_id"] = pid
+        # Ensure image_url has a value (DB has NOT NULL constraint).
+        # Digital products get their image from the clip's first frame later.
+        if "image_url" not in payload:
+            payload["image_url"] = ""
         print(f"DEBUG: api_create_product called with {payload}")
         result = create_product(payload)
         print(f"DEBUG: create_product result: {result}")
@@ -434,14 +438,12 @@ def api_analyze_product(data: ProductAnalyzeRequest):
 @app.post("/api/products/{product_id}/analyze-digital")
 def api_analyze_digital_product(product_id: str):
     """
-    Runs dual-source analysis on a digital product:
-    1. Scrapes the website_url for marketing copy.
-    2. Runs vision analysis on the product image_url.
-    3. Synthesizes both into a visual_description JSON and saves it.
+    Scrapes the product website and uses GPT to extract structured product
+    insights (description, benefits, audience, USPs) for script generation.
     """
     try:
-        from ugc_backend.llm_vision_client import LLMVisionClient
         from ugc_backend.web_scraper import WebScraperClient
+        import openai, json as _json
 
         product = get_product(product_id)
         if not product:
@@ -449,31 +451,54 @@ def api_analyze_digital_product(product_id: str):
 
         analysis = {}
 
-        # Step 1: Vision analysis on image_url
-        if product.get("image_url"):
-            try:
-                vision_client = LLMVisionClient()
-                analysis = vision_client.describe_product_image(product["image_url"]) or {}
-                print(f"      [OK] Vision analysis complete for product {product_id}")
-            except Exception as e:
-                print(f"      !! Vision analysis failed (non-fatal): {e}")
-
-        # Step 2: Website scraping
+        # Step 1: Scrape the website
+        website_text = None
         if product.get("website_url"):
             try:
                 scraper = WebScraperClient()
                 website_text = scraper.scrape(product["website_url"])
-                if website_text:
-                    analysis["website_content_summary"] = website_text[:500]
-                    print(f"      [OK] Website scraping complete for product {product_id}")
+                print(f"      [OK] Website scraping complete for product {product_id} ({len(website_text or '')} chars)")
             except Exception as e:
                 print(f"      !! Website scraping failed (non-fatal): {e}")
+
+        if not website_text:
+            raise HTTPException(status_code=422, detail="Could not scrape website content. Check the URL.")
+
+        # Step 2: Send scraped text to GPT for intelligent analysis
+        try:
+            client = openai.OpenAI()
+            resp = client.chat.completions.create(
+                model="gpt-4.1-mini",
+                temperature=0.3,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": (
+                        "You are a product analyst. Given raw website text from a digital product/app, "
+                        "extract structured insights in JSON format. Return ONLY a JSON object with these keys:\n"
+                        "- product_summary: A 2-3 sentence description of what the product is and does.\n"
+                        "- key_benefits: An array of 3-5 main benefits for users (short, punchy phrases).\n"
+                        "- target_audience: Who this product is for (1-2 sentences).\n"
+                        "- unique_selling_points: An array of 2-4 things that make it stand out from competitors.\n"
+                        "- tone_and_personality: The brand's voice/tone in 2-3 words (e.g. 'Friendly, Professional, Bold').\n"
+                        "- category: The product category (e.g. 'Productivity', 'Health & Fitness', 'Finance', etc.).\n"
+                        "Be concise and direct. Focus on what matters for creating compelling UGC video scripts."
+                    )},
+                    {"role": "user", "content": f"Product name: {product.get('name', 'Unknown')}\n\nWebsite content:\n{website_text[:2500]}"}
+                ]
+            )
+            raw = resp.choices[0].message.content
+            analysis = _json.loads(raw)
+            print(f"      [OK] GPT analysis complete for product {product_id}")
+        except Exception as e:
+            print(f"      !! GPT analysis failed: {e}")
+            # Fallback: store raw text summary if GPT fails
+            analysis["website_content_summary"] = website_text[:1000]
 
         if analysis:
             update_product(product_id, {"visual_description": analysis})
             return {"status": "analyzed", "product_id": product_id, "analysis": analysis}
         else:
-            raise HTTPException(status_code=422, detail="Analysis returned no data. Check image_url and website_url.")
+            raise HTTPException(status_code=422, detail="Analysis returned no data.")
 
     except HTTPException:
         raise
@@ -1217,18 +1242,23 @@ def api_create_app_clip(data: AppClipCreate, request: Request, user: dict = Depe
         if not new_clip:
             raise HTTPException(status_code=500, detail="Failed to create app clip")
 
-        # Immediately create a linked digital product (image added async)
-        product_data = {"name": new_clip["name"], "type": "digital", "image_url": ""}
-        if new_clip.get("user_id"):
-            product_data["user_id"] = new_clip["user_id"]
-        if new_clip.get("project_id"):
-            product_data["project_id"] = new_clip["project_id"]
-        new_product = create_product(product_data)
-        if new_product:
-            update_app_clip(new_clip["id"], {"product_id": new_product["id"]})
-            new_clip["product_id"] = new_product["id"]
-            print(f"      [OK] Auto-created digital product {new_product['id']} for clip {new_clip['id']}")
-
+        # Auto-create a linked digital product ONLY when no product_id was provided.
+        # If the user already selected or created a product in the modal,
+        # skip auto-creation to avoid duplicates.
+        if not new_clip.get("product_id"):
+            product_data = {"name": new_clip["name"], "type": "digital", "image_url": ""}
+            if new_clip.get("user_id"):
+                product_data["user_id"] = new_clip["user_id"]
+            if new_clip.get("project_id"):
+                product_data["project_id"] = new_clip["project_id"]
+            new_product = create_product(product_data)
+            if new_product:
+                update_app_clip(new_clip["id"], {"product_id": new_product["id"]})
+                new_clip["product_id"] = new_product["id"]
+                print(f"      [OK] Auto-created digital product {new_product['id']} for clip {new_clip['id']}")
+        else:
+            new_product = None  # Product already linked — skip auto-creation
+            print(f"      [OK] Clip {new_clip['id']} already linked to product {new_clip['product_id']}")
         # Extract first frame in background, then update clip + product image
         if new_clip.get("video_url") and not new_clip.get("first_frame_url"):
             import threading
@@ -1238,8 +1268,13 @@ def api_create_app_clip(data: AppClipCreate, request: Request, user: dict = Depe
                     frame_url = extract_first_frame(new_clip["video_url"])
                     if frame_url:
                         update_app_clip(new_clip["id"], {"first_frame_url": frame_url})
-                        if new_product:
-                            update_product(new_product["id"], {"image_url": frame_url})
+                        # Update the linked product's image if it has none yet
+                        linked_pid = new_clip.get("product_id")
+                        if linked_pid:
+                            linked_prod = get_product(linked_pid)
+                            if linked_prod and not linked_prod.get("image_url"):
+                                update_product(linked_pid, {"image_url": frame_url})
+                                print(f"      [OK] Updated product {linked_pid} image from clip first frame")
                         print(f"      [OK] Auto-extracted first frame for clip {new_clip['id']}")
                 except Exception as e:
                     print(f"      !! Auto frame extraction failed for clip {new_clip['id']}: {e}")
@@ -1339,28 +1374,44 @@ def create_signed_url(data: SignedUrlRequest):
 
 
 @app.post("/jobs/bulk")
-def api_create_bulk_jobs(data: BulkJobCreate):
+def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Depends(get_optional_user)):
     try:
         inf = get_influencer(data.influencer_id)
         if not inf:
             raise HTTPException(status_code=404, detail="Influencer not found")
 
-        scripts = list_scripts()
-        clips = list_app_clips()
+        # ---------------------------------------------------------------
+        # Build script & clip pools — product-scoped for digital campaigns
+        # ---------------------------------------------------------------
+        is_digital_product = (data.product_type == "digital" and data.product_id)
+
+        if is_digital_product:
+            # Product-scoped clips: only clips belonging to this product
+            product_clips = list_app_clips_by_product(data.product_id)
+            clip_pool = product_clips if product_clips else list_app_clips()  # fallback
+            if not clip_pool:
+                clip_pool = []  # safe empty — jobs will have no clip
+
+            # Product-scoped scripts: only scripts linked to this product
+            product_scripts = list_scripts(product_id=data.product_id)
+            scripts = product_scripts if product_scripts else list_scripts()  # fallback
+        else:
+            # Legacy path: global pools + category matching (unchanged)
+            scripts = list_scripts()
+            clips = list_app_clips()
+            inf_style = (inf.get("style") or "").lower().strip()
+            matching_clips = [
+                c for c in clips
+                if inf_style and (
+                    inf_style in (c.get("category") or "").lower()
+                    or inf_style in (c.get("description") or "").lower()
+                    or inf_style in (c.get("name") or "").lower()
+                )
+            ] if clips else []
+            clip_pool = matching_clips if matching_clips else clips
+
         if not scripts:
             raise HTTPException(status_code=400, detail="No scripts available. Add scripts first.")
-
-        # Category-match clips to influencer
-        inf_style = (inf.get("style") or "").lower().strip()
-        matching_clips = [
-            c for c in clips
-            if inf_style and (
-                inf_style in (c.get("category") or "").lower()
-                or inf_style in (c.get("description") or "").lower()
-                or inf_style in (c.get("name") or "").lower()
-            )
-        ] if clips else []
-        clip_pool = matching_clips if matching_clips else clips
 
         # Detect actual DB columns dynamically (same approach as single job)
         try:
@@ -1376,16 +1427,54 @@ def api_create_bulk_jobs(data: BulkJobCreate):
                 "product_type", "product_id", "cost_image",
                 "hook", "model_api", "assistant_type", "length", "campaign_name",
                 "cost_video", "cost_voice", "cost_music", "cost_processing", "total_cost",
-                "cinematic_shot_ids", "error_message",
+                "cinematic_shot_ids", "error_message", "variation_prompt",
             }
 
         created_jobs = []
-        for _ in range(data.count):
-            selected_script = random.choice(scripts)
-            selected_clip = random.choice(clip_pool) if clip_pool else None
+        for i in range(data.count):
+            # ----- Clip selection: round-robin for digital, random for physical -----
+            if is_digital_product and clip_pool:
+                selected_clip = clip_pool[i % len(clip_pool)]
+            elif clip_pool:
+                selected_clip = random.choice(clip_pool)
+            else:
+                selected_clip = None
 
-            # Use frontend hook if provided, otherwise fall back to random script text
-            script_text = data.hook if data.hook else selected_script.get("text", "")
+            selected_script = random.choice(scripts)
+
+            # ----- 70/30 Influencer Setting Variation (digital only) -----
+            variation_prompt = None
+            if is_digital_product and random.random() < 0.70:
+                try:
+                    from prompts.digital_prompts import generate_variation_prompt
+                    default_setting = (inf.get("setting") or "").strip()
+                    variation_prompt = generate_variation_prompt(
+                        influencer_name=inf.get("name", "Influencer"),
+                        default_setting=default_setting or "natural environment",
+                    )
+                except Exception as e:
+                    print(f"   !! Variation prompt failed for job {i}: {e}")
+                    variation_prompt = None  # safe fallback
+
+            # ----- Script: generate unique per-video script for digital -----
+            if is_digital_product and not data.hook:
+                # Generate a fresh, unique script for each video
+                try:
+                    from ugc_backend.ai_script_client import AIScriptClient
+                    product = get_product(data.product_id)
+                    visuals = product.get("visual_description") or {} if product else {}
+                    client = AIScriptClient()
+                    script_text = client.generate_digital_product_script(
+                        product_name=product.get("name", "App") if product else "App",
+                        product_analysis=visuals,
+                        duration=data.duration,
+                    )
+                    print(f"   [Bulk] Job {i+1}: Generated unique script ({len(script_text)} chars)")
+                except Exception as e:
+                    print(f"   !! Per-video script generation failed for job {i}: {e}")
+                    script_text = selected_script.get("text", "")
+            else:
+                script_text = data.hook if data.hook else selected_script.get("text", "")
             costs = cost_service.estimate_total_cost(
                 script_text=script_text,
                 duration=data.duration,
@@ -1404,10 +1493,23 @@ def api_create_bulk_jobs(data: BulkJobCreate):
                 "length": data.duration,
                 "status": "pending",
                 "progress": 0,
+                "variation_prompt": variation_prompt,  # None = use default setting
                 **costs,
             }
+
+            # Inject user_id and project_id if authenticated
+            if user:
+                job_data["user_id"] = user["id"]
+                pid = _resolve_project_id(request, user)
+                if pid and "project_id" in db_columns:
+                    job_data["project_id"] = pid
+
             if data.hook:
                 job_data["hook"] = data.hook
+            elif is_digital_product and script_text:
+                # Store the uniquely generated script in the hook field
+                job_data["hook"] = script_text
+                job_data["script_id"] = None  # no static script reference
             if data.cinematic_shot_ids:
                 job_data["cinematic_shot_ids"] = data.cinematic_shot_ids
 

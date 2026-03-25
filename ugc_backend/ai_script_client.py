@@ -130,6 +130,35 @@ class AIScriptClient:
             print("OPENAI_API_KEY not found. Script generation will fail.")
         self.client = OpenAI(api_key=self.api_key)
 
+    @staticmethod
+    def _build_product_description(product_data: Dict[str, Any]) -> str:
+        """Build a rich product description from structured GPT website analysis.
+
+        Handles both the new structured format (product_summary, key_benefits, etc.)
+        and the legacy flat visual_description string.
+        """
+        parts = []
+
+        # New structured fields from GPT website analysis
+        if product_data.get("product_summary"):
+            parts.append(f"What it is: {product_data['product_summary']}")
+        if product_data.get("key_benefits") and isinstance(product_data["key_benefits"], list):
+            parts.append(f"Key benefits: {', '.join(product_data['key_benefits'])}")
+        if product_data.get("target_audience"):
+            parts.append(f"Target audience: {product_data['target_audience']}")
+        if product_data.get("unique_selling_points") and isinstance(product_data["unique_selling_points"], list):
+            parts.append(f"Unique selling points: {', '.join(product_data['unique_selling_points'])}")
+        if product_data.get("tone_and_personality"):
+            parts.append(f"Brand tone: {product_data['tone_and_personality']}")
+
+        # Legacy fallback: flat visual_description string
+        if not parts:
+            legacy = product_data.get("visual_description", "")
+            if legacy and isinstance(legacy, str):
+                parts.append(legacy)
+
+        return "\n".join(parts) if parts else f"A product called {product_data.get('name', 'Product')}."
+
     # ------------------------------------------------------------------
     # Two-Step Persona Pipeline (Private Methods)
     # ------------------------------------------------------------------
@@ -365,17 +394,31 @@ Generate the {num_parts}-part UGC script now."""
         app_description_parts = []
 
         if product_analysis:
-            ui_desc = product_analysis.get("visual_description", "")
-            app_type = product_analysis.get("app_type", "")
-            key_features = product_analysis.get("key_features", [])
-            if ui_desc:
-                app_description_parts.append(f"App UI: {ui_desc}")
-            if app_type:
-                app_description_parts.append(f"App type: {app_type}")
-            if key_features and isinstance(key_features, list):
-                app_description_parts.append(f"Key features: {', '.join(key_features[:5])}")
+            # New structured fields from GPT website analysis
+            if product_analysis.get("product_summary"):
+                app_description_parts.append(f"What it is: {product_analysis['product_summary']}")
+            if product_analysis.get("key_benefits") and isinstance(product_analysis["key_benefits"], list):
+                app_description_parts.append(f"Key benefits: {', '.join(product_analysis['key_benefits'])}")
+            if product_analysis.get("target_audience"):
+                app_description_parts.append(f"Target audience: {product_analysis['target_audience']}")
+            if product_analysis.get("unique_selling_points") and isinstance(product_analysis["unique_selling_points"], list):
+                app_description_parts.append(f"USPs: {', '.join(product_analysis['unique_selling_points'])}")
+            if product_analysis.get("tone_and_personality"):
+                app_description_parts.append(f"Brand tone: {product_analysis['tone_and_personality']}")
 
-        if website_content:
+            # Legacy fallback fields
+            if not app_description_parts:
+                ui_desc = product_analysis.get("visual_description", "")
+                app_type = product_analysis.get("app_type", "")
+                key_features = product_analysis.get("key_features", [])
+                if ui_desc:
+                    app_description_parts.append(f"App UI: {ui_desc}")
+                if app_type:
+                    app_description_parts.append(f"App type: {app_type}")
+                if key_features and isinstance(key_features, list):
+                    app_description_parts.append(f"Key features: {', '.join(key_features[:5])}")
+
+        if website_content and not app_description_parts:
             app_description_parts.append(f"Website content (first 1500 chars):\n{website_content[:1500]}")
 
         if not app_description_parts:
@@ -502,7 +545,7 @@ Generate the {num_parts}-part UGC script now."""
         and just ask it to build the persona.
         """
         product_name = product_data.get("brand_name") or product_data.get("name", "the product")
-        product_desc = product_data.get("visual_description", "A product.")
+        product_desc = self._build_product_description(product_data)
         product_category = product_data.get("category", "General")
 
         inf_name = influencer_data.get("name", "the creator")
@@ -569,7 +612,7 @@ Return ONLY the JSON object, no explanation."""
     ) -> list:
         """Call 2: Hook Generation. Returns 4 diverse opening lines aligned to the methodology."""
         product_name = product_data.get("brand_name") or product_data.get("name", "the product")
-        product_desc = product_data.get("visual_description", "A product.")
+        product_desc = self._build_product_description(product_data)
 
         # Build methodology-specific hook guidance
         methodology_hook_guidance = {
@@ -672,7 +715,7 @@ Return ONLY the JSON array, no explanation."""
     ) -> Dict[str, Any]:
         """Call 3: Full Script Generation. Returns the complete script_json object."""
         product_name = product_data.get("brand_name") or product_data.get("name", "the product")
-        product_desc = product_data.get("visual_description", "A product.")
+        product_desc = self._build_product_description(product_data)
         product_category = product_data.get("category", "General")
 
         num_scenes = 4 if video_length >= 30 else 2

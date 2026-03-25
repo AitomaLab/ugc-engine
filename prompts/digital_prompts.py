@@ -57,7 +57,8 @@ def generate_ultra_prompt(scene_type, ctx, script_override=None, is_last_scene=F
         f"candid UGC look, realism, high detail, skin texture\n"
         f"speech_constraint: {speech_constraint}\n"
         f"negative: no airbrushed skin, no studio lighting, no ring light reflection in eyes, "
-        f"no geometric distortion, no extra fingers, no word repetition, no stuttering, no repeated syllables"
+        f"no geometric distortion, no extra fingers, no word repetition, no stuttering, no repeated syllables, "
+        f"no subtitles, no captions, no text overlays, no burned-in text, no on-screen text, no words rendered on screen"
     )
     return prompt, script
 
@@ -255,7 +256,8 @@ def build_30s(dur, app_clip, ctx, product=None, influencer=None):
             f"style: raw authentic TikTok/Reels UGC, candid, not polished\n"
             f"speech_constraint: speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, speak at a relaxed unhurried natural pace filling the full duration of the video, do not rush\n"
             f"negative: no airbrushed skin, no studio lighting, no camera panning, no scene wipe, no transitions, "
-            f"no extra fingers, no silent video, no mutated hands, no stuttering"
+            f"no extra fingers, no silent video, no mutated hands, no stuttering, "
+            f"no subtitles, no captions, no text overlays, no burned-in text, no on-screen text, no words rendered on screen"
         )
 
         scenes.append({
@@ -309,7 +311,8 @@ def build_30s(dur, app_clip, ctx, product=None, influencer=None):
                 f"voice_type: clear confident pronunciation, casual, conversational {ctx['accent']}, {ctx['tone'].lower()} tone, consistent medium pacing\n"
                 f"style: raw authentic TikTok/Reels UGC, candid, not polished\n"
                 f"speech_constraint: {speech_constraint}\n"
-                f"negative: no airbrushed skin, no studio lighting, no camera movement, no panning, no scene wipe, no cuts, no transitions, no extra fingers, no stuttering, no extra limbs"
+                f"negative: no airbrushed skin, no studio lighting, no camera movement, no panning, no scene wipe, no cuts, no transitions, no extra fingers, no stuttering, no extra limbs, "
+                f"no subtitles, no captions, no text overlays, no burned-in text, no on-screen text, no words rendered on screen"
             )
         scenes.append({
             "name": "reaction",
@@ -358,7 +361,8 @@ def build_30s(dur, app_clip, ctx, product=None, influencer=None):
                 f"voice_type: clear confident pronunciation, casual, conversational {ctx['accent']}, {ctx['tone'].lower()} tone, consistent medium pacing\n"
                 f"style: raw authentic TikTok/Reels UGC, candid, not polished\n"
                 f"speech_constraint: {speech_constraint_3}\n"
-                f"negative: no airbrushed skin, no studio lighting, no camera movement, no panning, no scene wipe, no cuts, no transitions, no extra fingers, no stuttering, no extra limbs"
+                f"negative: no airbrushed skin, no studio lighting, no camera movement, no panning, no scene wipe, no cuts, no transitions, no extra fingers, no stuttering, no extra limbs, "
+                f"no subtitles, no captions, no text overlays, no burned-in text, no on-screen text, no words rendered on screen"
             )
             scenes.append({
                 "name": "cta",
@@ -513,7 +517,8 @@ def build_digital_unified(influencer: dict, product: dict, app_clip: dict, durat
         f"style: raw authentic TikTok/Reels UGC, candid, not polished\n"
         f"speech_constraint: speak ONLY the exact dialogue words provided, do not add or improvise any words, never repeat or stutter any word, each word must be spoken exactly once, speak at a relaxed unhurried natural pace filling the full duration of the video, do not rush\n"
         f"negative: no airbrushed skin, no studio lighting, no geometric distortion, no extra fingers, "
-        f"no silent video, no muted audio, no word repetition, no stuttering, no repeated syllables"
+        f"no silent video, no muted audio, no word repetition, no stuttering, no repeated syllables, "
+        f"no subtitles, no captions, no text overlays, no burned-in text, no on-screen text, no words rendered on screen"
     )
 
     scene_1 = {
@@ -542,3 +547,70 @@ def build_digital_unified(influencer: dict, product: dict, app_clip: dict, durat
     }
 
     return [scene_1, scene_2]
+
+
+# ---------------------------------------------------------------------------
+# Dynamic Influencer Variation — Setting Prompt Generator
+# ---------------------------------------------------------------------------
+
+def generate_variation_prompt(influencer_name: str, default_setting: str) -> str | None:
+    """Generate a unique one-line environment/setting description for campaign diversity.
+
+    Uses gpt-4.1-mini to create a fresh, plausible UGC environment that differs
+    from the influencer's default setting.  Returns None on any error so the
+    caller can safely fall back to the default.
+
+    Args:
+        influencer_name: Name of the influencer (for context).
+        default_setting: The influencer's default ``setting`` field value.
+
+    Returns:
+        A single-line setting string, or None if generation fails.
+    """
+    import os
+    try:
+        from openai import OpenAI
+    except ImportError:
+        print("[variation] openai package not installed — skipping variation")
+        return None
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        print("[variation] OPENAI_API_KEY not set — skipping variation")
+        return None
+
+    try:
+        client = OpenAI(api_key=api_key)
+        resp = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            max_tokens=60,
+            temperature=1.2,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You generate SHORT one-line UGC video environment descriptions. "
+                        "Output ONLY the setting description — no quotes, no prefix, no explanation. "
+                        "Examples: 'cozy bedroom with fairy lights and a messy bed', "
+                        "'bright modern kitchen with white countertops', "
+                        "'sunny park bench under a large oak tree'."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Create a new, unique UGC video setting for influencer '{influencer_name}'. "
+                        f"It must be DIFFERENT from: '{default_setting}'. "
+                        f"Output one line only."
+                    ),
+                },
+            ],
+        )
+        result = resp.choices[0].message.content.strip().strip("\"'")
+        if result and len(result) > 5:
+            print(f"[variation] Generated setting: {result}")
+            return result
+        return None
+    except Exception as e:
+        print(f"[variation] GPT call failed: {e}")
+        return None

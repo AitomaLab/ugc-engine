@@ -137,6 +137,14 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=Non
         "setting": setting or "natural environment matching the background visible in the reference image",
     }
 
+    # Dynamic Influencer Variation: override setting if a variation_prompt was
+    # generated for this job (70% of bulk digital campaigns). The original
+    # setting is preserved as the fallback for the remaining 30%.
+    if influencer.get("variation_prompt"):
+        ctx["setting"] = influencer["variation_prompt"]
+        print(f"      [SCENE] Variation setting override: {ctx['setting']}")
+
+
     # -----------------------------------------------------------------------
     # NEW: If a structured script_json object is provided, extract scene
     # dialogues from it and populate ctx fields directly. This bypasses the

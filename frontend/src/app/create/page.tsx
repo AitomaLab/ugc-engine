@@ -387,6 +387,8 @@ function CreateContent() {
 
             if (isCampaignMode) {
                 // Bulk creation
+                // For digital campaigns: omit hook so backend generates a unique script per video
+                const bulkHook = (productType === 'digital') ? undefined : effectiveHook;
                 await apiFetch('/jobs/bulk', {
                     method: 'POST',
                     body: JSON.stringify({
@@ -398,7 +400,7 @@ function CreateContent() {
                         assistant_type: selectedInf?.style || 'Travel',
                         product_type: productType,
                         product_id: productId || undefined,
-                        hook: effectiveHook,
+                        hook: bulkHook,
                         cinematic_shot_ids: selectedCinematicShots.length > 0 ? selectedCinematicShots : undefined,
                         auto_transition_type: enableAutoTransitions ? autoTransitionType : undefined,
                     }),
@@ -957,8 +959,8 @@ function CreateContent() {
                 {/* Generate Button */}
                 <button className="btn-generate" onClick={handleSubmit} disabled={!selectedInfluencer || submitting}>
                     <svg style={{ width: 16, height: 16, stroke: 'white', fill: 'none', strokeWidth: 2 }} viewBox="0 0 24 24"><polygon points="13,2 3,14 12,14 11,22 21,10 12,10" /></svg>
-                    {submitting ? 'Launching...' : isCampaignMode ? `Launch Campaign (${quantity})` : 'Generate Video'}
-                    {creditCosts[`${productType}_${duration}s`] && <span className="credit-cost">{creditCosts[`${productType}_${duration}s`]} credits</span>}
+                    {submitting ? 'Launching...' : isCampaignMode ? 'Launch Campaign' : 'Generate Video'}
+                    {creditCosts[`${productType}_${duration}s`] && <span className="credit-cost">{isCampaignMode ? creditCosts[`${productType}_${duration}s`] * quantity : creditCosts[`${productType}_${duration}s`]} cr</span>}
                 </button>
             </div>
 
