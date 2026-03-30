@@ -66,6 +66,35 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'remotion-renderer' });
 });
 
+// Debug endpoint to inspect Chromium installation
+app.get('/debug', (req, res) => {
+  const info = {
+    chromiumPath,
+    chromeArgs,
+    env: {
+      REMOTION_CHROME_EXECUTABLE: process.env.REMOTION_CHROME_EXECUTABLE,
+      CHROMIUM_FLAGS: process.env.CHROMIUM_FLAGS,
+      PUPPETEER_SKIP_DOWNLOAD: process.env.PUPPETEER_SKIP_DOWNLOAD,
+    },
+    checks: {},
+  };
+  // Check common paths
+  ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome', '/usr/lib/chromium/chromium'].forEach(p => {
+    info.checks[p] = fs.existsSync(p);
+  });
+  // Try to find chromium
+  try {
+    info.whichChromium = execSync('which chromium 2>/dev/null || echo NOT_FOUND', { encoding: 'utf-8' }).trim();
+  } catch (_) { info.whichChromium = 'error'; }
+  try {
+    info.dpkgChromium = execSync('dpkg -L chromium 2>/dev/null | head -20', { encoding: 'utf-8' }).trim();
+  } catch (_) { info.dpkgChromium = 'not installed'; }
+  try {
+    info.chromiumVersion = execSync('chromium --version 2>/dev/null || chromium-browser --version 2>/dev/null || echo FAIL', { encoding: 'utf-8' }).trim();
+  } catch (_) { info.chromiumVersion = 'error'; }
+  res.json(info);
+});
+
 // Serve local video files over HTTP so Remotion's OffthreadVideo can access them.
 // Remotion only supports http:// and https:// URLs — not file:// URLs.
 app.get('/video', (req, res) => {
