@@ -22,12 +22,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxtst6 \
     xdg-utils \
     ffmpeg \
+    dbus \
     && rm -rf /var/lib/apt/lists/*
 
 # Tell Puppeteer/Remotion to skip downloading its own Chromium
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 # Point Remotion to the system-installed Chromium
 ENV REMOTION_CHROME_EXECUTABLE=/usr/bin/chromium
+# Required for running Chromium in Docker (no display, no sandbox)
+ENV CHROMIUM_FLAGS="--no-sandbox"
+ENV DBUS_SESSION_BUS_ADDRESS=/dev/null
 
 WORKDIR /app
 

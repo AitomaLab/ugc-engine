@@ -37,6 +37,15 @@ function findChromiumExecutable() {
 
 const chromiumPath = findChromiumExecutable();
 
+// Chrome args required for running in Docker/cloud containers
+const chromeArgs = [
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+  '--disable-dev-shm-usage',
+  '--disable-gpu',
+  '--single-process',
+];
+
 // Pre-bundle the Remotion project on startup (cached for all subsequent renders)
 let bundlePromise = null;
 
@@ -172,6 +181,7 @@ app.post('/render', async (req, res) => {
       id: 'CaptionedVideo',
       inputProps,
       ...(chromiumPath ? { chromiumExecutable: chromiumPath } : {}),
+      chromiumOptions: { args: chromeArgs },
     });
 
     // Override composition duration and fps to match the source video exactly
@@ -196,6 +206,7 @@ app.post('/render', async (req, res) => {
       inputProps,
       concurrency: Math.max(1, Math.floor(require('os').cpus().length / 2)),
       ...(chromiumPath ? { chromiumExecutable: chromiumPath } : {}),
+      chromiumOptions: { args: chromeArgs },
     });
 
     console.log(`[Remotion] Render complete: ${outputLocation}`);
