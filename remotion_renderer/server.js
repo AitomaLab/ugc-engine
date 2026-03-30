@@ -64,15 +64,57 @@ app.get('/video', (req, res) => {
 
 // Main render endpoint
 app.post('/render', async (req, res) => {
-  const { videoPath, transcription, subtitleStyle, subtitlePlacement } = req.body;
+  const { videoPath, videoUrl, transcription, subtitleStyle, subtitlePlacement } = req.body;
 
   // Validate required fields
-  if (!videoPath || !transcription) {
-    return res.status(400).json({ error: 'videoPath and transcription are required' });
+  if ((!videoPath && !videoUrl) || !transcription) {
+    return res.status(400).json({ error: 'videoPath or videoUrl, and transcription are required' });
   }
 
-  if (!fs.existsSync(videoPath)) {
-    return res.status(400).json({ error: `Video file not found: ${videoPath}` });
+  // Determine which video source to use
+  let localVideoPath = videoPath;
+  let tempDownloaded = false;
+
+  // If a remote URL is provided (cloud-to-cloud), download it to a temp file
+  if (videoUrl && !videoPath) {
+    try {
+      const os = require('os');
+      const https = require('https');
+      const http = require('http');
+      const tmpDir = os.tmpdir();
+      const tmpFile = path.join(tmpDir, `remotion_input_${Date.now()}.mp4`);
+      console.log(`[Remotion] Downloading remote video: ${videoUrl}`);
+
+      await new Promise((resolve, reject) => {
+        const protocol = videoUrl.startsWith('https') ? https : http;
+        const file = fs.createWriteStream(tmpFile);
+        protocol.get(videoUrl, (response) => {
+          // Handle redirects
+          if (response.statusCode === 301 || response.statusCode === 302) {
+            const redirectUrl = response.headers.location;
+            const redirProtocol = redirectUrl.startsWith('https') ? https : http;
+            redirProtocol.get(redirectUrl, (redirRes) => {
+              redirRes.pipe(file);
+              file.on('finish', () => { file.close(); resolve(); });
+            }).on('error', reject);
+          } else {
+            response.pipe(file);
+            file.on('finish', () => { file.close(); resolve(); });
+          }
+        }).on('error', reject);
+      });
+
+      console.log(`[Remotion] Downloaded to: ${tmpFile} (${(fs.statSync(tmpFile).size / 1024 / 1024).toFixed(1)} MB)`);
+      localVideoPath = tmpFile;
+      tempDownloaded = true;
+    } catch (dlErr) {
+      console.error('[Remotion] Failed to download remote video:', dlErr.message);
+      return res.status(400).json({ error: `Failed to download remote video: ${dlErr.message}` });
+    }
+  }
+
+  if (!fs.existsSync(localVideoPath)) {
+    return res.status(400).json({ error: `Video file not found: ${localVideoPath}` });
   }
 
   try {
@@ -80,13 +122,12 @@ app.post('/render', async (req, res) => {
     const serveUrl = await getBundle();
 
     // Determine video duration and fps from the source video
-    const metadata = await getVideoMetadata(videoPath);
+    const metadata = await getVideoMetadata(localVideoPath);
     const fps = Math.round(metadata.fps) || 30;
     const durationInFrames = Math.ceil(metadata.durationInSeconds * fps);
 
     // Serve the local file over HTTP so Remotion can access it.
-    // Remotion's OffthreadVideo only supports http/https URLs, not file:// URLs.
-    const absoluteVideoPath = path.resolve(videoPath);
+    const absoluteVideoPath = path.resolve(localVideoPath);
     const videoSrc = `http://localhost:${PORT}/video?path=${encodeURIComponent(absoluteVideoPath)}`;
 
     const inputProps = {
@@ -109,13 +150,12 @@ app.post('/render', async (req, res) => {
     composition.height = metadata.height || 1920;
 
     // Output path: same directory as input, with _captioned suffix
-    const ext = path.extname(videoPath);
-    const outputLocation = videoPath.replace(ext, `_captioned${ext}`);
+    const ext = path.extname(localVideoPath);
+    const outputLocation = localVideoPath.replace(ext, `_captioned${ext}`);
 
-    console.log(`[Remotion] Rendering: ${path.basename(videoPath)} -> ${path.basename(outputLocation)}`);
+    console.log(`[Remotion] Rendering: ${path.basename(localVideoPath)} -> ${path.basename(outputLocation)}`);
     console.log(`[Remotion] Style: ${inputProps.subtitleStyle}, Placement: ${inputProps.subtitlePlacement}`);
     console.log(`[Remotion] Duration: ${metadata.durationInSeconds.toFixed(2)}s @ ${fps}fps = ${durationInFrames} frames`);
-    console.log(`[Remotion] Video URL: ${videoSrc}`);
 
     await renderMedia({
       composition,
@@ -123,15 +163,36 @@ app.post('/render', async (req, res) => {
       codec: 'h264',
       outputLocation,
       inputProps,
-      // Use half the available CPU cores for rendering
       concurrency: Math.max(1, Math.floor(require('os').cpus().length / 2)),
     });
 
     console.log(`[Remotion] Render complete: ${outputLocation}`);
-    res.json({ outputLocation, success: true });
+
+    // Read the captioned file and return it as a downloadable binary response
+    // so the caller (Modal) can save it directly without needing filesystem access.
+    const stat = fs.statSync(outputLocation);
+    res.writeHead(200, {
+      'Content-Type': 'video/mp4',
+      'Content-Length': stat.size,
+      'Content-Disposition': `attachment; filename="${path.basename(outputLocation)}"`,
+      'X-Output-Location': outputLocation,
+    });
+    fs.createReadStream(outputLocation).pipe(res);
+
+    // Cleanup temp files after response is sent
+    res.on('finish', () => {
+      try {
+        if (tempDownloaded && fs.existsSync(localVideoPath)) fs.unlinkSync(localVideoPath);
+        if (fs.existsSync(outputLocation)) fs.unlinkSync(outputLocation);
+      } catch (_) {}
+    });
 
   } catch (err) {
     console.error('[Remotion] Render failed:', err.message);
+    // Cleanup temp file on failure
+    if (tempDownloaded && fs.existsSync(localVideoPath)) {
+      try { fs.unlinkSync(localVideoPath); } catch (_) {}
+    }
     res.status(500).json({ error: err.message, success: false });
   }
 });

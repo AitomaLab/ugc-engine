@@ -656,24 +656,53 @@ def run_generation_pipeline(
                 try:
                     print(f"      [SUBTITLES] Rendering with Remotion (style={subtitle_style}, placement={subtitle_placement})...")
                     remotion_url = os.getenv("REMOTION_RENDERER_URL", "http://localhost:8090")
+                    is_cloud = "localhost" not in remotion_url and "127.0.0.1" not in remotion_url
+
                     payload = {
-                        "videoPath": str(final_path),
                         "transcription": transcription,
                         "subtitleStyle": subtitle_style,
                         "subtitlePlacement": subtitle_placement,
                     }
+
+                    if is_cloud:
+                        # Cloud-to-cloud: upload the video to Supabase and send the public URL
+                        print(f"      [SUBTITLES] Cloud mode: uploading assembled video to Supabase for Remotion...")
+                        temp_upload_url = storage_helper.upload_to_supabase_storage(
+                            str(final_path),
+                            bucket="generated-videos",
+                            destination_path=f"temp_remotion_{os.path.basename(str(final_path))}",
+                        )
+                        print(f"      [SUBTITLES] Uploaded: {temp_upload_url}")
+                        payload["videoUrl"] = temp_upload_url
+                    else:
+                        # Local development: send the local file path directly
+                        payload["videoPath"] = str(final_path)
+
                     response = requests.post(
                         f"{remotion_url}/render",
                         json=payload,
                         timeout=300,  # 5 minutes max
+                        stream=True,
                     )
                     response.raise_for_status()
-                    result = response.json()
-                    if result.get("success") and result.get("outputLocation"):
-                        captioned_path = result["outputLocation"]
-                        print(f"      [SUBTITLES] ✅ Remotion render complete: {captioned_path}")
+
+                    content_type = response.headers.get("Content-Type", "")
+                    if "video/mp4" in content_type:
+                        # Cloud mode: Remotion returned the captioned video as binary
+                        from pathlib import Path as _Path
+                        captioned_path = str(_Path(str(final_path)).parent / f"{_Path(str(final_path)).stem}_captioned.mp4")
+                        with open(captioned_path, "wb") as f:
+                            for chunk in response.iter_content(chunk_size=8192):
+                                f.write(chunk)
+                        print(f"      [SUBTITLES] ✅ Remotion render complete (cloud): {captioned_path}")
                     else:
-                        raise ValueError(f"Remotion returned unexpected response: {result}")
+                        # Local mode: Remotion returned JSON with local outputLocation
+                        result = response.json()
+                        if result.get("success") and result.get("outputLocation"):
+                            captioned_path = result["outputLocation"]
+                            print(f"      [SUBTITLES] ✅ Remotion render complete: {captioned_path}")
+                        else:
+                            raise ValueError(f"Remotion returned unexpected response: {result}")
                 except Exception as remotion_err:
                     print(f"      [SUBTITLES] ⚠️ Remotion failed: {remotion_err}. Falling back to FFmpeg.")
                     captioned_path = None  # Trigger fallback

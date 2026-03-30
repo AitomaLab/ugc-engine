@@ -40,6 +40,36 @@ def upload_temporary_file(file_path):
     print(f"      🔗 Public URL: {direct_url}")
     return direct_url
 
+def upload_to_supabase_storage(file_path, bucket="generated-videos", destination_path=None):
+    """
+    Upload a local file to Supabase Storage.
+    Returns the public URL for the uploaded file.
+    """
+    from ugc_db.db_manager import get_supabase
+    
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"File not found: {file_path}")
+
+    sb = get_supabase()
+    if not destination_path:
+        destination_path = os.path.basename(file_path)
+
+    with open(file_path, "rb") as f:
+        file_data = f.read()
+
+    # Upload (upsert to overwrite if exists)
+    sb.storage.from_(bucket).upload(
+        destination_path,
+        file_data,
+        {"content-type": "video/mp4", "upsert": "true"},
+    )
+
+    supabase_url = os.getenv("SUPABASE_URL", "")
+    public_url = f"{supabase_url}/storage/v1/object/public/{bucket}/{destination_path}"
+    print(f"      ☁️ Uploaded to Supabase Storage: {public_url}")
+    return public_url
+
+
 if __name__ == "__main__":
     # Test upload
     test_file = "test.txt"
