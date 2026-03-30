@@ -2,6 +2,7 @@ providers = ["node"]
 
 [variables]
 NODE_VERSION = "20"
+NPM_CONFIG_PRODUCTION = "false"
 
 [phases.setup]
 aptPkgs = ["chromium-browser", "fonts-liberation", "fonts-noto-color-emoji"]
