@@ -63,6 +63,13 @@ worker_image = (
         "node --version && npm --version",
     )
     .pip_install_from_requirements("requirements.txt")
+    # Remotion renderer: copy into image, install deps, pre-download Chrome
+    # (must come before add_local_python_source because run_commands follows)
+    .add_local_dir("remotion_renderer", remote_path="/root/remotion_renderer",
+                   ignore=["node_modules", "dist", "*.mp4", "output"], copy=True)
+    .run_commands(
+        "cd /root/remotion_renderer && npm install",
+    )
     # Root-level Python modules the pipeline needs
     .add_local_python_source(
         "config",
@@ -83,14 +90,6 @@ worker_image = (
     # Non-Python data files the pipeline needs
     .add_local_dir("prompts", remote_path="/root/project/prompts")
     .add_local_file("ugc_backend/cost_config.json", remote_path="/root/project/ugc_backend/cost_config.json")
-    # Remotion renderer (Node.js project) — exclude node_modules (installed in container)
-    .add_local_dir("remotion_renderer", remote_path="/root/remotion_renderer",
-                   ignore=["node_modules", "dist", "*.mp4", "output"])
-    # Install Remotion npm dependencies and pre-download Chrome Headless Shell
-    .run_commands(
-        "cd /root/remotion_renderer && npm install",
-        "cd /root/remotion_renderer && npx remotion browser ensure",
-    )
 )
 
 
