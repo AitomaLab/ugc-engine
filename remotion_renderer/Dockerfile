@@ -35,13 +35,12 @@ ENV DBUS_SESSION_BUS_ADDRESS=/dev/null
 
 WORKDIR /app
 
-# Railway uses the repo root as Docker build context, so paths are relative to repo root.
-# Copy package files from remotion_renderer/ subdirectory
-COPY remotion_renderer/package*.json ./
+# Copy package files and install dependencies
+COPY package*.json ./
 RUN npm install
 
-# Copy the rest of the remotion_renderer app
-COPY remotion_renderer/ .
+# Copy the rest of the app
+COPY . .
 
 # Expose the port (Railway will inject PORT env var)
 EXPOSE 8090
