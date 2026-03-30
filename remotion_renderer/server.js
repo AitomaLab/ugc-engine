@@ -5,7 +5,7 @@ const fs = require('fs');
 const app = express();
 app.use(express.json({ limit: '50mb' }));
 
-const PORT = process.env.REMOTION_PORT || 8090;
+const PORT = process.env.PORT || process.env.REMOTION_PORT || 8090;
 
 // Pre-bundle the Remotion project on startup (cached for all subsequent renders)
 let bundlePromise = null;
