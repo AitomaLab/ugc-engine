@@ -8,43 +8,16 @@ app.use(express.json({ limit: '50mb' }));
 
 const PORT = process.env.PORT || process.env.REMOTION_PORT || 8090;
 
-// Detect system-installed Chromium for cloud deployments (Railway, Render, etc.)
-function findChromiumExecutable() {
-  const candidates = [
-    process.env.REMOTION_CHROME_EXECUTABLE,
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
-    '/usr/bin/google-chrome',
-    '/usr/bin/google-chrome-stable',
-  ];
-  for (const c of candidates) {
-    if (c && fs.existsSync(c)) {
-      console.log(`[Remotion] Found Chromium at: ${c}`);
-      return c;
-    }
-  }
-  // Try 'which chromium'
-  try {
-    const which = execSync('which chromium 2>/dev/null || which chromium-browser 2>/dev/null', { encoding: 'utf-8' }).trim();
-    if (which) {
-      console.log(`[Remotion] Found Chromium via which: ${which}`);
-      return which;
-    }
-  } catch (_) {}
-  console.log('[Remotion] No system Chromium found, using Remotion default');
-  return undefined;
-}
-
-const chromiumPath = findChromiumExecutable();
-
 // Chrome args required for running in Docker/cloud containers
 const chromeArgs = [
   '--no-sandbox',
   '--disable-setuid-sandbox',
   '--disable-dev-shm-usage',
   '--disable-gpu',
-  '--disable-features=VizDisplayCompositor',
 ];
+
+// Memory limit for offthread video cache (50MB to stay within 1GB Railway limit)
+const OFFTHREAD_CACHE_SIZE = 50 * 1024 * 1024; // 50MB
 
 // Pre-bundle the Remotion project on startup (cached for all subsequent renders)
 let bundlePromise = null;
@@ -66,32 +39,19 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'remotion-renderer' });
 });
 
-// Debug endpoint to inspect Chromium installation
+// Debug endpoint to inspect Chrome Headless Shell and system info
 app.get('/debug', (req, res) => {
+  const os = require('os');
   const info = {
-    chromiumPath,
     chromeArgs,
-    env: {
-      REMOTION_CHROME_EXECUTABLE: process.env.REMOTION_CHROME_EXECUTABLE,
-      CHROMIUM_FLAGS: process.env.CHROMIUM_FLAGS,
-      PUPPETEER_SKIP_DOWNLOAD: process.env.PUPPETEER_SKIP_DOWNLOAD,
+    offthreadCacheSize: `${OFFTHREAD_CACHE_SIZE / 1024 / 1024}MB`,
+    system: {
+      totalMemory: `${Math.round(os.totalmem() / 1024 / 1024)}MB`,
+      freeMemory: `${Math.round(os.freemem() / 1024 / 1024)}MB`,
+      cpus: os.cpus().length,
     },
-    checks: {},
+    note: 'Using Remotion built-in Chrome Headless Shell (pre-downloaded at build time)',
   };
-  // Check common paths
-  ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome', '/usr/lib/chromium/chromium'].forEach(p => {
-    info.checks[p] = fs.existsSync(p);
-  });
-  // Try to find chromium
-  try {
-    info.whichChromium = execSync('which chromium 2>/dev/null || echo NOT_FOUND', { encoding: 'utf-8' }).trim();
-  } catch (_) { info.whichChromium = 'error'; }
-  try {
-    info.dpkgChromium = execSync('dpkg -L chromium 2>/dev/null | head -20', { encoding: 'utf-8' }).trim();
-  } catch (_) { info.dpkgChromium = 'not installed'; }
-  try {
-    info.chromiumVersion = execSync('chromium --version 2>/dev/null || chromium-browser --version 2>/dev/null || echo FAIL', { encoding: 'utf-8' }).trim();
-  } catch (_) { info.chromiumVersion = 'error'; }
   res.json(info);
 });
 
@@ -209,8 +169,8 @@ app.post('/render', async (req, res) => {
       serveUrl,
       id: 'CaptionedVideo',
       inputProps,
-      ...(chromiumPath ? { chromiumExecutable: chromiumPath } : {}),
       chromiumOptions: { args: chromeArgs },
+      offthreadVideoCacheSizeInBytes: OFFTHREAD_CACHE_SIZE,
     });
 
     // Override composition duration and fps to match the source video exactly
@@ -235,8 +195,8 @@ app.post('/render', async (req, res) => {
       inputProps,
       concurrency: 1, // Force single-thread for 1GB Railway instances
       timeoutInMilliseconds: 240000, // 4 minute timeout
-      ...(chromiumPath ? { chromiumExecutable: chromiumPath } : {}),
       chromiumOptions: { args: chromeArgs },
+      offthreadVideoCacheSizeInBytes: OFFTHREAD_CACHE_SIZE,
     });
 
     console.log(`[Remotion] Render complete: ${outputLocation}`);

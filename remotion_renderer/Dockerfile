@@ -1,8 +1,7 @@
 FROM node:20-slim
 
-# Install Chromium and all required dependencies for Remotion rendering
+# Install only the essential dependencies for Chrome Headless Shell + FFmpeg
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    chromium \
     libnss3 \
     libatk-bridge2.0-0 \
     libdrm2 \
@@ -25,12 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     dbus \
     && rm -rf /var/lib/apt/lists/*
 
-# Tell Puppeteer/Remotion to skip downloading its own Chromium
-ENV PUPPETEER_SKIP_DOWNLOAD=true
-# Point Remotion to the system-installed Chromium
-ENV REMOTION_CHROME_EXECUTABLE=/usr/bin/chromium
-# Required for running Chromium in Docker (no display, no sandbox)
-ENV CHROMIUM_FLAGS="--no-sandbox"
+# Required for running headless Chrome in Docker
 ENV DBUS_SESSION_BUS_ADDRESS=/dev/null
 
 WORKDIR /app
@@ -41,6 +35,10 @@ RUN npm install
 
 # Copy the rest of the app
 COPY . .
+
+# Pre-download Chrome Headless Shell at build time (not at runtime)
+# This prevents the 108MB download during rendering and saves memory
+RUN npx remotion browser ensure
 
 # Expose the port (Railway will inject PORT env var)
 EXPOSE 8090
