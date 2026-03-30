@@ -29,7 +29,39 @@ app = modal.App(
 # Container image with all dependencies + project source code
 worker_image = (
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install("ffmpeg")
+    .apt_install(
+        # FFmpeg for video assembly
+        "ffmpeg",
+        # Chrome Headless Shell dependencies for Remotion rendering
+        "libnss3",
+        "libatk-bridge2.0-0",
+        "libdrm2",
+        "libxcomposite1",
+        "libxdamage1",
+        "libxrandr2",
+        "libgbm1",
+        "libasound2",
+        "libpangocairo-1.0-0",
+        "libgtk-3-0",
+        "libxshmfence1",
+        "fonts-liberation",
+        "fonts-noto-color-emoji",
+        "libx11-xcb1",
+        "libxcb-dri3-0",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "dbus",
+        # curl for downloading Node.js
+        "curl",
+        "ca-certificates",
+    )
+    # Install Node.js 20 via NodeSource
+    .run_commands(
+        "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -",
+        "apt-get install -y nodejs",
+        "node --version && npm --version",
+    )
     .pip_install_from_requirements("requirements.txt")
     # Root-level Python modules the pipeline needs
     .add_local_python_source(
@@ -51,6 +83,14 @@ worker_image = (
     # Non-Python data files the pipeline needs
     .add_local_dir("prompts", remote_path="/root/project/prompts")
     .add_local_file("ugc_backend/cost_config.json", remote_path="/root/project/ugc_backend/cost_config.json")
+    # Remotion renderer (Node.js project) — exclude node_modules (installed in container)
+    .add_local_dir("remotion_renderer", remote_path="/root/remotion_renderer",
+                   ignore=["node_modules", "dist", "*.mp4", "output"])
+    # Install Remotion npm dependencies and pre-download Chrome Headless Shell
+    .run_commands(
+        "cd /root/remotion_renderer && npm install",
+        "cd /root/remotion_renderer && npx remotion browser ensure",
+    )
 )
 
 
@@ -62,8 +102,8 @@ worker_image = (
     image=worker_image,
     timeout=600,           # 10 min max per video job
     retries=1,             # Retry once on transient failures
-    cpu=2.0,               # 2 vCPUs for ffmpeg
-    memory=2048,           # 2 GB RAM
+    cpu=2.0,               # 2 vCPUs for ffmpeg + Remotion
+    memory=4096,           # 4 GB RAM — needed for Chromium + video rendering
 )
 def process_video(job_id: str):
     """

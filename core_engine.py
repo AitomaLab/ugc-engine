@@ -651,58 +651,69 @@ def run_generation_pipeline(
         )
 
         if transcription and transcription.get("words"):
-            # --- PRIMARY PATH: Remotion ---
+            # --- PRIMARY PATH: Remotion (via subprocess) ---
             if use_remotion:
                 try:
                     print(f"      [SUBTITLES] Rendering with Remotion (style={subtitle_style}, placement={subtitle_placement})...")
-                    remotion_url = os.getenv("REMOTION_RENDERER_URL", "http://localhost:8090")
-                    is_cloud = "localhost" not in remotion_url and "127.0.0.1" not in remotion_url
 
-                    payload = {
+                    from pathlib import Path as _Path
+                    import json as _json
+                    import tempfile as _tempfile
+
+                    # Determine the Remotion renderer directory
+                    # In Modal: /root/remotion_renderer
+                    # Locally: ./remotion_renderer (relative to project root)
+                    remotion_dir = "/root/remotion_renderer"
+                    if not os.path.isdir(remotion_dir):
+                        remotion_dir = os.path.join(os.path.dirname(__file__), "remotion_renderer")
+
+                    render_script = os.path.join(remotion_dir, "render_captions.js")
+                    if not os.path.isfile(render_script):
+                        raise FileNotFoundError(f"Remotion render script not found: {render_script}")
+
+                    # Write input props to a temp JSON file
+                    props = {
                         "transcription": transcription,
                         "subtitleStyle": subtitle_style,
                         "subtitlePlacement": subtitle_placement,
                     }
+                    with _tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as pf:
+                        _json.dump(props, pf)
+                        props_path = pf.name
 
-                    if is_cloud:
-                        # Cloud-to-cloud: upload the video to Supabase and send the public URL
-                        print(f"      [SUBTITLES] Cloud mode: uploading assembled video to Supabase for Remotion...")
-                        temp_upload_url = storage_helper.upload_to_supabase_storage(
-                            str(final_path),
-                            bucket="generated-videos",
-                            destination_path=f"temp_remotion_{os.path.basename(str(final_path))}",
-                        )
-                        print(f"      [SUBTITLES] Uploaded: {temp_upload_url}")
-                        payload["videoUrl"] = temp_upload_url
-                    else:
-                        # Local development: send the local file path directly
-                        payload["videoPath"] = str(final_path)
+                    # Output path
+                    captioned_output = str(_Path(str(final_path)).parent / f"{_Path(str(final_path)).stem}_captioned.mp4")
 
-                    response = requests.post(
-                        f"{remotion_url}/render",
-                        json=payload,
-                        timeout=300,  # 5 minutes max
-                        stream=True,
+                    # Call the Node.js render script via subprocess
+                    cmd = [
+                        "node", render_script,
+                        "--input", str(final_path),
+                        "--props", props_path,
+                        "--output", captioned_output,
+                    ]
+                    print(f"      [SUBTITLES] Running: node render_captions.js ...")
+                    result = subprocess.run(
+                        cmd, capture_output=True, text=True, timeout=300,
+                        cwd=remotion_dir,
                     )
-                    response.raise_for_status()
 
-                    content_type = response.headers.get("Content-Type", "")
-                    if "video/mp4" in content_type:
-                        # Cloud mode: Remotion returned the captioned video as binary
-                        from pathlib import Path as _Path
-                        captioned_path = str(_Path(str(final_path)).parent / f"{_Path(str(final_path)).stem}_captioned.mp4")
-                        with open(captioned_path, "wb") as f:
-                            for chunk in response.iter_content(chunk_size=8192):
-                                f.write(chunk)
-                        print(f"      [SUBTITLES] ✅ Remotion render complete (cloud): {captioned_path}")
+                    # Cleanup temp props file
+                    try:
+                        os.unlink(props_path)
+                    except OSError:
+                        pass
+
+                    if result.returncode == 0 and os.path.isfile(captioned_output):
+                        captioned_path = captioned_output
+                        # Print Remotion stdout for debugging
+                        for line in result.stdout.strip().split("\n"):
+                            if line.strip():
+                                print(f"      {line}")
+                        print(f"      [SUBTITLES] ✅ Remotion render complete: {captioned_path}")
                     else:
-                        # Local mode: Remotion returned JSON with local outputLocation
-                        result = response.json()
-                        if result.get("success") and result.get("outputLocation"):
-                            captioned_path = result["outputLocation"]
-                            print(f"      [SUBTITLES] ✅ Remotion render complete: {captioned_path}")
-                        else:
-                            raise ValueError(f"Remotion returned unexpected response: {result}")
+                        stderr_msg = result.stderr.strip()[-500:] if result.stderr else "no stderr"
+                        raise RuntimeError(f"Remotion exited with code {result.returncode}: {stderr_msg}")
+
                 except Exception as remotion_err:
                     print(f"      [SUBTITLES] ⚠️ Remotion failed: {remotion_err}. Falling back to FFmpeg.")
                     captioned_path = None  # Trigger fallback
