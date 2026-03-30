@@ -115,7 +115,10 @@ function CreateContent() {
     const [scriptMethodology, setScriptMethodology] = useState<string>('');
     const [linkedClips, setLinkedClips] = useState<AppClip[]>([]);
     const [selectedLinkedClip, setSelectedLinkedClip] = useState<string>('');
-    const [modelApi, setModelApi] = useState('seedance-1.5-pro');
+    const [modelApi, setModelApi] = useState('veo-3.1-fast');
+    const [subtitlesEnabled, setSubtitlesEnabled] = useState<boolean>(true);
+    const [subtitleStyle, setSubtitleStyle] = useState<string>('hormozi');
+    const [subtitlePlacement, setSubtitlePlacement] = useState<string>('middle');
     const [appClipId, setAppClipId] = useState<string>('');
     const [productId, setProductId] = useState<string>('');
     const [productType, setProductType] = useState<'digital' | 'physical'>('digital');
@@ -403,6 +406,9 @@ function CreateContent() {
                         hook: bulkHook,
                         cinematic_shot_ids: selectedCinematicShots.length > 0 ? selectedCinematicShots : undefined,
                         auto_transition_type: enableAutoTransitions ? autoTransitionType : undefined,
+                        subtitles_enabled: subtitlesEnabled,
+                        subtitle_style: subtitleStyle,
+                        subtitle_placement: subtitlePlacement,
                     }),
                 });
                 setSuccessMessage(` Campaign "${campaignName || 'Untitled'}" launched with ${quantity} videos!`);
@@ -422,6 +428,9 @@ function CreateContent() {
                         length: duration,
                         cinematic_shot_ids: selectedCinematicShots.length > 0 ? selectedCinematicShots : undefined,
                         auto_transition_type: enableAutoTransitions ? autoTransitionType : undefined,
+                        subtitles_enabled: subtitlesEnabled,
+                        subtitle_style: subtitleStyle,
+                        subtitle_placement: subtitlePlacement,
                     }),
                 });
                 setSuccessMessage(' Video generation started!');
@@ -785,7 +794,7 @@ function CreateContent() {
                     </div>
                 )}
 
-                {/* STEP 3 — AI Model */}
+                {/* AI MODEL SELECTOR — HIDDEN: Defaulting to Veo 3.1. Uncomment to re-enable.
                 <div className="config-section">
                     <div className="config-step">
                         <div className="step-num">3</div>
@@ -799,6 +808,7 @@ function CreateContent() {
                         ))}
                     </div>
                 </div>
+                */}
 
                 {/* Duration */}
                 <div className="config-section">
@@ -810,6 +820,157 @@ function CreateContent() {
                             </button>
                         ))}
                     </div>
+                </div>
+
+                {/* SUBTITLE CONFIGURATION */}
+                <div className="config-section">
+                    <div className="config-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <span>Subtitles</span>
+                        <button
+                            onClick={() => setSubtitlesEnabled(!subtitlesEnabled)}
+                            style={{
+                                width: '44px',
+                                height: '24px',
+                                borderRadius: '12px',
+                                border: 'none',
+                                cursor: 'pointer',
+                                backgroundColor: subtitlesEnabled ? '#337AFF' : '#D1D5DB',
+                                position: 'relative' as const,
+                                transition: 'background-color 0.2s',
+                            }}
+                        >
+                            <span style={{
+                                position: 'absolute' as const,
+                                top: '2px',
+                                left: subtitlesEnabled ? '22px' : '2px',
+                                width: '20px',
+                                height: '20px',
+                                borderRadius: '50%',
+                                backgroundColor: '#FFFFFF',
+                                transition: 'left 0.2s',
+                                boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                            }} />
+                        </button>
+                    </div>
+
+                    {subtitlesEnabled && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '12px' }}>
+
+                            {/* Style Selector */}
+                            <div>
+                                <div style={{ marginBottom: '8px', fontSize: '12px', color: '#6B7280' }}>Style</div>
+                                <div className="pill-group">
+                                    {[
+                                        { value: 'hormozi', label: 'Hormozi' },
+                                        { value: 'mrbeast', label: 'MrBeast' },
+                                        { value: 'plain', label: 'Plain' },
+                                    ].map(s => (
+                                        <button
+                                            key={s.value}
+                                            className={`btn-secondary ${subtitleStyle === s.value ? 'active' : ''}`}
+                                            onClick={() => setSubtitleStyle(s.value)}
+                                        >
+                                            {s.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Placement Selector */}
+                            <div>
+                                <div style={{ marginBottom: '8px', fontSize: '12px', color: '#6B7280' }}>Placement</div>
+                                <div className="pill-group">
+                                    {[
+                                        { value: 'top', label: 'Top' },
+                                        { value: 'middle', label: 'Middle' },
+                                        { value: 'bottom', label: 'Bottom' },
+                                    ].map(p => (
+                                        <button
+                                            key={p.value}
+                                            className={`btn-secondary ${subtitlePlacement === p.value ? 'active' : ''}`}
+                                            onClick={() => setSubtitlePlacement(p.value)}
+                                        >
+                                            {p.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Live Preview */}
+                            <div>
+                                <div style={{ marginBottom: '8px', fontSize: '12px', color: '#6B7280' }}>Preview</div>
+                                <div style={{
+                                    position: 'relative' as const,
+                                    width: '100%',
+                                    paddingTop: '177.78%',
+                                    backgroundColor: '#1a1a2e',
+                                    borderRadius: '12px',
+                                    overflow: 'hidden',
+                                    backgroundImage: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
+                                }}>
+                                    <div style={{
+                                        position: 'absolute' as const,
+                                        left: '50%',
+                                        transform: 'translateX(-50%)',
+                                        width: '90%',
+                                        textAlign: 'center' as const,
+                                        ...(subtitlePlacement === 'top' ? { top: '8%' } : {}),
+                                        ...(subtitlePlacement === 'middle' ? { top: '50%', transform: 'translate(-50%, -50%)' } : {}),
+                                        ...(subtitlePlacement === 'bottom' ? { bottom: '12%' } : {}),
+                                    }}>
+                                        {subtitleStyle === 'hormozi' && (
+                                            <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '3px' }}>
+                                                {['THIS', 'APP', 'IS', 'INSANE'].map((word, i) => (
+                                                    <span key={i} style={{
+                                                        fontFamily: 'Impact, Arial Black, sans-serif',
+                                                        fontSize: '22px',
+                                                        fontWeight: 900,
+                                                        color: word === 'INSANE' ? '#FFFF00' : '#FFFFFF',
+                                                        textShadow: '-2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000',
+                                                        textTransform: 'uppercase' as const,
+                                                        display: 'inline-block',
+                                                        transform: word === 'INSANE' ? 'scale(1.1)' : 'scale(1)',
+                                                    }}>
+                                                        {word}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
+                                        {subtitleStyle === 'mrbeast' && (
+                                            <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '4px' }}>
+                                                {['THIS', 'APP', 'IS', 'INSANE'].map((word, i) => (
+                                                    <span key={i} style={{
+                                                        fontFamily: 'Arial Black, sans-serif',
+                                                        fontSize: '18px',
+                                                        fontWeight: 900,
+                                                        color: '#FFFFFF',
+                                                        backgroundColor: 'rgba(0,0,0,0.75)',
+                                                        padding: '2px 8px',
+                                                        borderRadius: '6px',
+                                                        display: 'inline-block',
+                                                    }}>
+                                                        {word}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
+                                        {subtitleStyle === 'plain' && (
+                                            <span style={{
+                                                fontFamily: 'Arial, sans-serif',
+                                                fontSize: '16px',
+                                                fontWeight: 700,
+                                                color: '#FFFFFF',
+                                                textShadow: '1px 1px 4px rgba(0,0,0,0.9)',
+                                            }}>
+                                                This app is insane
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                    )}
                 </div>
 
                 {/* Script Source — physical products only (digital scripts handled inline in Step 1) */}

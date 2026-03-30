@@ -518,12 +518,174 @@ def refund_credits(user_id: str, amount: int, metadata: dict = None):
 
 
 # ---------------------------------------------------------------------------
+# Stripe-Related DB Operations
+# ---------------------------------------------------------------------------
+
+def get_stripe_customer_id(user_id: str):
+    """Fetch the Stripe Customer ID from profiles, or None if not yet created."""
+    sb = get_supabase()
+    result = sb.table("profiles").select("stripe_customer_id").eq("id", user_id).execute()
+    if result.data and result.data[0].get("stripe_customer_id"):
+        return result.data[0]["stripe_customer_id"]
+    return None
+
+
+def save_stripe_customer_id(user_id: str, stripe_customer_id: str):
+    """Store a Stripe Customer ID on the user's profile."""
+    sb = get_supabase()
+    sb.table("profiles").update({
+        "stripe_customer_id": stripe_customer_id
+    }).eq("id", user_id).execute()
+
+
+def get_plan_by_stripe_price_id(stripe_price_id: str):
+    """Look up a subscription_plan by its Stripe Price ID."""
+    sb = get_supabase()
+    result = sb.table("subscription_plans").select("*").eq("stripe_price_id", stripe_price_id).execute()
+    return result.data[0] if result.data else None
+
+
+def get_plan_by_id(plan_id: str):
+    """Look up a subscription plan by its internal UUID."""
+    sb = get_supabase()
+    result = sb.table("subscription_plans").select("*").eq("id", plan_id).execute()
+    return result.data[0] if result.data else None
+
+
+def upsert_subscription(user_id: str, plan_id: str, stripe_subscription_id: str,
+                         status: str, period_start: str, period_end: str):
+    """Create or update a subscription row tied to a Stripe Subscription."""
+    sb = get_supabase()
+    existing = sb.table("subscriptions").select("id").eq("user_id", user_id).execute()
+    data = {
+        "user_id": user_id,
+        "plan_id": plan_id,
+        "stripe_subscription_id": stripe_subscription_id,
+        "status": status,
+        "current_period_start": period_start,
+        "current_period_end": period_end,
+    }
+    if existing.data:
+        sb.table("subscriptions").update(data).eq("id", existing.data[0]["id"]).execute()
+    else:
+        sb.table("subscriptions").insert(data).execute()
+
+
+def cancel_subscription(stripe_subscription_id: str):
+    """Mark a subscription as canceled by its Stripe Subscription ID."""
+    sb = get_supabase()
+    sb.table("subscriptions").update({
+        "status": "canceled"
+    }).eq("stripe_subscription_id", stripe_subscription_id).execute()
+
+
+def get_user_id_by_stripe_customer(stripe_customer_id: str):
+    """Reverse-lookup: find user_id from a Stripe Customer ID (for webhooks)."""
+    sb = get_supabase()
+    result = sb.table("profiles").select("id").eq("stripe_customer_id", stripe_customer_id).execute()
+    return result.data[0]["id"] if result.data else None
+
+
+def add_credits(user_id: str, amount: int, tx_type: str, description: str, metadata: dict = None):
+    """Add credits to a user's wallet and log a transaction.
+
+    Idempotent: uses stripe_idempotency_key to prevent duplicate credits
+    from webhook retries.
+    """
+    sb = get_supabase()
+    idempotency_key = None
+    if metadata:
+        idempotency_key = metadata.get("stripe_invoice_id") or metadata.get("stripe_session_id")
+
+    wallet = get_wallet(user_id)
+    if not wallet:
+        result = sb.table("credit_wallets").insert({
+            "user_id": user_id,
+            "balance": amount,
+        }).execute()
+        wallet_id = result.data[0]["id"]
+    else:
+        new_balance = wallet["balance"] + amount
+        sb.table("credit_wallets").update({
+            "balance": new_balance
+        }).eq("id", wallet["id"]).execute()
+        wallet_id = wallet["id"]
+
+    tx_data = {
+        "wallet_id": wallet_id,
+        "amount": amount,
+        "type": tx_type,
+        "description": description,
+        "metadata": metadata or {},
+    }
+    if idempotency_key:
+        tx_data["stripe_idempotency_key"] = idempotency_key
+
+    try:
+        sb.table("credit_transactions").insert(tx_data).execute()
+    except Exception as e:
+        if "duplicate" in str(e).lower() or "unique" in str(e).lower():
+            # Webhook retry — already processed, revert the balance update
+            if wallet:
+                sb.table("credit_wallets").update({
+                    "balance": wallet["balance"]
+                }).eq("id", wallet_id).execute()
+            return
+        raise
+
+
+# ---------------------------------------------------------------------------
 # Scoped Asset Queries — user_id + project_id filtered
 # ---------------------------------------------------------------------------
 
+def seed_default_influencers(user_id: str, project_id: str):
+    """
+    Auto-populates a new/empty project with the 18 base template influencers.
+    Finds the admin project (the one that owns 'Meg') and clones its influencers,
+    excluding Meg, Max, and Naiara as requested.
+    """
+    sb = get_supabase()
+    
+    # Locate the admin project by finding where 'Meg' lives
+    admin_inf = sb.table("influencers").select("project_id").eq("name", "Meg").limit(1).execute().data
+    if not admin_inf or not admin_inf[0].get("project_id"):
+        return
+        
+    admin_pid = admin_inf[0]["project_id"]
+    
+    # Don't seed if this IS the admin project querying itself
+    if project_id == admin_pid:
+        return
+        
+    template_infs = sb.table("influencers").select("*").eq("project_id", admin_pid).execute().data
+    
+    exclude_names = {"meg", "max", "naiara"}
+    clones = []
+    
+    for inf in template_infs:
+        inf_name = inf.get("name", "")
+        if inf_name.lower() in exclude_names:
+            continue
+            
+        clone = dict(inf)
+        clone.pop("id", None)
+        clone.pop("created_at", None)
+        clone["user_id"] = user_id
+        clone["project_id"] = project_id
+        clones.append(clone)
+        
+    if clones:
+        sb.table("influencers").insert(clones).execute()
+
 def list_influencers_scoped(user_id: str, project_id: str):
     sb = get_supabase()
-    return sb.table("influencers").select("*").eq("user_id", user_id).eq("project_id", project_id).execute().data
+    data = sb.table("influencers").select("*").eq("user_id", user_id).eq("project_id", project_id).execute().data
+    if not data:
+        # If the project has NO influencers, automatically seed the default templates
+        seed_default_influencers(user_id, project_id)
+        # Fetch again after seeding
+        data = sb.table("influencers").select("*").eq("user_id", user_id).eq("project_id", project_id).execute().data
+    return data
 
 def list_scripts_scoped(user_id: str, project_id: str, **filters):
     sb = get_supabase()

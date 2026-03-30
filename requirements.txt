@@ -19,3 +19,4 @@ httpx
 supabase
 PyYAML
 modal
+stripe

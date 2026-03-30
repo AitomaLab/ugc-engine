@@ -11,6 +11,7 @@ interface Plan {
   price_monthly: number;
   credits_monthly: number;
   is_active: boolean;
+  stripe_price_id?: string | null;
 }
 
 const PLAN_META: Record<string, { tagline: string; features: string[]; cta: string }> = {
@@ -38,9 +39,10 @@ const PLAN_META: Record<string, { tagline: string; features: string[]; cta: stri
 
 export default function UpgradePage() {
   const { subscription } = useApp();
-  const currentPlan = subscription?.plan?.name || 'Starter';
+  const currentPlan = subscription?.plan?.name || 'Free';
   const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
+  const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
 
   useEffect(() => {
     apiFetch<Plan[]>('/api/plans')
@@ -89,12 +91,32 @@ export default function UpgradePage() {
                   <div className="up-card-footer">
                     {isCurrent ? (
                       <button className="up-btn up-btn-current" disabled>Current Plan</button>
+                    ) : !plan.stripe_price_id ? (
+                      <button
+                        className="up-btn up-btn-outline"
+                        onClick={() => window.location.href = 'mailto:max@aitoma.ai?subject=Agency Plan Inquiry'}
+                      >
+                        Contact Sales
+                      </button>
                     ) : (
                       <button
                         className={`up-btn ${isHighlight ? 'up-btn-primary' : 'up-btn-outline'}`}
-                        onClick={() => alert(`Upgrade to ${plan.name} — coming soon!`)}
+                        disabled={checkoutLoading === plan.id}
+                        onClick={async () => {
+                          try {
+                            setCheckoutLoading(plan.id);
+                            const { checkout_url } = await apiFetch<{ checkout_url: string }>(
+                              '/api/stripe/checkout/subscription',
+                              { method: 'POST', body: JSON.stringify({ plan_id: plan.id }) }
+                            );
+                            window.location.href = checkout_url;
+                          } catch (err: any) {
+                            alert(err.message || 'Failed to start checkout');
+                            setCheckoutLoading(null);
+                          }
+                        }}
                       >
-                        {plan.price_monthly > currentPrice ? meta.cta : 'Downgrade'}
+                        {checkoutLoading === plan.id ? 'Redirecting...' : plan.price_monthly > currentPrice ? meta.cta : 'Downgrade'}
                       </button>
                     )}
                   </div>
@@ -102,6 +124,28 @@ export default function UpgradePage() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {subscription?.plan?.name && subscription.plan.name !== 'Free' && (
+        <div style={{ textAlign: 'center', marginTop: '1.5rem' }}>
+          <button
+            className="up-btn up-btn-outline"
+            style={{ maxWidth: '300px', margin: '0 auto' }}
+            onClick={async () => {
+              try {
+                const { portal_url } = await apiFetch<{ portal_url: string }>(
+                  '/api/stripe/portal',
+                  { method: 'POST' }
+                );
+                window.location.href = portal_url;
+              } catch (err: any) {
+                alert(err.message || 'Failed to open billing portal');
+              }
+            }}
+          >
+            Manage Billing & Payment Methods
+          </button>
         </div>
       )}
 

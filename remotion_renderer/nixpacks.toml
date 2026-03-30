@@ -1,0 +1,10 @@
+providers = ["node"]
+
+[variables]
+NODE_VERSION = "20"
+
+[phases.setup]
+aptPkgs = ["chromium-browser", "fonts-liberation", "fonts-noto-color-emoji"]
+
+[start]
+cmd = "npm start"

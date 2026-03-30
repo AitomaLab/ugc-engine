@@ -273,6 +273,10 @@ def generate_ugc_video(self, job_id: str):
             "model_api": job.get("model_api", "seedance-1.5-pro"),
             "cinematic_shot_ids": job.get("cinematic_shot_ids") or job_metadata.get("cinematic_shot_ids") or [],
             "auto_transition_type": auto_trans_type,
+            # Subtitle configuration — read from job, fall back to safe defaults
+            "subtitles_enabled": job.get("subtitles_enabled", True),
+            "subtitle_style": job.get("subtitle_style", "hormozi"),
+            "subtitle_placement": job.get("subtitle_placement", "middle"),
         }
 
     except Exception as e:

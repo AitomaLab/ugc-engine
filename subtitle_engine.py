@@ -106,13 +106,14 @@ def _correct_brand_in_words(words_list, brand_names):
     return words_list
 
 
-def extract_transcription_with_whisper(video_path, brand_names=None):
+def extract_transcription_with_whisper(video_path, brand_names=None, script_text=None):
     """
     Extracts word-level timestamps using the OpenAI Whisper API.
     
     Args:
         video_path: Path to the video file
         brand_names: Optional list of brand/product names to guide Whisper spelling
+        script_text: Optional known script text to guide Whisper accuracy
     """
     try:
         print(f"   🎤 Extracting audio and transcribing with Whisper API...")
@@ -122,11 +123,16 @@ def extract_transcription_with_whisper(video_path, brand_names=None):
 
         client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         
-        # Build Whisper prompt with brand names to guide correct spelling
-        whisper_prompt = None
+        # Build Whisper prompt with script text + brand names for maximum accuracy
+        prompt_parts = []
+        if script_text:
+            prompt_parts.append(script_text)
+            print(f"      [PROMPT] Guiding Whisper with full script text")
         if brand_names:
-            whisper_prompt = f"Brand names mentioned: {', '.join(brand_names)}."
-            print(f"      [BRAND] Guiding Whisper with: {whisper_prompt}")
+            prompt_parts.append(f"Brand names mentioned: {', '.join(brand_names)}.")
+            print(f"      [BRAND] Guiding Whisper with: {brand_names}")
+        
+        whisper_prompt = " ".join(prompt_parts) if prompt_parts else None
 
         with open(audio_path, "rb") as audio_file:
             kwargs = {

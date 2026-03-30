@@ -20,6 +20,8 @@ import uuid
 import random
 from datetime import datetime, timezone
 
+import stripe
+
 from ugc_backend.cost_service import cost_service
 from ugc_backend.auth import get_current_user, get_optional_user
 from ugc_backend.credit_cost_service import get_video_credit_cost, get_shot_credit_cost
@@ -39,6 +41,10 @@ from ugc_db.db_manager import (
     get_profile, update_profile,
     create_project as db_create_project, update_project as db_update_project, delete_project as db_delete_project,
     get_subscription, get_wallet, list_transactions, deduct_credits, refund_credits,
+    get_stripe_customer_id, save_stripe_customer_id,
+    get_plan_by_stripe_price_id, get_plan_by_id,
+    upsert_subscription, cancel_subscription,
+    get_user_id_by_stripe_customer, add_credits,
     list_influencers_scoped, list_scripts_scoped, list_products_scoped,
     list_app_clips_scoped, list_jobs_scoped, list_product_shots_scoped,
     get_stats_scoped,
@@ -123,6 +129,10 @@ def _dispatch_worker(job_id: str) -> bool:
 # ---------------------------------------------------------------------------
 
 app = FastAPI(title="UGC Engine SaaS API v3")
+
+# Stripe configuration
+stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 
 
 def _resolve_project_id(request: Request, user: dict | None) -> str | None:
@@ -256,6 +266,10 @@ class JobCreate(BaseModel):
     campaign_name: Optional[str] = None
     cinematic_shot_ids: Optional[List[str]] = None  # Cinematic Product Shots
     auto_transition_type: Optional[str] = None      # 'match_cut', 'whip_pan', 'focus_pull'
+    # Subtitle configuration
+    subtitles_enabled: Optional[bool] = True
+    subtitle_style: Optional[str] = "hormozi"
+    subtitle_placement: Optional[str] = "middle"
 
 class BulkJobCreate(BaseModel):
     influencer_id: str
@@ -270,6 +284,10 @@ class BulkJobCreate(BaseModel):
     campaign_name: Optional[str] = None         # Campaign grouping name
     cinematic_shot_ids: Optional[List[str]] = None  # Cinematic Product Shots
     auto_transition_type: Optional[str] = None      # 'match_cut', 'whip_pan', 'focus_pull'
+    # Subtitle configuration
+    subtitles_enabled: Optional[bool] = True
+    subtitle_style: Optional[str] = "hormozi"
+    subtitle_placement: Optional[str] = "middle"
 
 class SignedUrlRequest(BaseModel):
     bucket: str
@@ -703,6 +721,7 @@ def api_create_job(request: Request, data: JobCreate, user: dict = Depends(get_o
                 "hook", "model_api", "assistant_type", "length", "campaign_name",
                 "cost_video", "cost_voice", "cost_music", "cost_processing", "total_cost",
                 "cinematic_shot_ids", "error_message",
+                "subtitles_enabled", "subtitle_style", "subtitle_placement",
             }
 
         job_data = data.model_dump(exclude_none=True)
@@ -1428,6 +1447,7 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
                 "hook", "model_api", "assistant_type", "length", "campaign_name",
                 "cost_video", "cost_voice", "cost_music", "cost_processing", "total_cost",
                 "cinematic_shot_ids", "error_message", "variation_prompt",
+                "subtitles_enabled", "subtitle_style", "subtitle_placement",
             }
 
         created_jobs = []
@@ -1858,6 +1878,262 @@ def api_get_credit_costs():
         "cinematic_image_4k": 16,
         "cinematic_video_8s": 51,
     }
+
+
+# ---------------------------------------------------------------------------
+# Stripe Billing
+# ---------------------------------------------------------------------------
+
+# Top-up package definitions (server-side source of truth)
+TOPUP_PACKAGES = {
+    "small":  {"credits": 250,  "stripe_price_id": os.getenv("STRIPE_TOPUP_SMALL_PRICE_ID", "")},
+    "medium": {"credits": 750,  "stripe_price_id": os.getenv("STRIPE_TOPUP_MEDIUM_PRICE_ID", "")},
+    "large":  {"credits": 2000, "stripe_price_id": os.getenv("STRIPE_TOPUP_LARGE_PRICE_ID", "")},
+    "xl":     {"credits": 5000, "stripe_price_id": os.getenv("STRIPE_TOPUP_XL_PRICE_ID", "")},
+}
+
+class CheckoutSubscriptionRequest(BaseModel):
+    plan_id: str
+
+class CheckoutTopUpRequest(BaseModel):
+    package: str  # "small", "medium", "large", "xl"
+
+
+@app.post("/api/stripe/checkout/subscription")
+def api_stripe_checkout_subscription(
+    body: CheckoutSubscriptionRequest,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    """Create a Stripe Checkout Session for a subscription plan."""
+    plan = get_plan_by_id(body.plan_id)
+    if not plan or not plan.get("stripe_price_id"):
+        raise HTTPException(status_code=400, detail="Invalid plan or plan not configured for Stripe")
+
+    # Get or lazily create Stripe Customer
+    customer_id = get_stripe_customer_id(user["id"])
+    if not customer_id:
+        customer = stripe.Customer.create(
+            email=user.get("email", ""),
+            metadata={"supabase_user_id": user["id"]},
+        )
+        customer_id = customer.id
+        save_stripe_customer_id(user["id"], customer_id)
+
+    origin = request.headers.get("origin", os.getenv("FRONTEND_URL", "http://localhost:3000"))
+
+    session = stripe.checkout.Session.create(
+        customer=customer_id,
+        mode="subscription",
+        line_items=[{"price": plan["stripe_price_id"], "quantity": 1}],
+        success_url=f"{origin}/checkout/success?session_id={{CHECKOUT_SESSION_ID}}",
+        cancel_url=f"{origin}/upgrade",
+        metadata={
+            "supabase_user_id": user["id"],
+            "plan_id": plan["id"],
+        },
+        subscription_data={
+            "metadata": {
+                "supabase_user_id": user["id"],
+                "plan_id": plan["id"],
+            },
+        },
+    )
+
+    return {"checkout_url": session.url}
+
+
+@app.post("/api/stripe/checkout/topup")
+def api_stripe_checkout_topup(
+    body: CheckoutTopUpRequest,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    """Create a Stripe Checkout Session for a one-time credit top-up."""
+    pkg = TOPUP_PACKAGES.get(body.package)
+    if not pkg or not pkg["stripe_price_id"]:
+        raise HTTPException(status_code=400, detail="Invalid top-up package")
+
+    # Get or lazily create Stripe Customer
+    customer_id = get_stripe_customer_id(user["id"])
+    if not customer_id:
+        customer = stripe.Customer.create(
+            email=user.get("email", ""),
+            metadata={"supabase_user_id": user["id"]},
+        )
+        customer_id = customer.id
+        save_stripe_customer_id(user["id"], customer_id)
+
+    origin = request.headers.get("origin", os.getenv("FRONTEND_URL", "http://localhost:3000"))
+
+    session = stripe.checkout.Session.create(
+        customer=customer_id,
+        mode="payment",
+        line_items=[{"price": pkg["stripe_price_id"], "quantity": 1}],
+        success_url=f"{origin}/checkout/success?session_id={{CHECKOUT_SESSION_ID}}",
+        cancel_url=f"{origin}/manage?topup=1",
+        metadata={
+            "supabase_user_id": user["id"],
+            "topup_package": body.package,
+            "topup_credits": str(pkg["credits"]),
+        },
+    )
+
+    return {"checkout_url": session.url}
+
+
+@app.post("/api/stripe/portal")
+def api_stripe_portal(
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    """Create a Stripe Customer Portal session for self-service billing management."""
+    customer_id = get_stripe_customer_id(user["id"])
+    if not customer_id:
+        raise HTTPException(status_code=400, detail="No Stripe account found. Subscribe to a plan first.")
+
+    origin = request.headers.get("origin", os.getenv("FRONTEND_URL", "http://localhost:3000"))
+
+    portal_session = stripe.billing_portal.Session.create(
+        customer=customer_id,
+        return_url=f"{origin}/manage",
+    )
+
+    return {"portal_url": portal_session.url}
+
+
+@app.post("/api/stripe/webhook")
+async def api_stripe_webhook(request: Request):
+    """Handle Stripe webhook events. Unauthenticated — verified via signature."""
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature")
+
+    if not sig_header or not STRIPE_WEBHOOK_SECRET:
+        raise HTTPException(status_code=400, detail="Missing Stripe signature or webhook secret")
+
+    try:
+        event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
+    except stripe.error.SignatureVerificationError:
+        raise HTTPException(status_code=400, detail="Invalid Stripe signature")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Webhook error: {str(e)}")
+
+    event_type = event["type"]
+    data = event["data"]["object"]
+
+    print(f"[Stripe] Received event: {event_type} (id: {event['id']})")
+
+    # ── checkout.session.completed ─────────────────────────────────────
+    if event_type == "checkout.session.completed":
+        metadata = data.get("metadata", {})
+        mode = data.get("mode")
+
+        if mode == "payment":
+            # One-time top-up payment completed
+            user_id = metadata.get("supabase_user_id")
+            credits = int(metadata.get("topup_credits", "0"))
+            package = metadata.get("topup_package", "unknown")
+
+            if user_id and credits > 0:
+                add_credits(
+                    user_id=user_id,
+                    amount=credits,
+                    tx_type="top_up",
+                    description=f"Credit top-up: {package} ({credits} credits)",
+                    metadata={
+                        "stripe_session_id": data.get("id"),
+                        "package": package,
+                    },
+                )
+                print(f"[Stripe] Added {credits} credits to user {user_id} (top-up: {package})")
+
+    # ── invoice.paid ───────────────────────────────────────────────────
+    elif event_type == "invoice.paid":
+        subscription_id = data.get("subscription")
+        customer_id = data.get("customer")
+
+        if subscription_id:
+            sub = stripe.Subscription.retrieve(subscription_id)
+            user_id = sub.metadata.get("supabase_user_id")
+            plan_id = sub.metadata.get("plan_id")
+
+            if not user_id:
+                user_id = get_user_id_by_stripe_customer(customer_id)
+
+            if user_id and plan_id:
+                plan = get_plan_by_id(plan_id)
+                if plan:
+                    period_start = datetime.fromtimestamp(
+                        sub["current_period_start"], tz=timezone.utc
+                    ).isoformat()
+                    period_end = datetime.fromtimestamp(
+                        sub["current_period_end"], tz=timezone.utc
+                    ).isoformat()
+
+                    upsert_subscription(
+                        user_id=user_id,
+                        plan_id=plan_id,
+                        stripe_subscription_id=subscription_id,
+                        status="active",
+                        period_start=period_start,
+                        period_end=period_end,
+                    )
+
+                    add_credits(
+                        user_id=user_id,
+                        amount=plan["credits_monthly"],
+                        tx_type="monthly_allotment",
+                        description=f"{plan['name']} plan: {plan['credits_monthly']} monthly credits",
+                        metadata={
+                            "stripe_invoice_id": data.get("id"),
+                            "stripe_subscription_id": subscription_id,
+                            "period_start": period_start,
+                            "period_end": period_end,
+                        },
+                    )
+                    print(f"[Stripe] Replenished {plan['credits_monthly']} credits for user {user_id} ({plan['name']})")
+
+    # ── customer.subscription.updated ──────────────────────────────────
+    elif event_type == "customer.subscription.updated":
+        subscription_id = data.get("id")
+        user_id = data.get("metadata", {}).get("supabase_user_id")
+        customer_id = data.get("customer")
+        status = data.get("status")
+
+        if not user_id:
+            user_id = get_user_id_by_stripe_customer(customer_id)
+
+        if user_id:
+            items = data.get("items", {}).get("data", [])
+            if items:
+                new_price_id = items[0].get("price", {}).get("id")
+                new_plan = get_plan_by_stripe_price_id(new_price_id) if new_price_id else None
+
+                if new_plan:
+                    period_start = datetime.fromtimestamp(
+                        data["current_period_start"], tz=timezone.utc
+                    ).isoformat()
+                    period_end = datetime.fromtimestamp(
+                        data["current_period_end"], tz=timezone.utc
+                    ).isoformat()
+
+                    upsert_subscription(
+                        user_id=user_id,
+                        plan_id=new_plan["id"],
+                        stripe_subscription_id=subscription_id,
+                        status=status if status in ("active", "past_due", "canceled") else "active",
+                        period_start=period_start,
+                        period_end=period_end,
+                    )
+                    print(f"[Stripe] Subscription updated for user {user_id}: {new_plan['name']} ({status})")
+
+    # ── customer.subscription.deleted ──────────────────────────────────
+    elif event_type == "customer.subscription.deleted":
+        subscription_id = data.get("id")
+        cancel_subscription(subscription_id)
+        print(f"[Stripe] Subscription {subscription_id} canceled/deleted")
+
+    return {"status": "ok"}
 
 
 # ---------------------------------------------------------------------------

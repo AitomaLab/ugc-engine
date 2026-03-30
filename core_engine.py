@@ -600,14 +600,12 @@ def run_generation_pipeline(
         else:
             print("      [MUSIC] ⚠️ Music generation failed — video will have no background music")
 
-    # 5. Assemble final video
+    # 5. Assemble final video (WITHOUT subtitles — subtitles are applied after)
     if status_callback:
         status_callback("Assembling")
-        
+
     version = datetime.now().strftime("%H%M%S")
     output_path = config.OUTPUT_DIR / f"{project_name}_v{version}.mp4"
-    durations = [s["target_duration"] for s in scenes]
-    length = fields.get("Length", "15s")
 
     # Build brand names list for subtitle correction
     brand_names = []
@@ -620,6 +618,7 @@ def run_generation_pipeline(
     if brand_names:
         print(f"      [BRAND] Brand names for subtitle correction: {brand_names}")
 
+    length = fields.get("Length", "15s")
     final_path = assemble_video.assemble_video(
         video_paths=video_paths,
         output_path=output_path,
@@ -628,8 +627,92 @@ def run_generation_pipeline(
         scene_types=[s.get("type", "clip") for s in video_paths],
         brand_names=brand_names or None,
     )
-    
-    # 6. Cleanup temp files
+
+    # 6. Apply subtitles (Remotion primary, FFmpeg fallback)
+    subtitles_enabled = fields.get("subtitles_enabled", True)
+    subtitle_style = fields.get("subtitle_style", "hormozi")
+    subtitle_placement = fields.get("subtitle_placement", "middle")
+    use_remotion = os.getenv("USE_REMOTION_SUBTITLES", "true").lower() == "true"
+
+    captioned_path = None
+
+    if subtitles_enabled:
+        if status_callback:
+            status_callback("Subtitling")
+
+        # Always run Whisper on the FINAL assembled video for accurate timestamps
+        # Pass the known script text so Whisper knows what words to expect
+        script_text = fields.get("Hook") or fields.get("script_text")
+        print("      [SUBTITLES] Transcribing final assembled video with Whisper...")
+        if script_text:
+            print(f"      [SUBTITLES] Script hint: {script_text[:80]}...")
+        transcription = subtitle_engine.extract_transcription_with_whisper(
+            str(final_path), brand_names=brand_names or None, script_text=script_text
+        )
+
+        if transcription and transcription.get("words"):
+            # --- PRIMARY PATH: Remotion ---
+            if use_remotion:
+                try:
+                    print(f"      [SUBTITLES] Rendering with Remotion (style={subtitle_style}, placement={subtitle_placement})...")
+                    remotion_url = os.getenv("REMOTION_RENDERER_URL", "http://localhost:8090")
+                    payload = {
+                        "videoPath": str(final_path),
+                        "transcription": transcription,
+                        "subtitleStyle": subtitle_style,
+                        "subtitlePlacement": subtitle_placement,
+                    }
+                    response = requests.post(
+                        f"{remotion_url}/render",
+                        json=payload,
+                        timeout=300,  # 5 minutes max
+                    )
+                    response.raise_for_status()
+                    result = response.json()
+                    if result.get("success") and result.get("outputLocation"):
+                        captioned_path = result["outputLocation"]
+                        print(f"      [SUBTITLES] ✅ Remotion render complete: {captioned_path}")
+                    else:
+                        raise ValueError(f"Remotion returned unexpected response: {result}")
+                except Exception as remotion_err:
+                    print(f"      [SUBTITLES] ⚠️ Remotion failed: {remotion_err}. Falling back to FFmpeg.")
+                    captioned_path = None  # Trigger fallback
+
+            # --- FALLBACK PATH: FFmpeg/ASS ---
+            if not captioned_path:
+                try:
+                    print("      [SUBTITLES] Rendering with FFmpeg fallback...")
+                    from pathlib import Path as _Path
+                    subtitle_path = _Path(str(final_path)).parent / "subtitles_synced.ass"
+                    subtitle_engine.generate_subtitles_from_whisper(
+                        transcription, subtitle_path, brand_names=brand_names or None
+                    )
+                    if subtitle_path.exists() and subtitle_path.stat().st_size > 250:
+                        subtitled_path = _Path(str(final_path)).parent / f"{_Path(str(final_path)).stem}_captioned.mp4"
+                        sub_path_safe = str(subtitle_path.resolve()).replace("\\", "/").replace(":", "\\:")
+                        cmd = [
+                            "ffmpeg", "-y",
+                            "-i", str(final_path),
+                            "-vf", f"ass=\\'{sub_path_safe}\\'",
+                            "-c:v", "libx264",
+                            "-c:a", "copy",
+                            "-preset", "veryfast",
+                            str(subtitled_path),
+                        ]
+                        subprocess.run(cmd, capture_output=True, check=True)
+                        captioned_path = str(subtitled_path)
+                        print(f"      [SUBTITLES] ✅ FFmpeg fallback complete: {captioned_path}")
+                except Exception as ffmpeg_err:
+                    print(f"      [SUBTITLES] ❌ FFmpeg fallback also failed: {ffmpeg_err}. Using video without subtitles.")
+                    captioned_path = None
+        else:
+            print("      [SUBTITLES] ⚠️ No transcription words found. Skipping subtitles.")
+
+    # Use captioned video if available, otherwise use the assembled video without subtitles
+    final_output_path = captioned_path if captioned_path else str(final_path)
+
+    # 7. Cleanup temp files
     assemble_video.cleanup_temp(project_name)
-    
-    return str(final_path)
+
+    return str(final_output_path)
+

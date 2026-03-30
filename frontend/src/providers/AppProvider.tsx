@@ -18,6 +18,7 @@ interface AppContextType {
   wallet: CreditWallet | null;
   isLoading: boolean;
   refreshWallet: () => void;
+  refreshSubscription: () => void;
   refreshProjects: () => void;
   getAuthHeaders: () => Record<string, string>;
 }
@@ -120,6 +121,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (walletData) setWallet(walletData);
   }, [token]);
 
+  const refreshSubscription = useCallback(async () => {
+    if (!token) return;
+    const subData = await authFetch<Subscription>('/api/subscription', token);
+    if (subData) setSubscription(subData);
+  }, [token]);
+
   const refreshProjects = useCallback(async () => {
     if (!token) return;
     const projectsData = await authFetch<Project[]>('/api/projects', token);
@@ -150,6 +157,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     wallet,
     isLoading: loading,
     refreshWallet,
+    refreshSubscription,
     refreshProjects,
     getAuthHeaders,
   };

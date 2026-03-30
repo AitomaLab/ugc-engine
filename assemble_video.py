@@ -366,65 +366,24 @@ def assemble_video(video_paths, output_path, music_path=None, max_duration=None,
 
     # Check if we have a mix of UGC and cinematic scenes
     has_cinematic = any(s["type"] == "cinematic_shot" for s in scene_metadata)
-    ugc_types = {"veo", "physical_product_scene", "clip"}
-    ugc_scenes = [s for s in scene_metadata if s["type"] in ugc_types]
-    cinematic_scenes_meta = [s for s in scene_metadata if s["type"] == "cinematic_shot"]
 
-    if has_cinematic and ugc_scenes:
-        # [*] SUBTITLE-SAFE ASSEMBLY: Burn subtitles on UGC portion only
-        print("   [CIN] Cinematic mode: subtitles will only appear on UGC scenes")
+    if has_cinematic:
+        # Cinematic path: concatenate all scenes in original order.
+        # NOTE: Subtitle burning has been moved to core_engine.py and is applied
+        # AFTER assembly on the complete final video. Do NOT add subtitle logic here.
+        ugc_types = {"veo", "physical_product_scene", "clip"}
+        ugc_scenes = [s for s in scene_metadata if s["type"] in ugc_types]
+        cinematic_scenes_meta = [s for s in scene_metadata if s["type"] == "cinematic_shot"]
 
-        # Step 2a: Concatenate only UGC scenes for transcription
-        ugc_concat_list = work_dir / "ugc_concat.txt"
-        with open(ugc_concat_list, "w") as f:
-            for s in ugc_scenes:
-                safe_path = str(Path(s["path"]).resolve()).replace("\\", "/")
-                f.write(f"file '{safe_path}'\n")
+        print(f"   [CINEMATIC] {len(ugc_scenes)} UGC scenes + {len(cinematic_scenes_meta)} cinematic scenes")
 
-        ugc_combined = work_dir / "ugc_combined.mp4"
-        cmd = [
-            "ffmpeg", "-y",
-            "-f", "concat", "-safe", "0",
-            "-i", str(ugc_concat_list),
-            "-c", "copy",
-            str(ugc_combined),
-        ]
-        subprocess.run(cmd, capture_output=True, check=True)
-
-        ugc_dur = get_video_duration(ugc_combined)
-        print(f"      UGC portion: {ugc_dur:.1f}s")
-
-        # Step 2b: Transcribe and burn subtitles on UGC portion only
-        ugc_input = str(ugc_combined)
-        transcription = extract_transcription_with_whisper(ugc_input, brand_names=brand_names)
-        if transcription:
-            subtitle_path = work_dir / "subtitles_synced.ass"
-            generate_subtitles_from_whisper(transcription, subtitle_path, brand_names=brand_names)
-            
-            if Path(subtitle_path).exists() and Path(subtitle_path).stat().st_size > 250:
-                print("   [SUB] Burning subtitles on UGC portion only...")
-                ugc_subtitled = work_dir / "ugc_subtitled.mp4"
-                sub_path_safe = str(Path(subtitle_path).resolve()).replace("\\", "/").replace(":", "\\:")
-                cmd = ["ffmpeg", "-y", "-i", ugc_input, "-vf", f"ass=\\'{sub_path_safe}\\'", "-c:v", "libx264", "-c:a", "copy", "-preset", "veryfast", str(ugc_subtitled)]
-                subprocess.run(cmd, capture_output=True, check=True)
-                ugc_input = str(ugc_subtitled)
-
-        # Step 2c: Re-normalize the subtitled UGC (codec may have changed)
-        ugc_final = work_dir / "ugc_final.mp4"
-        normalize_video(ugc_input, ugc_final)
-
-        # Step 2d: Concatenate UGC-with-subtitles + cinematic clips in original order
-        print("   [LINK] Concatenating UGC (with subs) + cinematic (no subs)...")
+        # Concatenate all scenes in original order (UGC + cinematic interleaved)
         final_concat_list = work_dir / "final_concat.txt"
         with open(final_concat_list, "w") as f:
             for s in scene_metadata:
-                if s["type"] in ugc_types:
-                    safe_path = str(Path(ugc_final).resolve()).replace("\\", "/")
-                else:
-                    # Cinematic — use original normalized (no subtitles)
-                    norm_path = work_dir / f"cin_renorm_{s['index']}.mp4"
-                    normalize_video(s["path"], norm_path)
-                    safe_path = str(Path(norm_path).resolve()).replace("\\", "/")
+                norm_path = work_dir / f"norm_{s['index']}.mp4"
+                normalize_video(s["path"], norm_path)
+                safe_path = str(Path(norm_path).resolve()).replace("\\", "/")
                 f.write(f"file '{safe_path}'\n")
 
         combined = work_dir / "combined.mp4"
@@ -437,21 +396,17 @@ def assemble_video(video_paths, output_path, music_path=None, max_duration=None,
         ]
         subprocess.run(cmd, capture_output=True, check=True)
         current_input = str(combined)
-
         total_dur = get_video_duration(combined)
-        print(f"      Combined: {total_dur:.1f}s (UGC subtitled, cinematic clean)")
-
+        print(f"      Combined: {total_dur:.1f}s (UGC + cinematic, no subtitles)")
     else:
-        # Standard path: no cinematic scenes — concatenate and subtitle everything
-        # (Audio streams already ensured before transitions above)
-
+        # Standard path: no cinematic scenes — concatenate everything.
+        # NOTE: Subtitle burning has been moved to core_engine.py.
         print("   [LINK] Concatenating scenes...")
         concat_list = work_dir / "concat.txt"
         with open(concat_list, "w") as f:
             for path in normalized_paths:
                 safe_path = str(Path(path).resolve()).replace("\\", "/")
                 f.write(f"file '{safe_path}'\n")
-
         combined = work_dir / "combined.mp4"
         cmd = [
             "ffmpeg", "-y",
@@ -461,24 +416,9 @@ def assemble_video(video_paths, output_path, music_path=None, max_duration=None,
             str(combined),
         ]
         subprocess.run(cmd, capture_output=True, check=True)
-
         total_dur = get_video_duration(combined)
         print(f"      Combined: {total_dur:.1f}s")
-
-        # Step 3: Generate and Burn Synchronized Subtitles
         current_input = str(combined)
-        transcription = extract_transcription_with_whisper(current_input, brand_names=brand_names)
-        if transcription:
-            subtitle_path = work_dir / "subtitles_synced.ass"
-            generate_subtitles_from_whisper(transcription, subtitle_path, brand_names=brand_names)
-            
-            if Path(subtitle_path).exists() and Path(subtitle_path).stat().st_size > 250:
-                print("   [SUB] Burning in subtitles...")
-                subtitled = work_dir / "subtitled.mp4"
-                sub_path_safe = str(Path(subtitle_path).resolve()).replace("\\", "/").replace(":", "\\:")
-                cmd = ["ffmpeg", "-y", "-i", current_input, "-vf", f"ass=\\'{sub_path_safe}\\'", "-c:v", "libx264", "-c:a", "copy", "-preset", "veryfast", str(subtitled)]
-                subprocess.run(cmd, capture_output=True, check=True)
-                current_input = str(subtitled)
 
     # Step 4: Add background music (if provided)
     if music_path and Path(music_path).exists():

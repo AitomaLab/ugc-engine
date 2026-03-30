@@ -2,6 +2,7 @@
 
 import { useState, useEffect, Suspense } from 'react';
 import { useApp } from '@/providers/AppProvider';
+import { apiFetch } from '@/lib/utils';
 import { supabase } from '@/lib/supabaseClient';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
@@ -24,6 +25,7 @@ export default function ManagePageWrapper() {
 function ManagePage() {
   const { profile, subscription, wallet } = useApp();
   const [topUpOpen, setTopUpOpen] = useState(false);
+  const [topUpLoading, setTopUpLoading] = useState<string | null>(null);
   const searchParams = useSearchParams();
 
   // Auto-open modal when arriving from profile dropdown (?topup=1)
@@ -88,7 +90,25 @@ function ManagePage() {
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1 }}>
                 <span style={{ display: 'inline-flex', alignItems: 'center', padding: '4px 14px', borderRadius: '20px', fontSize: '11px', fontWeight: 700, background: 'linear-gradient(135deg, rgba(51,122,255,0.1), rgba(99,102,241,0.1))', color: 'var(--blue)', letterSpacing: '0.02em' }}>{planName}</span>
               </div>
-              <Link href="/upgrade" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '5px 14px', fontSize: '12px', color: 'var(--blue)', fontWeight: 600, textDecoration: 'none', border: '1px solid rgba(51,122,255,0.2)', borderRadius: '6px', transition: 'all 0.15s', whiteSpace: 'nowrap' }}>Change Plan</Link>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <Link href="/upgrade" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '5px 14px', fontSize: '12px', color: 'var(--blue)', fontWeight: 600, textDecoration: 'none', border: '1px solid rgba(51,122,255,0.2)', borderRadius: '6px', transition: 'all 0.15s', whiteSpace: 'nowrap' }}>Change Plan</Link>
+                {planName !== 'Free' && (
+                  <button
+                    onClick={async () => {
+                      try {
+                        const { portal_url } = await apiFetch<{ portal_url: string }>(
+                          '/api/stripe/portal',
+                          { method: 'POST' }
+                        );
+                        window.location.href = portal_url;
+                      } catch (err: any) {
+                        alert(err.message || 'Failed to open billing portal');
+                      }
+                    }}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '5px 14px', fontSize: '12px', color: 'var(--text-2)', fontWeight: 600, background: 'none', border: '1px solid var(--border)', borderRadius: '6px', cursor: 'pointer', transition: 'all 0.15s', whiteSpace: 'nowrap' }}
+                  >Manage Billing</button>
+                )}
+              </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', padding: '10px 0' }}>
               <span style={{ fontSize: '13px', color: 'var(--text-3)', width: '140px', flexShrink: 0, fontWeight: 500 }}>Billing Period Ends</span>
@@ -214,14 +234,28 @@ function ManagePage() {
 
                   {/* Buy button */}
                   <button
-                    onClick={() => alert(`Purchase ${pkg.name} ($${pkg.price}) — coming soon!`)}
+                    disabled={topUpLoading === pkg.name}
+                    onClick={async () => {
+                      try {
+                        setTopUpLoading(pkg.name);
+                        const packageKey = pkg.name.split(' ')[0].toLowerCase(); // "Small Top-Up" -> "small"
+                        const { checkout_url } = await apiFetch<{ checkout_url: string }>(
+                          '/api/stripe/checkout/topup',
+                          { method: 'POST', body: JSON.stringify({ package: packageKey }) }
+                        );
+                        window.location.href = checkout_url;
+                      } catch (err: any) {
+                        alert(err.message || 'Failed to start checkout');
+                        setTopUpLoading(null);
+                      }
+                    }}
                     style={{
                       width: '100%',
                       padding: '10px',
                       borderRadius: '8px',
                       fontSize: '13px',
                       fontWeight: 700,
-                      cursor: 'pointer',
+                      cursor: topUpLoading === pkg.name ? 'wait' : 'pointer',
                       transition: 'all 0.2s',
                       border: 'none',
                       marginTop: 'auto',
@@ -229,6 +263,7 @@ function ManagePage() {
                       color: pkg.popular ? 'white' : 'var(--text-1)',
                       ...(pkg.popular ? {} : { border: '1.5px solid var(--border)' }),
                       boxShadow: pkg.popular ? '0 4px 12px rgba(51,122,255,0.25)' : 'none',
+                      opacity: topUpLoading === pkg.name ? 0.7 : 1,
                     }}
                     onMouseEnter={e => {
                       if (!pkg.popular) { e.currentTarget.style.borderColor = 'var(--blue)'; e.currentTarget.style.color = 'var(--blue)'; }
@@ -239,7 +274,7 @@ function ManagePage() {
                       else { e.currentTarget.style.boxShadow = '0 4px 12px rgba(51,122,255,0.25)'; }
                     }}
                   >
-                    Buy Now
+                    {topUpLoading === pkg.name ? 'Redirecting...' : 'Buy Now'}
                   </button>
                 </div>
               ))}

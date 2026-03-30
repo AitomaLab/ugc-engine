@@ -36,3 +36,10 @@ ugc_saas.db
 !vercel.json
 !Procfile
 !Dockerfile
+
+nul
+dump_influencers.py
+frontend/dev.log
+temp_*.py
+test_*.py
+test_out.txt
