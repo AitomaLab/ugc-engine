@@ -233,7 +233,8 @@ app.post('/render', async (req, res) => {
       codec: 'h264',
       outputLocation,
       inputProps,
-      concurrency: Math.max(1, Math.floor(require('os').cpus().length / 2)),
+      concurrency: 1, // Force single-thread for 1GB Railway instances
+      timeoutInMilliseconds: 240000, // 4 minute timeout
       ...(chromiumPath ? { chromiumExecutable: chromiumPath } : {}),
       chromiumOptions: { args: chromeArgs },
     });
