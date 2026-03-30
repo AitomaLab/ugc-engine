@@ -1,11 +1,41 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const { execSync } = require('child_process');
 
 const app = express();
 app.use(express.json({ limit: '50mb' }));
 
 const PORT = process.env.PORT || process.env.REMOTION_PORT || 8090;
+
+// Detect system-installed Chromium for cloud deployments (Railway, Render, etc.)
+function findChromiumExecutable() {
+  const candidates = [
+    process.env.REMOTION_CHROME_EXECUTABLE,
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+  ];
+  for (const c of candidates) {
+    if (c && fs.existsSync(c)) {
+      console.log(`[Remotion] Found Chromium at: ${c}`);
+      return c;
+    }
+  }
+  // Try 'which chromium'
+  try {
+    const which = execSync('which chromium 2>/dev/null || which chromium-browser 2>/dev/null', { encoding: 'utf-8' }).trim();
+    if (which) {
+      console.log(`[Remotion] Found Chromium via which: ${which}`);
+      return which;
+    }
+  } catch (_) {}
+  console.log('[Remotion] No system Chromium found, using Remotion default');
+  return undefined;
+}
+
+const chromiumPath = findChromiumExecutable();
 
 // Pre-bundle the Remotion project on startup (cached for all subsequent renders)
 let bundlePromise = null;
@@ -141,6 +171,7 @@ app.post('/render', async (req, res) => {
       serveUrl,
       id: 'CaptionedVideo',
       inputProps,
+      ...(chromiumPath ? { chromiumExecutable: chromiumPath } : {}),
     });
 
     // Override composition duration and fps to match the source video exactly
@@ -164,6 +195,7 @@ app.post('/render', async (req, res) => {
       outputLocation,
       inputProps,
       concurrency: Math.max(1, Math.floor(require('os').cpus().length / 2)),
+      ...(chromiumPath ? { chromiumExecutable: chromiumPath } : {}),
     });
 
     console.log(`[Remotion] Render complete: ${outputLocation}`);
