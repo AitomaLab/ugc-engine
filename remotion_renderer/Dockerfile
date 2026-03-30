@@ -36,8 +36,8 @@ ENV DBUS_SESSION_BUS_ADDRESS=/dev/null
 WORKDIR /app
 
 # Copy package files and install dependencies
-COPY package.json package-lock.json ./
-RUN npm ci --production=false
+COPY package*.json ./
+RUN npm install
 
 # Copy the rest of the app
 COPY . .
