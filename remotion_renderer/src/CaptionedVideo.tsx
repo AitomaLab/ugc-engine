@@ -2,6 +2,11 @@ import React, { useMemo } from 'react';
 import { AbsoluteFill, OffthreadVideo, useCurrentFrame, useVideoConfig } from 'remotion';
 import { z } from 'zod';
 
+// Google Fonts CSS import — ensures Impact-like fonts are available on Linux/cloud
+const GOOGLE_FONTS_CSS = `
+  @import url('https://fonts.googleapis.com/css2?family=Anton&family=Archivo+Black&family=Roboto:wght@700;900&display=swap');
+`;
+
 // --- Zod Schema ---
 export const CaptionedVideoSchema = z.object({
   videoSrc: z.string(),
@@ -61,7 +66,7 @@ const HormoziCaption: React.FC<{ words: string[] }> = ({ words }) => (
       const isPower = POWER_WORDS.has(clean);
       return (
         <span key={i} style={{
-          fontFamily: 'Impact, Arial Black, sans-serif',
+          fontFamily: "'Anton', Impact, 'Arial Black', sans-serif",
           fontSize: isPower ? '88px' : '80px', fontWeight: 900,
           color: isPower ? '#FFFF00' : '#FFFFFF',
           textShadow: '-4px -4px 0 #000, 4px -4px 0 #000, -4px 4px 0 #000, 4px 4px 0 #000, 0 6px 0 #000',
@@ -84,7 +89,7 @@ const MrBeastCaption: React.FC<{ words: string[] }> = ({ words }) => (
   }}>
     {words.map((word, i) => (
       <span key={i} style={{
-        fontFamily: 'Arial Black, Impact, sans-serif',
+        fontFamily: "'Archivo Black', 'Arial Black', Impact, sans-serif",
         fontSize: '80px', fontWeight: 900, color: '#FFFFFF',
         backgroundColor: 'rgba(0, 0, 0, 0.75)',
         padding: '4px 14px', borderRadius: '8px',
@@ -104,7 +109,7 @@ const PlainCaption: React.FC<{ words: string[] }> = ({ words }) => (
   }}>
     {words.map((word, i) => (
       <span key={i} style={{
-        fontFamily: 'Arial, sans-serif',
+        fontFamily: "'Roboto', Arial, sans-serif",
         fontSize: '60px', fontWeight: 700, color: '#FFFFFF',
         textShadow: '2px 2px 6px rgba(0,0,0,0.9)',
         lineHeight: 1.3, display: 'inline-block',
@@ -138,6 +143,8 @@ export const CaptionedVideo: React.FC<Props> = ({
 
   return (
     <AbsoluteFill>
+      {/* Load Google Fonts for cross-platform consistency */}
+      <style dangerouslySetInnerHTML={{ __html: GOOGLE_FONTS_CSS }} />
       <OffthreadVideo src={videoSrc} />
 
       {activeChunk && (
