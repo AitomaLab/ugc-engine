@@ -625,11 +625,20 @@ def generate_music(prompt="upbeat, trendy, short-form social media background mu
         status = result["data"]["status"]
 
         if status in ["SUCCESS", "FIRST_SUCCESS"]:
-            suno_data = result["data"]["response"]["sunoData"]
-            if suno_data:
-                audio_url = suno_data[0]["audioUrl"]
-                print(f"   ✅ Music ready!")
-                return audio_url
+            try:
+                response_data = result["data"].get("response", {})
+                suno_data = response_data.get("sunoData") if response_data else None
+                if suno_data and len(suno_data) > 0:
+                    audio_url = suno_data[0].get("audioUrl")
+                    if audio_url:
+                        print(f"   ✅ Music ready!")
+                        return audio_url
+                    else:
+                        print(f"   ⚠️ sunoData present but audioUrl is empty, continuing poll...")
+                else:
+                    print(f"   ⚠️ Status={status} but sunoData is empty, continuing poll...")
+            except (KeyError, IndexError, TypeError) as parse_err:
+                print(f"   ⚠️ Error parsing music response: {parse_err}")
         elif status in ["CREATE_TASK_FAILED", "GENERATE_AUDIO_FAILED"]:
             print("   ⚠️ Music generation failed")
             return None

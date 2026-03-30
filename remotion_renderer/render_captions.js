@@ -144,7 +144,7 @@ async function main() {
     codec: 'h264',
     outputLocation: output,
     inputProps,
-    concurrency: 1,
+    concurrency: 3, // Parallel frame rendering (Modal has 4GB RAM)
     timeoutInMilliseconds: 300000, // 5 minutes
     chromiumOptions: { args: chromeArgs },
     offthreadVideoCacheSizeInBytes: 100 * 1024 * 1024, // 100MB cache (Modal has plenty of RAM)

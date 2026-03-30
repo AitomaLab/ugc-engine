@@ -592,13 +592,16 @@ def run_generation_pipeline(
             f"upbeat trendy background music for a short social media video about {theme}, "
             f"energetic positive modern pop instrumental"
         )
-        music_url = generate_scenes.generate_music(music_prompt)
-        if music_url:
-            music_file = output_dir / "music.mp3"
-            generate_scenes.download_video(music_url, music_file)
-            music_path = str(music_file)
-        else:
-            print("      [MUSIC] ⚠️ Music generation failed — video will have no background music")
+        try:
+            music_url = generate_scenes.generate_music(music_prompt)
+            if music_url:
+                music_file = output_dir / "music.mp3"
+                generate_scenes.download_video(music_url, music_file)
+                music_path = str(music_file)
+            else:
+                print("      [MUSIC] ⚠️ Music generation returned no URL — video will have no background music")
+        except Exception as music_err:
+            print(f"      [MUSIC] ⚠️ Music generation failed: {music_err} — video will have no background music")
 
     # 5. Assemble final video (WITHOUT subtitles — subtitles are applied after)
     if status_callback:
