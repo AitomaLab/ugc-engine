@@ -43,7 +43,7 @@ const chromeArgs = [
   '--disable-setuid-sandbox',
   '--disable-dev-shm-usage',
   '--disable-gpu',
-  '--single-process',
+  '--disable-features=VizDisplayCompositor',
 ];
 
 // Pre-bundle the Remotion project on startup (cached for all subsequent renders)
