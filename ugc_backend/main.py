@@ -16,6 +16,10 @@ from pydantic import BaseModel
 from typing import List, Optional
 from fastapi.middleware.cors import CORSMiddleware
 import os
+from dotenv import load_dotenv
+load_dotenv(".env.saas")
+load_dotenv(".env")
+
 import uuid
 import random
 from datetime import datetime, timezone
@@ -1843,7 +1847,33 @@ def api_get_subscription(user: dict = Depends(get_current_user)):
 def api_get_wallet(user: dict = Depends(get_current_user)):
     wallet = get_wallet(user["id"])
     if not wallet:
-        return {"balance": 0, "user_id": user["id"]}
+        # User has no wallet row yet. Supabase trigger handle_new_user failed or is missing.
+        # Lazily initialize their wallet with 100 free credits.
+        sb = get_supabase()
+        
+        # Ensure profile exists
+        existing_profile = sb.table("profiles").select("id").eq("id", user["id"]).execute()
+        if not existing_profile.data:
+            sb.table("profiles").insert({"id": user["id"]}).execute()
+            
+        # Create wallet with 100 credits
+        result = sb.table("credit_wallets").insert({
+            "user_id": user["id"],
+            "balance": 100
+        }).execute()
+        
+        wallet_id = result.data[0]["id"]
+        
+        # Log the 100 credits as a Welcome Bonus
+        sb.table("credit_transactions").insert({
+            "wallet_id": wallet_id,
+            "amount": 100,
+            "type": "welcome_bonus",
+            "description": "100 Free Credits on Sign-up",
+            "metadata": {}
+        }).execute()
+        
+        return {"balance": 100, "user_id": user["id"]}
     return wallet
 
 @app.get("/api/wallet/transactions")
@@ -1990,7 +2020,12 @@ def api_stripe_portal(
     """Create a Stripe Customer Portal session for self-service billing management."""
     customer_id = get_stripe_customer_id(user["id"])
     if not customer_id:
-        raise HTTPException(status_code=400, detail="No Stripe account found. Subscribe to a plan first.")
+        customer = stripe.Customer.create(
+            email=user.get("email", ""),
+            metadata={"supabase_user_id": user["id"]},
+        )
+        customer_id = customer.id
+        save_stripe_customer_id(user["id"], customer_id)
 
     origin = request.headers.get("origin", os.getenv("FRONTEND_URL", "http://localhost:3000"))
 

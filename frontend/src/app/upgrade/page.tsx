@@ -16,23 +16,23 @@ interface Plan {
 
 const PLAN_META: Record<string, { tagline: string; features: string[]; cta: string }> = {
   Starter: {
-    tagline: 'Perfect for solo creators and small brands getting started.',
-    features: ['10 videos per month', '15s & 30s formats', '3 AI influencers', 'Auto-burned captions', 'Background music', '1 social platform'],
+    tagline: 'Perfect for getting started with AI-generated content.',
+    features: ['1,000 Credits/month', 'Generate up to 10 videos/month', '15s & 30s video formats', '3 AI Influencers', 'Auto-burned captions', 'Background music', 'Auto-post to 1 social platform'],
     cta: 'Get Started',
   },
   Creator: {
-    tagline: 'For growing brands that need consistent, high-volume content.',
-    features: ['50 videos per month', '15s & 30s formats', 'All AI influencers', 'Physical & digital products', 'Cinematic product shots', 'Auto-burned captions & music', '3 social platforms (IG, TikTok, YT)', 'Bulk campaign generation', 'Priority generation queue'],
+    tagline: 'For creators and brands that need consistent, high-volume content.',
+    features: ['3,000 Credits/month', 'Generate up to 30 videos/month', 'Everything in Starter, plus:', 'Unlock all AI Influencers', 'Physical & Digital Products', 'UGC & Cinematic Product Shots', 'Content calendar & scheduling', 'Auto-post to 3 social platforms', 'Bulk campaign generation'],
     cta: 'Start Free Trial',
   },
   Business: {
-    tagline: 'For agencies and power users managing multiple brands.',
-    features: ['Unlimited videos', 'All Creator features', 'Multiple brand workspaces', 'API access', 'Custom AI influencers', 'Dedicated support', 'White-label option'],
+    tagline: 'For established businesses scaling their content production.',
+    features: ['6,000 Credits/month', 'Generate up to 60 videos/month', 'Everything in Creator, plus:', 'Create Custom AI Influencers', 'Dedicated Support', 'Priority generation queue'],
     cta: 'Contact Sales',
   },
   Agency: {
-    tagline: 'Enterprise-level features for large teams and resellers.',
-    features: ['Unlimited everything', 'White-label platform', 'SLA guarantee', 'Custom integrations', 'Priority queue', 'Dedicated CSM'],
+    tagline: 'For agencies and power users managing multiple brands.',
+    features: ['Unlimited videos', 'Everything in Business, plus:', 'Dedicated Account Manager', 'API Access'],
     cta: 'Contact Sales',
   },
 };
@@ -52,7 +52,8 @@ export default function UpgradePage() {
   }, []);
 
   const sortedPlans = [...plans].sort((a, b) => a.price_monthly - b.price_monthly);
-  const highlightIndex = sortedPlans.length >= 2 ? 1 : -1;
+  const displayPlans = sortedPlans.filter(p => p.name !== 'Agency');
+  const highlightIndex = displayPlans.length >= 2 ? 1 : -1;
 
   return (
     <div className="content-area">
@@ -64,66 +65,95 @@ export default function UpgradePage() {
       {loading ? (
         <div style={{ textAlign: 'center', padding: '4rem', color: 'var(--text-3)', fontSize: '14px' }}>Loading plans...</div>
       ) : (
-        <div className="up-grid">
-          {sortedPlans.map((plan, idx) => {
-            const isCurrent = plan.name === currentPlan;
-            const isHighlight = idx === highlightIndex;
-            const meta = PLAN_META[plan.name] || { tagline: '', features: [], cta: 'Select' };
-            const currentPrice = sortedPlans.find(p => p.name === currentPlan)?.price_monthly || 0;
+        <div className="up-wrapper">
+          <div className="up-grid">
+            {displayPlans.map((plan, idx) => {
+              const isCurrent = plan.name === currentPlan;
+              const isHighlight = idx === highlightIndex;
+              const meta = PLAN_META[plan.name] || { tagline: '', features: [], cta: 'Select' };
+              const currentPrice = sortedPlans.find(p => p.name === currentPlan)?.price_monthly || 0;
 
-            return (
-              <div key={plan.id} className={`up-card ${isHighlight ? 'up-card-pop' : ''} ${isCurrent ? 'up-card-current' : ''}`}>
-                {isHighlight && <div className="up-badge">Most Popular</div>}
-                <div className="up-card-inner">
-                  <h3>{plan.name}</h3>
-                  <div className="up-price">
-                    <span className="up-dollar">$</span>{plan.price_monthly}<span className="up-period">/month</span>
-                  </div>
-                  <p className="up-tagline">{meta.tagline}</p>
-                  <ul className="up-features">
-                    {meta.features.map(f => (
-                      <li key={f}>
-                        <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" /></svg>
-                        {f}
-                      </li>
-                    ))}
-                  </ul>
-                  <div className="up-card-footer">
-                    {isCurrent ? (
-                      <button className="up-btn up-btn-current" disabled>Current Plan</button>
-                    ) : !plan.stripe_price_id ? (
-                      <button
-                        className="up-btn up-btn-outline"
-                        onClick={() => window.location.href = 'mailto:max@aitoma.ai?subject=Agency Plan Inquiry'}
-                      >
-                        Contact Sales
-                      </button>
-                    ) : (
-                      <button
-                        className={`up-btn ${isHighlight ? 'up-btn-primary' : 'up-btn-outline'}`}
-                        disabled={checkoutLoading === plan.id}
-                        onClick={async () => {
-                          try {
-                            setCheckoutLoading(plan.id);
-                            const { checkout_url } = await apiFetch<{ checkout_url: string }>(
-                              '/api/stripe/checkout/subscription',
-                              { method: 'POST', body: JSON.stringify({ plan_id: plan.id }) }
-                            );
-                            window.location.href = checkout_url;
-                          } catch (err: any) {
-                            alert(err.message || 'Failed to start checkout');
-                            setCheckoutLoading(null);
-                          }
-                        }}
-                      >
-                        {checkoutLoading === plan.id ? 'Redirecting...' : plan.price_monthly > currentPrice ? meta.cta : 'Downgrade'}
-                      </button>
-                    )}
+              let ctaText = 'Select';
+              if (checkoutLoading === plan.id) {
+                ctaText = 'Redirecting...';
+              } else if (currentPlan === 'Free' || !currentPlan) {
+                ctaText = 'Start Now';
+              } else if (plan.price_monthly > currentPrice) {
+                ctaText = 'Upgrade Now';
+              } else {
+                ctaText = 'Downgrade';
+              }
+
+              return (
+                <div key={plan.id} className={`up-card ${isHighlight ? 'up-card-pop' : ''} ${isCurrent ? 'up-card-current' : ''}`}>
+                  {isHighlight && <div className="up-badge">Most Popular</div>}
+                  <div className="up-card-inner">
+                    <h3>{plan.name}</h3>
+                    <div className="up-price">
+                      <span className="up-dollar">$</span>{plan.price_monthly}<span className="up-period">/month</span>
+                    </div>
+                    <p className="up-tagline">{meta.tagline}</p>
+                    <ul className="up-features">
+                      {meta.features.map(f => {
+                        if (f.startsWith('Everything in')) {
+                          return (
+                            <li key={f} className="up-feature-subheader">
+                              <em>{f}</em>
+                            </li>
+                          );
+                        }
+                        return (
+                          <li key={f}>
+                            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" /></svg>
+                            {f}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    <div className="up-card-footer">
+                      {isCurrent ? (
+                        <button className="up-btn up-btn-current" disabled>Current Plan</button>
+                      ) : !plan.stripe_price_id ? (
+                        <button
+                          className="up-btn up-btn-outline"
+                          onClick={() => window.location.href = 'mailto:max@aitoma.ai?subject=Agency Plan Inquiry'}
+                        >
+                          Contact Sales
+                        </button>
+                      ) : (
+                        <button
+                          className={`up-btn ${isHighlight ? 'up-btn-primary' : 'up-btn-outline'}`}
+                          disabled={checkoutLoading === plan.id}
+                          onClick={async () => {
+                            try {
+                              setCheckoutLoading(plan.id);
+                              const { checkout_url } = await apiFetch<{ checkout_url: string }>(
+                                '/api/stripe/checkout/subscription',
+                                { method: 'POST', body: JSON.stringify({ plan_id: plan.id }) }
+                              );
+                              window.location.href = checkout_url;
+                            } catch (err: any) {
+                              alert(err.message || 'Failed to start checkout');
+                              setCheckoutLoading(null);
+                            }
+                          }}
+                        >
+                          {ctaText}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
+
+          <div className="up-agency-banner">
+            <p>
+              Are you an Agency looking to create 100+ videos per month?{' '}
+              <a href="mailto:max@aitoma.ai?subject=Agency Plan Inquiry">Contact Sales</a>
+            </p>
+          </div>
         </div>
       )}
 
@@ -169,13 +199,44 @@ export default function UpgradePage() {
           font-size: 15px;
           color: var(--text-3);
         }
+        .up-wrapper {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+        }
         .up-grid {
           display: grid;
-          grid-template-columns: repeat(4, 1fr);
-          gap: 18px;
-          max-width: 1200px;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 24px;
+          max-width: 960px;
+          width: 100%;
           margin: 0 auto;
           align-items: start;
+        }
+        .up-agency-banner {
+          margin-top: 48px;
+          padding: 24px 32px;
+          background: rgba(51,122,255,0.04);
+          border: 1px solid rgba(51,122,255,0.15);
+          border-radius: 12px;
+          text-align: center;
+          max-width: 600px;
+          width: 100%;
+        }
+        .up-agency-banner p {
+          margin: 0;
+          font-size: 14.5px;
+          color: var(--text-2);
+          font-weight: 500;
+        }
+        .up-agency-banner a {
+          color: var(--blue);
+          font-weight: 700;
+          text-decoration: none;
+          margin-left: 6px;
+        }
+        .up-agency-banner a:hover {
+          text-decoration: underline;
         }
         /* ── Card ── */
         .up-card {
@@ -275,6 +336,12 @@ export default function UpgradePage() {
           color: var(--text-2);
           padding: 6px 0;
           line-height: 1.4;
+        }
+        .up-feature-subheader {
+          color: var(--text-3) !important;
+          font-style: italic;
+          margin-top: 6px;
+          padding-bottom: 0 !important;
         }
         .up-features svg {
           width: 16px;
