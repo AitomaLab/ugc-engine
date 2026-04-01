@@ -5,6 +5,7 @@ import { apiFetch, formatDate, getApiUrl } from '@/lib/utils';
 import { useApp } from '@/providers/AppProvider';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { ProductShot } from '@/lib/types';
+import Select from '@/components/ui/Select';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -509,7 +510,7 @@ function CreateContent() {
                                 {products.filter(p => p.type === 'digital').length === 0 ? (
                                     <div style={{ fontSize: '12px', color: 'var(--text-3)', fontStyle: 'italic' }}>No digital products found. Add one in Products.</div>
                                 ) : (
-                                    <div className="product-selector-grid">
+                                    <div className="product-selector-grid" style={{ maxHeight: '200px', overflowY: 'auto', paddingRight: '4px' }}>
                                         {products.filter(p => p.type === 'digital').map((prod) => (
                                             <div key={prod.id} className={`prod-card ${productId === prod.id ? 'selected' : ''}`} onClick={() => setProductId(prod.id)}>
                                                 <div className="prod-thumb" style={prod.image_url ? { backgroundImage: `url(${prod.image_url})`, backgroundSize: 'cover', backgroundPosition: 'center' } : { background: 'var(--blue-light)' }}>
@@ -659,7 +660,7 @@ function CreateContent() {
                             {products.filter(p => !p.type || p.type === 'physical').length === 0 ? (
                                 <div style={{ fontSize: '12px', color: 'var(--text-3)' }}>No physical products found. Add one in Products.</div>
                             ) : (
-                                <div className="product-selector-grid">
+                                <div className="product-selector-grid" style={{ maxHeight: '200px', overflowY: 'auto', paddingRight: '4px' }}>
                                     {products.filter(p => !p.type || p.type === 'physical').map((prod) => (
                                         <div key={prod.id} className={`prod-card ${productId === prod.id ? 'selected' : ''}`} onClick={() => setProductId(prod.id)}>
                                             <div className="prod-thumb" style={prod.image_url ? { backgroundImage: `url(${prod.image_url})`, backgroundSize: 'cover', backgroundPosition: 'center' } : { background: 'var(--blue-light)' }}>
@@ -773,7 +774,7 @@ function CreateContent() {
                 {/* STEP 2 — Video Count */}
                 <div className="config-section">
                     <div className="config-step">
-                        <div className={`step-num ${selectedInfluencer ? 'done' : ''}`}>2</div>
+                        <div className={`step-num ${productId ? 'done' : ''}`}>2</div>
                         <div className="step-text">Video Count</div>
                     </div>
                     <div className="video-count-row">
@@ -837,17 +838,22 @@ function CreateContent() {
 
 {/* ── SCRIPT ── */}
 <div className="config-section">
-    <div className="config-label">Script</div>
-    <div className="pill-group" style={{ marginBottom: '10px' }}>
+    <div className="config-step">
+        <div className={`step-num ${(customScript || generatedScript || selectedScript) ? 'done' : ''}`}>3</div>
+        <div className="step-text">Script</div>
+    </div>
+    <div style={{ display: 'flex', flexWrap: 'nowrap', gap: '6px', marginBottom: '10px' }}>
         <button
             className={`btn-secondary ${scriptTab === 'ai' ? 'active' : ''}`}
             onClick={() => { setScriptTab('ai'); setScriptSource('custom'); }}
+            style={{ whiteSpace: 'nowrap', padding: '6px 14px', fontSize: '12px' }}
         >
             AI Generated
         </button>
         <button
             className={`btn-secondary ${scriptTab === 'library' ? 'active' : ''}`}
             onClick={() => setScriptTab('library')}
+            style={{ whiteSpace: 'nowrap', padding: '6px 14px', fontSize: '12px' }}
         >
             From Library ({(() => {
                 const sp = products.find(p => p.id === productId);
@@ -865,35 +871,24 @@ function CreateContent() {
 
     {scriptTab === 'ai' ? (
         <div>
-            {/* Script Style — dropdown */}
+            {/* Script Style — themed dropdown */}
             <div style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-3)', marginBottom: '6px' }}>
                 Script Style
             </div>
-            <select
+            <Select
                 value={scriptMethodology}
-                onChange={(e) => setScriptMethodology(e.target.value)}
-                style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    marginBottom: '10px',
-                    fontSize: '12px',
-                    fontWeight: 500,
-                    color: 'var(--text-1)',
-                    background: 'var(--surface)',
-                    border: '1px solid var(--border)',
-                    borderRadius: 'var(--radius-sm)',
-                    cursor: 'pointer',
-                    outline: 'none',
-                }}
-            >
-                <option value="">🎲 Random (Recommended)</option>
-                <option value="Hook/Benefit/CTA">Hook / Benefit / CTA</option>
-                <option value="Problem/Agitate/Solve">Problem / Agitate / Solve</option>
-                <option value="Contrarian/Shock">Contrarian / Shock</option>
-                <option value="Social Proof">Social Proof</option>
-                <option value="Aspiration/Dream">Aspiration / Dream</option>
-                <option value="Curiosity/Cliffhanger">Curiosity / Cliffhanger</option>
-            </select>
+                onChange={setScriptMethodology}
+                style={{ marginBottom: '10px' }}
+                options={[
+                    { value: '', label: '🎲 Random (Recommended)' },
+                    { value: 'Hook/Benefit/CTA', label: 'Hook / Benefit / CTA' },
+                    { value: 'Problem/Agitate/Solve', label: 'Problem / Agitate / Solve' },
+                    { value: 'Contrarian/Shock', label: 'Contrarian / Shock' },
+                    { value: 'Social Proof', label: 'Social Proof' },
+                    { value: 'Aspiration/Dream', label: 'Aspiration / Dream' },
+                    { value: 'Curiosity/Cliffhanger', label: 'Curiosity / Cliffhanger' },
+                ]}
+            />
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '6px' }}>
                 <button

@@ -7,7 +7,4 @@ startCommand = "PYTHONPATH=. uvicorn app:app --host 0.0.0.0 --port $PORT"
 [services.worker]
 startCommand = "PYTHONPATH=. celery -A ugc_worker.tasks worker --loglevel=info"
 
-# Remotion subtitle renderer microservice
-[services.remotion-renderer]
-src = "./remotion_renderer"
-startCommand = "npm start"
+

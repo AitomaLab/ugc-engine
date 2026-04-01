@@ -459,22 +459,34 @@ def _extract_video_url(data):
     return result_data.get("videoUrl")
 
 
-def download_video(url, output_path):
-    """Download a video from URL to local file."""
+def download_video(url, output_path, max_retries=5):
+    """Download a video from URL to local file with retries on transient connection errors like 524."""
+    import time
     print(f"   📥 Downloading video...")
-    resp = requests.get(url, stream=True)
-    resp.raise_for_status()
-
+    
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(output_path, "wb") as f:
-        for chunk in resp.iter_content(chunk_size=8192):
-            f.write(chunk)
+    for attempt in range(max_retries):
+        try:
+            resp = requests.get(url, stream=True, timeout=60)
+            resp.raise_for_status()
 
-    size_mb = output_path.stat().st_size / (1024 * 1024)
-    print(f"      💾 Saved: {output_path} ({size_mb:.1f} MB)")
-    return str(output_path)
+            with open(output_path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+
+            size_mb = output_path.stat().st_size / (1024 * 1024)
+            print(f"      💾 Saved: {output_path} ({size_mb:.1f} MB)")
+            return str(output_path)
+        except Exception as e:
+            if attempt < max_retries - 1:
+                wait_time = (2 ** attempt) * 5
+                print(f"      ⚠️ Download failed ({str(e)[:150]}). Retrying in {wait_time}s... (Attempt {attempt + 2}/{max_retries})")
+                time.sleep(wait_time)
+            else:
+                raise RuntimeError(f"Failed to download video after {max_retries} attempts: {e}")
 
 
 def generate_all_scenes(scenes, project_name="video", record_id=None, status_callback=None):

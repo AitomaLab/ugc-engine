@@ -99,7 +99,7 @@ worker_image = (
 
 @app.function(
     image=worker_image,
-    timeout=600,           # 10 min max per video job
+    timeout=1800,          # 30 min max per video job
     retries=1,             # Retry once on transient failures
     cpu=2.0,               # 2 vCPUs for ffmpeg + Remotion
     memory=4096,           # 4 GB RAM — needed for Chromium + video rendering
