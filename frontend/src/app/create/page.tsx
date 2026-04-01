@@ -523,159 +523,143 @@ function CreateContent() {
                                 )}
                             </div>
 
-                            {/* Step 2: Generate Script (when product selected) */}
-                            {productId && (
-                                <div style={{ marginBottom: '12px' }}>
-                                    <div style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.6px', color: 'var(--blue)', marginBottom: '8px' }}>Script</div>
-                                    <div className="pill-group" style={{marginBottom:'10px'}}>
-                                        <button className={`btn-secondary ${scriptTab === 'ai' ? 'active' : ''}`} onClick={() => { setScriptTab('ai'); setScriptSource('custom'); }}>AI Generated</button>
-                                        <button className={`btn-secondary ${scriptTab === 'library' ? 'active' : ''}`} onClick={() => setScriptTab('library')}>From Library ({(() => { const sp = products.find(p => p.id === productId); const sc = sp?.category || ''; return scripts.filter(s => { const mp = s.product_id === productId; const mc = sc && s.category && s.category.toLowerCase() === sc.toLowerCase(); if (!mp && !mc) return false; if (s.video_length && s.video_length !== duration) return false; return true; }).length; })()})</button>
-                                    </div>
-                                    {scriptTab === 'ai' ? (
-                                        <div>
-                                            <div style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-3)', marginBottom: '6px' }}>Script Style</div>
-                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginBottom: '10px' }}>
-                                                {['', 'Hook/Benefit/CTA', 'Problem/Agitate/Solve', 'Contrarian/Shock', 'Social Proof', 'Aspiration/Dream', 'Curiosity/Cliffhanger'].map(m => (
-                                                    <button key={m} className={`btn-secondary ${scriptMethodology === m ? 'active' : ''}`} onClick={() => setScriptMethodology(m)} style={{fontSize:'11px',padding:'5px 10px'}}>
-                                                        {m || '🎲 Random'}
-                                                    </button>
-                                                ))}
-                                            </div>
-                                            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '6px' }}>
-                                                <button onClick={generateDigitalScript} disabled={isGeneratingScript} style={{ fontSize: '11px', color: 'var(--blue)', fontWeight: 600, cursor: 'pointer', background: 'none', border: 'none', opacity: isGeneratingScript ? 0.5 : 1 }}>
-                                                    {isGeneratingScript ? 'Generating...' : 'Regenerate'}
-                                                </button>
-                                            </div>
-                                            <textarea
-                                                className="config-textarea"
-                                                rows={6}
-                                                value={customScript}
-                                                onChange={e => { setCustomScript(e.target.value); setScriptSource('custom'); }}
-                                                placeholder="AI will generate a script based on your product and website..."
-                                                disabled={isGeneratingScript}
-                                                style={{ fontSize: '13px', lineHeight: '1.5' }}
-                                            />
-                                        </div>
-                                    ) : (() => {
-                                        const selectedProduct = products.find(p => p.id === productId);
-                                        const selectedCategory = selectedProduct?.category || '';
-                                        const filtered = scripts.filter(s => {
-                                            // Only show scripts linked to this product or matching its category
-                                            const matchesProduct = s.product_id === productId;
-                                            const matchesCategory = selectedCategory && s.category && s.category.toLowerCase() === selectedCategory.toLowerCase();
-                                            if (!matchesProduct && !matchesCategory) return false;
-                                            if (s.video_length && s.video_length !== duration) return false;
-                                            return true;
-                                        }).sort((a, b) => {
-                                            const aMatch = a.product_id === productId ? 1 : 0;
-                                            const bMatch = b.product_id === productId ? 1 : 0;
-                                            return bMatch - aMatch;
-                                        });
-                                        return (
-                                        <div style={{maxHeight:'250px',overflowY:'auto',display:'flex',flexDirection:'column',gap:'6px'}}>
-                                            {filtered.length === 0 ? (
-                                                <div style={{fontSize:'12px',color:'var(--text-3)',padding:'20px 12px',textAlign:'center',lineHeight:1.6}}>
-                                                    <div style={{marginBottom:'8px'}}>No scripts found for this product or category{duration ? ` (${duration}s)` : ''}.</div>
-                                                    <div style={{display:'flex',gap:'8px',justifyContent:'center',flexWrap:'wrap'}}>
-                                                        <button onClick={() => { setScriptTab('ai'); setScriptSource('custom'); }} style={{fontSize:'11px',color:'var(--blue)',fontWeight:600,cursor:'pointer',background:'var(--blue-light)',border:'1px solid var(--blue)',borderRadius:'var(--radius-sm)',padding:'6px 12px'}}>Use AI Generated</button>
-                                                        <button onClick={() => window.open('/scripts','_blank')} style={{fontSize:'11px',color:'var(--text-2)',fontWeight:600,cursor:'pointer',background:'var(--bg-2)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',padding:'6px 12px'}}>Go to Scripts Page →</button>
-                                                    </div>
-                                                </div>
-                                            ) : filtered.map(scr => {
-                                                const scrHook = scr.script_json?.hook || scr.text?.split('|||')[0]?.trim() || scr.name || 'Untitled';
-                                                const isSel = selectedScript === scr.id;
-                                                return (
-                                                    <div key={scr.id} onClick={() => {
-                                                        setSelectedScript(scr.id);
-                                                        setScriptSource('specific');
-                                                        const scenes = scr.script_json?.scenes || [];
-                                                        const fullText = scenes.map(s => s.dialogue).join('\n\n') || scr.text || '';
-                                                        setCustomScript(fullText);
-                                                    }} style={{
-                                                        padding:'10px 12px',borderRadius:'var(--radius-sm)',cursor:'pointer',transition:'all 0.15s',
-                                                        border: isSel ? '2px solid var(--blue)' : '1px solid var(--border)',
-                                                        background: isSel ? 'var(--blue-light)' : 'var(--bg-2)',
-                                                    }}>
-                                                        <div style={{fontSize:'12px',fontWeight:600,color:'var(--text-1)',marginBottom:'4px',lineHeight:1.3}}>&ldquo;{scrHook.slice(0,80)}{scrHook.length>80?'...':''}&rdquo;</div>
-                                                        <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
-                                                            {scr.category && <span style={{fontSize:'10px',padding:'2px 6px',borderRadius:'4px',background:'rgba(51,122,255,0.1)',color:'var(--blue)',fontWeight:500}}>{scr.category}</span>}
-                                                            {scr.methodology && <span style={{fontSize:'10px',padding:'2px 6px',borderRadius:'4px',background:'rgba(139,92,246,0.1)',color:'#8B5CF6',fontWeight:500}}>{scr.methodology}</span>}
-                                                            {scr.video_length && <span style={{fontSize:'10px',padding:'2px 6px',borderRadius:'4px',background:'rgba(245,158,11,0.1)',color:'#F59E0B',fontWeight:500}}>{scr.video_length}s</span>}
-                                                            {scr.is_trending && <span style={{fontSize:'10px',padding:'2px 6px',borderRadius:'4px',background:'rgba(22,163,74,0.1)',color:'#16A34A',fontWeight:500}}>Trending</span>}
-                                                            {scr.product_id === productId && <span style={{fontSize:'10px',padding:'2px 6px',borderRadius:'4px',background:'rgba(51,122,255,0.15)',color:'var(--blue)',fontWeight:600}}>This Product</span>}
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                        );
-                                    })()}
-                                </div>
-                            )}
 
-                            {/* Step 3: Select Linked App Clip */}
-                            {productId && (
-                                <div>
-                                    <div style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.6px', color: 'var(--text-3)', marginBottom: '8px' }}>
-                                        App Clip
-                                        <span style={{ fontWeight: 400, marginLeft: '4px', color: 'var(--text-3)' }}>(linked to this product)</span>
-                                    </div>
-                                    {linkedClips.length === 0 ? (
-                                        <div>
-                                            <div style={{ fontSize: '12px', color: 'var(--text-3)', fontStyle: 'italic', marginBottom: '8px' }}>
-                                                No clips linked to this product. Using auto-selection.
-                                            </div>
-                                            <div className="product-selector-grid">
-                                                <div className={`prod-card ${appClipId === 'auto' ? 'selected' : ''}`} onClick={() => setAppClipId('auto')}>
-                                                    <div className="prod-thumb" style={{ background: 'var(--blue-light)' }}>
-                                                        <svg viewBox="0 0 24 24"><polygon points="13,2 3,14 12,14 11,22 21,10 12,10" /></svg>
-                                                    </div>
-                                                    <div className="prod-card-name">Auto</div>
-                                                    <div className="prod-card-type">Random</div>
-                                                </div>
-                                                {appClips.slice(0, 8).map((clip) => (
-                                                    <div key={clip.id} className={`prod-card ${appClipId === clip.id ? 'selected' : ''}`} onClick={() => setAppClipId(clip.id)}>
-                                                        <div className="prod-thumb" style={clip.video_url ? {} : { background: 'var(--blue-light)' }}>
-                                                            {clip.video_url ? (
-                                                                <video src={clip.video_url} muted loop playsInline autoPlay style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', top: 0, left: 0 }} />
-                                                            ) : (
-                                                                <svg viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2" /><line x1="12" y1="18" x2="12.01" y2="18" /></svg>
-                                                            )}
-                                                        </div>
-                                                        <div className="prod-card-name">{clip.name}</div>
-                                                        <div className="prod-card-type">{clip.category || 'Clip'}</div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    ) : (
-                                        <div className="product-selector-grid">
-                                            {linkedClips.map((clip) => (
-                                                <div key={clip.id} className={`prod-card ${selectedLinkedClip === clip.id ? 'selected' : ''}`} onClick={() => { setSelectedLinkedClip(clip.id); setAppClipId(clip.id); }}>
-                                                    <div className="prod-thumb" style={{}}>
-                                                        {clip.first_frame_url ? (
-                                                            <img src={clip.first_frame_url} alt={clip.name} style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', top: 0, left: 0 }} />
-                                                        ) : clip.video_url ? (
-                                                            <video src={clip.video_url} muted loop playsInline autoPlay style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', top: 0, left: 0 }} />
-                                                        ) : (
-                                                            <svg viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2" /><line x1="12" y1="18" x2="12.01" y2="18" /></svg>
-                                                        )}
-                                                    </div>
-                                                    <div className="prod-card-name">{clip.name}</div>
-                                                    <div className="prod-card-type">Linked</div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
+{/* App Clips — 9:16 portrait grid */}
+{productId && (
+    <div style={{ marginTop: '12px' }}>
+        <div style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.6px', color: 'var(--text-3)', marginBottom: '8px' }}>
+            App Clips
+            <span style={{ fontWeight: 400, marginLeft: '6px', color: 'var(--text-3)', textTransform: 'none' }}>(linked to this product)</span>
+        </div>
+
+        {linkedClips.length === 0 ? (
+            <div>
+                <div style={{ fontSize: '12px', color: 'var(--text-3)', fontStyle: 'italic', marginBottom: '8px' }}>
+                    No clips linked to this product. Using auto-selection.
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+                    {/* Auto card */}
+                    <div
+                        onClick={() => setAppClipId('auto')}
+                        style={{
+                            aspectRatio: '9/16',
+                            position: 'relative',
+                            borderRadius: '8px',
+                            overflow: 'hidden',
+                            cursor: 'pointer',
+                            border: appClipId === 'auto' ? '2px solid var(--blue)' : '2px solid transparent',
+                            boxShadow: appClipId === 'auto' ? '0 0 0 2px rgba(51,122,255,0.2)' : 'none',
+                            background: 'var(--blue-light)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '6px',
+                        }}
+                    >
+                        <svg viewBox="0 0 24 24" style={{ width: '20px', fill: 'var(--blue)' }}>
+                            <polygon points="13,2 3,14 12,14 11,22 21,10 12,10" />
+                        </svg>
+                        <span style={{ fontSize: '10px', fontWeight: 700, color: 'var(--blue)' }}>Auto</span>
+                        <span style={{ fontSize: '9px', color: 'var(--text-3)' }}>Random</span>
+                    </div>
+
+                    {appClips.slice(0, 8).map((clip) => (
+                        <div
+                            key={clip.id}
+                            onClick={() => setAppClipId(clip.id)}
+                            style={{
+                                aspectRatio: '9/16',
+                                position: 'relative',
+                                borderRadius: '8px',
+                                overflow: 'hidden',
+                                cursor: 'pointer',
+                                border: appClipId === clip.id ? '2px solid var(--blue)' : '2px solid transparent',
+                                boxShadow: appClipId === clip.id ? '0 0 0 2px rgba(51,122,255,0.2)' : 'none',
+                                background: 'var(--surface-hover)',
+                                transition: 'all 0.2s',
+                            }}
+                        >
+                            {clip.video_url ? (
+                                <video src={clip.video_url} muted loop playsInline autoPlay
+                                    style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+                            ) : (
+                                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--blue-light)' }}>
+                                    <svg viewBox="0 0 24 24" style={{ width: '20px', fill: 'var(--blue)' }}>
+                                        <rect x="5" y="2" width="14" height="20" rx="2" />
+                                    </svg>
                                 </div>
                             )}
+                            <div style={{
+                                position: 'absolute', bottom: 0, left: 0, right: 0,
+                                background: 'linear-gradient(to top, rgba(0,0,0,0.85), transparent)',
+                                padding: '20px 6px 6px 6px',
+                            }}>
+                                <div style={{ fontSize: '10px', fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {clip.name}
+                                </div>
+                                <div style={{ fontSize: '9px', color: 'rgba(255,255,255,0.7)' }}>
+                                    {clip.category || 'Clip'}
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+                {linkedClips.map((clip) => (
+                    <div
+                        key={clip.id}
+                        onClick={() => { setSelectedLinkedClip(clip.id); setAppClipId(clip.id); }}
+                        style={{
+                            aspectRatio: '9/16',
+                            position: 'relative',
+                            borderRadius: '8px',
+                            overflow: 'hidden',
+                            cursor: 'pointer',
+                            border: selectedLinkedClip === clip.id ? '2px solid var(--blue)' : '2px solid transparent',
+                            boxShadow: selectedLinkedClip === clip.id ? '0 0 0 2px rgba(51,122,255,0.2)' : 'none',
+                            background: 'var(--surface-hover)',
+                            transition: 'all 0.2s',
+                        }}
+                    >
+                        {clip.first_frame_url ? (
+                            <img src={clip.first_frame_url} alt={clip.name}
+                                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+                        ) : clip.video_url ? (
+                            <video src={clip.video_url} muted loop playsInline autoPlay
+                                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+                        ) : (
+                            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--blue-light)' }}>
+                                <svg viewBox="0 0 24 24" style={{ width: '20px', fill: 'var(--blue)' }}>
+                                    <rect x="5" y="2" width="14" height="20" rx="2" />
+                                </svg>
+                            </div>
+                        )}
+                        <div style={{
+                            position: 'absolute', bottom: 0, left: 0, right: 0,
+                            background: 'linear-gradient(to top, rgba(0,0,0,0.85), transparent)',
+                            padding: '20px 6px 6px 6px',
+                        }}>
+                            <div style={{ fontSize: '10px', fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                {clip.name}
+                            </div>
+                            <div style={{ fontSize: '9px', color: 'rgba(255,255,255,0.7)' }}>Linked</div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        )}
+    </div>
+)}
                         </div>
                     ) : (
                         <div style={{ marginTop: '8px' }}>
                             {products.filter(p => !p.type || p.type === 'physical').length === 0 ? (
                                 <div style={{ fontSize: '12px', color: 'var(--text-3)' }}>No physical products found. Add one in Products.</div>
                             ) : (
-                                <div className="product-selector-grid" style={{ maxHeight: '120px', overflowY: 'auto', paddingRight: '4px' }}>
+                                <div className="product-selector-grid">
                                     {products.filter(p => !p.type || p.type === 'physical').map((prod) => (
                                         <div key={prod.id} className={`prod-card ${productId === prod.id ? 'selected' : ''}`} onClick={() => setProductId(prod.id)}>
                                             <div className="prod-thumb" style={prod.image_url ? { backgroundImage: `url(${prod.image_url})`, backgroundSize: 'cover', backgroundPosition: 'center' } : { background: 'var(--blue-light)' }}>
@@ -698,30 +682,59 @@ function CreateContent() {
                             Cinematic Shots
                             <span style={{ fontSize: '10px', color: 'var(--text-3)', fontWeight: 400 }}>Optional</span>
                         </div>
-                        <div style={{ display: 'flex', gap: '12px', marginTop: '12px', overflowX: 'auto', paddingBottom: '16px' }} className="no-scrollbar">
-                            {cinematicShots.map((shot) => {
-                                const isSelected = selectedCinematicShots.includes(shot.id);
-                                return (
-                                    <div
-                                        key={shot.id}
-                                        style={{ width: '88px', height: '156px', flexShrink: 0, position: 'relative', borderRadius: '12px', overflow: 'hidden', cursor: 'pointer', border: isSelected ? '2px solid var(--blue)' : '2px solid transparent', boxShadow: isSelected ? '0 0 0 2px rgba(51,122,255,0.2)' : 'none', transition: 'all 0.2s' }}
-                                        onClick={() => setSelectedCinematicShots(prev => isSelected ? prev.filter(id => id !== shot.id) : [...prev, shot.id])}
-                                    >
-                                        {shot.video_url ? (
-                                            <video src={shot.video_url} autoPlay muted loop playsInline style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', inset: 0 }} />
-                                        ) : shot.image_url ? (
-                                            <img src={shot.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', inset: 0 }} />
-                                        ) : (
-                                            <div style={{ width: '100%', height: '100%', backgroundColor: 'var(--surface-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-3)', fontSize: '11px', textAlign: 'center', padding: '8px', lineHeight: 1.2 }}>No Preview</div>
-                                        )}
-                                        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'linear-gradient(to top, rgba(0,0,0,0.8), transparent)', padding: '24px 8px 8px 8px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', color: 'white', fontSize: '10px', fontWeight: 600 }}>
-                                            <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', paddingRight: '4px' }}>{shot.shot_type.replace('_', ' ')}</span>
-                                            {isSelected && <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', flexShrink: 0, fill: 'var(--blue)' }}><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" /></svg>}
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
+<div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginTop: '12px' }}>
+    {cinematicShots.map((shot) => {
+        const isSelected = selectedCinematicShots.includes(shot.id);
+        return (
+            <div
+                key={shot.id}
+                onClick={() => setSelectedCinematicShots(prev =>
+                    isSelected ? prev.filter(id => id !== shot.id) : [...prev, shot.id]
+                )}
+                style={{
+                    aspectRatio: '9/16',
+                    position: 'relative',
+                    borderRadius: '8px',
+                    overflow: 'hidden',
+                    cursor: 'pointer',
+                    border: isSelected ? '2px solid var(--blue)' : '2px solid transparent',
+                    boxShadow: isSelected ? '0 0 0 2px rgba(51,122,255,0.2)' : 'none',
+                    background: '#0d1117',
+                    transition: 'all 0.2s',
+                }}
+            >
+                {shot.video_url ? (
+                    <video src={shot.video_url} autoPlay muted loop playsInline
+                        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : shot.image_url ? (
+                    <img src={shot.image_url} alt=""
+                        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : (
+                    <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-3)', fontSize: '10px', textAlign: 'center', padding: '8px', lineHeight: 1.2 }}>
+                        No Preview
+                    </div>
+                )}
+                <div style={{
+                    position: 'absolute', bottom: 0, left: 0, right: 0,
+                    background: 'linear-gradient(to top, rgba(0,0,0,0.85), transparent)',
+                    padding: '20px 6px 6px 6px',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'flex-end',
+                }}>
+                    <span style={{ fontSize: '10px', fontWeight: 600, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', paddingRight: '4px' }}>
+                        {shot.shot_type.replace('_', ' ')}
+                    </span>
+                    {isSelected && (
+                        <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', flexShrink: 0, fill: 'var(--blue)' }}>
+                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
+                        </svg>
+                    )}
+                </div>
+            </div>
+        );
+    })}
+</div>
                         {selectedCinematicShots.length > 0 && (
                             <div style={{ fontSize: '10px', color: 'var(--blue)', marginTop: '4px' }}>
                                 {selectedCinematicShots.length} shot{selectedCinematicShots.length > 1 ? 's' : ''} selected
@@ -822,6 +835,178 @@ function CreateContent() {
                     </div>
                 </div>
 
+{/* ── SCRIPT ── */}
+<div className="config-section">
+    <div className="config-label">Script</div>
+    <div className="pill-group" style={{ marginBottom: '10px' }}>
+        <button
+            className={`btn-secondary ${scriptTab === 'ai' ? 'active' : ''}`}
+            onClick={() => { setScriptTab('ai'); setScriptSource('custom'); }}
+        >
+            AI Generated
+        </button>
+        <button
+            className={`btn-secondary ${scriptTab === 'library' ? 'active' : ''}`}
+            onClick={() => setScriptTab('library')}
+        >
+            From Library ({(() => {
+                const sp = products.find(p => p.id === productId);
+                const sc = sp?.category || '';
+                return scripts.filter(s => {
+                    const mp = s.product_id === productId;
+                    const mc = sc && s.category && s.category.toLowerCase() === sc.toLowerCase();
+                    if (!mp && !mc) return false;
+                    if (s.video_length && s.video_length !== duration) return false;
+                    return true;
+                }).length;
+            })()})
+        </button>
+    </div>
+
+    {scriptTab === 'ai' ? (
+        <div>
+            {/* Script Style — dropdown */}
+            <div style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-3)', marginBottom: '6px' }}>
+                Script Style
+            </div>
+            <select
+                value={scriptMethodology}
+                onChange={(e) => setScriptMethodology(e.target.value)}
+                style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    marginBottom: '10px',
+                    fontSize: '12px',
+                    fontWeight: 500,
+                    color: 'var(--text-1)',
+                    background: 'var(--surface)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius-sm)',
+                    cursor: 'pointer',
+                    outline: 'none',
+                }}
+            >
+                <option value="">🎲 Random (Recommended)</option>
+                <option value="Hook/Benefit/CTA">Hook / Benefit / CTA</option>
+                <option value="Problem/Agitate/Solve">Problem / Agitate / Solve</option>
+                <option value="Contrarian/Shock">Contrarian / Shock</option>
+                <option value="Social Proof">Social Proof</option>
+                <option value="Aspiration/Dream">Aspiration / Dream</option>
+                <option value="Curiosity/Cliffhanger">Curiosity / Cliffhanger</option>
+            </select>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '6px' }}>
+                <button
+                    onClick={productType === 'digital' ? generateDigitalScript : () => {
+                        setIsGeneratingScript(true);
+                        fetch(`${API_URL}/api/scripts/generate`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                product_id: productId,
+                                duration,
+                                influencer_id: selectedInfluencer || undefined,
+                                methodology: scriptMethodology || undefined,
+                            }),
+                        })
+                            .then(res => res.json())
+                            .then(data => {
+                                let script = '';
+                                if (data.script_json && data.script_json.scenes) {
+                                    script = data.script_json.scenes.map((s: { dialogue: string }) => s.dialogue).join(' ||| ');
+                                } else if (data.script) {
+                                    script = data.script;
+                                }
+                                setGeneratedScript(script);
+                                setCustomScript(script);
+                                setScriptSource('custom');
+                            })
+                            .finally(() => setIsGeneratingScript(false));
+                    }}
+                    disabled={isGeneratingScript || !productId}
+                    style={{ fontSize: '11px', color: 'var(--blue)', fontWeight: 600, cursor: 'pointer', background: 'none', border: 'none', opacity: isGeneratingScript ? 0.5 : 1 }}
+                >
+                    {isGeneratingScript ? 'Generating...' : 'Regenerate'}
+                </button>
+            </div>
+
+            <textarea
+                className="config-textarea"
+                rows={6}
+                value={isGeneratingScript ? 'Generating compelling script...' : (scriptSource === 'custom' ? customScript : generatedScript)}
+                onChange={e => { setCustomScript(e.target.value); setScriptSource('custom'); }}
+                placeholder={productType === 'digital'
+                    ? 'AI will generate a script based on your product and website...'
+                    : 'Select a product to generate a script...'}
+                disabled={isGeneratingScript}
+                style={{ fontSize: '13px', lineHeight: '1.5' }}
+            />
+        </div>
+    ) : (() => {
+        const selectedProduct = products.find(p => p.id === productId);
+        const selectedCategory = selectedProduct?.category || '';
+        const filtered = scripts.filter(s => {
+            const matchesProduct = s.product_id === productId;
+            const matchesCategory = selectedCategory && s.category && s.category.toLowerCase() === selectedCategory.toLowerCase();
+            if (!matchesProduct && !matchesCategory) return false;
+            if (s.video_length && s.video_length !== duration) return false;
+            return true;
+        }).sort((a, b) => {
+            const aMatch = a.product_id === productId ? 1 : 0;
+            const bMatch = b.product_id === productId ? 1 : 0;
+            return bMatch - aMatch;
+        });
+        return (
+            <div style={{ maxHeight: '300px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {filtered.length === 0 ? (
+                    <div style={{ fontSize: '12px', color: 'var(--text-3)', padding: '20px 12px', textAlign: 'center', lineHeight: 1.6 }}>
+                        <div style={{ marginBottom: '8px' }}>No scripts found for this product or category{duration ? ` (${duration}s)` : ''}.</div>
+                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                            <button onClick={() => { setScriptTab('ai'); setScriptSource('custom'); }}
+                                style={{ fontSize: '11px', color: 'var(--blue)', fontWeight: 600, cursor: 'pointer', background: 'var(--blue-light)', border: '1px solid var(--blue)', borderRadius: 'var(--radius-sm)', padding: '6px 12px' }}>
+                                Use AI Generated
+                            </button>
+                            <button onClick={() => window.open('/scripts', '_blank')}
+                                style={{ fontSize: '11px', color: 'var(--text-2)', fontWeight: 600, cursor: 'pointer', background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '6px 12px' }}>
+                                Go to Scripts Page →
+                            </button>
+                        </div>
+                    </div>
+                ) : filtered.map(scr => {
+                    const hookText = scr.script_json?.hook || scr.text?.split('|||')[0]?.trim() || scr.name || 'Untitled';
+                    const isSelected = selectedScript === scr.id;
+                    return (
+                        <div key={scr.id}
+                            onClick={() => {
+                                setSelectedScript(scr.id);
+                                setScriptSource('specific');
+                                const scenes = scr.script_json?.scenes || [];
+                                const fullText = scenes.map(s => s.dialogue).join('\n\n') || scr.text || '';
+                                setCustomScript(fullText);
+                            }}
+                            style={{
+                                padding: '10px 12px', borderRadius: 'var(--radius-sm)', cursor: 'pointer', transition: 'all 0.15s',
+                                border: isSelected ? '2px solid var(--blue)' : '1px solid var(--border)',
+                                background: isSelected ? 'var(--blue-light)' : 'var(--bg-2)',
+                            }}>
+                            <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-1)', marginBottom: '4px', lineHeight: 1.3 }}>
+                                &ldquo;{hookText.slice(0, 80)}{hookText.length > 80 ? '...' : ''}&rdquo;
+                            </div>
+                            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                {scr.category && <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', background: 'rgba(51,122,255,0.1)', color: 'var(--blue)', fontWeight: 500 }}>{scr.category}</span>}
+                                {scr.methodology && <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', background: 'rgba(139,92,246,0.1)', color: '#8B5CF6', fontWeight: 500 }}>{scr.methodology}</span>}
+                                {scr.video_length && <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', background: 'rgba(245,158,11,0.1)', color: '#F59E0B', fontWeight: 500 }}>{scr.video_length}s</span>}
+                                {scr.is_trending && <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', background: 'rgba(22,163,74,0.1)', color: '#16A34A', fontWeight: 500 }}>Trending</span>}
+                                {scr.product_id === productId && <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', background: 'rgba(51,122,255,0.15)', color: 'var(--blue)', fontWeight: 600 }}>This Product</span>}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        );
+    })()}
+</div>
+
                 {/* SUBTITLE CONFIGURATION */}
                 <div className="config-section">
                     <div className="config-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -859,21 +1044,22 @@ function CreateContent() {
                             {/* Style Selector */}
                             <div>
                                 <div style={{ marginBottom: '8px', fontSize: '12px', color: '#6B7280' }}>Style</div>
-                                <div className="pill-group">
-                                    {[
-                                        { value: 'hormozi', label: 'Hormozi' },
-                                        { value: 'mrbeast', label: 'MrBeast' },
-                                        { value: 'plain', label: 'Plain' },
-                                    ].map(s => (
-                                        <button
-                                            key={s.value}
-                                            className={`btn-secondary ${subtitleStyle === s.value ? 'active' : ''}`}
-                                            onClick={() => setSubtitleStyle(s.value)}
-                                        >
-                                            {s.label}
-                                        </button>
-                                    ))}
-                                </div>
+<div style={{ display: 'flex', flexWrap: 'nowrap', gap: '8px' }}>
+    {[
+        { value: 'hormozi', label: 'Hormozi' },
+        { value: 'mrbeast', label: 'MrBeast' },
+        { value: 'plain', label: 'Plain' },
+    ].map(s => (
+        <button
+            key={s.value}
+            className={`btn-secondary ${subtitleStyle === s.value ? 'active' : ''}`}
+            onClick={() => setSubtitleStyle(s.value)}
+            style={{ flex: 1, textAlign: 'center', padding: '8px 0' }}
+        >
+            {s.label}
+        </button>
+    ))}
+</div>
                             </div>
 
                             {/* Placement Selector */}
@@ -973,113 +1159,6 @@ function CreateContent() {
                     )}
                 </div>
 
-                {/* Script Source — physical products only (digital scripts handled inline in Step 1) */}
-                {productType === 'physical' && (
-                    <div className="config-section">
-                        <div className="config-label">Script</div>
-                    <div className="pill-group" style={{marginBottom:'10px'}}>
-                        <button className={`btn-secondary ${scriptTab === 'ai' ? 'active' : ''}`} onClick={() => { setScriptTab('ai'); setScriptSource('custom'); }}>AI Generated</button>
-                        <button className={`btn-secondary ${scriptTab === 'library' ? 'active' : ''}`} onClick={() => setScriptTab('library')}>From Library ({(() => { const sp = products.find(p => p.id === productId); const sc = sp?.category || ''; return scripts.filter(s => { const mp = s.product_id === productId; const mc = sc && s.category && s.category.toLowerCase() === sc.toLowerCase(); if (!mp && !mc) return false; if (s.video_length && s.video_length !== duration) return false; return true; }).length; })()})</button>
-                    </div>
-                    {scriptTab === 'ai' ? (
-                        <div>
-                            <div style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-3)', marginBottom: '6px' }}>Script Style</div>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginBottom: '10px' }}>
-                                {['', 'Hook/Benefit/CTA', 'Problem/Agitate/Solve', 'Contrarian/Shock', 'Social Proof', 'Aspiration/Dream', 'Curiosity/Cliffhanger'].map(m => (
-                                    <button key={m} className={`btn-secondary ${scriptMethodology === m ? 'active' : ''}`} onClick={() => setScriptMethodology(m)} style={{fontSize:'11px',padding:'5px 10px'}}>
-                                        {m || '🎲 Random'}
-                                    </button>
-                                ))}
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '6px' }}>
-                                <button onClick={() => {
-                                    setIsGeneratingScript(true);
-                                    fetch(`${API_URL}/api/scripts/generate`, {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ product_id: productId, duration, influencer_id: selectedInfluencer || undefined, methodology: scriptMethodology || undefined }),
-                                    })
-                                        .then(res => res.json())
-                                        .then(data => {
-                                            let script = '';
-                                            if (data.script_json && data.script_json.scenes) {
-                                                script = data.script_json.scenes.map((s: {dialogue:string}) => s.dialogue).join(' ||| ');
-                                            } else if (data.script) {
-                                                script = data.script;
-                                            }
-                                            setGeneratedScript(script); setCustomScript(script); setScriptSource('custom');
-                                        })
-                                        .finally(() => setIsGeneratingScript(false));
-                                }} disabled={isGeneratingScript || !productId} style={{ fontSize: '11px', color: 'var(--blue)', fontWeight: 600, cursor: 'pointer', background: 'none', border: 'none' }}>
-                                    {isGeneratingScript ? 'Generating...' : 'Regenerate'}
-                                </button>
-                            </div>
-                            <textarea className="config-textarea" rows={8}
-                                value={isGeneratingScript ? 'Generating compelling script...' : (scriptSource === 'custom' ? customScript : generatedScript)}
-                                onChange={e => { setCustomScript(e.target.value); setScriptSource('custom'); }}
-                                placeholder="Select a product to generate a script..."
-                                disabled={isGeneratingScript}
-                                style={{ fontSize: '13px', lineHeight: '1.5' }}
-                            />
-                        </div>
-                    ) : (() => {
-                        // Smart filtering: match by product + category relevance
-                        const selectedProduct = products.find(p => p.id === productId);
-                        const selectedCategory = selectedProduct?.category || '';
-                        const filtered = scripts.filter(s => {
-                            // Only show scripts linked to this product or matching its category
-                            const matchesProduct = s.product_id === productId;
-                            const matchesCategory = selectedCategory && s.category && s.category.toLowerCase() === selectedCategory.toLowerCase();
-                            if (!matchesProduct && !matchesCategory) return false;
-                            if (s.video_length && s.video_length !== duration) return false;
-                            return true;
-                        }).sort((a, b) => {
-                            // Scripts linked to the current product come first
-                            const aMatch = a.product_id === productId ? 1 : 0;
-                            const bMatch = b.product_id === productId ? 1 : 0;
-                            return bMatch - aMatch;
-                        });
-                        return (
-                        <div style={{maxHeight:'300px',overflowY:'auto',display:'flex',flexDirection:'column',gap:'6px'}}>
-                            {filtered.length === 0 ? (
-                                <div style={{fontSize:'12px',color:'var(--text-3)',padding:'20px 12px',textAlign:'center',lineHeight:1.6}}>
-                                    <div style={{marginBottom:'8px'}}>No scripts found for this product or category{duration ? ` (${duration}s)` : ''}.</div>
-                                    <div style={{display:'flex',gap:'8px',justifyContent:'center',flexWrap:'wrap'}}>
-                                        <button onClick={() => { setScriptTab('ai'); setScriptSource('custom'); }} style={{fontSize:'11px',color:'var(--blue)',fontWeight:600,cursor:'pointer',background:'var(--blue-light)',border:'1px solid var(--blue)',borderRadius:'var(--radius-sm)',padding:'6px 12px'}}>Use AI Generated</button>
-                                        <button onClick={() => window.open('/scripts','_blank')} style={{fontSize:'11px',color:'var(--text-2)',fontWeight:600,cursor:'pointer',background:'var(--bg-2)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',padding:'6px 12px'}}>Go to Scripts Page →</button>
-                                    </div>
-                                </div>
-                            ) : filtered.map(scr => {
-                                const hook = scr.script_json?.hook || scr.text?.split('|||')[0]?.trim() || scr.name || 'Untitled';
-                                const isSelected = selectedScript === scr.id;
-                                return (
-                                    <div key={scr.id} onClick={() => {
-                                        setSelectedScript(scr.id);
-                                        setScriptSource('specific');
-                                        const scenes = scr.script_json?.scenes || [];
-                                        const fullText = scenes.map(s => s.dialogue).join('\n\n') || scr.text || '';
-                                        setCustomScript(fullText);
-                                    }} style={{
-                                        padding:'10px 12px',borderRadius:'var(--radius-sm)',cursor:'pointer',transition:'all 0.15s',
-                                        border: isSelected ? '2px solid var(--blue)' : '1px solid var(--border)',
-                                        background: isSelected ? 'var(--blue-light)' : 'var(--bg-2)',
-                                    }}>
-                                        <div style={{fontSize:'12px',fontWeight:600,color:'var(--text-1)',marginBottom:'4px',lineHeight:1.3}}>&ldquo;{hook.slice(0,80)}{hook.length>80?'...':''}&rdquo;</div>
-                                        <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
-                                            {scr.category && <span style={{fontSize:'10px',padding:'2px 6px',borderRadius:'4px',background:'rgba(51,122,255,0.1)',color:'var(--blue)',fontWeight:500}}>{scr.category}</span>}
-                                            {scr.methodology && <span style={{fontSize:'10px',padding:'2px 6px',borderRadius:'4px',background:'rgba(139,92,246,0.1)',color:'#8B5CF6',fontWeight:500}}>{scr.methodology}</span>}
-                                            {scr.video_length && <span style={{fontSize:'10px',padding:'2px 6px',borderRadius:'4px',background:'rgba(245,158,11,0.1)',color:'#F59E0B',fontWeight:500}}>{scr.video_length}s</span>}
-                                            {scr.is_trending && <span style={{fontSize:'10px',padding:'2px 6px',borderRadius:'4px',background:'rgba(22,163,74,0.1)',color:'#16A34A',fontWeight:500}}>Trending</span>}
-                                            {scr.product_id === productId && <span style={{fontSize:'10px',padding:'2px 6px',borderRadius:'4px',background:'rgba(51,122,255,0.15)',color:'var(--blue)',fontWeight:600}}>This Product</span>}
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                        );
-                    })()}
-                </div>
-                )}
 
                 {/* Advanced Settings */}
                 <div className="config-section">
