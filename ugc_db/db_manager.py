@@ -823,3 +823,61 @@ def get_stats_scoped(user_id: str):
         "scripts": scripts,
         "app_clips": app_clips,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AI Clone helpers (new — appended at bottom, do not modify above this line)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_user_clones(user_id: str):
+    sb = get_supabase()
+    return (
+        sb.table("user_ai_clones")
+        .select("*")
+        .eq("user_id", user_id)
+        .order("created_at", desc=True)
+        .execute()
+        .data or []
+    )
+
+
+def get_clone_looks(clone_id: str):
+    sb = get_supabase()
+    return (
+        sb.table("user_ai_clone_looks")
+        .select("*")
+        .eq("clone_id", clone_id)
+        .order("created_at")
+        .execute()
+        .data or []
+    )
+
+
+def get_clone_job(job_id: str):
+    sb = get_supabase()
+    result = sb.table("clone_video_jobs").select("*").eq("id", job_id).execute()
+    return result.data[0] if result.data else None
+
+
+def update_clone_job(job_id: str, data: dict):
+    sb = get_supabase()
+    result = (
+        sb.table("clone_video_jobs")
+        .update(data)
+        .eq("id", job_id)
+        .execute()
+    )
+    return result.data[0] if result.data else None
+
+
+def list_clone_jobs_for_user(user_id: str, limit: int = 50):
+    sb = get_supabase()
+    return (
+        sb.table("clone_video_jobs")
+        .select("*")
+        .eq("user_id", user_id)
+        .order("created_at", desc=True)
+        .limit(limit)
+        .execute()
+        .data or []
+    )

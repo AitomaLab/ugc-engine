@@ -9,36 +9,23 @@ import os
 
 def upload_temporary_file(file_path):
     """
-    Upload a local file to tmpfiles.org.
+    Upload a local file to Supabase instead of tmpfiles.org (which blocks bots).
     Returns the direct download URL.
     """
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"File not found: {file_path}")
 
-    print(f"   ☁️ Uploading to temporary storage (tmpfiles.org)...")
+    print(f"   ☁️ Uploading to temporary storage (Supabase)...")
     
-    url = "https://tmpfiles.org/api/v1/upload"
-    with open(file_path, 'rb') as f:
-        files = {'file': f}
-        resp = requests.post(url, files=files)
+    # Use a 'temp/' prefix so we can clean these up later if we want
+    filename = os.path.basename(file_path)
+    # Add a timestamp to avoid collisions
+    import time
+    dest_path = f"temp/{int(time.time())}_{filename}"
     
-    if resp.status_code != 200:
-        raise RuntimeError(f"Upload failed ({resp.status_code}): {resp.text}")
-
-    data = resp.json()
-    if data.get("status") != "success":
-        raise RuntimeError(f"Upload error: {data}")
-
-    # The API returns the viewing URL: https://tmpfiles.org/12345/filename
-    # We need the DIRECT download link: https://tmpfiles.org/dl/12345/filename
-    viewing_url = data["data"]["url"]
-    direct_url = viewing_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
-    
-    # Force HTTPS and strip
-    direct_url = direct_url.strip().replace("http://", "https://")
-    
-    print(f"      🔗 Public URL: {direct_url}")
-    return direct_url
+    public_url = upload_to_supabase_storage(file_path, bucket="generated-videos", destination_path=dest_path)
+    print(f"      🔗 Public URL: {public_url}")
+    return public_url
 
 def upload_to_supabase_storage(file_path, bucket="generated-videos", destination_path=None):
     """
@@ -57,11 +44,17 @@ def upload_to_supabase_storage(file_path, bucket="generated-videos", destination
     with open(file_path, "rb") as f:
         file_data = f.read()
 
+    # Auto-detect content type from file extension
+    import mimetypes
+    content_type, _ = mimetypes.guess_type(file_path)
+    if not content_type:
+        content_type = "application/octet-stream"
+
     # Upload (upsert to overwrite if exists)
     sb.storage.from_(bucket).upload(
         destination_path,
         file_data,
-        {"content-type": "video/mp4", "upsert": "true"},
+        {"content-type": content_type, "upsert": "true"},
     )
 
     supabase_url = os.getenv("SUPABASE_URL", "")

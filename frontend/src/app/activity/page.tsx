@@ -15,6 +15,7 @@ interface Job {
     updated_at?: string;
     final_video_url?: string;
     error_message?: string;
+    status_message?: string;
     influencer_id?: string;
     model_api?: string;
     campaign_name?: string;
@@ -66,11 +67,21 @@ export default function ActivityPage() {
 
     const fetchData = useCallback(async () => {
         try {
-            const [jobsData, infData] = await Promise.all([
+            const [jobsData, cloneJobsData, infData] = await Promise.all([
                 apiFetch<Job[]>('/jobs?limit=200'),
+                apiFetch<Job[]>('/api/clone-jobs').catch(() => []),
                 apiFetch<Influencer[]>('/influencers'),
             ]);
-            setJobs(jobsData);
+            // Normalize clone jobs to match Job interface
+            const normalizedCloneJobs = (cloneJobsData || []).map((cj: any) => ({
+                ...cj,
+                status: cj.status === 'complete' ? 'success' : cj.status,
+                model_api: 'AI Clone',
+                campaign_name: 'AI Clone',
+            }));
+            const allJobs = [...jobsData, ...normalizedCloneJobs]
+                .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+            setJobs(allJobs);
             setInfluencers(infData);
         } catch (err) {
             console.error('Activity fetch error:', err);
@@ -303,12 +314,12 @@ function JobTable({
                                     <svg viewBox="0 0 24 24"><polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" /></svg>
                                 </div>
                                 <div>
-                                    <div className="job-name">{influencerMap.get(job.influencer_id || '')?.name ?? 'Unknown'}</div>
+                                    <div className="job-name">{job.influencer_id ? (influencerMap.get(job.influencer_id)?.name ?? 'Unknown') : (job.campaign_name === 'AI Clone' ? 'My AI Clone' : 'Unknown')}</div>
                                     <div className="job-id">{job.id.substring(0, 12)}...</div>
                                 </div>
                             </div>
                         </div>
-                        <div className="td">{influencerMap.get(job.influencer_id || '')?.name ?? '—'}</div>
+                        <div className="td">{job.influencer_id ? (influencerMap.get(job.influencer_id)?.name ?? '—') : (job.campaign_name === 'AI Clone' ? 'My AI Clone' : '—')}</div>
                         <div className="td">
                             <button
                                 onClick={() => job.status === 'failed' ? onErrorClick(job) : undefined}
@@ -317,6 +328,9 @@ function JobTable({
                             >
                                 {statusLabel}
                             </button>
+                            {job.status === 'processing' && job.status_message && (
+                                <div style={{ fontSize: '11px', color: 'var(--text-3)', marginTop: '4px' }}>{job.status_message}</div>
+                            )}
                         </div>
                         <div className="td muted">{job.model_api || '—'}</div>
                         <div className="td" style={{ color: 'var(--blue)', fontWeight: 600, fontSize: '13px' }}>

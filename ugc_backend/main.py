@@ -128,9 +128,397 @@ def _dispatch_worker(job_id: str) -> bool:
     print(f"[START] Job {job_id} started in background thread (no Redis)")
     return True
 
+
+def _download_to_path(url: str, path) -> None:
+    """Download a file from URL to a local Path. Used by clone B-roll assembly."""
+    import requests as _req
+    resp = _req.get(str(url), stream=True, timeout=120)
+    resp.raise_for_status()
+    with open(str(path), "wb") as f:
+        for chunk in resp.iter_content(chunk_size=8192):
+            if chunk:
+                f.write(chunk)
+
+
+# Lazy dispatch for AI Clone jobs — mirrors _dispatch_worker but uses clone_engine
+def _dispatch_clone_worker(job_id: str) -> bool:
+    """Try to dispatch a clone job to a worker. Returns True if successful.
+
+    Priority order:
+    1. Modal serverless worker (if USE_MODAL_WORKER=true + MODAL_CLONE_WEBHOOK_URL)
+    2. In-process background thread (always-available fallback)
+    """
+
+    # --- Option 1: Modal serverless worker ---
+    if os.getenv("USE_MODAL_WORKER", "").lower() == "true":
+        modal_url = os.getenv("MODAL_CLONE_WEBHOOK_URL")
+        if modal_url:
+            try:
+                import requests as _req
+                resp = _req.post(modal_url, json={"job_id": job_id}, timeout=10)
+                if resp.status_code < 300:
+                    print(f"[OK] Clone job {job_id} dispatched to Modal worker")
+                    return True
+                else:
+                    print(f"!! Modal clone dispatch returned {resp.status_code}: {resp.text}")
+            except Exception as e:
+                print(f"!! Modal clone dispatch failed: {e}, falling back to in-process")
+        else:
+            print("!! MODAL_CLONE_WEBHOOK_URL not set, running clone job in-process")
+
+    # --- Option 2: Fallback — run in background thread ---
+    import threading
+    import sys as _sys
+    import traceback as _tb
+
+    def _run_clone_in_background():
+        try:
+            print(f"[CLONE-THREAD] Running clone job {job_id} in-process...", flush=True)
+            import clone_engine
+            import storage_helper
+            import subtitle_engine
+            from ugc_db.db_manager import get_supabase
+            from pathlib import Path
+            import random
+            import shutil
+
+            sb = get_supabase()
+
+            def update_cjob(updates: dict):
+                get_supabase().table("clone_video_jobs").update(updates).eq("id", job_id).execute()
+
+            job_result = sb.table("clone_video_jobs").select("*").eq("id", job_id).execute()
+            if not job_result.data:
+                print(f"[CLONE-THREAD] FAIL — Clone job {job_id} not found", flush=True)
+                return
+            job = job_result.data[0]
+
+            update_cjob({"status": "processing", "progress": 5})
+
+            clone_result = sb.table("user_ai_clones").select("*").eq("id", job["clone_id"]).execute()
+            if not clone_result.data:
+                raise RuntimeError(f"Clone {job['clone_id']} not found")
+            clone = clone_result.data[0]
+
+            if job.get("look_id"):
+                look_result = sb.table("user_ai_clone_looks").select("*").eq("id", job["look_id"]).execute()
+                if not look_result.data:
+                    raise RuntimeError(f"Look {job['look_id']} not found")
+                clone_image_url = look_result.data[0]["image_url"]
+            else:
+                all_looks = sb.table("user_ai_clone_looks").select("*").eq("clone_id", job["clone_id"]).execute()
+                if not all_looks.data:
+                    raise RuntimeError(f"No looks found for clone {job['clone_id']}")
+                clone_image_url = random.choice(all_looks.data)["image_url"]
+
+            # ── Fetch product details and B-roll clips ──────────────────────
+            product_name = ""
+            product_image_url = None
+            broll_clips = []       # list of dicts: [{"video_url": ..., "duration": ...}]
+            product_type = job.get("product_type", "physical")
+
+            if job.get("product_id"):
+                prod_result = sb.table("products").select("*").eq("id", job["product_id"]).execute()
+                if prod_result.data:
+                    product = prod_result.data[0]
+                    product_name = product.get("name", "")
+                    product_image_url = product.get("image_url")
+                    product_type = job.get("product_type") or product.get("type", "physical")
+
+                    if product_type == "digital":
+                        # Fetch app clips for this digital product
+                        clips = sb.table("app_clips").select("*").eq("product_id", job["product_id"]).execute()
+                        if clips.data:
+                            broll_clips = clips.data  # each has: video_url, duration, ...
+                            print(f"[CLONE-THREAD] Found {len(broll_clips)} app clips for digital product", flush=True)
+                    else:
+                        # Fetch cinematic shots (animated) for physical product
+                        shots = (
+                            sb.table("product_shots")
+                            .select("*")
+                            .eq("product_id", job["product_id"])
+                            .eq("status", "animation_completed")
+                            .execute()
+                        )
+                        if shots.data:
+                            broll_clips = [{"video_url": s["video_url"], "duration": 4.0} for s in shots.data]
+                            print(f"[CLONE-THREAD] Found {len(broll_clips)} cinematic shots for physical product", flush=True)
+
+            # ── Calculate avatar duration ────────────────────────────────────
+            total_duration = job.get("duration", 15)
+            has_broll = bool(broll_clips)
+
+            if has_broll:
+                # Use the first B-roll clip only (MVP: auto-pick first)
+                broll_clip = broll_clips[0]
+                broll_duration = float(broll_clip.get("duration", 7.0))
+                avatar_duration = max(total_duration - broll_duration, 5.0)  # at least 5s of speaking
+                print(f"[CLONE-THREAD] Timing: {total_duration}s total = {avatar_duration:.1f}s avatar + {broll_duration:.1f}s B-roll", flush=True)
+            else:
+                avatar_duration = None  # no cap — avatar speaks full duration
+                print(f"[CLONE-THREAD] No B-roll clips — avatar will speak for full duration", flush=True)
+
+            print(f"[CLONE-THREAD] Clone image: {clone_image_url}", flush=True)
+            print(f"[CLONE-THREAD] Product image: {product_image_url or 'None'}", flush=True)
+            print(f"[CLONE-THREAD] Script: {job['script_text'][:100]}...", flush=True)
+            update_cjob({"progress": 20})
+
+            # ── Generate avatar video (with composite if product provided) ──
+            clone_gender = clone.get("gender", "male")
+            print(f"[CLONE-THREAD] Clone gender: {clone_gender}", flush=True)
+
+            avatar_url = clone_engine.generate_clone_video(
+                job_id=job_id,
+                clone_image_url=clone_image_url,
+                elevenlabs_voice_id=clone["elevenlabs_voice_id"],
+                script_text=job["script_text"],
+                subtitles_enabled=job.get("subtitles_enabled", True),
+                subtitle_style=job.get("subtitle_style", "hormozi"),
+                subtitle_placement=job.get("subtitle_placement", "middle"),
+                product_name=product_name,
+                product_image_url=product_image_url,
+                avatar_duration=avatar_duration,
+                skip_subtitles=has_broll,  # skip if we'll assemble + burn externally
+                gender=clone_gender,
+            )
+
+            update_cjob({"progress": 75})
+
+            # ── Post-Processing: Assemble, Music, Subtitles ─────────────────
+            import subprocess
+            work_dir = Path(f"/tmp/clone_assembly_{job_id}")
+            work_dir.mkdir(parents=True, exist_ok=True)
+
+            try:
+                # 1. Prepare Base Video
+                avatar_path = work_dir / "avatar.mp4"
+                _download_to_path(avatar_url, avatar_path)
+                assembled_path = avatar_path
+
+                if has_broll:
+                    print(f"[CLONE-THREAD] Assembling avatar video + B-roll clip...", flush=True)
+                    # Download first B-roll clip
+                    broll_path = work_dir / "broll_0.mp4"
+                    _download_to_path(broll_clip["video_url"], broll_path)
+
+                    import sys
+                    sys.path.append(str(Path(__file__).parent.parent))
+                    from assemble_video import ensure_audio_stream
+
+                    avatar_path_safe = ensure_audio_stream(avatar_path, work_dir)
+                    broll_path_safe = ensure_audio_stream(broll_path, work_dir)
+
+                    # Re-encode both for consistent format
+                    avatar_enc = work_dir / "avatar_enc.mp4"
+                    broll_enc = work_dir / "broll_enc.mp4"
+
+                    for src, dst in [(avatar_path_safe, avatar_enc), (broll_path_safe, broll_enc)]:
+                        cmd = [
+                            "ffmpeg", "-y", "-i", str(src),
+                            "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+                            "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
+                            "-r", "30",
+                            "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                            "-movflags", "+faststart",
+                            str(dst),
+                        ]
+                        subprocess.run(cmd, capture_output=True, check=True)
+
+                    # Get dimensions from avatar to resize B-roll
+                    probe_cmd = [
+                        "ffprobe", "-v", "quiet", "-print_format", "json",
+                        "-show_streams", str(avatar_enc),
+                    ]
+                    probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
+                    import json
+                    probe_data = json.loads(probe_result.stdout)
+                    vid_stream = next((s for s in probe_data.get("streams", []) if s["codec_type"] == "video"), {})
+                    aw = int(vid_stream.get("width", 720))
+                    ah = int(vid_stream.get("height", 1280))
+
+                    # Re-encode B-roll to match avatar dimensions
+                    broll_matched = work_dir / "broll_matched.mp4"
+                    cmd = [
+                        "ffmpeg", "-y", "-i", str(broll_enc),
+                        "-vf", f"scale={aw}:{ah}:force_original_aspect_ratio=decrease,pad={aw}:{ah}:(ow-iw)/2:(oh-ih)/2",
+                        "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+                        "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
+                        "-r", "30",
+                        "-movflags", "+faststart",
+                        str(broll_matched),
+                    ]
+                    subprocess.run(cmd, capture_output=True, check=True)
+
+                    # Concat: avatar first, then B-roll
+                    concat_list = work_dir / "concat.txt"
+                    with open(concat_list, "w") as f:
+                        f.write(f"file '{avatar_enc.as_posix()}'\n")
+                        f.write(f"file '{broll_matched.as_posix()}'\n")
+
+                    assembled_path = work_dir / "assembled.mp4"
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-f", "concat", "-safe", "0",
+                        "-i", str(concat_list),
+                        "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+                        "-c:a", "aac", "-b:a", "192k",
+                        "-movflags", "+faststart",
+                        str(assembled_path),
+                    ]
+                    subprocess.run(cmd, capture_output=True, check=True)
+                    print(f"[CLONE-THREAD] Assembly complete: {assembled_path.stat().st_size / (1024*1024):.1f} MB", flush=True)
+
+                # ── Generate & Mix Music ─────────────────────────────────────────
+                if not job.get("skip_music", False):
+                    print(f"[CLONE-THREAD] Generating background music...", flush=True)
+                    try:
+                        import generate_scenes
+                        theme = job.get("Theme", product_name or "trendy product")
+                        music_prompt = f"upbeat trendy background music for a short social media video about {theme}, energetic positive modern pop instrumental"
+                        music_url = generate_scenes.generate_music(music_prompt)
+                        if music_url:
+                            music_path = work_dir / "music.mp3"
+                            generate_scenes.download_video(music_url, music_path)
+                            print(f"[CLONE-THREAD] Mixing background music...", flush=True)
+                            with_music_path = work_dir / "assembled_with_music.mp4"
+                            cmd = [
+                                "ffmpeg", "-y",
+                                "-i", str(assembled_path),
+                                "-stream_loop", "-1", "-i", str(music_path),
+                                "-filter_complex", "[0:a][1:a]amix=inputs=2:duration=first:weights=2 0.2[a]",
+                                "-map", "0:v", "-map", "[a]",
+                                "-c:v", "copy",
+                                "-c:a", "aac", "-b:a", "192k",
+                                str(with_music_path)
+                            ]
+                            subprocess.run(cmd, capture_output=True)
+                            assembled_path = with_music_path
+                    except Exception as music_err:
+                        print(f"[CLONE-THREAD] Music generation failed: {music_err}", flush=True)
+
+                update_cjob({"progress": 85})
+
+                # ── Burn Subtitles ───────────────────────────────────────────────
+                final_path = assembled_path
+                if job.get("subtitles_enabled", True):
+                    print(f"[CLONE-THREAD] Burning subtitles on video...", flush=True)
+                    subtitle_style = job.get("subtitle_style", "hormozi")
+                    subtitle_placement = job.get("subtitle_placement", "middle")
+                    use_remotion = os.getenv("USE_REMOTION_SUBTITLES", "true").lower() == "true"
+                    
+                    try:
+                        brand_names = [product_name] if product_name else []
+                        transcription = subtitle_engine.extract_transcription_with_whisper(
+                            str(assembled_path),
+                            brand_names=brand_names or None,
+                            script_text=job["script_text"],
+                        )
+                        if transcription and transcription.get("words"):
+                            captioned_path = None
+                            
+                            # Remotion Path
+                            if use_remotion:
+                                try:
+                                    print(f"[CLONE-THREAD] Rendering with Remotion (style={subtitle_style})...", flush=True)
+                                    import json as _json
+                                    import tempfile as _tempfile
+                                    
+                                    remotion_dir = "/root/remotion_renderer"
+                                    if not os.path.isdir(remotion_dir):
+                                        remotion_dir = os.path.join(os.path.dirname(__file__), "..", "remotion_renderer")
+                                        
+                                    render_script = os.path.join(remotion_dir, "render_captions.js")
+                                    
+                                    props = {
+                                        "transcription": transcription,
+                                        "subtitleStyle": subtitle_style,
+                                        "subtitlePlacement": subtitle_placement,
+                                    }
+                                    with _tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as pf:
+                                        _json.dump(props, pf)
+                                        props_path = pf.name
+                                        
+                                    captioned_output = str(work_dir / "final_remotion.mp4")
+                                    cmd = [
+                                        "node", render_script,
+                                        "--input", str(assembled_path),
+                                        "--props", props_path,
+                                        "--output", captioned_output,
+                                    ]
+                                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, cwd=remotion_dir)
+                                    try:
+                                        os.unlink(props_path)
+                                    except OSError:
+                                        pass
+                                        
+                                    if result.returncode == 0 and os.path.isfile(captioned_output):
+                                        captioned_path = captioned_output
+                                        print(f"[CLONE-THREAD] Remotion render complete", flush=True)
+                                    else:
+                                        print(f"[CLONE-THREAD] Remotion failed, falling back. Code: {result.returncode}, Stderr: {result.stderr}", flush=True)
+                                except Exception as rem_err:
+                                    print(f"[CLONE-THREAD] Remotion error: {rem_err}, falling back", flush=True)
+
+                            # FFmpeg Fallback Path
+                            if not captioned_path:
+                                print(f"[CLONE-THREAD] Rendering with FFmpeg fallback...", flush=True)
+                                subtitle_path = work_dir / "subtitles.ass"
+                                subtitle_engine.generate_subtitles_from_whisper(
+                                    transcription, subtitle_path, brand_names=brand_names or None
+                                )
+                                if subtitle_path.exists() and subtitle_path.stat().st_size > 250:
+                                    sub_safe = str(subtitle_path.resolve()).replace("\\", "/").replace(":", "\\:")
+                                    subtitled_path = work_dir / "final_subtitled.mp4"
+                                    cmd = [
+                                        "ffmpeg", "-y",
+                                        "-i", str(assembled_path),
+                                        "-vf", f"ass={sub_safe}",
+                                        "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+                                        "-c:a", "copy",
+                                        str(subtitled_path),
+                                    ]
+                                    result = subprocess.run(cmd, capture_output=True)
+                                    if result.returncode == 0:
+                                        captioned_path = str(subtitled_path)
+                                        print("[CLONE-THREAD] Subtitles burned with FFmpeg", flush=True)
+                                        
+                            if captioned_path:
+                                final_path = Path(captioned_path)
+                    except Exception as sub_err:
+                        print(f"[CLONE-THREAD] Subtitle application failed: {sub_err}", flush=True)
+
+                # Upload final assembled video
+                destination = f"clone-videos/{job_id}/final.mp4"
+                final_url = storage_helper.upload_to_supabase_storage(
+                    file_path=str(final_path),
+                    bucket="generated-videos",
+                    destination_path=destination,
+                )
+                print(f"[CLONE-THREAD] Final video uploaded: {final_url}", flush=True)
+            finally:
+                shutil.rmtree(work_dir, ignore_errors=True)
+
+            update_cjob({"status": "complete", "progress": 100, "final_video_url": final_url})
+            print(f"[CLONE-THREAD] ✓ Clone job {job_id} complete: {final_url}", flush=True)
+        except Exception as e:
+            print(f"[CLONE-THREAD] ✗ Clone job {job_id} failed: {e}", flush=True)
+            _tb.print_exc()
+            _sys.stdout.flush()
+            from ugc_db.db_manager import get_supabase
+            get_supabase().table("clone_video_jobs").update({
+                "status": "failed", "error_message": str(e)[:1000],
+            }).eq("id", job_id).execute()
+
+    thread = threading.Thread(target=_run_clone_in_background, daemon=False, name=f"clone-{job_id[:8]}")
+    thread.start()
+    print(f"[CLONE-THREAD] Clone job {job_id} started in background thread", flush=True)
+    return True
+
 # ---------------------------------------------------------------------------
 # App Setup
 # ---------------------------------------------------------------------------
+
+from ugc_backend.api_clones import router as clones_router
 
 app = FastAPI(title="UGC Engine SaaS API v3")
 
@@ -162,6 +550,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(clones_router)
 
 
 # ---------------------------------------------------------------------------
@@ -1379,7 +1769,7 @@ def api_extract_frame(clip_id: str):
 @app.post("/assets/signed-url")
 def create_signed_url(data: SignedUrlRequest):
     sb = get_supabase()
-    allowed_buckets = {"influencer-images", "app-clips", "generated-videos"}
+    allowed_buckets = {"influencer-images", "app-clips", "generated-videos", "clone-looks"}
     if data.bucket not in allowed_buckets:
         raise HTTPException(status_code=400, detail=f"Invalid bucket. Allowed: {allowed_buckets}")
     try:
@@ -1585,11 +1975,66 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
 # ---------------------------------------------------------------------------
 
 @app.get("/jobs")
-def api_list_jobs(request: Request, status: Optional[str] = None, limit: int = Query(default=50, le=200), user: dict = Depends(get_optional_user)):
+def api_list_jobs(request: Request, status: Optional[str] = None, limit: int = Query(default=50, le=200), include_clones: bool = Query(default=False), user: dict = Depends(get_optional_user)):
     if user:
         pid = _resolve_project_id(request, user)
-        return list_jobs_scoped(user["id"], project_id=pid, status=status, limit=limit)
-    return list_jobs(status, limit)
+        regular_jobs = list_jobs_scoped(user["id"], project_id=pid, status=status, limit=limit)
+    else:
+        regular_jobs = list_jobs(status, limit)
+
+    if not include_clones or not user:
+        return regular_jobs
+
+    # Also fetch clone video jobs and normalize them to match the VideoJob shape
+    sb = get_supabase()
+    q = (
+        sb.table("clone_video_jobs")
+        .select("*")
+        .eq("user_id", user["id"])
+        .order("created_at", desc=True)
+        .limit(limit)
+    )
+    if status:
+        q = q.eq("status", status)
+    clone_jobs_raw = q.execute().data or []
+
+    if not clone_jobs_raw:
+        return regular_jobs
+
+    # Look up clone names for display
+    clone_ids = list({j["clone_id"] for j in clone_jobs_raw if j.get("clone_id")})
+    clone_map = {}
+    if clone_ids:
+        clones_data = sb.table("user_ai_clones").select("id,name").in_("id", clone_ids).execute().data or []
+        clone_map = {c["id"]: c["name"] for c in clones_data}
+
+    # Also look up look image URLs for thumbnails
+    look_ids = list({j["look_id"] for j in clone_jobs_raw if j.get("look_id")})
+    look_map = {}
+    if look_ids:
+        looks_data = sb.table("user_ai_clone_looks").select("id,image_url").in_("id", look_ids).execute().data or []
+        look_map = {l["id"]: l["image_url"] for l in looks_data}
+
+    # Normalize clone jobs to look like regular VideoJob
+    for cj in clone_jobs_raw:
+        cj["_source"] = "clone"
+        cj["clone_name"] = clone_map.get(cj.get("clone_id", ""), "AI Clone")
+        cj["look_image_url"] = look_map.get(cj.get("look_id", ""), "")
+        # Normalize status: clone uses 'complete', regular uses 'success'
+        if cj.get("status") == "complete":
+            cj["status"] = "success"
+            cj["progress"] = 100
+        # Map clone fields to regular VideoJob fields the frontend expects
+        cj["campaign_name"] = "AI Clone"
+        cj["influencer_id"] = f"clone_{cj.get('clone_id', '')}"  # Prefixed ID for filtering
+
+    # Merge and sort by created_at desc
+    for rj in regular_jobs:
+        rj["_source"] = "influencer"
+
+    all_jobs = regular_jobs + clone_jobs_raw
+    all_jobs.sort(key=lambda j: j.get("created_at") or "", reverse=True)
+    return all_jobs[:limit]
 
 @app.get("/jobs/{job_id}")
 def api_get_job(job_id: str):
@@ -2170,6 +2615,116 @@ async def api_stripe_webhook(request: Request):
 
     return {"status": "ok"}
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AI Clone Job Endpoints (new — completely separate from /jobs)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class CloneJobCreate(BaseModel):
+    clone_id: str
+    look_id: Optional[str] = None
+    product_id: Optional[str] = None
+    product_type: str = "physical"
+    script_text: str
+    duration: int = 15
+    subtitles_enabled: bool = True
+    subtitle_style: str = "hormozi"
+    subtitle_placement: str = "middle"
+
+
+@app.post("/api/clone-jobs")
+def create_clone_job(data: CloneJobCreate, user: dict = Depends(get_optional_user)):
+    """
+    Create a new AI Clone video job and dispatch it to the clone worker.
+    This endpoint is completely separate from POST /jobs (standard pipeline).
+    """
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    sb = get_supabase()
+
+    # Verify the clone belongs to this user
+    clone_check = (
+        sb.table("user_ai_clones")
+        .select("id")
+        .eq("id", data.clone_id)
+        .eq("user_id", user["id"])
+        .execute()
+    )
+    if not clone_check.data:
+        raise HTTPException(status_code=404, detail="Clone not found")
+
+    # Create the job record
+    row = {
+        "user_id": user["id"],
+        "clone_id": data.clone_id,
+        "look_id": data.look_id,
+        "product_id": data.product_id,
+        "product_type": data.product_type,
+        "script_text": data.script_text,
+        "duration": data.duration,
+        "subtitles_enabled": data.subtitles_enabled,
+        "subtitle_style": data.subtitle_style,
+        "subtitle_placement": data.subtitle_placement,
+        "status": "pending",
+        "progress": 0,
+    }
+    result = sb.table("clone_video_jobs").insert(row).execute()
+    if not result.data:
+        raise HTTPException(status_code=500, detail="Failed to create clone job")
+
+    job = result.data[0]
+    job_id = job["id"]
+
+    # Dispatch to the isolated clone worker (Modal or in-process)
+    _dispatch_clone_worker(job_id)
+
+    return {"job_id": job_id, "status": "pending"}
+
+
+@app.get("/api/clone-jobs/{job_id}")
+def get_clone_job_status(job_id: str, user: dict = Depends(get_optional_user)):
+    """Poll the status of a clone video job."""
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    sb = get_supabase()
+    result = (
+        sb.table("clone_video_jobs")
+        .select("*")
+        .eq("id", job_id)
+        .eq("user_id", user["id"])
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return result.data[0]
+
+
+@app.get("/api/clone-jobs")
+def list_clone_jobs(user: dict = Depends(get_optional_user)):
+    """List all clone video jobs for the current user."""
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    sb = get_supabase()
+    result = (
+        sb.table("clone_video_jobs")
+        .select("*")
+        .eq("user_id", user["id"])
+        .order("created_at", desc=True)
+        .limit(50)
+        .execute()
+    )
+    return result.data or []
+
+
+@app.delete("/api/clone-jobs/{job_id}")
+def delete_clone_job(job_id: str, user: dict = Depends(get_optional_user)):
+    """Delete a clone video job."""
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    sb = get_supabase()
+    sb.table("clone_video_jobs").delete().eq("id", job_id).eq("user_id", user["id"]).execute()
+    return {"status": "deleted", "id": job_id}
 
 # ---------------------------------------------------------------------------
 # Job Refund (for failed generations)

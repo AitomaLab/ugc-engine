@@ -23,14 +23,18 @@ export default function VideosPage() {
     const [copiedFeedback, setCopiedFeedback] = useState(false);
     const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
 
+    const [clones, setClones] = useState<any[]>([]);
+
     const fetchData = useCallback(async () => {
         try {
-            const [jobsData, infData] = await Promise.all([
-                apiFetch<VideoJob[]>('/jobs?limit=200'),
+            const [jobsData, infData, clonesData] = await Promise.all([
+                apiFetch<any[]>('/jobs?limit=200&include_clones=true'),
                 apiFetch<Influencer[]>('/influencers'),
+                apiFetch<any[]>('/api/clones').catch(() => []),
             ]);
             setJobs(jobsData);
             setInfluencers(infData);
+            setClones(clonesData);
         } catch (err) {
             console.error('Videos fetch error:', err);
         } finally {
@@ -50,7 +54,13 @@ export default function VideosPage() {
     async function handleDelete(jobId: string) {
         if (!confirm('Delete this video? This cannot be undone.')) return;
         try {
-            await apiFetch(`/jobs/${jobId}`, { method: 'DELETE' });
+            // Find the job to check if it's a clone job
+            const job = jobs.find(j => j.id === jobId);
+            if (job && (job as any)._source === 'clone') {
+                await apiFetch(`/api/clone-jobs/${jobId}`, { method: 'DELETE' });
+            } else {
+                await apiFetch(`/jobs/${jobId}`, { method: 'DELETE' });
+            }
             setJobs(prev => prev.filter(j => j.id !== jobId));
             setSelectedIds(prev => { const next = new Set(prev); next.delete(jobId); return next; });
         } catch (err) { console.error('Delete error:', err); }
@@ -129,10 +139,14 @@ export default function VideosPage() {
                         className="filter-select"
                         value={influencerFilter}
                         onChange={setInfluencerFilter}
-                        placeholder="All Influencers"
+                        placeholder="All Creators"
                         options={[
-                            { value: '', label: 'All Influencers' },
-                            ...influencers.map(inf => ({ value: inf.id, label: inf.name }))
+                            { value: '', label: 'All Creators' },
+                            ...influencers.map(inf => ({ value: inf.id, label: inf.name })),
+                            ...(clones.length > 0 ? [
+                                { value: '__divider_clones__', label: '── AI Clones ──' },
+                                ...clones.map((c: any) => ({ value: `clone_${c.id}`, label: c.name })),
+                            ] : []),
                         ]}
                     />
 
@@ -228,7 +242,12 @@ export default function VideosPage() {
                                     </button>
                                 </div>
                                 <div className='video-info' style={{ paddingBottom: '12px' }}>
-                                    <div className='video-name' style={{ fontWeight: 700 }}>{influencerMap.get(job.influencer_id ?? '')?.name ?? 'Unknown'} — {job.campaign_name || 'Single'}</div>
+                                    <div className='video-name' style={{ fontWeight: 700 }}>
+                                        {(job as any)._source === 'clone'
+                                            ? ((job as any).clone_name || 'AI Clone')
+                                            : (influencerMap.get(job.influencer_id ?? '')?.name ?? 'Unknown')}
+                                        {' — '}{job.campaign_name || 'Single'}
+                                    </div>
                                     <div className='video-date' style={{ marginTop: '4px' }}>{(job as any).product_type === 'physical' ? 'Physical' : 'Digital'} 15s · {formatDate(job.created_at ?? '')}</div>
                                 </div>
                                 <div className='video-info' style={{ display: 'flex', gap: '8px', paddingTop: 0, paddingBottom: '12px', marginTop: 'auto' }}>

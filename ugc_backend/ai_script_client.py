@@ -427,7 +427,7 @@ Generate the {num_parts}-part UGC script now."""
         app_context = "\n\n".join(app_description_parts)
 
         words_per_scene = 20
-        num_parts = 3 if duration >= 30 else 2
+        num_parts = 3 if duration >= 30 else 1
 
         if num_parts == 3:
             scene_description = f"""The video has 3 AI-generated scenes followed by an app clip:
@@ -443,14 +443,27 @@ Part 3 (CTA): Warm call-to-action encouraging viewers to try the app. Exactly 20
 
 **Example format (notice the length — each part is 20+ words):**
 Okay so I literally just found this app and honestly it changed the way I plan my entire week, like no joke. ||| The meal planning feature is insane, it gives you recipes based on what you already have in your fridge, so easy. ||| Seriously go download it right now, I put the link in my bio for you guys, you are going to love it."""
+            
+            format_rules = f"""**CRITICAL FORMAT RULES:**
+- Output ONLY the spoken words, separated by |||
+- No emojis, hashtags, stage directions, or scene labels
+- No ellipsis (...) — use commas or periods for pauses
+- No text before Part 1 or after Part 3
+- NEVER repeat the last word(s) of one part at the beginning of the next part.
+- Do NOT end any part with hanging words or transition noises (e.g., "uh", "um", "and", "so", "but", "like")"""
         else:
-            scene_description = f"""The video has 2 scenes:
-- Scene 1 (8 seconds): An AI influencer speaks directly to camera, holding a phone/device showing the app. Exactly 20-{words_per_scene} words (7 seconds of speech).
-- Scene 2 (7 seconds): The actual app screen recording plays. Your script for Scene 2 is a short, punchy CTA subtitle overlay. Exactly 10-15 words."""
+            scene_description = f"""The video has 1 scene followed by an app clip:
+- Scene 1 (8 seconds): An AI influencer speaks directly to camera about the app. Exactly 20-{words_per_scene + 5} words (7-8 seconds of speech).
+- Scene 2 (7 seconds): The actual app screen recording plays. No voiceover is needed here, only background music will play."""
 
-            structure_block = f"""**STRUCTURE — output exactly 2 parts separated by |||**
-Part 1 (Hook): Creates immediate curiosity about the app. Exactly 20-{words_per_scene} words (7 seconds of speech).
-Part 2 (CTA): Short, punchy call-to-action. Exactly 10-15 words."""
+            structure_block = f"""**STRUCTURE — output exactly 1 part (DO NOT use |||)**
+Part 1 (Hook & CTA combined): Creates immediate curiosity and includes a quick call-to-action. Exactly 20-{words_per_scene + 5} words (7-8 seconds of speech)."""
+
+            format_rules = f"""**CRITICAL FORMAT RULES:**
+- Output ONLY the spoken words. Do NOT use the ||| symbol anywhere.
+- No emojis, hashtags, stage directions, or scene labels.
+- No ellipsis (...) — use commas or periods for pauses.
+- Do NOT end the script with hanging words or transition noises."""
 
         system_prompt = f"""You are a viral UGC content creator writing a script for a {duration}-second social media video promoting a digital app or software product.
 
@@ -471,13 +484,7 @@ Part 2 (CTA): Short, punchy call-to-action. Exactly 10-15 words."""
 - Avoid: "real talk", "let me tell you", "I cannot stress this enough"
 - Use specific details from the website content — vague scripts do not convert
 
-**CRITICAL FORMAT RULES:**
-- Output ONLY the spoken words, separated by |||
-- No emojis, hashtags, stage directions, or scene labels
-- No ellipsis (...) — use commas or periods for pauses
-- No text before Part 1 or after Part {num_parts}
-- NEVER repeat the last word(s) of one part at the beginning of the next part.
-- Do NOT end any part with hanging words or transition noises (e.g., "uh", "um", "and", "so", "but", "like")"""
+{format_rules}"""
 
         user_prompt = f"""**Product Name:** {product_name}
 

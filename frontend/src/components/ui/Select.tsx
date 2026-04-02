@@ -101,18 +101,42 @@ export default function Select({ value, onChange, options, className = '', style
                         <div className="custom-select-empty">No options available</div>
                     ) : (
                         <ul className="custom-select-list">
-                            {options.map((option) => (
-                                <li
-                                    key={option.value}
-                                    className={`custom-select-item ${option.value === value ? 'selected' : ''}`}
-                                    onClick={() => {
-                                        onChange(option.value);
-                                        setIsOpen(false);
-                                    }}
-                                >
-                                    {option.label}
-                                </li>
-                            ))}
+                            {options.map((option) => {
+                                // Render divider/section headers
+                                if (option.value.startsWith('__divider')) {
+                                    return (
+                                        <li
+                                            key={option.value}
+                                            className="custom-select-divider"
+                                            style={{
+                                                fontSize: '11px',
+                                                fontWeight: 700,
+                                                color: 'var(--text-3)',
+                                                padding: '8px 12px 4px',
+                                                cursor: 'default',
+                                                borderTop: '1px solid var(--border)',
+                                                marginTop: '4px',
+                                                letterSpacing: '0.03em',
+                                                textTransform: 'uppercase',
+                                            }}
+                                        >
+                                            {option.label}
+                                        </li>
+                                    );
+                                }
+                                return (
+                                    <li
+                                        key={option.value}
+                                        className={`custom-select-item ${option.value === value ? 'selected' : ''}`}
+                                        onClick={() => {
+                                            onChange(option.value);
+                                            setIsOpen(false);
+                                        }}
+                                    >
+                                        {option.label}
+                                    </li>
+                                );
+                            })}
                         </ul>
                     )}
                 </div>,

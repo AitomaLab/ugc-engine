@@ -31,6 +31,8 @@ interface Job {
   campaign_name?: string;
   model_api?: string;
   error_message?: string;
+  _source?: string;
+  clone_name?: string;
 }
 
 interface Influencer {
@@ -89,7 +91,7 @@ export default function StudioPage() {
     try {
       const [statsData, jobsData, infData] = await Promise.all([
         apiFetch<Stats>("/stats"),
-        apiFetch<Job[]>("/jobs?limit=100"),
+        apiFetch<Job[]>("/jobs?limit=100&include_clones=true"),
         apiFetch<Influencer[]>("/influencers"),
       ]);
       setStats(statsData);
@@ -288,7 +290,12 @@ export default function StudioPage() {
                   </div>
                 </div>
                 <div className="video-info">
-                  <div className="video-name">{influencerMap.get(job.influencer_id ?? '')?.name ?? 'Unknown'} — {job.campaign_name ?? 'Single'}</div>
+                  <div className="video-name">
+                  {job._source === 'clone'
+                    ? `🤖 ${job.clone_name || 'AI Clone'}`
+                    : (influencerMap.get(job.influencer_id ?? '')?.name ?? 'Unknown')}
+                  {' — '}{job.campaign_name ?? 'Single'}
+                </div>
                   <div className="video-date">{formatDate(job.created_at ?? '')}</div>
                 </div>
               </div>

@@ -106,6 +106,69 @@ def _correct_brand_in_words(words_list, brand_names):
     return words_list
 
 
+def _restore_numbers_in_words(words_list, original_script):
+    """Replace spelled-out number sequences in Whisper output with the original
+    numeric forms from the script (e.g. 'three hundred sixteen thousand ...' → '$316,897').
+
+    This is needed because elevenlabs_client preprocesses numbers to spoken form
+    for better TTS, but subtitles should display the original numbers.
+    """
+    if not words_list or not original_script:
+        return words_list
+
+    import re as _re
+    from elevenlabs_client import _preprocess_for_tts
+
+    # Build a mapping: spoken form → original form
+    # Find all numbers/currencies/percentages in the original script
+    number_patterns = [
+        _re.compile(r'[$€]\s?[\d,]+(?:\.[\d]{1,2})?'),   # $316,897.50
+        _re.compile(r'[\d,]+(?:\.[\d]+)?\s*%'),            # 216.90%
+        _re.compile(r'[\d,]{4,}'),                          # 1,000,000
+    ]
+
+    replacements = []  # list of (spoken_words_list, original_text)
+    for pattern in number_patterns:
+        for match in pattern.finditer(original_script):
+            original = match.group(0)
+            spoken = _preprocess_for_tts(original).strip()
+            spoken_words = spoken.lower().split()
+            if spoken_words and spoken.lower() != original.lower():
+                replacements.append((spoken_words, original))
+
+    if not replacements:
+        return words_list
+
+    # Sort by longest spoken form first (greedy matching)
+    replacements.sort(key=lambda x: len(x[0]), reverse=True)
+
+    # Scan through words_list and replace matching sequences
+    result = []
+    i = 0
+    while i < len(words_list):
+        matched = False
+        for spoken_words, original_text in replacements:
+            seq_len = len(spoken_words)
+            if i + seq_len <= len(words_list):
+                # Check if the next N words match the spoken form
+                candidate = [words_list[j]["word"].strip().lower().rstrip(".,!?;:") for j in range(i, i + seq_len)]
+                if candidate == spoken_words:
+                    # Replace: keep the timing of first and last word, merge into one word
+                    merged = dict(words_list[i])  # copy first word's data
+                    merged["word"] = original_text
+                    merged["end"] = words_list[i + seq_len - 1]["end"]
+                    result.append(merged)
+                    i += seq_len
+                    matched = True
+                    print(f"      [NUM FIX] '{' '.join(candidate)}' → '{original_text}'")
+                    break
+        if not matched:
+            result.append(words_list[i])
+            i += 1
+
+    return result
+
+
 def extract_transcription_with_whisper(video_path, brand_names=None, script_text=None):
     """
     Extracts word-level timestamps using the OpenAI Whisper API.
@@ -152,6 +215,10 @@ def extract_transcription_with_whisper(video_path, brand_names=None, script_text
         # Post-process: fix any remaining brand misspellings in word-level data
         if brand_names and result and result.get("words"):
             _correct_brand_in_words(result["words"], brand_names)
+        
+        # Post-process: restore original numeric forms for subtitle display
+        if script_text and result and result.get("words"):
+            result["words"] = _restore_numbers_in_words(result["words"], script_text)
         
         print("   ✅ Whisper transcription successful.")
         return result

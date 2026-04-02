@@ -134,6 +134,14 @@ function CreateContent() {
     const [hookLoading, setHookLoading] = useState(false);
     const [costEstimate, setCostEstimate] = useState<CostEstimate | any | null>(null);
 
+    // ── AI Clone state (new — additive only, does not affect existing state) ────
+    const [creatorMode, setCreatorMode]             = useState<'influencer' | 'ai_clone'>('influencer');
+    const [userClones, setUserClones]               = useState<any[]>([]);
+    const [selectedCloneId, setSelectedCloneId]     = useState<string>('');
+    const [selectedLookId, setSelectedLookId]       = useState<string>('');
+    const [cloneLooks, setCloneLooks]               = useState<any[]>([]);
+    const [isSubmittingClone, setIsSubmittingClone] = useState(false);
+
     // Initial data load
     useEffect(() => {
         let mounted = true;
@@ -149,6 +157,9 @@ function CreateContent() {
             setAppClips(clipRes || []);
             setProducts(prodRes || []);
             setLoading(false);
+
+            // Fetch user's AI clones (new — additive only)
+            apiFetch<any[]>('/api/clones').then(setUserClones).catch(() => {});
 
             const targetProductId = searchParams.get('product_id');
             if (targetProductId) {
@@ -451,6 +462,74 @@ function CreateContent() {
             setSubmitting(false);
         }
     }
+
+    // ── AI Clone submit (new — completely separate from handleSubmit) ────────────
+    async function handleCloneSubmit() {
+        if (!selectedCloneId) return;
+
+        // Derive the script text from the LEFT PANEL's script state (same as handleSubmit)
+        let scriptText = '';
+        if (productType === 'physical') {
+            scriptText = customScript || generatedScript || '';
+        } else if (scriptSource === 'custom') {
+            scriptText = customScript || '';
+        }
+        // Combine hook + base script
+        if (hook && scriptText) {
+            scriptText = `${hook}\n\n${scriptText}`;
+        } else if (hook) {
+            scriptText = hook;
+        }
+
+        if (!scriptText.trim()) {
+            setSuccessMessage('✗ Please write or generate a script first.');
+            return;
+        }
+
+        setIsSubmittingClone(true);
+        setSuccessMessage('');
+        try {
+            await apiFetch('/api/clone-jobs', {
+                method: 'POST',
+                body: JSON.stringify({
+                    clone_id: selectedCloneId,
+                    look_id: selectedLookId || undefined,
+                    product_id: productId || undefined,
+                    product_type: productType,
+                    script_text: scriptText,
+                    duration,
+                    subtitles_enabled: subtitlesEnabled,
+                    subtitle_style: subtitleStyle,
+                    subtitle_placement: subtitlePlacement,
+                }),
+            });
+            setSuccessMessage('✓ AI Clone video generation started!');
+            refreshWallet();
+            setTimeout(() => router.push('/activity'), 2000);
+        } catch (err) {
+            setSuccessMessage(`✗ Error: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        } finally {
+            setIsSubmittingClone(false);
+        }
+    }
+
+    // Fetch looks when selectedCloneId changes (new)
+    useEffect(() => {
+        if (selectedCloneId) {
+            apiFetch<any[]>(`/api/clones/${selectedCloneId}/looks`)
+                .then(setCloneLooks)
+                .catch(() => setCloneLooks([]));
+        } else {
+            setCloneLooks([]);
+        }
+    }, [selectedCloneId]);
+
+    // Auto-select the first clone if only one exists (new)
+    useEffect(() => {
+        if (userClones.length >= 1 && !selectedCloneId) {
+            setSelectedCloneId(userClones[0].id);
+        }
+    }, [userClones, selectedCloneId]);
 
     if (loading) {
         return (
@@ -1192,16 +1271,47 @@ function CreateContent() {
                 })()}
 
                 {/* Generate Button */}
-                <button className="btn-generate" onClick={handleSubmit} disabled={!selectedInfluencer || submitting}>
+                <button className="btn-generate" onClick={creatorMode === 'ai_clone' ? handleCloneSubmit : handleSubmit} disabled={creatorMode === 'ai_clone' ? (!selectedCloneId || isSubmittingClone) : (!selectedInfluencer || submitting)}>
                     <svg style={{ width: 16, height: 16, stroke: 'white', fill: 'none', strokeWidth: 2 }} viewBox="0 0 24 24"><polygon points="13,2 3,14 12,14 11,22 21,10 12,10" /></svg>
-                    {submitting ? 'Launching...' : isCampaignMode ? 'Launch Campaign' : 'Generate Video'}
-                    {creditCosts[`${productType}_${duration}s`] && <span className="credit-cost">{isCampaignMode ? creditCosts[`${productType}_${duration}s`] * quantity : creditCosts[`${productType}_${duration}s`]} cr</span>}
+                    {creatorMode === 'ai_clone'
+                        ? (isSubmittingClone ? 'Launching...' : 'Generate AI Clone Video')
+                        : (submitting ? 'Launching...' : isCampaignMode ? 'Launch Campaign' : 'Generate Video')}
+                    {creatorMode === 'influencer' && creditCosts[`${productType}_${duration}s`] && <span className="credit-cost">{isCampaignMode ? creditCosts[`${productType}_${duration}s`] * quantity : creditCosts[`${productType}_${duration}s`]} cr</span>}
                 </button>
             </div>
 
             {/* ──── RIGHT PANEL: Workspace ──── */}
             <div className="workspace">
+                {/* ── Creator Mode Toggle (new — additive only) ─────────────────────────── */}
+                <div style={{ display: 'flex', gap: '0', marginBottom: '20px', borderBottom: '1px solid var(--border-soft)' }}>
+                    <button
+                        onClick={() => setCreatorMode('influencer')}
+                        style={{
+                            flex: 1, padding: '10px 16px', fontSize: '13px', fontWeight: 600,
+                            background: 'none', border: 'none', cursor: 'pointer',
+                            borderBottom: creatorMode === 'influencer' ? '2px solid var(--blue)' : '2px solid transparent',
+                            color: creatorMode === 'influencer' ? 'var(--blue)' : 'var(--text-3)',
+                            transition: 'all 0.15s',
+                        }}
+                    >
+                        AI Influencer
+                    </button>
+                    <button
+                        onClick={() => setCreatorMode('ai_clone')}
+                        style={{
+                            flex: 1, padding: '10px 16px', fontSize: '13px', fontWeight: 600,
+                            background: 'none', border: 'none', cursor: 'pointer',
+                            borderBottom: creatorMode === 'ai_clone' ? '2px solid var(--blue)' : '2px solid transparent',
+                            color: creatorMode === 'ai_clone' ? 'var(--blue)' : 'var(--text-3)',
+                            transition: 'all 0.15s',
+                        }}
+                    >
+                        My AI Clone
+                    </button>
+                </div>
+
                 {/* Influencer Selector / Onboarding Tutorial */}
+                {creatorMode === 'influencer' && (
                 <div className="config-section">
                     {influencers.length === 0 ? (
                         <div style={{ padding: '28px 16px' }}>
@@ -1273,6 +1383,81 @@ function CreateContent() {
                         </>
                     )}
                 </div>
+                )}
+
+                {/* ── AI Clone mode ── */}
+                {creatorMode === 'ai_clone' && (
+                    <div style={{ marginBottom: '24px' }}>
+                        {userClones.length === 0 ? (
+                            <div style={{ textAlign: 'center', padding: '32px 16px', background: 'var(--surface)', borderRadius: '12px', border: '1px solid var(--border-soft)' }}>
+                                <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-1)', marginBottom: '8px' }}>
+                                    No AI Clone set up yet
+                                </div>
+                                <div style={{ fontSize: '12px', color: 'var(--text-3)', marginBottom: '16px' }}>
+                                    Create your AI Clone to generate videos with your own face and voice.
+                                </div>
+                                <a
+                                    href='/influencers?tab=ai_clones'
+                                    style={{
+                                        display: 'inline-block', padding: '10px 24px',
+                                        background: 'var(--blue)', color: 'white',
+                                        borderRadius: 'var(--radius-sm)', fontSize: '13px',
+                                        fontWeight: 700, textDecoration: 'none',
+                                    }}
+                                >
+                                    Set Up My AI Clone →
+                                </a>
+                            </div>
+                        ) : (
+                            <>
+                                {/* ── Look selector grid (same layout as influencer selector) ── */}
+                                <div className="section-title">Select Look</div>
+                                {cloneLooks.length > 0 ? (
+                                    <div className="influencer-grid">
+                                        {/* Random look card */}
+                                        <div
+                                            className={`inf-card ${!selectedLookId ? 'selected' : ''}`}
+                                            onClick={() => setSelectedLookId('')}
+                                        >
+                                            <div className="inf-thumb" style={{ background: 'linear-gradient(135deg, var(--blue-light) 0%, var(--blue) 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: '6px' }}>
+                                                <svg viewBox='0 0 24 24' style={{ width: '24px', fill: 'white' }}>
+                                                    <polygon points='13,2 3,14 12,14 11,22 21,10 12,10' />
+                                                </svg>
+                                                <div className="inf-name">Random</div>
+                                            </div>
+                                            <div className="inf-check">
+                                                <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" /></svg>
+                                            </div>
+                                        </div>
+
+                                        {/* Individual look cards */}
+                                        {cloneLooks.map(look => (
+                                            <div key={look.id}
+                                                className={`inf-card ${selectedLookId === look.id ? 'selected' : ''}`}
+                                                onClick={() => setSelectedLookId(look.id)}
+                                            >
+                                                <div className="inf-thumb" style={{ backgroundImage: `url(${look.image_url})` }}>
+                                                    <div className="inf-name">{look.label}</div>
+                                                </div>
+                                                <div className="inf-check">
+                                                    <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" /></svg>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className='empty-state' style={{ padding: '24px' }}>
+                                        <div className='empty-title'>No looks yet</div>
+                                        <div className='empty-sub'>Upload a portrait photo in the <a href='/influencers?tab=ai_clones' style={{ color: 'var(--blue)' }}>Influencers</a> page to get started.</div>
+                                    </div>
+                                )}
+                                <div style={{ marginTop: '8px', fontSize: '11px', color: 'var(--text-3)' }}>
+                                    <a href='/influencers?tab=ai_clones' style={{ color: 'var(--blue)' }}>Manage looks →</a>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                )}
 
                 {/* Smart Preview */}
                 {selectedInfluencer && (
