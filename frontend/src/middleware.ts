@@ -31,7 +31,10 @@ export async function middleware(req: NextRequest) {
   }
 
   // If logged in and on login/signup, redirect to home
-  if (hasAuthCookie && isPublicRoute) {
+  // (but NOT forgot-password/reset-password — recovery sessions need those pages)
+  const redirectAuthRoutes = ['/login', '/signup'];
+  const shouldRedirectAuth = redirectAuthRoutes.some(route => path.startsWith(route));
+  if (hasAuthCookie && shouldRedirectAuth) {
     return NextResponse.redirect(new URL('/', req.url));
   }
 
