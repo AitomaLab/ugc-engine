@@ -684,7 +684,7 @@ class BulkJobCreate(BaseModel):
     subtitle_placement: Optional[str] = "middle"
 
 class SignedUrlRequest(BaseModel):
-    bucket: str
+    bucket: str = "product-images"
     file_name: str
 
 class CostEstimateRequest(BaseModel):
