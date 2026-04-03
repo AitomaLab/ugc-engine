@@ -10,7 +10,7 @@ import { Header } from '@/components/layout/Header';
  */
 export function ClientProviders({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const isAuthPage = pathname === '/login' || pathname === '/signup';
+  const isAuthPage = pathname === '/login' || pathname === '/signup' || pathname === '/forgot-password' || pathname === '/reset-password';
 
   return (
     <AppProvider>
