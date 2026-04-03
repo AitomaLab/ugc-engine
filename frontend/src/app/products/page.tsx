@@ -9,6 +9,7 @@ import MediaPreviewModal from '@/components/ui/MediaPreviewModal';
 import { apiFetch } from '@/lib/utils';
 import { Product } from '@/lib/types';
 import { useProgressiveList } from '@/hooks/useProgressiveList';
+import { useTranslation } from '@/lib/i18n';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 
@@ -34,6 +35,7 @@ function AppClipModal({ isOpen, onClose, onSaved, products = [], defaultProductI
   products?: Product[];
   defaultProductId?: string | null;
 }) {
+  const { t } = useTranslation();
   const [name, setName] = useState('');
   const [videoUrl, setVideoUrl] = useState('');
   const [mode, setMode] = useState<'upload' | 'url'>('upload');
@@ -148,22 +150,22 @@ function AppClipModal({ isOpen, onClose, onSaved, products = [], defaultProductI
     <div className="modal-overlay">
       <div className="modal-box" style={{ maxWidth: '520px' }}>
         <div className="modal-header">
-          <h3>New App Clip</h3>
+          <h3>{t('products.clip.title')}</h3>
           <button className="modal-close" onClick={onClose}>
             <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
           </button>
         </div>
         <div className="modal-body">
           <div style={{ marginBottom: '16px' }}>
-            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>Clip Name</label>
-            <input className="input-field" type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Product Demo Clip" />
+            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>{t('products.clip.name')}</label>
+            <input className="input-field" type="text" value={name} onChange={e => setName(e.target.value)} placeholder={t('products.clip.namePlaceholder')} />
           </div>
           <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border)', marginBottom: '16px' }}>
             <button onClick={() => setMode('upload')} style={{ flex: 'none', padding: '8px 16px', fontSize: '12px', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', borderBottom: mode === 'upload' ? '2px solid var(--blue)' : '2px solid transparent', color: mode === 'upload' ? 'var(--blue)' : 'var(--text-3)', transition: 'all 0.15s' }}>
-              Upload Video
+              {t('products.clip.uploadVideo')}
             </button>
             <button onClick={() => setMode('url')} style={{ flex: 'none', padding: '8px 16px', fontSize: '12px', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', borderBottom: mode === 'url' ? '2px solid var(--blue)' : '2px solid transparent', color: mode === 'url' ? 'var(--blue)' : 'var(--text-3)', transition: 'all 0.15s' }}>
-              Paste URL
+              {t('products.clip.pasteUrl')}
             </button>
           </div>
           {mode === 'upload' && (
@@ -179,15 +181,15 @@ function AppClipModal({ isOpen, onClose, onSaved, products = [], defaultProductI
                   {uploading ? (
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
                       <div style={{ width: '24px', height: '24px', border: '2px solid var(--border)', borderTopColor: 'var(--blue)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
-                      <span style={{ fontSize: '12px', color: 'var(--text-2)' }}>Uploading...</span>
+                      <span style={{ fontSize: '12px', color: 'var(--text-2)' }}>{t('products.clip.uploading')}</span>
                     </div>
                   ) : (
                     <>
                       <svg viewBox="0 0 24 24" style={{ width: '28px', height: '28px', stroke: 'var(--text-3)', fill: 'none', strokeWidth: 1.5, margin: '0 auto 8px' }}>
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" />
                       </svg>
-                      <p style={{ fontSize: '13px', color: 'var(--text-2)', margin: 0 }}>Drop a video here or <span style={{ color: 'var(--blue)', fontWeight: 600 }}>browse</span></p>
-                      <p style={{ fontSize: '11px', color: 'var(--text-3)', margin: '4px 0 0' }}>MP4, MOV, WebM — max 200 MB</p>
+                      <p style={{ fontSize: '13px', color: 'var(--text-2)', margin: 0 }}>{t('products.clip.dropHere')} <span style={{ color: 'var(--blue)', fontWeight: 600 }}>{t('products.clip.browse')}</span></p>
+                      <p style={{ fontSize: '11px', color: 'var(--text-3)', margin: '4px 0 0' }}>{t('products.clip.maxSize')}</p>
                     </>
                   )}
                 </div>
@@ -198,7 +200,7 @@ function AppClipModal({ isOpen, onClose, onSaved, products = [], defaultProductI
           {mode === 'url' && (
             <div>
               <input className="input-field" type="url" value={videoUrl} onChange={e => setVideoUrl(e.target.value)} placeholder="https://example.com/video.mp4" />
-              <p style={{ fontSize: '11px', color: 'var(--text-3)', margin: '6px 0 0' }}>Direct link to a publicly accessible video file.</p>
+              <p style={{ fontSize: '11px', color: 'var(--text-3)', margin: '6px 0 0' }}>{t('products.clip.directLink')}</p>
               {videoUrl && videoUrl.startsWith('http') && (
                 <div style={{ marginTop: '12px', borderRadius: '10px', overflow: 'hidden', aspectRatio: '16/9', background: '#000' }}>
                   <video src={videoUrl} style={{ width: '100%', height: '100%', objectFit: 'contain' }} controls />
@@ -210,7 +212,7 @@ function AppClipModal({ isOpen, onClose, onSaved, products = [], defaultProductI
           {/* ─── Product Association Section ─── */}
           <div style={{ marginTop: '20px', padding: '16px', background: 'var(--surface-hover)', borderRadius: '10px', border: '1px solid var(--border-soft)' }}>
             <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '10px' }}>
-              Link to Digital Product
+              {t('products.clip.linkDigital')}
             </label>
             {/* Segmented control */}
             <div style={{ display: 'flex', gap: '4px', marginBottom: '12px', background: 'var(--surface)', borderRadius: '8px', padding: '3px', border: '1px solid var(--border-soft)' }}>
@@ -222,7 +224,7 @@ function AppClipModal({ isOpen, onClose, onSaved, products = [], defaultProductI
                   color: productMode === 'existing' ? 'white' : 'var(--text-3)',
                 }}
               >
-                Existing Product
+                {t('products.clip.existingProduct')}
               </button>
               <button
                 onClick={() => setProductMode('new')}
@@ -232,18 +234,18 @@ function AppClipModal({ isOpen, onClose, onSaved, products = [], defaultProductI
                   color: productMode === 'new' ? 'white' : 'var(--text-3)',
                 }}
               >
-                Create New
+                {t('products.clip.createNew')}
               </button>
             </div>
             {productMode === 'existing' ? (
               <Select
                 value={selectedProductId}
                 onChange={setSelectedProductId}
-                placeholder="Select a digital product..."
+                placeholder={t('products.clip.selectProduct')}
                 className="filter-select"
                 style={{ width: '100%' }}
                 options={[
-                  { value: '', label: 'No product (auto-create)' },
+                  { value: '', label: t('products.clip.noProductAuto') },
                   ...digitalProducts.map(p => ({ value: p.id, label: p.name })),
                 ]}
               />
@@ -271,9 +273,9 @@ function AppClipModal({ isOpen, onClose, onSaved, products = [], defaultProductI
           )}
         </div>
         <div className="modal-footer">
-          <button className="btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn-secondary" onClick={onClose}>{t('common.cancel')}</button>
           <button className="btn-primary" onClick={handleSave} disabled={saving || uploading || !name.trim() || !videoUrl.trim()} style={{ opacity: (saving || uploading || !name.trim() || !videoUrl.trim()) ? 0.5 : 1 }}>
-            {saving ? 'Saving...' : 'Save Clip'}
+            {saving ? t('products.clip.saving') : t('products.clip.saveClip')}
           </button>
         </div>
       </div>
@@ -285,6 +287,7 @@ function AppClipModal({ isOpen, onClose, onSaved, products = [], defaultProductI
 /*  Products Page (Physical + Digital tabs)                            */
 /* ------------------------------------------------------------------ */
 function ProductsContent() {
+  const { t } = useTranslation();
   const searchParams = useSearchParams();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<'physical' | 'digital'>(
@@ -372,8 +375,8 @@ function ProductsContent() {
   return (
     <div className='content-area'>
       <div className='page-header'>
-        <h1>Products</h1>
-        <p>Manage the products used in your UGC campaigns.</p>
+        <h1>{t('products.title')}</h1>
+        <p>{t('products.subtitle')}</p>
       </div>
 
       {/* Tab bar */}
@@ -386,7 +389,7 @@ function ProductsContent() {
             color: activeTab === 'physical' ? 'var(--blue)' : 'var(--text-3)', transition: 'all 0.15s',
           }}
         >
-          Physical Products
+          {t('products.physical')}
         </button>
         <button
           onClick={() => { setActiveTab('digital'); router.replace('/products?tab=digital'); }}
@@ -396,7 +399,7 @@ function ProductsContent() {
             color: activeTab === 'digital' ? 'var(--blue)' : 'var(--text-3)', transition: 'all 0.15s',
           }}
         >
-          Digital Products & Clips
+          {t('products.digital')}
         </button>
       </div>
 
@@ -407,24 +410,24 @@ function ProductsContent() {
             <div className='asset-toolbar-left'>
               <div className='search-box'>
                 <svg viewBox='0 0 24 24'><circle cx='11' cy='11' r='8' /><line x1='21' y1='21' x2='16.65' y2='16.65' /></svg>
-                <input type='text' placeholder='Search products...' value={search} onChange={e => setSearch(e.target.value)} />
+                <input type='text' placeholder={t('products.searchProducts')} value={search} onChange={e => setSearch(e.target.value)} />
               </div>
             </div>
             <button className='btn-create' onClick={() => handleOpenModal()}>
               <svg viewBox='0 0 24 24'><line x1='12' y1='5' x2='12' y2='19' /><line x1='5' y1='12' x2='19' y2='12' /></svg>
-              Add Product
+              {t('products.add')}
             </button>
           </div>
           {loading ? (
-            <div className='empty-state'><div className='empty-title'>Loading products...</div></div>
+            <div className='empty-state'><div className='empty-title'>{t('products.loadingProducts')}</div></div>
           ) : physicalFiltered.length === 0 ? (
             <div className='empty-state'>
               <div className='empty-icon'>
                 <svg viewBox='0 0 24 24'><path d='M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z' /></svg>
               </div>
-              <div className='empty-title'>No products yet</div>
-              <div className='empty-sub'>Add a product to start creating UGC videos.</div>
-              <button className='btn-primary' onClick={() => handleOpenModal()}>Add Product</button>
+              <div className='empty-title'>{t('products.noProducts')}</div>
+              <div className='empty-sub'>{t('products.addFirst')}</div>
+              <button className='btn-primary' onClick={() => handleOpenModal()}>{t('products.add')}</button>
             </div>
           ) : (
             <>
@@ -443,16 +446,16 @@ function ProductsContent() {
                     </div>
                     <div className='product-info'>
                       <div className='product-name'>{product.name}</div>
-                      <div className='product-meta'>{product.type ?? 'Product'} · {product.job_count ?? 0} videos generated</div>
+                      <div className='product-meta'>{product.type ?? 'Product'} · {product.job_count ?? 0} {t('products.videosGenerated')}</div>
                     </div>
                     <div className='product-actions'>
                       <Link href={`/cinematic?product_id=${product.id}`} className='product-btn primary' style={{ textDecoration: 'none' }}>
                         <svg viewBox='0 0 24 24'><rect x='2' y='2' width='20' height='20' rx='2.18' ry='2.18' /><line x1='7' y1='2' x2='7' y2='22' /><line x1='17' y1='2' x2='17' y2='22' /><line x1='2' y1='12' x2='22' y2='12' /><line x1='2' y1='7' x2='7' y2='7' /><line x1='2' y1='17' x2='7' y2='17' /><line x1='17' y1='7' x2='22' y2='7' /><line x1='17' y1='17' x2='22' y2='17' /></svg>
-                        Cinematic
+                        {t('products.cinematic')}
                       </Link>
                       <Link href={`/create?product_id=${product.id}`} className='product-btn secondary' style={{ textDecoration: 'none' }}>
                         <svg viewBox='0 0 24 24'><polygon points='5,3 19,12 5,21' /></svg>
-                        Create
+                        {t('common.create')}
                       </Link>
                       <button onClick={() => handleOpenModal(product)} className='product-btn secondary' style={{ flex: '0 0 auto', padding: '10px' }} title="Edit Product">
                         <svg viewBox="0 0 24 24"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" /></svg>
@@ -477,31 +480,31 @@ function ProductsContent() {
                 <div className='asset-toolbar-left'>
                   <div className='search-box'>
                     <svg viewBox='0 0 24 24'><circle cx='11' cy='11' r='8' /><line x1='21' y1='21' x2='16.65' y2='16.65' /></svg>
-                    <input type='text' placeholder='Search digital products...' value={clipSearch} onChange={e => setClipSearch(e.target.value)} />
+                    <input type='text' placeholder={t('products.searchDigital')} value={clipSearch} onChange={e => setClipSearch(e.target.value)} />
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button className='btn-create' onClick={() => { setSelectedProduct(null); setIsModalOpen(true); }} style={{ background: 'var(--surface-hover)', color: 'var(--blue)', border: '1px solid rgba(51,122,255,0.2)' }}>
                     <svg viewBox='0 0 24 24'><path d='M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z' /></svg>
-                    New Product
+                    {t('products.newProduct')}
                   </button>
                   <button className='btn-create' onClick={() => setClipModalOpen(true)}>
                     <svg viewBox='0 0 24 24'><line x1='12' y1='5' x2='12' y2='19' /><line x1='5' y1='12' x2='19' y2='12' /></svg>
-                    Add Clip
+                    {t('products.addClip')}
                   </button>
                 </div>
               </div>
 
               {loading ? (
-                <div className='empty-state'><div className='empty-title'>Loading digital products...</div></div>
+                <div className='empty-state'><div className='empty-title'>{t('products.loadingDigital')}</div></div>
               ) : digitalProducts.filter(p => (p.name || '').toLowerCase().includes(clipSearch.toLowerCase())).length === 0 ? (
                 <div className='empty-state'>
                   <div className='empty-icon'>
                     <svg viewBox='0 0 24 24'><rect x='5' y='2' width='14' height='20' rx='2' /><line x1='12' y1='18' x2='12.01' y2='18' /></svg>
                   </div>
-                  <div className='empty-title'>No digital products yet</div>
-                  <div className='empty-sub'>Upload app clips to automatically create digital products, or create one manually.</div>
-                  <button className='btn-primary' onClick={() => setClipModalOpen(true)}>Add Clip</button>
+                  <div className='empty-title'>{t('products.noDigital')}</div>
+                  <div className='empty-sub'>{t('products.addDigitalFirst')}</div>
+                  <button className='btn-primary' onClick={() => setClipModalOpen(true)}>{t('products.addClip')}</button>
                 </div>
               ) : (
                 <div className='products-grid'>
@@ -531,7 +534,7 @@ function ProductsContent() {
                           <div className='product-actions'>
                             <Link href={`/create?product_id=${product.id}`} className='product-btn secondary' style={{ textDecoration: 'none', flex: 1 }} onClick={(e) => e.stopPropagation()}>
                               <svg viewBox='0 0 24 24'><polygon points='5,3 19,12 5,21' /></svg>
-                              Create
+                              {t('common.create')}
                             </Link>
                             <button onClick={(e) => { e.stopPropagation(); handleOpenModal(product); }} className='product-btn secondary' style={{ flex: '0 0 auto', padding: '10px' }} title="Edit">
                               <svg viewBox="0 0 24 24"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" /></svg>
@@ -553,7 +556,7 @@ function ProductsContent() {
                   style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'none', border: '1px solid var(--border)', borderRadius: '8px', padding: '8px 14px', cursor: 'pointer', fontSize: '13px', fontWeight: 600, color: 'var(--text-2)', transition: 'all 0.15s' }}
                 >
                   <svg viewBox='0 0 24 24' style={{ width: '16px', height: '16px', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><path d='M19 12H5M12 19l-7-7 7-7' /></svg>
-                  Back
+                  {t('common.back')}
                 </button>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1 }}>
                   {selectedDigitalProduct.image_url && (
@@ -561,17 +564,17 @@ function ProductsContent() {
                   )}
                   <div>
                     <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-1)' }}>{selectedDigitalProduct.name}</div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-3)' }}>Digital Product · {clips.filter(c => c.product_id === selectedDigitalProduct.id).length} clips</div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-3)' }}>{t('products.digitalProduct')} · {clips.filter(c => c.product_id === selectedDigitalProduct.id).length} clips</div>
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <Link href={`/create?product_id=${selectedDigitalProduct.id}`} className='btn-create' style={{ textDecoration: 'none' }}>
                     <svg viewBox='0 0 24 24'><polygon points='5,3 19,12 5,21' /></svg>
-                    Create Video
+                    {t('header.createVideo')}
                   </Link>
                   <button className='btn-create' onClick={() => setClipModalOpen(true)} style={{ background: 'var(--surface-hover)', color: 'var(--blue)', border: '1px solid rgba(51,122,255,0.2)' }}>
                     <svg viewBox='0 0 24 24'><line x1='12' y1='5' x2='12' y2='19' /><line x1='5' y1='12' x2='19' y2='12' /></svg>
-                    Add Clip
+                    {t('products.addClip')}
                   </button>
                 </div>
               </div>
@@ -582,7 +585,7 @@ function ProductsContent() {
                 const filteredProductClips = productClips.filter(c => (c.name || '').toLowerCase().includes(clipSearch.toLowerCase()));
 
                 return clipsLoading ? (
-                  <div className='empty-state'><div className='empty-title'>Loading clips...</div></div>
+                  <div className='empty-state'><div className='empty-title'>{t('products.loadingClips')}</div></div>
                 ) : filteredProductClips.length === 0 ? (
                   <div className='empty-state'>
                     <div className='empty-icon'>
@@ -614,11 +617,11 @@ function ProductsContent() {
                         <div className='video-info' style={{ display: 'flex', gap: '8px', paddingTop: 0, paddingBottom: '12px', marginTop: 'auto' }}>
                           <button style={{ flex: 1, padding: '6px 0', backgroundColor: 'var(--surface-hover)', color: 'var(--blue)', borderRadius: '4px', fontSize: '12px', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px', border: '1px solid rgba(51,122,255,0.15)', cursor: 'pointer' }} onClick={() => window.open(clip.video_url || '')}>
                             <svg viewBox='0 0 24 24' style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' /><polyline points='7 10 12 15 17 10' /><line x1='12' y1='15' x2='12' y2='3' /></svg>
-                            Save
+                            {t('common.save')}
                           </button>
                           <button style={{ flex: 1, padding: '6px 0', backgroundColor: 'transparent', color: 'var(--text-2)', borderRadius: '4px', fontSize: '12px', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px', border: '1px solid var(--border)', cursor: 'pointer' }}>
                             <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" /></svg>
-                            Share
+                            {t('videos.share')}
                           </button>
                         </div>
                       </div>
@@ -662,7 +665,7 @@ function ProductsContent() {
 
 export default function ProductsPage() {
   return (
-    <Suspense fallback={<div className='content-area'><div className='empty-state'><div className='empty-title'>Loading products...</div></div></div>}>
+    <Suspense fallback={<div className='content-area'><div className='empty-state'><div className='empty-title'>Loading...</div></div></div>}>
       <ProductsContent />
     </Suspense>
   );

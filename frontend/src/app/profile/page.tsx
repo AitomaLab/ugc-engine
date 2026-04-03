@@ -2,11 +2,13 @@
 
 import { useState } from 'react';
 import { useApp } from '@/providers/AppProvider';
+import { useTranslation } from '@/lib/i18n';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export default function ProfilePage() {
   const { profile, getAuthHeaders } = useApp();
+  const { t } = useTranslation();
   const [name, setName] = useState(profile?.name || '');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -37,42 +39,42 @@ export default function ProfilePage() {
   return (
     <div className="content-area">
       <div className="page-header">
-        <h1>Profile</h1>
-        <p>Manage your personal information</p>
+        <h1>{t('profile.title')}</h1>
+        <p>{t('profile.subtitle')}</p>
       </div>
 
       <div style={{ maxWidth: '600px' }}>
         <div className="settings-card">
           <div className="settings-section">
-            <h3>Personal Information</h3>
+            <h3>{t('profile.personalInfo')}</h3>
 
             <div className="field-group">
-              <label>Email</label>
+              <label>{t('profile.email')}</label>
               <input type="email" value={profile?.email || ''} disabled className="field-input disabled" />
-              <span className="field-hint">Email cannot be changed</span>
+              <span className="field-hint">{t('profile.emailHint')}</span>
             </div>
 
             <div className="field-group">
-              <label>Display Name</label>
+              <label>{t('profile.displayName')}</label>
               <input
                 type="text"
                 value={name}
                 onChange={e => setName(e.target.value)}
-                placeholder="Your name"
+                placeholder={t('profile.namePlaceholder')}
                 className="field-input"
               />
             </div>
 
             <div className="field-group">
-              <label>User ID</label>
+              <label>{t('profile.userId')}</label>
               <input type="text" value={profile?.id || ''} disabled className="field-input disabled mono" />
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '1rem' }}>
               <button onClick={handleSave} disabled={saving} className="btn-primary">
-                {saving ? 'Saving...' : 'Save Changes'}
+                {saving ? t('common.saving') : t('common.save')}
               </button>
-              {saved && <span style={{ color: '#22c55e', fontSize: '0.85rem' }}>✓ Saved successfully</span>}
+              {saved && <span style={{ color: '#22c55e', fontSize: '0.85rem' }}>{t('profile.savedSuccess')}</span>}
             </div>
           </div>
         </div>

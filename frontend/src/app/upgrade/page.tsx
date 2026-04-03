@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useApp } from '@/providers/AppProvider';
+import { useTranslation } from '@/lib/i18n';
 import { apiFetch } from '@/lib/utils';
 import Link from 'next/link';
 
@@ -14,31 +15,35 @@ interface Plan {
   stripe_price_id?: string | null;
 }
 
-const PLAN_META: Record<string, { tagline: string; features: string[]; cta: string }> = {
-  Starter: {
-    tagline: 'Perfect for getting started with AI-generated content.',
-    features: ['1,000 Credits/month', 'Generate up to 10 videos/month', '15s & 30s video formats', '3 AI Influencers', 'Auto-burned captions', 'Background music', 'Auto-post to 1 social platform'],
-    cta: 'Get Started',
-  },
-  Creator: {
-    tagline: 'For creators and brands that need consistent, high-volume content.',
-    features: ['3,000 Credits/month', 'Generate up to 30 videos/month', 'Everything in Starter, plus:', 'Unlock all AI Influencers', 'Physical & Digital Products', 'UGC & Cinematic Product Shots', 'Content calendar & scheduling', 'Auto-post to 3 social platforms', 'Bulk campaign generation'],
-    cta: 'Start Free Trial',
-  },
-  Business: {
-    tagline: 'For established businesses scaling their content production.',
-    features: ['6,000 Credits/month', 'Generate up to 60 videos/month', 'Everything in Creator, plus:', 'Create Custom AI Influencers', 'Dedicated Support', 'Priority generation queue'],
-    cta: 'Contact Sales',
-  },
-  Agency: {
-    tagline: 'For agencies and power users managing multiple brands.',
-    features: ['Unlimited videos', 'Everything in Business, plus:', 'Dedicated Account Manager', 'API Access'],
-    cta: 'Contact Sales',
-  },
-};
+function getPlanMeta(t: (k: string) => string): Record<string, { tagline: string; features: string[]; cta: string }> {
+  return {
+    Starter: {
+      tagline: t('plan.starter.tagline'),
+      features: [t('plan.starter.f1'), t('plan.starter.f2'), t('plan.starter.f3'), t('plan.starter.f4'), t('plan.starter.f5'), t('plan.starter.f6'), t('plan.starter.f7')],
+      cta: t('upgrade.getStarted'),
+    },
+    Creator: {
+      tagline: t('plan.creator.tagline'),
+      features: [t('plan.creator.f1'), t('plan.creator.f2'), t('plan.creator.f3'), t('plan.creator.f4'), t('plan.creator.f5'), t('plan.creator.f6'), t('plan.creator.f7'), t('plan.creator.f8'), t('plan.creator.f9')],
+      cta: t('upgrade.startTrial'),
+    },
+    Business: {
+      tagline: t('plan.business.tagline'),
+      features: [t('plan.business.f1'), t('plan.business.f2'), t('plan.business.f3'), t('plan.business.f4'), t('plan.business.f5'), t('plan.business.f6')],
+      cta: t('upgrade.contactSales'),
+    },
+    Agency: {
+      tagline: t('plan.agency.tagline'),
+      features: [t('plan.agency.f1'), t('plan.agency.f2'), t('plan.agency.f3'), t('plan.agency.f4')],
+      cta: t('upgrade.contactSales'),
+    },
+  };
+}
 
 export default function UpgradePage() {
   const { subscription } = useApp();
+  const { t } = useTranslation();
+  const PLAN_META = getPlanMeta(t);
   const currentPlan = subscription?.plan?.name || 'Free';
   const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
@@ -58,12 +63,12 @@ export default function UpgradePage() {
   return (
     <div className="content-area">
       <div className="up-header">
-        <h1>Choose Your Plan</h1>
-        <p>Scale your UGC video production with the right plan for your needs</p>
+        <h1>{t('upgrade.title')}</h1>
+        <p>{t('upgrade.subtitle')}</p>
       </div>
 
       {loading ? (
-        <div style={{ textAlign: 'center', padding: '4rem', color: 'var(--text-3)', fontSize: '14px' }}>Loading plans...</div>
+        <div style={{ textAlign: 'center', padding: '4rem', color: 'var(--text-3)', fontSize: '14px' }}>{t('upgrade.loadingPlans')}</div>
       ) : (
         <div className="up-wrapper">
           <div className="up-grid">
@@ -75,27 +80,27 @@ export default function UpgradePage() {
 
               let ctaText = 'Select';
               if (checkoutLoading === plan.id) {
-                ctaText = 'Redirecting...';
+                ctaText = t('manage.redirecting');
               } else if (currentPlan === 'Free' || !currentPlan) {
-                ctaText = 'Start Now';
+                ctaText = t('upgrade.startNow');
               } else if (plan.price_monthly > currentPrice) {
-                ctaText = 'Upgrade Now';
+                ctaText = t('upgrade.upgradeNow');
               } else {
-                ctaText = 'Downgrade';
+                ctaText = t('upgrade.downgrade');
               }
 
               return (
                 <div key={plan.id} className={`up-card ${isHighlight ? 'up-card-pop' : ''} ${isCurrent ? 'up-card-current' : ''}`}>
-                  {isHighlight && <div className="up-badge">Most Popular</div>}
+                  {isHighlight && <div className="up-badge">{t('upgrade.mostPopular')}</div>}
                   <div className="up-card-inner">
                     <h3>{plan.name}</h3>
                     <div className="up-price">
-                      <span className="up-dollar">$</span>{plan.price_monthly}<span className="up-period">/month</span>
+                      <span className="up-dollar">$</span>{plan.price_monthly}<span className="up-period">{t('upgrade.month')}</span>
                     </div>
                     <p className="up-tagline">{meta.tagline}</p>
                     <ul className="up-features">
-                      {meta.features.map(f => {
-                        if (f.startsWith('Everything in')) {
+                      {meta.features.map((f: string) => {
+                        if (f.includes(t('plan.creator.f3').split(',')[0]) || f.startsWith('Everything in') || f.includes('Todo en')) {
                           return (
                             <li key={f} className="up-feature-subheader">
                               <em>{f}</em>
@@ -112,13 +117,13 @@ export default function UpgradePage() {
                     </ul>
                     <div className="up-card-footer">
                       {isCurrent ? (
-                        <button className="up-btn up-btn-current" disabled>Current Plan</button>
+                        <button className="up-btn up-btn-current" disabled>{t('upgrade.currentPlan')}</button>
                       ) : !plan.stripe_price_id ? (
                         <button
                           className="up-btn up-btn-outline"
                           onClick={() => window.location.href = 'mailto:max@aitoma.ai?subject=Agency Plan Inquiry'}
                         >
-                          Contact Sales
+                          {t('upgrade.contactSales')}
                         </button>
                       ) : (
                         <button
@@ -150,8 +155,8 @@ export default function UpgradePage() {
 
           <div className="up-agency-banner">
             <p>
-              Are you an Agency looking to create 100+ videos per month?{' '}
-              <a href="mailto:max@aitoma.ai?subject=Agency Plan Inquiry">Contact Sales</a>
+              {t('upgrade.agencyBanner')}{' '}
+              <a href="mailto:max@aitoma.ai?subject=Agency Plan Inquiry">{t('upgrade.contactSales')}</a>
             </p>
           </div>
         </div>
@@ -174,13 +179,13 @@ export default function UpgradePage() {
               }
             }}
           >
-            Manage Billing & Payment Methods
+            {t('upgrade.manageBilling')}
           </button>
         </div>
       )}
 
       <div style={{ textAlign: 'center', marginTop: '2rem' }}>
-        <Link href="/manage" className="up-back">← Back to Account Settings</Link>
+        <Link href="/manage" className="up-back">{t('upgrade.backToSettings')}</Link>
       </div>
 
       <style jsx>{`

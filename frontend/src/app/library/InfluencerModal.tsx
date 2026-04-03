@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Influencer } from '@/lib/types';
 import { apiFetch } from '@/lib/utils';
+import { useTranslation } from '@/lib/i18n';
 
 // Supabase URL for constructing public image URLs
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
@@ -17,6 +18,7 @@ interface InfluencerModalProps {
 const PRESET_CATEGORIES = ['Travel', 'Fashion', 'Tech', 'Fitness', 'Food', 'General'];
 
 export function InfluencerModal({ isOpen, onClose, initialData, onSave }: InfluencerModalProps) {
+    const { t } = useTranslation();
     const [name, setName] = useState('');
     const [gender, setGender] = useState('Female');
     const [description, setDescription] = useState('');
@@ -145,7 +147,7 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
                 {/* Header */}
                 <div className="modal-header">
                     <h3 className="">
-                        {initialData ? 'Edit Influencer' : 'Add New Influencer'}
+                        {initialData ? t('influencer.editTitle') : t('influencer.addTitle')}
                     </h3>
                     <button onClick={onClose} className="modal-close">
                         <svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12" /></svg>
@@ -157,32 +159,32 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
 
                     {/* Name */}
                     <div className="space-y-1">
-                        <label className="form-label">Name <span className="required">*</span></label>
+                        <label className="form-label">{t('influencer.name')} <span className="required">*</span></label>
                         <input
                             value={name}
                             onChange={(e) => setName(e.target.value)}
                             className="input-field w-full"
-                            placeholder="e.g. Sofia"
+                            placeholder={t('influencer.namePlaceholder')}
                         />
                     </div>
 
                     {/* Gender */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                        <label className="form-label" style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase' }}>Sex <span className="required" style={{ color: 'var(--red)' }}>*</span></label>
+                        <label className="form-label" style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase' }}>{t('influencer.sex')} <span className="required" style={{ color: 'var(--red)' }}>*</span></label>
                         <div style={{ display: 'flex', gap: '8px' }}>
-                            {['Male', 'Female'].map(g => (
+                            {[{ key: 'Male', label: t('influencer.male') }, { key: 'Female', label: t('influencer.female') }].map(g => (
                                 <button
-                                    key={g}
+                                    key={g.key}
                                     type="button"
-                                    onClick={() => setGender(g)}
+                                    onClick={() => setGender(g.key)}
                                     style={{
                                         flex: 1, padding: '8px 16px', borderRadius: 'var(--radius-sm)', fontSize: '13px', fontWeight: 500, transition: 'all 0.15s',
-                                        border: `1px solid ${gender === g ? 'var(--blue)' : 'var(--border)'}`,
-                                        background: gender === g ? 'var(--blue)' : 'var(--surface)',
-                                        color: gender === g ? 'white' : 'var(--text-2)'
+                                        border: `1px solid ${gender === g.key ? 'var(--blue)' : 'var(--border)'}`,
+                                        background: gender === g.key ? 'var(--blue)' : 'var(--surface)',
+                                        color: gender === g.key ? 'white' : 'var(--text-2)'
                                     }}
                                 >
-                                    {g}
+                                    {g.label}
                                 </button>
                             ))}
                         </div>
@@ -190,14 +192,14 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
 
                     {/* Category (Style) */}
                     <div className="space-y-1">
-                        <label className="form-label">Category</label>
+                        <label className="form-label">{t('influencer.category')}</label>
                         <div className="relative">
                             <input
                                 value={style}
                                 onChange={(e) => setStyle(e.target.value)}
                                 list="categories-list"
                                 className="input-field w-full"
-                                placeholder="Select or type category..."
+                                placeholder={t('influencer.categoryPlaceholder')}
                             />
                             <datalist id="categories-list">
                                 {PRESET_CATEGORIES.map(c => <option key={c} value={c} />)}
@@ -207,7 +209,7 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
 
                     {/* Image Upload */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        <label className="form-label" style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase' }}>Profile Image</label>
+                        <label className="form-label" style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase' }}>{t('influencer.profileImage')}</label>
 
                         <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
                             {/* Preview */}
@@ -241,21 +243,21 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
                                         disabled={uploading}
                                         style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 600, borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-2)', cursor: 'pointer' }}
                                     >
-                                        {uploading ? 'Uploading...' : 'Upload Image'}
+                                        {uploading ? t('product.uploading') : t('influencer.uploadImage')}
                                     </button>
                                     {imageUrl && (
                                         <button
                                             onClick={() => setImageUrl('')}
                                             style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 600, borderRadius: 'var(--radius-sm)', border: 'none', background: 'rgba(239, 68, 68, 0.1)', color: 'var(--red)', cursor: 'pointer' }}
                                         >
-                                            Remove
+                                            {t('influencer.remove')}
                                         </button>
                                     )}
                                 </div>
                                 <input
                                     value={imageUrl}
                                     onChange={(e) => setImageUrl(e.target.value)}
-                                    placeholder="Or paste image URL..."
+                                    placeholder={t('influencer.pasteUrl')}
                                     className="input-field w-full"
                                     style={{ fontSize: '12px', padding: '6px 10px', width: '100%' }}
                                 />
@@ -265,23 +267,23 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
 
                     {/* Description */}
                     <div className="space-y-1">
-                        <label className="form-label">Description</label>
+                        <label className="form-label">{t('influencer.description')}</label>
                         <textarea
                             value={description}
                             onChange={(e) => setDescription(e.target.value)}
                             className="input-field w-full h-20 resize-none"
-                            placeholder="Brief bio or visual description..."
+                            placeholder={t('influencer.descPlaceholder')}
                         />
                     </div>
 
                     {/* Voice ID */}
                     <div className="space-y-1">
-                        <label className="form-label">ElevenLabs Voice ID</label>
+                        <label className="form-label">{t('influencer.voiceId')}</label>
                         <input
                             value={voiceId}
                             onChange={(e) => setVoiceId(e.target.value)}
                             className="input-field w-full font-mono text-xs"
-                            placeholder="e.g. hpp4J3VqNfWAUOO0d1Us"
+                            placeholder={t('influencer.voicePlaceholder')}
                         />
                     </div>
                 </div>
@@ -294,7 +296,7 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
                         disabled={saving || !name.trim()}
                         className="btn-primary"
                     >
-                        {saving ? 'Saving...' : (initialData ? 'Save Changes' : 'Create Influencer')}
+                        {saving ? t('common.saving') : (initialData ? t('product.saveChanges') : t('influencer.createInfluencer'))}
                     </button>
                 </div>
             </div>

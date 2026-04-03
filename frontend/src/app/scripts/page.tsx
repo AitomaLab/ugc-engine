@@ -76,10 +76,13 @@ const IconSpin = () => <svg viewBox="0 0 24 24" className="spin-anim"><path d="M
 const IconClock = () => <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg>;
 const IconUser = () => <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>;
 
+import { useTranslation } from '@/lib/i18n';
+
 /* ================================================================
    MAIN COMPONENT
 ================================================================ */
 export default function ScriptsPage() {
+  const { t } = useTranslation();
   const [scripts, setScripts] = useState<Script[]>([]);
   const [influencers, setInfluencers] = useState<Influencer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -341,45 +344,45 @@ export default function ScriptsPage() {
       {/* ═══ SIDEBAR ═══ */}
       <aside className="scripts-sidebar">
         <div className="sb-section">
-          <div className="sb-label">Search</div>
+          <div className="sb-label">{t('scripts.search')}</div>
           <div className="sb-search-wrap">
             <IconSearch />
-            <input className="sb-search" type="text" placeholder="Search scripts..." value={search} onChange={e => setSearch(e.target.value)} />
+            <input className="sb-search" type="text" placeholder={t('scripts.searchScripts')} value={search} onChange={e => setSearch(e.target.value)} />
           </div>
         </div>
         <div className="sb-section">
-          <div className="sb-label">Category</div>
+          <div className="sb-label">{t('scripts.category')}</div>
           <Select
             value={catFilter}
             onChange={setCatFilter}
-            placeholder={`All Categories (${totalScripts})`}
+            placeholder={`${t('scripts.allCategories')} (${totalScripts})`}
             options={[
-              { value: '', label: `All Categories (${totalScripts})` },
+              { value: '', label: `${t('scripts.allCategories')} (${totalScripts})` },
               ...categories.map(c => ({ value: c, label: `${c} (${scripts.filter(s=>s.category===c).length})` })),
             ]}
           />
         </div>
         <div className="sb-section">
-          <div className="sb-label">Video Length</div>
+          <div className="sb-label">{t('scripts.videoLength')}</div>
           <Select
             value={lenFilter}
             onChange={setLenFilter}
-            placeholder="All Lengths"
+            placeholder={t('scripts.allLengths')}
             options={[
-              { value: '', label: 'All Lengths' },
-              { value: '15', label: '15 Seconds' },
-              { value: '30', label: '30 Seconds' },
+              { value: '', label: t('scripts.allLengths') },
+              { value: '15', label: t('scripts.seconds15') },
+              { value: '30', label: t('scripts.seconds30') },
             ]}
           />
         </div>
         <div className="sb-section">
-          <div className="sb-label">Influencer</div>
+          <div className="sb-label">{t('scripts.influencer')}</div>
           <Select
             value={infFilter}
             onChange={setInfFilter}
-            placeholder="All Influencers"
+            placeholder={t('scripts.allInfluencers')}
             options={[
-              { value: '', label: 'All Influencers' },
+              { value: '', label: t('scripts.allInfluencers') },
               ...influencers.map(inf => ({ value: inf.id, label: inf.name })),
             ]}
           />
@@ -390,42 +393,42 @@ export default function ScriptsPage() {
       <main className="scripts-main">
         {/* Page header */}
         <div className="sp-header">
-          <div><h1>Scripts</h1><p>Your library of structured UGC video scripts, organised by methodology and category.</p></div>
+          <div><h1>{t('scripts.title')}</h1><p>{t('scripts.subtitle')}</p></div>
           <div className="sp-header-actions">
             <button className="btn-find-trending" onClick={() => { setTrendModalOpen(true); setTrendPhase('config'); }}>
-              <IconTrend /> Scan Trending Scripts
+              <IconTrend /> {t('scripts.scanTrending')}
             </button>
             <button className="btn-new-script" onClick={() => { setModalOpen(true); setModalTab('ai'); setAiPreview(null); }}>
-              <IconPlus /> New Script
+              <IconPlus /> {t('scripts.newScript')}
             </button>
           </div>
         </div>
 
         {/* Stats Row */}
         <div className="stats-row">
-          <div className="stat-card"><div className="stat-value">{totalScripts}</div><div className="stat-label">Total Scripts</div></div>
-          <div className="stat-card"><div className="stat-value">{uniqueCats}</div><div className="stat-label">Categories</div></div>
-          <div className="stat-card"><div className="stat-value">{uniqueMeths}</div><div className="stat-label">Methodologies</div></div>
-          <div className="stat-card"><div className="stat-value">{usedInVideos}</div><div className="stat-label">Used in Videos</div></div>
-          <div className="stat-card"><div className="stat-value" style={{color:'var(--green)'}}>{trendingCount}</div><div className="stat-label">Trending Added</div></div>
+          <div className="stat-card"><div className="stat-value">{totalScripts}</div><div className="stat-label">{t('scripts.totalScripts')}</div></div>
+          <div className="stat-card"><div className="stat-value">{uniqueCats}</div><div className="stat-label">{t('scripts.categories')}</div></div>
+          <div className="stat-card"><div className="stat-value">{uniqueMeths}</div><div className="stat-label">{t('scripts.methodologies')}</div></div>
+          <div className="stat-card"><div className="stat-value">{usedInVideos}</div><div className="stat-label">{t('scripts.usedInVideos')}</div></div>
+          <div className="stat-card"><div className="stat-value" style={{color:'var(--green)'}}>{trendingCount}</div><div className="stat-label">{t('scripts.trendingAdded')}</div></div>
         </div>
 
         {/* Toolbar */}
         <div className="sp-toolbar">
           <div className="sp-toolbar-search">
             <IconSearch />
-            <input type="text" placeholder="Search scripts by hook, product, or influencer..." value={search} onChange={e => setSearch(e.target.value)} />
+            <input type="text" placeholder={t('scripts.searchPlaceholder')} value={search} onChange={e => setSearch(e.target.value)} />
           </div>
           <select className="sp-sort" value={sortBy} onChange={e => setSortBy(e.target.value)}>
-            <option value="created_at_desc">Newest First</option>
-            <option value="times_used_desc">Most Used</option>
-            <option value="name_asc">A — Z</option>
+            <option value="created_at_desc">{t('scripts.newestFirst')}</option>
+            <option value="times_used_desc">{t('scripts.mostUsed')}</option>
+            <option value="name_asc">{t('scripts.aToZ')}</option>
           </select>
         </div>
 
         {/* Methodology Pills */}
         <div className="sp-meth-pills">
-          <button className={`sp-meth-pill ${!methFilter ? 'active' : ''}`} onClick={() => setMethFilter('')}>All</button>
+          <button className={`sp-meth-pill ${!methFilter ? 'active' : ''}`} onClick={() => setMethFilter('')}>{t('scripts.all')}</button>
           {METHODOLOGIES.map(m => (
             <button
               key={m.id}
@@ -440,13 +443,13 @@ export default function ScriptsPage() {
 
         {/* Script Card Grid */}
         {loading ? (
-          <div className="empty-state"><div className="empty-title">Loading scripts...</div></div>
+          <div className="empty-state"><div className="empty-title">{t('scripts.loadingScripts')}</div></div>
         ) : scripts.length === 0 ? (
           <div className="empty-state">
             <div className="empty-icon"><IconDoc /></div>
-            <div className="empty-title">No scripts found</div>
-            <div className="empty-sub">Create your first script using AI or write one manually.</div>
-            <button className="btn-primary" onClick={() => { setModalOpen(true); setModalTab('ai'); }}>Create Script</button>
+            <div className="empty-title">{t('scripts.noScripts')}</div>
+            <div className="empty-sub">{t('scripts.noScriptsSub')}</div>
+            <button className="btn-primary" onClick={() => { setModalOpen(true); setModalTab('ai'); }}>{t('scripts.createScript')}</button>
           </div>
         ) : (
           <>
@@ -465,7 +468,7 @@ export default function ScriptsPage() {
                           {script.methodology}
                         </span>
                       )}
-                      {script.is_trending && <span className="sc-pill sc-pill-trend"><IconTrend /> Trending</span>}
+                      {script.is_trending && <span className="sc-pill sc-pill-trend"><IconTrend /> {t('scripts.trending')}</span>}
                     </div>
                     <div style={{ display: 'flex', gap: '4px' }}>
                       <button className="sc-icon-btn" onClick={() => handleDelete(script.id)} title="Delete">
@@ -492,8 +495,8 @@ export default function ScriptsPage() {
                       <span className="sc-pill sc-pill-dur">{script.video_length || 15}s</span>
                     </div>
                     <div style={{ display: 'flex', gap: '6px' }}>
-                      <button className="sc-btn-edit" onClick={() => openEdit(script)}>Edit</button>
-                      <button className="sc-btn-use" onClick={() => handleUse(script.id)}>Use</button>
+                      <button className="sc-btn-edit" onClick={() => openEdit(script)}>{t('scripts.edit')}</button>
+                      <button className="sc-btn-use" onClick={() => handleUse(script.id)}>{t('scripts.use')}</button>
                     </div>
                   </div>
 
@@ -540,14 +543,14 @@ export default function ScriptsPage() {
         <div className="sp-modal-overlay" onClick={() => setModalOpen(false)}>
           <div className="sp-modal" onClick={e => e.stopPropagation()}>
             <div className="sp-modal-head">
-              <h3>New Script</h3>
+              <h3>{t('scripts.newScriptModal')}</h3>
               <button className="sp-expand" onClick={() => setModalOpen(false)}><IconX /></button>
             </div>
             <div className="sp-modal-body">
               <div className="sp-tabs">
-                {(['ai','manual','csv'] as const).map(t => (
-                  <button key={t} className={`sp-tab${modalTab===t?' active':''}`} onClick={() => { setModalTab(t); setAiPreview(null); setCsvRows([]); setCsvDone(false); }}>
-                    {t==='ai'?'AI Generate':t==='manual'?'Write Manually':'Bulk Upload (CSV)'}
+                {(['ai','manual','csv'] as const).map(tab => (
+                  <button key={tab} className={`sp-tab${modalTab===tab?' active':''}`} onClick={() => { setModalTab(tab); setAiPreview(null); setCsvRows([]); setCsvDone(false); }}>
+                    {tab==='ai'?t('scripts.aiGenerate'):tab==='manual'?t('scripts.writeManually'):t('scripts.bulkUpload')}
                   </button>
                 ))}
               </div>
@@ -558,14 +561,14 @@ export default function ScriptsPage() {
                   <div className="ai-panel">
                     <div className="ai-panel-head">
                       <div className="ai-panel-ico"><IconDoc /></div>
-                      <div><h4>AI Script Generator</h4><p>Configure your script and let AI generate a human-sounding, methodology-driven script in seconds.</p></div>
+                      <div><h4>{t('scripts.aiTitle')}</h4><p>{t('scripts.aiDesc')}</p></div>
                     </div>
                     <div className="ai-config">
-                      <div><label className="sp-form-label">Product<span className="req">*</span></label><select className="sp-input" value={aiProd} onChange={e=>setAiProd(e.target.value)}><option value="">Select a product...</option>{products.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
-                      <div><label className="sp-form-label">Influencer<span className="req">*</span></label><select className="sp-input" value={aiInf} onChange={e=>setAiInf(e.target.value)}><option value="">Select an influencer...</option>{influencers.map(i=><option key={i.id} value={i.id}>{i.name}</option>)}</select></div>
-                      <div><label className="sp-form-label">Video Length<span className="req">*</span></label><select className="sp-input" value={aiLen} onChange={e=>setAiLen(Number(e.target.value))}><option value={15}>15 seconds</option><option value={30}>30 seconds</option></select></div>
+                      <div><label className="sp-form-label">{t('scripts.product')}<span className="req">*</span></label><select className="sp-input" value={aiProd} onChange={e=>setAiProd(e.target.value)}><option value="">{t('scripts.selectProduct')}</option>{products.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
+                      <div><label className="sp-form-label">{t('scripts.influencer')}<span className="req">*</span></label><select className="sp-input" value={aiInf} onChange={e=>setAiInf(e.target.value)}><option value="">{t('scripts.selectInfluencer')}</option>{influencers.map(i=><option key={i.id} value={i.id}>{i.name}</option>)}</select></div>
+                      <div><label className="sp-form-label">{t('scripts.videoLength')}<span className="req">*</span></label><select className="sp-input" value={aiLen} onChange={e=>setAiLen(Number(e.target.value))}><option value={15}>{t('scripts.seconds15')}</option><option value={30}>{t('scripts.seconds30')}</option></select></div>
                     </div>
-                    <div><label className="sp-form-label">Script Methodology<span className="req">*</span></label>
+                    <div><label className="sp-form-label">{t('scripts.scriptMethodology')}<span className="req">*</span></label>
                       <div className="method-sel">
                         {METHODOLOGIES.map(m=>(
                           <button key={m.id} className={`method-card${aiMeth===m.id?' selected':''}`} onClick={()=>setAiMeth(m.id)}>
@@ -575,16 +578,16 @@ export default function ScriptsPage() {
                       </div>
                     </div>
                     <div className="sp-form-group">
-                      <label className="sp-form-label">Additional Context (optional)</label>
-                      <textarea className="sp-input" placeholder="Any specific angles, key benefits, or talking points you want the script to include..." value={aiCtx} onChange={e=>setAiCtx(e.target.value)} />
+                      <label className="sp-form-label">{t('scripts.additionalContext')}</label>
+                      <textarea className="sp-input" placeholder={t('scripts.contextPlaceholder')} value={aiCtx} onChange={e=>setAiCtx(e.target.value)} />
                     </div>
                     <button className="btn-gen-ai" disabled={aiGenerating} onClick={handleAIGenerate}>
-                      {aiGenerating ? <><IconSpin /> Generating...</> : <><IconClock /> Generate Script</>}
+                      {aiGenerating ? <><IconSpin /> {t('scripts.generating')}</> : <><IconClock /> {t('scripts.generateScript')}</>}
                     </button>
                   </div>
                   {aiPreview && (
                     <div className="sp-preview">
-                      <div className="sp-preview-head"><h4>Generated Script Preview</h4><button className="btn-secondary" style={{fontSize:'12px',padding:'6px 12px'}} onClick={handleAIGenerate}>Regenerate</button></div>
+                      <div className="sp-preview-head"><h4>{t('scripts.previewTitle')}</h4><button className="btn-secondary" style={{fontSize:'12px',padding:'6px 12px'}} onClick={handleAIGenerate}>{t('scripts.regenerate')}</button></div>
                       {aiPreview.scenes?.map((sc,i) => (
                         <div key={i} className="sp-prev-scene">
                           <div className="sp-prev-label">Scene {sc.scene_number} -- {sc.scene_title} ({i*7} -- {i*7+7}s)</div>
@@ -601,22 +604,22 @@ export default function ScriptsPage() {
               {modalTab === 'manual' && (
                 <div>
                   <div className="sp-form-row">
-                    <div><label className="sp-form-label">Category<span className="req">*</span></label><select className="sp-input" value={manCat} onChange={e=>setManCat(e.target.value)}><option>E-commerce</option><option>Mobile Apps</option><option>Lifestyle</option><option>Health &amp; Beauty</option><option>Travel</option></select></div>
-                    <div><label className="sp-form-label">Methodology<span className="req">*</span></label><select className="sp-input" value={manMeth} onChange={e=>setManMeth(e.target.value)}>{METHODOLOGIES.map(m=><option key={m.id} value={m.id}>{m.label}</option>)}</select></div>
+                    <div><label className="sp-form-label">{t('scripts.category')}<span className="req">*</span></label><select className="sp-input" value={manCat} onChange={e=>setManCat(e.target.value)}><option>E-commerce</option><option>Mobile Apps</option><option>Lifestyle</option><option>Health &amp; Beauty</option><option>Travel</option></select></div>
+                    <div><label className="sp-form-label">{t('scripts.methodology')}<span className="req">*</span></label><select className="sp-input" value={manMeth} onChange={e=>setManMeth(e.target.value)}>{METHODOLOGIES.map(m=><option key={m.id} value={m.id}>{m.label}</option>)}</select></div>
                   </div>
                   <div className="sp-form-row">
-                    <div><label className="sp-form-label">Video Length</label><select className="sp-input" value={manLen} onChange={e=>setManLen(Number(e.target.value))}><option value={15}>15 seconds (2 scenes)</option><option value={30}>30 seconds (4 scenes)</option></select></div>
-                    <div><label className="sp-form-label">Linked Influencer</label><select className="sp-input" value={manInf} onChange={e=>setManInf(e.target.value)}><option value="">None</option>{influencers.map(i=><option key={i.id} value={i.id}>{i.name}</option>)}</select></div>
+                    <div><label className="sp-form-label">{t('scripts.videoLength')}</label><select className="sp-input" value={manLen} onChange={e=>setManLen(Number(e.target.value))}><option value={15}>{t('scripts.seconds15')} (2 {t('scripts.scenes').toLowerCase()})</option><option value={30}>{t('scripts.seconds30')} (4 {t('scripts.scenes').toLowerCase()})</option></select></div>
+                    <div><label className="sp-form-label">{t('scripts.linkedInfluencer')}</label><select className="sp-input" value={manInf} onChange={e=>setManInf(e.target.value)}><option value="">{t('scripts.none')}</option>{influencers.map(i=><option key={i.id} value={i.id}>{i.name}</option>)}</select></div>
                   </div>
                   {manScenes.map((sc,i) => (
                     <div key={i}>
                       <div className="sp-form-group">
-                        <label className="sp-form-label">Scene {i+1} -- {sceneTitle(i,sceneCount)} Dialogue<span className="req">*</span></label>
-                        <textarea className="sp-input" placeholder={`Write the ${i===0?'opening hook line':'script for scene '+(i+1)} (~17 words for ~7s)...`} value={sc.dialogue} onChange={e => { const n=[...manScenes]; n[i]={...n[i],dialogue:e.target.value}; setManScenes(n); }} />
+                        <label className="sp-form-label">{t('scripts.scene')} {i+1} -- {sceneTitle(i,sceneCount)} {t('scripts.dialogue')}<span className="req">*</span></label>
+                        <textarea className="sp-input" placeholder={`${t('scripts.dialogue')} (~17 words)...`} value={sc.dialogue} onChange={e => { const n=[...manScenes]; n[i]={...n[i],dialogue:e.target.value}; setManScenes(n); }} />
                       </div>
                       <div className="sp-form-group">
-                        <label className="sp-form-label">Scene {i+1} -- Visual Cue</label>
-                        <input type="text" className="sp-input" placeholder="Describe what the influencer is doing in this scene..." value={sc.visual_cue} onChange={e => { const n=[...manScenes]; n[i]={...n[i],visual_cue:e.target.value}; setManScenes(n); }} />
+                        <label className="sp-form-label">{t('scripts.scene')} {i+1} -- {t('scripts.visualCue')}</label>
+                        <input type="text" className="sp-input" placeholder={t('scripts.visualCue') + '...'} value={sc.visual_cue} onChange={e => { const n=[...manScenes]; n[i]={...n[i],visual_cue:e.target.value}; setManScenes(n); }} />
                       </div>
                     </div>
                   ))}
@@ -629,16 +632,16 @@ export default function ScriptsPage() {
                   <div className="csv-banner">
                     <div className="csv-banner-left">
                       <div className="csv-banner-icon"><IconDoc /></div>
-                      <div><h4>Download the CSV template</h4><p>Fill in one row per script. Required columns are marked below. Save as .csv and upload when ready.</p></div>
+                      <div><h4>{t('scripts.csvTitle')}</h4><p>{t('scripts.csvDesc')}</p></div>
                     </div>
-                    <button className="btn-dl-tmpl" onClick={downloadTemplate}><IconDl /> Download Template</button>
+                    <button className="btn-dl-tmpl" onClick={downloadTemplate}><IconDl /> {t('scripts.downloadTemplate')}</button>
                   </div>
-                  <div style={{marginBottom:'8px'}}><span className="sb-label">CSV Columns</span></div>
+                  <div style={{marginBottom:'8px'}}><span className="sb-label">{t('scripts.csvColumns')}</span></div>
                   <div className="csv-cols">
                     {CSV_COLS.map(c => (
                       <div key={c.name} className="csv-col">
                         <div className="cn">{c.name}</div><div className="cd">{c.desc}</div>
-                        <div className={c.req?'cr':'co'}>{c.req?'Required':'Optional'}</div>
+                        <div className={c.req?'cr':'co'}>{c.req?t('scripts.required'):t('scripts.optional')}</div>
                       </div>
                     ))}
                   </div>
@@ -648,14 +651,14 @@ export default function ScriptsPage() {
                     onClick={()=>fileRef.current?.click()}>
                     <input ref={fileRef} type="file" accept=".csv" style={{display:'none'}} onChange={e=>{const f=e.target.files?.[0];if(f)handleCsvFile(f);}} />
                     <div className="drop-zone-icon"><IconUpload /></div>
-                    <h4>Drop your CSV file here</h4>
-                    <p>or click to browse your computer</p>
-                    <div style={{fontSize:'11px',color:'var(--text-3)',marginTop:'10px'}}>Accepts .csv files only -- max 500 rows per upload</div>
+                    <h4>{t('scripts.dropCsv')}</h4>
+                    <p>{t('scripts.orClick')}</p>
+                    <div style={{fontSize:'11px',color:'var(--text-3)',marginTop:'10px'}}>{t('scripts.csvNote')}</div>
                   </div>
                   {csvRows.length > 0 && (
                     <div style={{marginTop:'20px'}}>
                       <div style={{display:'flex',justifyContent:'space-between',marginBottom:'12px'}}>
-                        <h4 style={{fontSize:'13px',fontWeight:700}}>Upload Preview</h4>
+                        <h4 style={{fontSize:'13px',fontWeight:700}}>{t('scripts.uploadPreview')}</h4>
                         <span style={{fontSize:'12px',color:'var(--text-2)'}}>{csvFileName} -- {csvRows.length} rows detected</span>
                       </div>
                       <div className={`csv-status-bar ${csvRows.some(r=>r.status==='err')?'warn':'ok'}`}>
@@ -678,9 +681,9 @@ export default function ScriptsPage() {
                         </table>
                       </div>
                       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:'14px'}}>
-                        <span style={{fontSize:'12px',color:'var(--text-2)'}}>Scripts with warnings will still be imported. You can edit them after upload.</span>
+                        <span style={{fontSize:'12px',color:'var(--text-2)'}}>{ t('scripts.warningNote')}</span>
                         <button className="btn-import" disabled={csvImporting||csvDone} onClick={handleCsvImport}>
-                          {csvDone ? <><IconCheck /> Imported</> : csvImporting ? <><IconSpin /> Importing...</> : <><IconUpload /> Import {csvRows.filter(r=>r.status!=='err').length} Scripts</>}
+                          {csvDone ? <><IconCheck /> {t('scripts.imported')}</> : csvImporting ? <><IconSpin /> {t('scripts.importing')}</> : <><IconUpload /> {t('scripts.import')} {csvRows.filter(r=>r.status!=='err').length}</>}
                         </button>
                       </div>
                     </div>
@@ -690,9 +693,9 @@ export default function ScriptsPage() {
             </div>
             {modalTab !== 'csv' && (
               <div className="sp-modal-foot">
-                <button className="btn-secondary" onClick={() => setModalOpen(false)}>Cancel</button>
-                {modalTab === 'ai' && aiPreview && <button className="btn-primary" onClick={handleSaveAI}>Save Script</button>}
-                {modalTab === 'manual' && <button className="btn-primary" onClick={handleManualSave}>Save Script</button>}
+                <button className="btn-secondary" onClick={() => setModalOpen(false)}>{t('common.cancel')}</button>
+                {modalTab === 'ai' && aiPreview && <button className="btn-primary" onClick={handleSaveAI}>{t('scripts.saveScript')}</button>}
+                {modalTab === 'manual' && <button className="btn-primary" onClick={handleManualSave}>{t('scripts.saveScript')}</button>}
               </div>
             )}
           </div>
@@ -704,17 +707,17 @@ export default function ScriptsPage() {
         <div className="sp-modal-overlay" onClick={() => { setTrendModalOpen(false); setTrendPhase('config'); }}>
           <div className="sp-modal" style={{maxWidth:'620px'}} onClick={e => e.stopPropagation()}>
             <div className="sp-modal-head">
-              <h3>Find Trending Scripts</h3>
+              <h3>{t('scripts.findTrending')}</h3>
               <button className="sp-expand" onClick={() => { setTrendModalOpen(false); setTrendPhase('config'); }}><IconX /></button>
             </div>
             <div className="sp-modal-body">
               {trendPhase === 'config' ? (
                 <div>
                   <div className="sp-form-row" style={{marginBottom:'16px'}}>
-                    <div><label className="sp-form-label">Category<span className="req">*</span></label><select className="sp-input" value={trendTopic} onChange={e=>setTrendTopic(e.target.value)}><option>E-commerce</option><option>Mobile Apps</option><option>Lifestyle</option><option>Health &amp; Beauty</option><option>Travel</option></select></div>
-                    <div><label className="sp-form-label">Platform Focus</label><select className="sp-input" value={trendPlatform} onChange={e=>setTrendPlatform(e.target.value)}><option>All Platforms</option><option>TikTok</option><option>Instagram Reels</option><option>YouTube Shorts</option></select></div>
+                    <div><label className="sp-form-label">{t('scripts.category')}<span className="req">*</span></label><select className="sp-input" value={trendTopic} onChange={e=>setTrendTopic(e.target.value)}><option>E-commerce</option><option>Mobile Apps</option><option>Lifestyle</option><option>Health &amp; Beauty</option><option>Travel</option></select></div>
+                    <div><label className="sp-form-label">{t('scripts.platformFocus')}</label><select className="sp-input" value={trendPlatform} onChange={e=>setTrendPlatform(e.target.value)}><option>{t('scripts.allPlatforms')}</option><option>TikTok</option><option>Instagram Reels</option><option>YouTube Shorts</option></select></div>
                   </div>
-                  <label className="sp-form-label" style={{marginBottom:'10px'}}>Sources to Scan</label>
+                  <label className="sp-form-label" style={{marginBottom:'10px'}}>{t('scripts.sourcesToScan')}</label>
                   <div className="trend-src-grid">
                     {[{id:'tiktok',name:'TikTok Ads Library',desc:'Top-performing UGC ads',bg:'#FFF0F0',color:'#EF4444'},{id:'instagram',name:'Instagram Reels',desc:'Viral creator scripts',bg:'#FFF0F9',color:'#C026D3'},{id:'youtube',name:'YouTube Shorts',desc:'High-retention hooks',bg:'#FFF0F0',color:'#EF4444'},{id:'blogs',name:'Ad Intelligence Blogs',desc:'Motion, Foreplay, AdSpy',bg:'var(--blue-light)',color:'var(--blue)'}].map(src=>(
                       <button key={src.id} className={`trend-src${trendSources.includes(src.id)?' selected':''}`} onClick={()=>setTrendSources(prev=>prev.includes(src.id)?prev.filter(s=>s!==src.id):[...prev,src.id])}>
@@ -723,22 +726,22 @@ export default function ScriptsPage() {
                       </button>
                     ))}
                   </div>
-                  <button className="btn-gen-ai" onClick={handleTrendingScan}><IconTrend /> Scan for Trending Scripts</button>
+                  <button className="btn-gen-ai" onClick={handleTrendingScan}><IconTrend /> {t('scripts.scanForTrending')}</button>
                 </div>
               ) : (
                 <div className="prog-steps">
-                  {['Scanning ad libraries','Analysing script patterns','Structuring into library format','Saving to your Scripts library'].map((step,i) => (
+                  {[t('scripts.scanningAds'), t('scripts.analysingPatterns'), t('scripts.structuring'), t('scripts.savingToLibrary')].map((step,i) => (
                     <div key={i} className="prog-step">
                       <div className={`step-dot ${trendStep>i?'done':trendStep===i?'active':'pending'}`}>
                         {trendStep>i ? <IconCheck /> : trendStep===i ? <IconSpin /> : <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>}
                       </div>
-                      <div><div className="st-title">{step}</div><div className="st-sub">{trendStep>i?'Complete':trendStep===i?'In progress...':'Waiting...'}</div></div>
+                      <div><div className="st-title">{step}</div><div className="st-sub">{trendStep>i?t('scripts.complete'):trendStep===i?t('scripts.inProgress'):t('scripts.waiting')}</div></div>
                     </div>
                   ))}
                 </div>
               )}
             </div>
-            <div className="sp-modal-foot"><button className="btn-secondary" onClick={() => { setTrendModalOpen(false); setTrendPhase('config'); }}>Cancel</button></div>
+            <div className="sp-modal-foot"><button className="btn-secondary" onClick={() => { setTrendModalOpen(false); setTrendPhase('config'); }}>{t('common.cancel')}</button></div>
           </div>
         </div>
       )}
@@ -748,26 +751,26 @@ export default function ScriptsPage() {
         <div className="sp-modal-overlay" onClick={() => setEditOpen(false)}>
           <div className="sp-modal" onClick={e => e.stopPropagation()} style={{maxWidth:'620px'}}>
             <div className="sp-modal-head">
-              <h3>Edit Script</h3>
+              <h3>{t('scripts.editScript')}</h3>
               <button className="sp-expand" onClick={() => setEditOpen(false)}><IconX /></button>
             </div>
             <div className="sp-modal-body" style={{maxHeight:'65vh',overflowY:'auto'}}>
               <div className="sp-form-row" style={{marginBottom:'16px'}}>
                 <div>
-                  <label className="sp-form-label">Category</label>
+                  <label className="sp-form-label">{t('scripts.category')}</label>
                   <select className="sp-input" value={editCat} onChange={e => setEditCat(e.target.value)}>
                     <option>General</option><option>E-commerce</option><option>Mobile Apps</option><option>Lifestyle</option><option>Health &amp; Beauty</option><option>Travel</option><option>Shopping</option>
                   </select>
                 </div>
                 <div>
-                  <label className="sp-form-label">Methodology</label>
+                  <label className="sp-form-label">{t('scripts.methodology')}</label>
                   <select className="sp-input" value={editMeth} onChange={e => setEditMeth(e.target.value)}>
                     {METHODOLOGIES.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
                   </select>
                 </div>
               </div>
               <div style={{marginBottom:'20px'}}>
-                <label className="sp-form-label">Video Length</label>
+                <label className="sp-form-label">{t('scripts.videoLength')}</label>
                 <div style={{display:'flex',gap:'10px',marginTop:'4px'}}>
                   <label style={{display:'flex',alignItems:'center',gap:'4px',fontSize:'13px',cursor:'pointer'}}>
                     <input type="radio" name="editLen" checked={editLen===15} onChange={() => setEditLen(15)} /> 15s
@@ -777,17 +780,17 @@ export default function ScriptsPage() {
                   </label>
                 </div>
               </div>
-              <label className="sp-form-label" style={{marginBottom:'12px',display:'block'}}>Scenes</label>
+              <label className="sp-form-label" style={{marginBottom:'12px',display:'block'}}>{t('scripts.scenes')}</label>
               {editScenes.map((sc, i) => (
                 <div key={i} style={{background:'var(--bg-2)',borderRadius:'var(--radius-sm)',padding:'14px',marginBottom:'12px',border:'1px solid var(--border)'}}>
                   <div style={{fontSize:'11px',fontWeight:700,textTransform:'uppercase',color:'var(--text-3)',marginBottom:'8px'}}>
                     Scene {i+1} — {i===0?'Hook':i===editScenes.length-1?'CTA':`Scene ${i+1}`}
                   </div>
-                  <label className="sp-form-label" style={{fontSize:'12px'}}>Dialogue</label>
+                  <label className="sp-form-label" style={{fontSize:'12px'}}>{t('scripts.dialogue')}</label>
                   <textarea className="sp-input" rows={3} value={sc.dialogue}
                     onChange={e => { const copy=[...editScenes]; copy[i]={...copy[i],dialogue:e.target.value}; setEditScenes(copy); }}
                     style={{width:'100%',resize:'vertical',marginBottom:'8px',fontFamily:'inherit'}} />
-                  <label className="sp-form-label" style={{fontSize:'12px'}}>Visual Cue</label>
+                  <label className="sp-form-label" style={{fontSize:'12px'}}>{t('scripts.visualCue')}</label>
                   <input className="sp-input" type="text" value={sc.visual_cue}
                     onChange={e => { const copy=[...editScenes]; copy[i]={...copy[i],visual_cue:e.target.value}; setEditScenes(copy); }}
                     style={{width:'100%'}} />
@@ -795,9 +798,9 @@ export default function ScriptsPage() {
               ))}
             </div>
             <div className="sp-modal-foot">
-              <button className="btn-secondary" onClick={() => setEditOpen(false)}>Cancel</button>
+              <button className="btn-secondary" onClick={() => setEditOpen(false)}>{t('common.cancel')}</button>
               <button className="btn-primary" onClick={saveEdit} disabled={editSaving}>
-                {editSaving ? 'Saving...' : 'Save Changes'}
+                {editSaving ? t('scripts.saving') : t('scripts.saveChanges')}
               </button>
             </div>
           </div>

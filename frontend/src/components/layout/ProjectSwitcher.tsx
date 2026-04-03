@@ -3,9 +3,11 @@
 import { useState, useRef, useEffect } from 'react';
 import { useApp } from '@/providers/AppProvider';
 import { createProject } from '@/lib/supabaseData';
+import { useTranslation } from '@/lib/i18n';
 
 /* ── Create Project Modal ──────────────────────────────── */
 function CreateProjectModal({ isOpen, onClose, onSaved }: { isOpen: boolean; onClose: () => void; onSaved: () => void }) {
+  const { t } = useTranslation();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [saving, setSaving] = useState(false);
@@ -42,14 +44,14 @@ function CreateProjectModal({ isOpen, onClose, onSaved }: { isOpen: boolean; onC
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-box" style={{ maxWidth: '440px' }} onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <h3>New Project</h3>
+          <h3>{t('projects.newProject')}</h3>
           <button className="modal-close" onClick={onClose}>
             <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
           </button>
         </div>
         <div className="modal-body">
           <div style={{ marginBottom: '16px' }}>
-            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>Project Name <span style={{ color: 'var(--red)' }}>*</span></label>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>{t('projects.projectName')} <span style={{ color: 'var(--red)' }}>*</span></label>
             <input
               className="input-field"
               autoFocus
@@ -60,7 +62,7 @@ function CreateProjectModal({ isOpen, onClose, onSaved }: { isOpen: boolean; onC
             />
           </div>
           <div>
-            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>Description (optional)</label>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>{t('projects.description')}</label>
             <textarea
               className="input-field"
               value={description}
@@ -77,9 +79,9 @@ function CreateProjectModal({ isOpen, onClose, onSaved }: { isOpen: boolean; onC
           )}
         </div>
         <div className="modal-footer">
-          <button className="btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn-secondary" onClick={onClose}>{t('common.cancel')}</button>
           <button className="btn-primary" onClick={handleSave} disabled={saving} style={{ opacity: saving ? 0.6 : 1 }}>
-            {saving ? 'Creating...' : 'Create Project'}
+            {saving ? t('common.creating') : t('projects.createProject')}
           </button>
         </div>
       </div>
@@ -90,6 +92,7 @@ function CreateProjectModal({ isOpen, onClose, onSaved }: { isOpen: boolean; onC
 /* ── Project Switcher ──────────────────────────────────── */
 export function ProjectSwitcher() {
   const { projects, activeProject, setActiveProject, refreshProjects } = useApp();
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -121,7 +124,7 @@ export function ProjectSwitcher() {
 
       {open && (
         <div className="ps-dropdown">
-          <div className="ps-label">Projects</div>
+          <div className="ps-label">{t('projectSwitcher.projects')}</div>
           {projects.map(p => (
             <button
               key={p.id}
@@ -144,7 +147,7 @@ export function ProjectSwitcher() {
           ))}
           <div className="ps-divider" />
           <button className="ps-item ps-new" onClick={() => { setOpen(false); setModalOpen(true); }}>
-            + New Project
+            {t('projectSwitcher.newProject')}
           </button>
         </div>
       )}

@@ -110,6 +110,7 @@ def generate_clone_video(
     avatar_duration: float = None,
     skip_subtitles: bool = False,
     gender: str = "male",
+    video_language: str = "en",
     progress_callback=None,
 ) -> str:
     """

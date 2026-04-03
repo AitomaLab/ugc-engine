@@ -4,6 +4,7 @@ import { Product } from '@/lib/types';
 import Select from '@/components/ui/Select';
 import MediaPreviewModal from '@/components/ui/MediaPreviewModal';
 import { apiFetch } from '@/lib/utils';
+import { useTranslation } from '@/lib/i18n';
 import './ProductModal.css';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
@@ -17,6 +18,7 @@ interface ProductModalProps {
 }
 
 export default function ProductModal({ isOpen, onClose, product, onSave, defaultType }: ProductModalProps) {
+    const { t } = useTranslation();
     const isEditing = !!product;
     // Digital creation mode: opened from Digital tab with no existing product
     const isDigitalCreate = !isEditing && defaultType === 'digital';
@@ -238,11 +240,11 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
 
     // ── Determine right panel labels based on product type ──
     const isDigitalProduct = type === 'digital' || isDigitalCreate;
-    const aiTitle = isDigitalProduct ? 'AI Website Analysis' : 'AI Vision Analysis';
+    const aiTitle = isDigitalProduct ? t('product.aiWebAnalysis') : t('product.aiVisionAnalysis');
     const aiDesc = isDigitalProduct
-        ? 'Scrape and analyze your digital product\'s website to extract features, positioning, and marketing copy.'
-        : 'Extract visual properties, brand colors, and aesthetic positioning from your product image using GPT-4o.';
-    const aiBtnLabel = isDigitalProduct ? 'Analyze Website with AI' : 'Analyze Image with AI';
+        ? t('product.aiWebDesc')
+        : t('product.aiVisionDesc');
+    const aiBtnLabel = isDigitalProduct ? t('product.analyzeWebsite') : t('product.analyzeImage');
     const aiDisabled = isDigitalProduct
         ? (!isEditing || analyzing)
         : (!imageUrl || analyzing || !isEditing);
@@ -253,7 +255,7 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
 
                 {/* Header */}
                 <div className="pm-header">
-                    <h2>{isEditing ? 'Asset Settings & Analysis' : isDigitalCreate ? 'New Digital Product' : 'Add New Product'}</h2>
+                    <h2>{isEditing ? t('product.title') : isDigitalCreate ? t('product.newDigital') : t('product.addNew')}</h2>
                     <button onClick={onClose} className="pm-close-btn" title="Close">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
                     </button>
@@ -266,12 +268,12 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
                         {/* Left Col: Core Details & Image/Clip */}
                         <div>
                             <div className="pm-form-group">
-                                <label className="pm-label">Product Name</label>
+                                <label className="pm-label">{t('product.productName')}</label>
                                 <input
                                     required
                                     value={name}
                                     onChange={e => setName(e.target.value)}
-                                    placeholder={isDigitalCreate ? "Ex: My App Pro" : "Ex: Moisturizing Conditioner"}
+                                    placeholder={isDigitalCreate ? t('product.placeholderDigital') : t('product.placeholderPhysical')}
                                     className="pm-input"
                                 />
                             </div>
@@ -279,13 +281,13 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
                             {/* Asset Type — hidden in digital creation mode */}
                             {!isDigitalCreate && (
                                 <div className="pm-form-group">
-                                    <label className="pm-label">Asset Type</label>
+                                    <label className="pm-label">{t('product.assetType')}</label>
                                     <Select
                                         value={type}
                                         onChange={setType}
                                         options={[
-                                            { value: 'physical', label: 'Physical Product' },
-                                            { value: 'digital', label: 'Digital Product / App' }
+                                            { value: 'physical', label: t('product.physicalProduct') },
+                                            { value: 'digital', label: t('product.digitalProduct') }
                                         ]}
                                         className="pm-input"
                                     />
@@ -293,7 +295,7 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
                             )}
 
                             <div className="pm-form-group">
-                                <label className="pm-label">Website URL</label>
+                                <label className="pm-label">{t('product.websiteUrl')}</label>
                                 <input
                                     value={websiteUrl}
                                     onChange={e => setWebsiteUrl(e.target.value)}
@@ -307,8 +309,8 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
                             {isDigitalCreate ? (
                                 <div className="pm-form-group">
                                     <label className="pm-label">
-                                        App Clip
-                                        <span style={{ fontWeight: 400, color: 'var(--text-3)', marginLeft: '6px' }}>(first frame → preview image)</span>
+                                        {t('product.appClip')}
+                                        <span style={{ fontWeight: 400, color: 'var(--text-3)', marginLeft: '6px' }}>{t('product.firstFrame')}</span>
                                     </label>
                                     <div className="pm-image-upload">
                                         <input type="file" ref={clipInputRef} style={{ display: 'none' }} accept="video/*" onChange={handleClipFileChange} />
@@ -337,16 +339,16 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
                                                 {uploading ? (
                                                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
                                                         <div style={{ width: '24px', height: '24px', border: '2px solid #e2e8f0', borderTopColor: 'var(--blue)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
-                                                        <span style={{ fontSize: '12px', color: '#64748b' }}>Uploading clip...</span>
+                                                        <span style={{ fontSize: '12px', color: '#64748b' }}>{t('product.uploadingClip')}</span>
                                                     </div>
                                                 ) : (
                                                     <>
                                                         <div style={{ width: 48, height: 48, borderRadius: '50%', backgroundColor: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3b82f6', margin: '0 auto 12px auto' }}>
                                                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" /></svg>
                                                         </div>
-                                                        <p style={{ fontSize: '14px', fontWeight: 700, color: '#334155' }}>Drop a video clip here or <span style={{ color: '#3b82f6' }}>browse</span></p>
-                                                        <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '4px' }}>MP4, MOV, WebM — max 200 MB</p>
-                                                        <p style={{ fontSize: '11px', color: '#94a3b8', marginTop: '6px' }}>The first frame will be used as the product preview image</p>
+                                                        <p style={{ fontSize: '14px', fontWeight: 700, color: '#334155' }}>{t('product.dropVideo')} <span style={{ color: '#3b82f6' }}>{t('product.browse')}</span></p>
+                                                        <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '4px' }}>{t('product.videoFormats')}</p>
+                                                        <p style={{ fontSize: '11px', color: '#94a3b8', marginTop: '6px' }}>{t('product.firstFrameNote')}</p>
                                                     </>
                                                 )}
                                             </div>
@@ -357,7 +359,7 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
                                             disabled={uploading}
                                             className="pm-upload-btn"
                                         >
-                                            {clipVideoUrl ? 'Replace Clip' : 'Browse Videos'}
+                                            {clipVideoUrl ? t('product.replaceClip') : t('product.browseVideos')}
                                         </button>
                                     </div>
                                 </div>
@@ -365,7 +367,7 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
                                 /* ── Physical / edit mode: Image Upload ── */
                                 <div className="pm-form-group">
                                     <label className="pm-label">
-                                        Preview Image{type === 'digital' && <span style={{ fontWeight: 400, color: 'var(--text-3)', marginLeft: '6px' }}>(optional)</span>}
+                                        {t('product.previewImage')}{type === 'digital' && <span style={{ fontWeight: 400, color: 'var(--text-3)', marginLeft: '6px' }}>{t('product.optional')}</span>}
                                     </label>
                                     <div className="pm-image-upload">
                                         <input type="file" ref={fileInputRef} className="hidden" style={{ display: 'none' }} accept="image/*" onChange={handleFileChange} />
@@ -379,21 +381,21 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
                                                 <img src={imageUrl} alt="Preview" />
                                                 {uploading && (
                                                     <div className="pm-uploading-overlay">
-                                                        <span>Uploading...</span>
+                                                        <span>{t('product.uploading')}</span>
                                                     </div>
                                                 )}
                                             </div>
                                         ) : (
                                             <div style={{ padding: '32px 0' }}>
                                                 {uploading ? (
-                                                    <span style={{ color: 'var(--blue)', fontWeight: 700 }}>Uploading...</span>
+                                                    <span style={{ color: 'var(--blue)', fontWeight: 700 }}>{t('product.uploading')}</span>
                                                 ) : (
                                                     <>
                                                         <div style={{ width: 48, height: 48, borderRadius: '50%', backgroundColor: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3b82f6', margin: '0 auto 12px auto' }}>
                                                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" /></svg>
                                                         </div>
-                                                        <p style={{ fontSize: '14px', fontWeight: 700, color: '#334155' }}>Click to upload image</p>
-                                                        <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '4px' }}>PNG, JPG up to 10MB</p>
+                                                        <p style={{ fontSize: '14px', fontWeight: 700, color: '#334155' }}>{t('product.clickUpload')}</p>
+                                                        <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '4px' }}>{t('product.imageFormats')}</p>
                                                     </>
                                                 )}
                                             </div>
@@ -404,7 +406,7 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
                                             disabled={uploading}
                                             className="pm-upload-btn"
                                         >
-                                            {imageUrl ? 'Replace Image' : 'Browse Files'}
+                                            {imageUrl ? t('product.replaceImage') : t('product.browseFiles')}
                                         </button>
                                     </div>
                                 </div>
@@ -429,11 +431,11 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
                                                 <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 12h4l3-9 5 18 3-9h5" /></svg>
                                             )}
                                         </div>
-                                        <p style={{ fontSize: '14px', fontWeight: 500 }}>No analysis data yet.</p>
+                                        <p style={{ fontSize: '14px', fontWeight: 500 }}>{t('product.noAnalysis')}</p>
                                         <p style={{ fontSize: '12px', marginTop: '4px' }}>
                                             {isDigitalProduct
-                                                ? 'Save the product first, then run the AI analyzer to scrape website data.'
-                                                : 'Run the AI analyzer to extract product metadata.'}
+                                                ? t('product.noAnalysisDigitalDesc')
+                                                : t('product.noAnalysisPhysicalDesc')}
                                         </p>
                                     </div>
                                 ) : (
@@ -486,7 +488,7 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
                                 {analyzing ? (
                                     <>
                                         <svg style={{ animation: 'spin 1s linear infinite', height: '20px', width: '20px' }} fill="none" viewBox="0 0 24 24"><circle style={{ opacity: 0.25 }} cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path style={{ opacity: 0.75 }} fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                                        {isDigitalProduct ? 'Analyzing Website...' : 'Analyzing Asset...'}
+                                        {isDigitalProduct ? t('product.analyzingWebsite') : t('product.analyzingAsset')}
                                     </>
                                 ) : (
                                     <>
@@ -496,7 +498,7 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
                                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><circle cx="12" cy="12" r="4"></circle></svg>
                                         )}
                                         {aiBtnLabel}
-                                        {!isEditing && <span style={{ fontSize: '10px', marginLeft: '4px', opacity: 0.7 }}>(Save first)</span>}
+                                        {!isEditing && <span style={{ fontSize: '10px', marginLeft: '4px', opacity: 0.7 }}>{t('product.saveFirst')}</span>}
                                     </>
                                 )}
                             </button>
@@ -507,10 +509,10 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
                 {/* Footer */}
                 <div className="pm-footer">
                     <button type="button" onClick={onClose} className="pm-btn-cancel">
-                        Cancel
+                        {t('common.cancel')}
                     </button>
                     <button type="submit" form="product-form" className="pm-btn-save">
-                        {isEditing ? 'Save Changes' : isDigitalCreate ? 'Create Product' : 'Save Product'}
+                        {isEditing ? t('product.saveChanges') : isDigitalCreate ? t('product.createProduct') : t('product.saveProduct')}
                     </button>
                 </div>
             </div>

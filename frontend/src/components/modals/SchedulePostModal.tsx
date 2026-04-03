@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { apiFetch } from '@/lib/utils';
 import { useProgressiveList } from '@/hooks/useProgressiveList';
+import { useTranslation } from '@/lib/i18n';
 import type { VideoJob, Influencer, SocialConnection } from '@/lib/types';
 
 /* ── Platform config ────────────────────────────────────────────────────── */
@@ -52,6 +53,7 @@ function formatShortDate(dateStr: string | null | undefined): string {
 
 /* ── Component ──────────────────────────────────────────────────────────── */
 export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: Props) {
+    const { t } = useTranslation();
     const [step, setStep] = useState(1);
     const [jobs, setJobs] = useState<VideoJob[]>([]);
     const [influencers, setInfluencers] = useState<Influencer[]>([]);
@@ -240,10 +242,10 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ posts }),
             });
-            setToast(`Successfully scheduled ${posts.length} post${posts.length > 1 ? 's' : ''}!`);
+            setToast(t('scheduleModal.successToast').replace('{count}', String(posts.length)));
             setTimeout(() => { setToast(''); onClose(); }, 2000);
         } catch {
-            setToast('Failed to schedule posts. Please try again.');
+            setToast(t('scheduleModal.failToast'));
             setTimeout(() => setToast(''), 3000);
         }
         setSubmitting(false);
@@ -254,7 +256,7 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
     const activeVideoId = selectedIds[activeVideoIdx];
     const activeConfig = activeVideoId ? configs[activeVideoId] : null;
     const allReady = selectedIds.every(id => configs[id]?.ready);
-    const STEPS = ['Select Videos', 'Configure Each', 'Review & Schedule'];
+    const STEPS = [t('scheduleModal.step1'), t('scheduleModal.step2'), t('scheduleModal.step3')];
 
     /* ── RENDER ──────────────────────────────────────────────────────────── */
     return (
@@ -276,9 +278,9 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                     justifyContent: 'space-between',
                 }}>
                     <div>
-                        <h2 style={{ margin: 0, fontSize: '22px', fontWeight: 700 }}>Schedule Posts</h2>
+                        <h2 style={{ margin: 0, fontSize: '22px', fontWeight: 700 }}>{t('scheduleModal.title')}</h2>
                         <p style={{ margin: '4px 0 0', color: 'var(--text-3)', fontSize: '13px' }}>
-                            Select one or more videos from your library
+                            {t('scheduleModal.subtitle')}
                         </p>
                     </div>
                     <button onClick={onClose} style={{
@@ -357,7 +359,7 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                             <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
                                         </svg>
                                         <input
-                                            type="text" placeholder="Search videos..."
+                                            type="text" placeholder={t('scheduleModal.searchVideos')}
                                             value={search} onChange={e => setSearch(e.target.value)}
                                             style={{ border: 'none', outline: 'none', fontSize: '13px', flex: 1, background: 'transparent', color: 'var(--text-1)' }}
                                         />
@@ -368,19 +370,19 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                         fontSize: '13px', fontWeight: 600, cursor: 'pointer',
                                         color: 'var(--text-1)', whiteSpace: 'nowrap',
                                     }}>
-                                        {selectedIds.length === filteredJobs.length && filteredJobs.length > 0 ? 'Deselect All' : `Select All (${filteredJobs.length})`}
+                                        {selectedIds.length === filteredJobs.length && filteredJobs.length > 0 ? t('scheduleModal.deselectAll') : t('scheduleModal.selectAllN')}
                                     </button>
                                 </div>
 
                                 {/* Grid — progressive loading */}
                                 {loadingData ? (
                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '60px 0', color: 'var(--text-3)', fontSize: '14px' }}>
-                                        Loading videos...
+                                        {t('scheduleModal.loadingVideos')}
                                     </div>
                                 ) : filteredJobs.length === 0 ? (
                                     <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--text-3)' }}>
-                                        <div style={{ fontSize: '14px', marginBottom: '8px' }}>No completed videos found</div>
-                                        <div style={{ fontSize: '12px' }}>Generate videos first, then come back to schedule them.</div>
+                                        <div style={{ fontSize: '14px', marginBottom: '8px' }}>{t('scheduleModal.noVideos')}</div>
+                                        <div style={{ fontSize: '12px' }}>{t('scheduleModal.noVideosDesc')}</div>
                                     </div>
                                 ) : (
                                     <div style={{
@@ -510,10 +512,10 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                 {/* Top section: selection count + selected list */}
                                 <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1 }}>
                                     <div style={{ fontWeight: 700, fontSize: '14px', marginBottom: '4px' }}>
-                                        {selectedIds.length} video{selectedIds.length !== 1 ? 's' : ''} selected
+                                        {selectedIds.length} {t('scheduleModal.videosSelected')}
                                     </div>
                                     <div style={{ fontSize: '12px', color: 'var(--text-3)', marginBottom: '12px' }}>
-                                        Will be scheduled in bulk
+                                        {t('scheduleModal.willBeScheduled')}
                                     </div>
 
                                     {/* Scrollable selected video list */}
@@ -568,12 +570,12 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                     flexShrink: 0,
                                 }}>
                                     <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--blue)', marginBottom: '4px' }}>
-                                        Global posting time
+                                        {t('scheduleModal.globalTime')}
                                     </div>
                                     <div style={{ fontSize: '11px', color: 'var(--text-3)', marginBottom: '10px' }}>
                                         {selectedIds.length > 0
-                                            ? `Applied to all ${selectedIds.length} videos (can override per video in Step 2)`
-                                            : 'Select videos to set a posting time'
+                                            ? t('scheduleModal.globalTimeApplied')
+                                            : t('scheduleModal.globalTimeSelect')
                                         }
                                     </div>
                                     <div style={{ display: 'flex', gap: '8px' }}>
@@ -627,7 +629,7 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                                     display: 'flex', alignItems: 'center', gap: '4px',
                                                 }}>
                                                     <div style={{ width: 6, height: 6, borderRadius: '50%', background: cfg?.ready ? '#34C759' : '#FF9500' }} />
-                                                    {cfg?.ready ? 'Ready' : 'Needs caption'}
+                                                    {cfg?.ready ? t('scheduleModal.ready') : t('scheduleModal.needsCaption')}
                                                 </div>
                                             </div>
                                         </div>
@@ -637,7 +639,7 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
 
                             {/* Right: config form */}
                             <div style={{ flex: 1 }}>
-                                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', marginBottom: '8px', display: 'block' }}>Platforms</label>
+                                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', marginBottom: '8px', display: 'block' }}>{t('scheduleModal.platforms')}</label>
                                 <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', flexWrap: 'wrap' }}>
                                     {Object.entries(PLATFORM_META).map(([pid, meta]) => {
                                         const on = activeConfig.platforms.includes(pid);
@@ -661,11 +663,11 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                     })}
                                 </div>
 
-                                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', marginBottom: '6px', display: 'block' }}>Caption</label>
+                                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', marginBottom: '6px', display: 'block' }}>{t('scheduleModal.caption')}</label>
                                 <div style={{ position: 'relative', marginBottom: '8px' }}>
                                     <textarea value={activeConfig.caption}
                                         onChange={e => updateConfig(activeVideoId, { caption: e.target.value })}
-                                        placeholder="Write a caption for this video..."
+                                        placeholder={t('scheduleModal.captionPlaceholder')}
                                         rows={4}
                                         style={{
                                             width: '100%', padding: '12px', borderRadius: '10px',
@@ -692,7 +694,7 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                     <svg viewBox="0 0 24 24" style={{ width: 14, height: 14, fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}>
                                         <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
                                     </svg>
-                                    {aiLoading ? 'Generating...' : 'AI Generate'}
+                                    {aiLoading ? t('scheduleModal.generating') : t('scheduleModal.aiGenerate')}
                                 </button>
 
                                 {aiCaptions.length > 0 && (
@@ -711,7 +713,7 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                     </div>
                                 )}
 
-                                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', marginBottom: '6px', display: 'block' }}>Hashtags</label>
+                                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', marginBottom: '6px', display: 'block' }}>{t('scheduleModal.hashtags')}</label>
                                 <input type="text" value={activeConfig.hashtags.join(' ')}
                                     onChange={e => updateConfig(activeVideoId, { hashtags: e.target.value.split(' ').filter(Boolean) })}
                                     placeholder="#ugc #ai #product"
@@ -727,7 +729,7 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                         <input type="checkbox" checked={activeConfig.useCustomTime}
                                             onChange={e => updateConfig(activeVideoId, { useCustomTime: e.target.checked })}
                                             style={{ accentColor: 'var(--blue)' }} />
-                                        Custom time for this video
+                                        {t('scheduleModal.customTime')}
                                     </label>
                                 </div>
                                 {activeConfig.useCustomTime && (
@@ -796,7 +798,7 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                                 display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
                                                 flex: 1,
                                             }}>
-                                                {cfg.caption || 'No caption'}
+                                                {cfg.caption || t('scheduleModal.noCaption')}
                                             </div>
                                             <button onClick={() => { setActiveVideoIdx(selectedIds.indexOf(id)); setStep(2); }}
                                                 style={{
@@ -804,7 +806,7 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                                     border: '1px solid var(--border)', background: 'transparent',
                                                     color: 'var(--blue)', fontSize: '12px', fontWeight: 600, cursor: 'pointer',
                                                 }}>
-                                                Edit
+                                                {t('scheduleModal.edit')}
                                             </button>
                                         </div>
                                     </div>
@@ -820,8 +822,8 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                 }}>
                     <div style={{ fontSize: '13px', color: 'var(--blue)', fontWeight: 600 }}>
-                        {step === 1 && selectedIds.length > 0 && `${selectedIds.length} video${selectedIds.length > 1 ? 's' : ''} ready`}
-                        {step === 2 && `Video ${activeVideoIdx + 1} of ${selectedIds.length}`}
+                        {step === 1 && selectedIds.length > 0 && `${selectedIds.length} ${t('scheduleModal.videosReady')}`}
+                        {step === 2 && t('scheduleModal.videoOf').replace('{current}', String(activeVideoIdx + 1)).replace('{total}', String(selectedIds.length))}
                     </div>
                     <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                         {step > 1 && (
@@ -830,7 +832,7 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                 border: '1px solid var(--border)', background: 'white',
                                 color: 'var(--text-2)', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
                             }}>
-                                Back
+                                {t('scheduleModal.back')}
                             </button>
                         )}
                         {step === 1 && (
@@ -839,7 +841,7 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                 border: '1px solid var(--border)', background: 'white',
                                 color: 'var(--text-2)', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
                             }}>
-                                Cancel
+                                {t('common.cancel')}
                             </button>
                         )}
                         {step === 1 && (
@@ -852,7 +854,7 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                     cursor: selectedIds.length > 0 ? 'pointer' : 'not-allowed',
                                     display: 'flex', alignItems: 'center', gap: '6px',
                                 }}>
-                                Next: Configure Each
+                                {t('scheduleModal.nextConfigure')}
                                 <svg viewBox="0 0 24 24" style={{ width: 14, height: 14, stroke: 'currentColor', fill: 'none', strokeWidth: 2 }}>
                                     <polyline points="9 18 15 12 9 6" />
                                 </svg>
@@ -866,7 +868,7 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                     color: 'white', fontSize: '13px', fontWeight: 600,
                                     cursor: allReady ? 'pointer' : 'not-allowed',
                                 }}>
-                                Next: Review
+                                {t('scheduleModal.nextReview')}
                             </button>
                         )}
                         {step === 3 && (
@@ -878,7 +880,7 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                     cursor: submitting ? 'not-allowed' : 'pointer',
                                     display: 'flex', alignItems: 'center', gap: '8px',
                                 }}>
-                                {submitting ? 'Scheduling...' : `Confirm & Schedule ${selectedIds.length} Post${selectedIds.length > 1 ? 's' : ''}`}
+                                {submitting ? t('scheduleModal.scheduling') : `${t('scheduleModal.confirmSchedule')} ${selectedIds.length} ${t('scheduleModal.posts')}`}
                             </button>
                         )}
                     </div>

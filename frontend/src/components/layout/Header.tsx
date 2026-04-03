@@ -7,6 +7,7 @@ import { useApp } from '@/providers/AppProvider';
 import { ProjectSwitcher } from '@/components/layout/ProjectSwitcher';
 import { supabase } from '@/lib/supabaseClient';
 import { apiFetch } from '@/lib/utils';
+import { useTranslation } from '@/lib/i18n';
 import type { Notification } from '@/lib/types';
 
 // SVG icon components — no emoji allowed
@@ -28,16 +29,60 @@ const IconFilm = () => <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" hei
 const IconCalendar = () => <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>;
 
 const NAV_ITEMS = [
-    { href: '/', label: 'Home', Icon: IconHome },
+    { href: '/', labelKey: 'nav.dashboard', label: 'Home', Icon: IconHome },
     { divider: true },
-    { href: '/videos', label: 'Videos', Icon: IconVideo },
-    { href: '/influencers', label: 'Influencers', Icon: IconUser },
-    { href: '/scripts', label: 'Scripts', Icon: IconFile },
-    { href: '/products', label: 'Products', Icon: IconBox },
-    { href: '/schedule', label: 'Schedule', Icon: IconCalendar },
+    { href: '/videos', labelKey: 'nav.videos', label: 'Videos', Icon: IconVideo },
+    { href: '/influencers', labelKey: 'nav.influencers', label: 'Influencers', Icon: IconUser },
+    { href: '/scripts', labelKey: 'nav.scripts', label: 'Scripts', Icon: IconFile },
+    { href: '/products', labelKey: 'nav.products', label: 'Products', Icon: IconBox },
+    { href: '/schedule', labelKey: 'nav.schedule', label: 'Schedule', Icon: IconCalendar },
     { divider: true },
-    { href: '/activity', label: 'Activity', Icon: IconActivity },
+    { href: '/activity', labelKey: 'nav.activity', label: 'Activity', Icon: IconActivity },
 ];
+
+// ── Language Toggle ────────────────────────────────────────────────────
+function LangToggle() {
+    const { lang, setLang } = useTranslation();
+    return (
+        <button
+            className="lang-toggle"
+            onClick={() => setLang(lang === 'en' ? 'es' : 'en')}
+            title={lang === 'en' ? 'Switch to Spanish' : 'Cambiar a Inglés'}
+            style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '2px',
+                padding: '4px 8px',
+                borderRadius: '6px',
+                border: '1px solid var(--border)',
+                background: 'var(--surface)',
+                cursor: 'pointer',
+                fontSize: '12px',
+                fontWeight: 600,
+                color: 'var(--text-secondary)',
+                transition: 'all 0.15s ease',
+                whiteSpace: 'nowrap' as const,
+            }}
+        >
+            <span style={{
+                padding: '2px 6px',
+                borderRadius: '4px',
+                background: lang === 'en' ? 'var(--blue, #337AFF)' : 'transparent',
+                color: lang === 'en' ? '#fff' : 'var(--text-3, #999)',
+                transition: 'all 0.15s ease',
+                fontWeight: lang === 'en' ? 700 : 500,
+            }}>EN</span>
+            <span style={{
+                padding: '2px 6px',
+                borderRadius: '4px',
+                background: lang === 'es' ? 'var(--blue, #337AFF)' : 'transparent',
+                color: lang === 'es' ? '#fff' : 'var(--text-3, #999)',
+                transition: 'all 0.15s ease',
+                fontWeight: lang === 'es' ? 700 : 500,
+            }}>ES</span>
+        </button>
+    );
+}
 
 function NavItem({ href, label, Icon, onClick }: { href: string; label: string; Icon: React.ComponentType; onClick?: () => void }) {
     const pathname = usePathname();
@@ -55,6 +100,7 @@ function CreateDropdown() {
     const ref = useRef<HTMLDivElement>(null);
     const pathname = usePathname();
     const isActive = pathname === '/create' || pathname === '/cinematic';
+    const { t } = useTranslation();
 
     useEffect(() => {
         const handler = (e: MouseEvent) => {
@@ -71,7 +117,7 @@ function CreateDropdown() {
                 onClick={() => setOpen(o => !o)}
             >
                 <IconPlus />
-                <span className="btn-label">Create</span>
+                <span className="btn-label">{t('common.create')}</span>
                 <svg viewBox="0 0 24 24" style={{ width: '12px', height: '12px', stroke: 'currentColor', fill: 'none', strokeWidth: 2, marginLeft: '2px', transition: 'transform 0.15s', transform: open ? 'rotate(180deg)' : 'none' }}>
                     <polyline points="6 9 12 15 18 9" />
                 </svg>
@@ -88,11 +134,11 @@ function CreateDropdown() {
                         <div className="cd-icon">
                             <svg viewBox="0 0 24 24"><polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" /></svg>
                         </div>
-                        <div><div className="cd-label">Create Video</div><div className="cd-desc">Generate UGC videos with AI</div></div>
+                        <div><div className="cd-label">{t('header.createVideo')}</div><div className="cd-desc">{t('create.title')}</div></div>
                     </Link>
                     <Link href="/cinematic" className="cd-item" onClick={() => setOpen(false)}>
                         <div className="cd-icon"><IconFilm /></div>
-                        <div><div className="cd-label">Cinematic Shots</div><div className="cd-desc">Product photography & animation</div></div>
+                        <div><div className="cd-label">{t('header.cinematicShots')}</div><div className="cd-desc">{t('products.cinematic')}</div></div>
                     </Link>
                 </div>
             )}
@@ -123,6 +169,7 @@ const NOTIF_ICONS: Record<string, { color: string; path: string }> = {
 };
 
 function NotificationDropdown() {
+    const { t } = useTranslation();
     const [open, setOpen] = useState(false);
     const [notifications, setNotifications] = useState<Notification[]>([]);
     const [readIds, setReadIds] = useState<Set<string>>(new Set());
@@ -201,26 +248,61 @@ function NotificationDropdown() {
             {open && (
                 <div className="notif-dropdown" onClick={e => e.stopPropagation()}>
                     <div className="notif-header">
-                        <span className="notif-title">Notifications</span>
+                        <span className="notif-title">{t('notif.title')}</span>
                         {notifications.length > 0 && (
-                            <button className="notif-mark-read" onClick={markAllRead}>Mark all read</button>
+                            <button className="notif-mark-read" onClick={markAllRead}>{t('notif.markAllRead')}</button>
                         )}
                     </div>
                     <div className="notif-list">
                         {loading && notifications.length === 0 && (
-                            <div className="notif-empty">Loading...</div>
+                            <div className="notif-empty">{t('notif.loading')}</div>
                         )}
                         {!loading && notifications.length === 0 && (
                             <div className="notif-empty">
                                 <svg viewBox="0 0 24 24" style={{ width: 32, height: 32, stroke: 'var(--text-3)', fill: 'none', strokeWidth: 1.5, marginBottom: 8 }}>
                                     <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" />
                                 </svg>
-                                <div>No notifications yet</div>
+                                <div>{t('notif.empty')}</div>
                             </div>
                         )}
                         {notifications.map(n => {
                             const icon = NOTIF_ICONS[n.type] || NOTIF_ICONS.job_pending;
                             const isUnread = !readIds.has(n.id);
+
+                            // Translate notification title based on type
+                            const TITLE_MAP: Record<string, string> = {
+                                job_success: t('notif.videoReady'),
+                                job_failed: t('notif.generationFailed'),
+                                job_processing: t('notif.generatingVideo'),
+                                job_pending: t('notif.jobQueued'),
+                                script_created: t('notif.scriptCreated'),
+                            };
+                            const translatedTitle = TITLE_MAP[n.type] || t('notif.jobUpdate');
+
+                            // Translate notification message
+                            const translateMessage = (msg: string): string => {
+                                if (msg.includes('completed successfully')) {
+                                    const name = msg.replace(' completed successfully', '');
+                                    return `${name} ${t('notif.completedSuccess')}`;
+                                }
+                                if (msg.includes('failed:')) {
+                                    const parts = msg.split('failed:');
+                                    return `${parts[0]}${t('notif.failed')}: ${parts[1]?.trim() || ''}`;
+                                }
+                                if (msg.includes('is generating')) {
+                                    const name = msg.split(' is generating')[0];
+                                    const pct = msg.match(/\((\d+%)\)/)?.[1] || '';
+                                    return `${name} ${t('notif.isGenerating')}${pct ? ` (${pct})` : ''}`;
+                                }
+                                if (msg.includes('is queued for generation')) {
+                                    const name = msg.replace(' is queued for generation', '');
+                                    return `${name} ${t('notif.isQueued')}`;
+                                }
+                                if (msg === 'New script') return t('notif.newScript');
+                                return msg;
+                            };
+                            const translatedMessage = translateMessage(n.message);
+
                             return (
                                 <div
                                     key={n.id}
@@ -231,8 +313,8 @@ function NotificationDropdown() {
                                         <svg viewBox="0 0 24 24"><path d={icon.path} /></svg>
                                     </div>
                                     <div className="notif-content">
-                                        <div className="notif-item-title">{n.title}</div>
-                                        <div className="notif-message">{n.message}</div>
+                                        <div className="notif-item-title">{translatedTitle}</div>
+                                        <div className="notif-message">{translatedMessage}</div>
                                         <div className="notif-time">{n.timestamp ? timeAgo(n.timestamp) : ''}</div>
                                     </div>
                                 </div>
@@ -246,6 +328,7 @@ function NotificationDropdown() {
 }
 
 function ProfileDropdown() {
+    const { t } = useTranslation();
     const [open, setOpen] = useState(false);
     const { profile, subscription, wallet } = useApp();
 
@@ -274,29 +357,29 @@ function ProfileDropdown() {
                     <div className="pd-avatar">{initials}</div>
                     <div>
                         <div className="pd-name">{profile?.name || profile?.email || 'User'}</div>
-                        <div className="pd-plan">{planName} Plan</div>
+                        <div className="pd-plan">{planName} {t('header.plan')}</div>
                     </div>
                 </div>
                 <div className="pd-credits">
-                    <div className="pd-credits-label">Monthly Credits</div>
+                    <div className="pd-credits-label">{t('dashboard.credits')}</div>
                     <div className="pd-credits-row">
                         <span className="pd-credits-value">{balance.toLocaleString()}</span>
-                        {monthlyCredits > 0 && <span className="pd-credits-total">of {monthlyCredits.toLocaleString()}</span>}
+                        {monthlyCredits > 0 && <span className="pd-credits-total">{t('header.of')} {monthlyCredits.toLocaleString()}</span>}
                     </div>
                     {monthlyCredits > 0 && (
                         <>
                             <div className="pd-bar-bg"><div className="pd-bar-fill" style={{ width: `${percentage}%` }} /></div>
-                            <div className="pd-bar-labels"><span>Used: {used.toLocaleString()}</span><span>{percentage}% remaining</span></div>
+                            <div className="pd-bar-labels"><span>{t('header.used')} {used.toLocaleString()}</span><span>{percentage}% {t('header.remaining')}</span></div>
                         </>
                     )}
-                    <button className="pd-topup" onClick={() => { window.location.href = '/manage?topup=1'; }}>Top Up Credits</button>
+                    <button className="pd-topup" onClick={() => { window.location.href = '/manage?topup=1'; }}>{t('header.topUp')}</button>
                 </div>
-                <Link href="/profile" className="pd-menu-item"><IconUser />View Profile</Link>
-                <Link href="/projects" className="pd-menu-item"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /></svg>My Projects</Link>
-                <Link href="/manage" className="pd-menu-item"><IconSettings />Manage Account</Link>
-                <Link href="/upgrade" className="pd-menu-item"><IconStar />Upgrade Plan</Link>
+                <Link href="/profile" className="pd-menu-item"><IconUser />{t('nav.profile')}</Link>
+                <Link href="/projects" className="pd-menu-item"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /></svg>{t('nav.projects')}</Link>
+                <Link href="/manage" className="pd-menu-item"><IconSettings />{t('nav.settings')}</Link>
+                <Link href="/upgrade" className="pd-menu-item"><IconStar />{t('header.upgradePlan')}</Link>
                 <div className="pd-divider" />
-                <div className="pd-menu-item danger" onClick={handleSignOut}><IconLogOut />Sign Out</div>
+                <div className="pd-menu-item danger" onClick={handleSignOut}><IconLogOut />{t('nav.signOut')}</div>
             </div>
         </div>
     );
@@ -304,6 +387,7 @@ function ProfileDropdown() {
 
 export function Header() {
     const [menuOpen, setMenuOpen] = useState(false);
+    const { t } = useTranslation();
     return (
         <header className="header">
             <button className="menu-toggle" onClick={() => setMenuOpen(!menuOpen)} aria-label="Toggle menu">
@@ -325,23 +409,23 @@ export function Header() {
                     'divider' in item ? (
                         <div key={`div-${i}`} className="nav-divider" />
                     ) : (
-                        <NavItem key={item.href} href={item.href!} label={item.label!} Icon={item.Icon!} onClick={() => setMenuOpen(false)} />
+                        <NavItem key={item.href} href={item.href!} label={item.labelKey ? t(item.labelKey) : item.label!} Icon={item.Icon!} onClick={() => setMenuOpen(false)} />
                     )
                 )}
                 {/* Mobile-only items */}
                 <div className="nav-divider mobile-only" />
                 <Link href="/create" className="nav-item mobile-only-item" onClick={() => setMenuOpen(false)}>
-                    <IconPlay /> Create Video
+                    <IconPlay /> {t('header.createVideo')}
                 </Link>
                 <Link href="/cinematic" className="nav-item mobile-only-item" onClick={() => setMenuOpen(false)}>
-                    <IconFilm /> Cinematic Shots
+                    <IconFilm /> {t('header.cinematicShots')}
                 </Link>
                 <div className="nav-divider mobile-only" />
                 <Link href="/profile" className="nav-item mobile-only-item" onClick={() => setMenuOpen(false)}>
-                    <IconUser /> Profile
+                    <IconUser /> {t('nav.profile')}
                 </Link>
                 <Link href="/manage" className="nav-item mobile-only-item" onClick={() => setMenuOpen(false)}>
-                    <IconSettings /> Settings
+                    <IconSettings /> {t('nav.settings')}
                 </Link>
             </nav>
 
@@ -349,6 +433,7 @@ export function Header() {
                 <ProjectSwitcher />
                 <CreateDropdown />
                 <div className="nav-divider hide-mobile" />
+                <LangToggle />
                 <NotificationDropdown />
                 <ProfileDropdown />
             </div>

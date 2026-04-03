@@ -290,7 +290,7 @@ function CinematicContent() {
         >
           <svg style={{ width: 16, height: 16, stroke: 'white', fill: 'none', strokeWidth: 2 }} viewBox="0 0 24 24"><polygon points="13,2 3,14 12,14 11,22 21,10 12,10" /></svg>
           {generating ? 'Generating...' : `Generate ${selectedStyles.size} Shot${selectedStyles.size !== 1 ? 's' : ''}`}
-          <span className="credit-cost">{selectedStyles.size * 13} cr</span>
+          <span className="credit-cost">{selectedStyles.size * 13} <img src="/star-white.png" alt="credits" style={{ height: 12, width: 12, verticalAlign: 'middle', marginLeft: 2, display: 'inline' }} /></span>
         </button>
       </div>
 
@@ -380,7 +380,7 @@ function CinematicContent() {
                             >
                               <svg viewBox="0 0 24 24" style={{ width: '12px', height: '12px', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><polygon points="5 3 19 12 5 21 5 3" /></svg>
                               {animatingIds.has(shot.id) ? 'Queuing...' : 'Animate'}
-                              <span style={{ marginLeft: '4px', fontSize: '10px', opacity: 0.85 }}>51 cr</span>
+                              <span style={{ marginLeft: '4px', fontSize: '10px', opacity: 0.85, display: 'inline-flex', alignItems: 'center', gap: '2px' }}>51 <img src="/star-white.png" alt="credits" style={{ height: 10, width: 10 }} /></span>
                             </button>
                           )}
                         </div>

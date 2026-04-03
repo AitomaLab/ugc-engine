@@ -14,6 +14,15 @@ def generate_ultra_prompt(scene_type, ctx, script_override=None, is_last_scene=F
     # Environment: use influencer-specific setting from ctx, fall back to reference image match
     env = ctx.get("setting", "natural environment matching the background visible in the reference image")
 
+    # i18n: override accent for Spanish videos — affects voice_type in all Veo prompts
+    video_language = ctx.get('video_language', 'en')
+    if video_language == 'es':
+        # Mutate a local copy of accent for this prompt; ctx itself stays unchanged
+        accent_override = 'native Spanish accent, speaking entirely in Spanish'
+    else:
+        accent_override = ctx.get('accent', 'neutral English')
+    # Use accent_override below instead of ctx['accent'] for voice_type
+
     if scene_type == "hook":
         script = script_override if script_override else sanitize_dialogue(ctx.get('hook', ''))
         action = (
@@ -52,7 +61,7 @@ def generate_ultra_prompt(scene_type, ctx, script_override=None, is_last_scene=F
         f"slightly uneven framing\n"
         f"setting: {env}, slightly blurry background, bright natural light from window\n"
         f"emotion: {emotion}\n"
-        f"voice_type: clear confident pronunciation, casual, conversational {ctx['accent']}, {ctx['tone'].lower()} tone, consistent medium-fast pacing\n"
+        f"voice_type: clear confident pronunciation, casual, conversational {accent_override}, {ctx['tone'].lower()} tone, consistent medium-fast pacing\n"
         f"style: raw authentic TikTok/Reels UGC, spontaneous not polished, "
         f"candid UGC look, realism, high detail, skin texture\n"
         f"speech_constraint: {speech_constraint}\n"
@@ -130,6 +139,10 @@ def build_30s(dur, app_clip, ctx, product=None, influencer=None):
     from prompts import sanitize_dialogue
 
     scenes = []
+
+    # i18n: override accent for Spanish videos
+    _video_lang = ctx.get('video_language', 'en')
+    _accent = 'native Spanish accent, speaking entirely in Spanish' if _video_lang == 'es' else ctx.get('accent', 'neutral English')
 
     # Determine how many Veo scenes based on app clip duration
     clip_duration = (app_clip.get("duration") or 8) if app_clip else 0
@@ -251,7 +264,7 @@ def build_30s(dur, app_clip, ctx, product=None, influencer=None):
             f"camera: amateur UGC video, stationary POV camera, character does NOT hold the filming camera, locked camera, NO camera movement, NO panning\n"
             f"setting: {env}, slightly blurry background\n"
             f"emotion: genuine excitement, authentic discovery reaction\n"
-            f"voice_type: casual, conversational {ctx['accent']}, {ctx['tone'].lower()} tone\n"
+            f"voice_type: casual, conversational {_accent}, {ctx['tone'].lower()} tone\n"
             f"audio: character speaks clearly and audibly\n"
             f"style: raw authentic TikTok/Reels UGC, candid, not polished\n"
             f"speech_constraint: speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, speak at a relaxed unhurried natural pace filling the full duration of the video, do not rush\n"
@@ -308,7 +321,7 @@ def build_30s(dur, app_clip, ctx, product=None, influencer=None):
                 f"camera: amateur UGC video, same camera angle, stationary camera, locked off, NO panning, NO movement\n"
                 f"setting: {env}, slightly blurry background\n"
                 f"emotion: total amazement, joy, genuine warmth\n"
-                f"voice_type: clear confident pronunciation, casual, conversational {ctx['accent']}, {ctx['tone'].lower()} tone, consistent medium pacing\n"
+                f"voice_type: clear confident pronunciation, casual, conversational {_accent}, {ctx['tone'].lower()} tone, consistent medium pacing\n"
                 f"style: raw authentic TikTok/Reels UGC, candid, not polished\n"
                 f"speech_constraint: {speech_constraint}\n"
                 f"negative: no airbrushed skin, no studio lighting, no camera movement, no panning, no scene wipe, no cuts, no transitions, no extra fingers, no stuttering, no extra limbs, "
@@ -358,7 +371,7 @@ def build_30s(dur, app_clip, ctx, product=None, influencer=None):
                 f"camera: amateur UGC video, same camera angle, stationary camera, locked off, NO panning, NO movement\n"
                 f"setting: {env}, slightly blurry background\n"
                 f"emotion: warm, encouraging, friendly, direct\n"
-                f"voice_type: clear confident pronunciation, casual, conversational {ctx['accent']}, {ctx['tone'].lower()} tone, consistent medium pacing\n"
+                f"voice_type: clear confident pronunciation, casual, conversational {_accent}, {ctx['tone'].lower()} tone, consistent medium pacing\n"
                 f"style: raw authentic TikTok/Reels UGC, candid, not polished\n"
                 f"speech_constraint: {speech_constraint_3}\n"
                 f"negative: no airbrushed skin, no studio lighting, no camera movement, no panning, no scene wipe, no cuts, no transitions, no extra fingers, no stuttering, no extra limbs, "
@@ -447,6 +460,10 @@ def build_digital_unified(influencer: dict, product: dict, app_clip: dict, durat
     import config
     from prompts import sanitize_dialogue
 
+    # i18n: override accent for Spanish videos
+    _video_lang = ctx.get('video_language', 'en')
+    _accent = 'native Spanish accent, speaking entirely in Spanish' if _video_lang == 'es' else ctx.get('accent', 'neutral English')
+
     # Determine device type from visual_description
     visual_desc = product.get("visual_description") or {}
     app_type = visual_desc.get("app_type", "mobile").lower()
@@ -512,7 +529,7 @@ def build_digital_unified(influencer: dict, product: dict, app_clip: dict, durat
         f"camera: amateur UGC video, stationary POV camera, character does NOT hold the filming camera, slight natural handheld shake\n"
         f"setting: {ctx.get('setting', 'natural environment matching the background visible in the reference image')}, slightly blurry background\n"
         f"emotion: genuine excitement, authentic discovery reaction\n"
-        f"voice_type: casual, conversational {ctx['accent']}, {ctx['tone'].lower()} tone\n"
+        f"voice_type: casual, conversational {_accent}, {ctx['tone'].lower()} tone\n"
         f"audio: character speaks clearly and audibly, voice must be present in the generated video\n"
         f"style: raw authentic TikTok/Reels UGC, candid, not polished\n"
         f"speech_constraint: speak ONLY the exact dialogue words provided, do not add or improvise any words, never repeat or stutter any word, each word must be spoken exactly once, speak at a relaxed unhurried natural pace filling the full duration of the video, do not rush\n"

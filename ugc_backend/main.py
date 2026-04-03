@@ -280,6 +280,7 @@ def _dispatch_clone_worker(job_id: str) -> bool:
                 avatar_duration=avatar_duration,
                 skip_subtitles=has_broll,  # skip if we'll assemble + burn externally
                 gender=clone_gender,
+                video_language=job.get("video_language", "en"),
             )
 
             update_cjob({"progress": 75})
@@ -412,6 +413,7 @@ def _dispatch_clone_worker(job_id: str) -> bool:
                             str(assembled_path),
                             brand_names=brand_names or None,
                             script_text=job["script_text"],
+                            video_language=job.get("video_language", "en"),
                         )
                         if transcription and transcription.get("words"):
                             captioned_path = None
@@ -664,6 +666,8 @@ class JobCreate(BaseModel):
     subtitles_enabled: Optional[bool] = True
     subtitle_style: Optional[str] = "hormozi"
     subtitle_placement: Optional[str] = "middle"
+    # Language
+    video_language: str = "en"                   # 'en' or 'es' — defaults to English
 
 class BulkJobCreate(BaseModel):
     influencer_id: str
@@ -682,6 +686,8 @@ class BulkJobCreate(BaseModel):
     subtitles_enabled: Optional[bool] = True
     subtitle_style: Optional[str] = "hormozi"
     subtitle_placement: Optional[str] = "middle"
+    # Language
+    video_language: str = "en"                   # 'en' or 'es' — defaults to English
 
 class SignedUrlRequest(BaseModel):
     bucket: str = "product-images"
@@ -927,6 +933,7 @@ class ScriptGenerateRequest(BaseModel):
     output_format: str = "json"            # "json" (new) or "legacy" (||| string)
     methodology: Optional[str] = None      # Force a specific methodology
     context: Optional[str] = None          # Additional user instructions
+    video_language: str = "en"             # 'en' or 'es' — defaults to English
 
 @app.post("/api/scripts/generate")
 def api_generate_script(data: ScriptGenerateRequest):
@@ -977,6 +984,7 @@ def api_generate_script(data: ScriptGenerateRequest):
                 video_length=data.duration,
                 methodology=data.methodology,
                 context=data.context,
+                video_language=data.video_language,
             )
             return {"script_json": script_json, "product_id": data.product_id}
 
@@ -1116,6 +1124,7 @@ def api_create_job(request: Request, data: JobCreate, user: dict = Depends(get_o
                 "cost_video", "cost_voice", "cost_music", "cost_processing", "total_cost",
                 "cinematic_shot_ids", "error_message",
                 "subtitles_enabled", "subtitle_style", "subtitle_placement",
+                "video_language",
             }
 
         job_data = data.model_dump(exclude_none=True)
@@ -1842,6 +1851,7 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
                 "cost_video", "cost_voice", "cost_music", "cost_processing", "total_cost",
                 "cinematic_shot_ids", "error_message", "variation_prompt",
                 "subtitles_enabled", "subtitle_style", "subtitle_placement",
+                "video_language",
             }
 
         created_jobs = []
@@ -1882,6 +1892,7 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
                         product_name=product.get("name", "App") if product else "App",
                         product_analysis=visuals,
                         duration=data.duration,
+                        video_language=data.video_language,
                     )
                     print(f"   [Bulk] Job {i+1}: Generated unique script ({len(script_text)} chars)")
                 except Exception as e:
@@ -1908,6 +1919,7 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
                 "status": "pending",
                 "progress": 0,
                 "variation_prompt": variation_prompt,  # None = use default setting
+                "video_language": data.video_language,
                 **costs,
             }
 
@@ -2630,6 +2642,7 @@ class CloneJobCreate(BaseModel):
     subtitles_enabled: bool = True
     subtitle_style: str = "hormozi"
     subtitle_placement: str = "middle"
+    video_language: str = "en"             # 'en' or 'es' — defaults to English
 
 
 @app.post("/api/clone-jobs")
@@ -2666,6 +2679,7 @@ def create_clone_job(data: CloneJobCreate, user: dict = Depends(get_optional_use
         "subtitles_enabled": data.subtitles_enabled,
         "subtitle_style": data.subtitle_style,
         "subtitle_placement": data.subtitle_placement,
+        "video_language": data.video_language,
         "status": "pending",
         "progress": 0,
     }

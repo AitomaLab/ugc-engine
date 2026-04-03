@@ -7,6 +7,7 @@ import { Influencer } from '@/lib/types';
 import { InfluencerModal } from '@/app/library/InfluencerModal';
 import Select from '@/components/ui/Select';
 import { useProgressiveList } from '@/hooks/useProgressiveList';
+import { useTranslation } from '@/lib/i18n';
 
 // IDs of looks currently being generated (polling for completion)
 const pendingLookIds = new Set<string>();
@@ -18,6 +19,7 @@ const pendingLookIds = new Set<string>();
 const SUPABASE_URL_CLONES = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 
 function AiClonesTab() {
+  const { t } = useTranslation();
   const [clones, setClones] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedCloneId, setSelectedCloneId] = useState<string>('');
@@ -248,7 +250,7 @@ function AiClonesTab() {
   }
 
   if (loading) {
-    return <div className='empty-state'><div className='empty-title'>Loading...</div></div>;
+    return <div className='empty-state'><div className='empty-title'>{t('common.loading')}</div></div>;
   }
 
   // ── No clone set up yet — includes image upload ───────────────────────────
@@ -256,15 +258,15 @@ function AiClonesTab() {
     return (
       <div style={{ maxWidth: '520px', margin: '40px auto', padding: '32px', background: 'var(--surface)', borderRadius: '16px', border: '1px solid var(--border-soft)' }}>
         <h2 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-1)', marginBottom: '8px' }}>
-          Set Up Your AI Clone
+          {t('clones.setupTitle')}
         </h2>
         <p style={{ fontSize: '13px', color: 'var(--text-3)', marginBottom: '24px' }}>
-          Create your AI Clone profile with your voice and a reference photo. The AI will use this to generate videos with your own face and voice.
+          {t('clones.setupDesc')}
         </p>
 
         {/* Reference Photo Upload */}
         <div style={{ marginBottom: '20px' }}>
-          <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '8px' }}>Reference Photo *</label>
+          <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '8px' }}>{t('clones.referencePhoto')} *</label>
           <div
             onClick={() => setupFileRef.current?.click()}
             style={{
@@ -283,7 +285,7 @@ function AiClonesTab() {
                 <svg viewBox='0 0 24 24' style={{ width: '24px', height: '24px', stroke: 'var(--text-3)', fill: 'none', strokeWidth: 1.5, margin: '0 auto 8px' }}>
                   <rect x='3' y='3' width='18' height='18' rx='2' /><circle cx='8.5' cy='8.5' r='1.5' /><path d='M21 15l-5-5L5 21' />
                 </svg>
-                <div style={{ fontSize: '11px', color: 'var(--text-3)', lineHeight: 1.4 }}>Click to upload<br/>a clear portrait</div>
+                <div style={{ fontSize: '11px', color: 'var(--text-3)', lineHeight: 1.4 }}>{t('clones.clickUpload')}<br/>{t('clones.clearPortrait')}</div>
               </div>
             )}
           </div>
@@ -291,16 +293,16 @@ function AiClonesTab() {
             onChange={e => { const f = e.target.files?.[0]; if (f) handleSetupImagePick(f); }}
           />
           <p style={{ fontSize: '11px', color: 'var(--text-3)', marginTop: '6px', maxWidth: '200px' }}>
-            Use a high-quality, well-lit portrait photo. Vertical (9:16) works best.
+            {t('clones.photoTip')}
           </p>
         </div>
 
         <div style={{ marginBottom: '16px' }}>
-          <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>Clone Name</label>
-          <input className='input-field' type='text' value={setupName} onChange={e => setSetupName(e.target.value)} placeholder='e.g. My AI Clone' />
+          <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>{t('clones.cloneName')}</label>
+          <input className='input-field' type='text' value={setupName} onChange={e => setSetupName(e.target.value)} placeholder={t('clones.cloneNamePlaceholder')} />
         </div>
         <div style={{ marginBottom: '16px' }}>
-          <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>Gender *</label>
+          <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>{t('clones.gender')} *</label>
           <div style={{ display: 'flex', gap: '8px' }}>
             {['male', 'female'].map(g => (
               <button key={g} onClick={() => setSetupGender(g)} style={{
@@ -309,15 +311,15 @@ function AiClonesTab() {
                 background: setupGender === g ? 'rgba(59,130,246,0.1)' : 'var(--surface-hover)',
                 color: setupGender === g ? 'var(--blue)' : 'var(--text-2)',
                 transition: 'all 0.15s',
-              }}>{g === 'male' ? 'Male' : 'Female'}</button>
+              }}>{g === 'male' ? t('clones.male') : t('clones.female')}</button>
             ))}
           </div>
         </div>
         <div style={{ marginBottom: '20px' }}>
-          <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>ElevenLabs Voice ID *</label>
-          <input className='input-field' type='text' value={setupVoiceId} onChange={e => setSetupVoiceId(e.target.value)} placeholder='e.g. 21m00Tcm4TlvDq8ikWAM' />
+          <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>{t('clones.voiceId')} *</label>
+          <input className='input-field' type='text' value={setupVoiceId} onChange={e => setSetupVoiceId(e.target.value)} placeholder={t('clones.voiceIdPlaceholder')} />
           <p style={{ fontSize: '11px', color: 'var(--text-3)', marginTop: '4px' }}>
-            Find your Voice ID in ElevenLabs → Voices → click your voice → View API ID.
+            {t('clones.voiceIdTip')}
           </p>
         </div>
         {setupError && (
@@ -326,7 +328,7 @@ function AiClonesTab() {
           </div>
         )}
         <button className='btn-primary' onClick={handleSetupSave} disabled={setupSaving} style={{ width: '100%' }}>
-          {setupSaving ? 'Creating...' : 'Create My AI Clone'}
+          {setupSaving ? t('clones.creating') : t('clones.createClone')}
         </button>
       </div>
     );
@@ -346,7 +348,7 @@ function AiClonesTab() {
           </div>
         </div>
         <button className='btn-secondary' onClick={() => setShowEdit(!showEdit)} style={{ fontSize: '12px' }}>
-          Edit Profile
+          {t('clones.editProfile')}
         </button>
       </div>
 
@@ -354,15 +356,15 @@ function AiClonesTab() {
       {showEdit && (
         <div style={{ marginBottom: '24px', padding: '16px 20px', background: 'var(--surface)', borderRadius: '12px', border: '1px solid var(--border-soft)' }}>
           <div style={{ marginBottom: '12px' }}>
-            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>Clone Name</label>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>{t('clones.cloneName')}</label>
             <input className='input-field' type='text' value={editName} onChange={e => setEditName(e.target.value)} />
           </div>
           <div style={{ marginBottom: '16px' }}>
-            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>ElevenLabs Voice ID</label>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>{t('clones.voiceId')}</label>
             <input className='input-field' type='text' value={editVoiceId} onChange={e => setEditVoiceId(e.target.value)} />
           </div>
           <div style={{ marginBottom: '12px' }}>
-            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>Gender</label>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>{t('clones.gender')}</label>
             <div style={{ display: 'flex', gap: '8px' }}>
               {['male', 'female'].map(g => (
                 <button key={g} onClick={() => setEditGender(g)} style={{
@@ -371,13 +373,13 @@ function AiClonesTab() {
                   background: editGender === g ? 'rgba(59,130,246,0.1)' : 'var(--surface-hover)',
                   color: editGender === g ? 'var(--blue)' : 'var(--text-2)',
                   transition: 'all 0.15s',
-                }}>{g === 'male' ? 'Male' : 'Female'}</button>
+                }}>{g === 'male' ? t('clones.male') : t('clones.female')}</button>
               ))}
             </div>
           </div>
           <div style={{ display: 'flex', gap: '8px' }}>
-            <button className='btn-primary' onClick={handleEditSave} disabled={editSaving}>{editSaving ? 'Saving...' : 'Save Changes'}</button>
-            <button className='btn-secondary' onClick={() => setShowEdit(false)}>Cancel</button>
+            <button className='btn-primary' onClick={handleEditSave} disabled={editSaving}>{editSaving ? t('clones.saving') : t('clones.saveChanges')}</button>
+            <button className='btn-secondary' onClick={() => setShowEdit(false)}>{t('common.cancel')}</button>
           </div>
         </div>
       )}
@@ -386,7 +388,7 @@ function AiClonesTab() {
       <div style={{ marginBottom: '24px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
           <h3 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-1)', margin: 0 }}>
-            My Looks ({looks.length})
+            {t('clones.myLooks')} ({looks.length})
           </h3>
           <div style={{ display: 'flex', gap: '8px' }}>
             {/* Generate New Look CTA — opens modal */}
@@ -399,7 +401,7 @@ function AiClonesTab() {
                 <svg viewBox='0 0 24 24' style={{ width: '14px', height: '14px', stroke: 'currentColor', fill: 'none', strokeWidth: 2 }}>
                   <polygon points='13,2 3,14 12,14 11,22 21,10 12,10' />
                 </svg>
-                Generate New Look
+                {t('clones.generateNewLook')}
               </button>
             )}
             {/* Upload Look CTA */}
@@ -409,7 +411,7 @@ function AiClonesTab() {
               disabled={uploading}
             >
               <svg viewBox='0 0 24 24'><line x1='12' y1='5' x2='12' y2='19' /><line x1='5' y1='12' x2='19' y2='12' /></svg>
-              {uploading ? 'Uploading...' : 'Upload Look'}
+              {uploading ? t('clones.uploading') : t('clones.uploadLook')}
             </button>
             <input
               ref={fileInputRef}
@@ -423,15 +425,15 @@ function AiClonesTab() {
 
         {/* ── Looks grid — big icard-style cards like AI Influencers ── */}
         {looksLoading ? (
-          <div className='empty-state'><div className='empty-title'>Loading looks...</div></div>
+          <div className='empty-state'><div className='empty-title'>{t('clones.loadingLooks')}</div></div>
         ) : looks.length === 0 ? (
           <div className='empty-state'>
             <div className='empty-icon'>
               <svg viewBox='0 0 24 24'><circle cx='12' cy='8' r='4' /><path d='M4 20c0-4 3.6-7 8-7s8 3 8 7' /></svg>
             </div>
-            <div className='empty-title'>No looks yet</div>
-            <div className='empty-sub'>Upload a portrait photo of yourself to get started. Use a high-quality, well-lit photo for best results.</div>
-            <button className='btn-primary' onClick={() => fileInputRef.current?.click()}>Upload Your First Look</button>
+            <div className='empty-title'>{t('clones.noLooks')}</div>
+            <div className='empty-sub'>{t('clones.noLooksSub')}</div>
+            <button className='btn-primary' onClick={() => fileInputRef.current?.click()}>{t('clones.uploadFirst')}</button>
           </div>
         ) : (
           <div className='influencers-grid'>
@@ -458,9 +460,9 @@ function AiClonesTab() {
                         borderRadius: '50%',
                         animation: 'spin 1s linear infinite',
                       }} />
-                      <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)' }}>Generating...</span>
+                      <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)' }}>{t('clones.generating')}</span>
                       <span style={{ fontSize: '10px', color: 'var(--text-3)', textAlign: 'center', maxWidth: '120px', lineHeight: 1.3 }}>
-                        This takes 2–3 min. You can leave this page.
+                        {t('clones.generatingTime')}
                       </span>
                       <span className='icard-name'>{look.label}</span>
                     </div>
@@ -474,11 +476,11 @@ function AiClonesTab() {
                       <svg viewBox='0 0 24 24' style={{ width: '32px', height: '32px', stroke: 'var(--red)', fill: 'none', strokeWidth: 1.5 }}>
                         <circle cx='12' cy='12' r='10' /><path d='M15 9l-6 6M9 9l6 6' />
                       </svg>
-                      <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--red)' }}>Generation Failed</span>
+                      <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--red)' }}>{t('clones.generationFailed')}</span>
                       <button
                         onClick={(e) => { e.stopPropagation(); handleDeleteLook(look.id); }}
                         style={{ fontSize: '11px', color: 'var(--text-3)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}
-                      >Remove</button>
+                      >{t('clones.remove')}</button>
                       <span className='icard-name'>{look.label}</span>
                     </div>
                   ) : (
@@ -492,15 +494,15 @@ function AiClonesTab() {
                   )}
                   <div className='icard-info' style={{ paddingBottom: '0' }}>
                     <div className='icard-tags'>
-                      {look.is_base && <span className='icard-tag'>Base</span>}
-                      {isPending && <span className='icard-tag' style={{ background: 'rgba(59,130,246,0.15)', color: 'var(--blue)' }}>Generating</span>}
+                      {look.is_base && <span className='icard-tag'>{t('clones.base')}</span>}
+                      {isPending && <span className='icard-tag' style={{ background: 'rgba(59,130,246,0.15)', color: 'var(--blue)' }}>{t('clones.generatingTag')}</span>}
                     </div>
                   </div>
                   {isReady && (
                     <div style={{ display: 'flex', borderTop: '1px solid var(--border-soft)', marginTop: '12px' }}>
                       <Link href={`/create?creator_mode=ai_clone`} style={{ flex: 1, padding: '12px', textAlign: 'center', fontSize: '13px', fontWeight: 600, color: 'var(--blue)', textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
                         <svg viewBox='0 0 24 24' style={{ width: '14px', height: '14px', fill: 'currentColor' }}><polygon points='5,3 19,12 5,21' /></svg>
-                        Use in Video
+                        {t('clones.useInVideo')}
                       </Link>
                     </div>
                   )}
@@ -527,18 +529,18 @@ function AiClonesTab() {
           }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
               <h3 style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-1)', margin: 0 }}>
-                Generate a New Look with AI
+                {t('clones.genModalTitle')}
               </h3>
               {!generating && (
                 <button onClick={() => setShowGenModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '18px', color: 'var(--text-3)', padding: '4px' }}>✕</button>
               )}
             </div>
             <p style={{ fontSize: '12px', color: 'var(--text-3)', marginBottom: '16px' }}>
-              Describe the outfit and setting you want. The AI will generate a new photo of you in that look, preserving your face identity.
+              {t('clones.genModalDesc')}
             </p>
 
             <div style={{ marginBottom: '12px' }}>
-              <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>Base Look (reference photo)</label>
+              <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>{t('clones.baseLook')}</label>
               <select
                 className='input-field'
                 value={genBaseLookId}
@@ -546,31 +548,31 @@ function AiClonesTab() {
                 style={{ width: '100%' }}
               >
                 {looks.map(l => (
-                  <option key={l.id} value={l.id}>{l.label}{l.is_base ? ' (Base)' : ''}</option>
+                  <option key={l.id} value={l.id}>{l.label}{l.is_base ? ` ${t('clones.baseSuffix')}` : ''}</option>
                 ))}
               </select>
             </div>
 
             <div style={{ marginBottom: '12px' }}>
-              <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>Describe the new look</label>
+              <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>{t('clones.describeLook')}</label>
               <textarea
                 className='input-field'
                 rows={3}
                 value={genPrompt}
                 onChange={e => setGenPrompt(e.target.value)}
-                placeholder='e.g. standing in a modern office, wearing a navy blazer and white shirt, bright natural light'
+                placeholder={t('clones.describePlaceholder')}
                 style={{ resize: 'vertical', fontSize: '13px' }}
               />
             </div>
 
             <div style={{ marginBottom: '16px' }}>
-              <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>Label for this look</label>
+              <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>{t('clones.lookLabel')}</label>
               <input
                 className='input-field'
                 type='text'
                 value={genLabel}
                 onChange={e => setGenLabel(e.target.value)}
-                placeholder='e.g. Office Look'
+                placeholder={t('clones.lookLabelPlaceholder')}
               />
             </div>
 
@@ -589,9 +591,9 @@ function AiClonesTab() {
               {generating ? (
                 <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
                   <span style={{ width: '14px', height: '14px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: 'white', borderRadius: '50%', animation: 'spin 1s linear infinite', display: 'inline-block' }} />
-                  Submitting...
+                  {t('clones.submitting')}
                 </span>
-              ) : 'Generate Look with AI'}
+              ) : t('clones.generateWithAi')}
             </button>
           </div>
         </div>
@@ -602,6 +604,7 @@ function AiClonesTab() {
 
 
 export default function InfluencersPage() {
+  const { t } = useTranslation();
   const [influencers, setInfluencers] = useState<Influencer[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -645,8 +648,8 @@ export default function InfluencersPage() {
   return (
     <div className='content-area'>
       <div className='page-header'>
-        <h1>Influencers</h1>
-        <p>Manage your AI Influencers and your personal AI Clones.</p>
+        <h1>{t('influencers.title')}</h1>
+        <p>{t('influencers.subtitle')}</p>
       </div>
 
       {/* Tab bar — same style as products/page.tsx */}
@@ -659,7 +662,7 @@ export default function InfluencersPage() {
             color: activeTab === 'influencers' ? 'var(--blue)' : 'var(--text-3)', transition: 'all 0.15s',
           }}
         >
-          AI Influencers
+          {t('influencers.influencersTab')}
         </button>
         <button
           onClick={() => setActiveTab('ai_clones')}
@@ -669,7 +672,7 @@ export default function InfluencersPage() {
             color: activeTab === 'ai_clones' ? 'var(--blue)' : 'var(--text-3)', transition: 'all 0.15s',
           }}
         >
-          My AI Clones
+          {t('influencers.clonesTab')}
         </button>
       </div>
 
@@ -679,33 +682,33 @@ export default function InfluencersPage() {
             <div className='asset-toolbar-left'>
               <div className='search-box'>
                 <svg viewBox='0 0 24 24'><circle cx='11' cy='11' r='8' /><line x1='21' y1='21' x2='16.65' y2='16.65' /></svg>
-                <input type='text' placeholder='Search influencers...' value={search} onChange={e => setSearch(e.target.value)} />
+                <input type='text' placeholder={t('common.search') + '...'} value={search} onChange={e => setSearch(e.target.value)} />
               </div>
               <Select
                 className='filter-select'
                 value={genderFilter}
                 onChange={setGenderFilter}
                 options={[
-                  { value: '', label: 'All Types' },
-                  { value: 'Female', label: 'Female' },
-                  { value: 'Male', label: 'Male' }
+                  { value: '', label: t('influencers.allTypes') },
+                  { value: 'Female', label: t('influencers.female') },
+                  { value: 'Male', label: t('influencers.male') }
                 ]}
               />
             </div>
             <button className='btn-create' onClick={() => { setEditTarget(null); setModalOpen(true); }}>
               <svg viewBox='0 0 24 24'><line x1='12' y1='5' x2='12' y2='19' /><line x1='5' y1='12' x2='19' y2='12' /></svg>
-              New Influencer
+              {t('influencers.create')}
             </button>
           </div>
 
           {loading ? (
-            <div className='empty-state'><div className='empty-title'>Loading influencers...</div></div>
+            <div className='empty-state'><div className='empty-title'>{t('common.loading')}</div></div>
           ) : filtered.length === 0 ? (
             <div className='empty-state'>
               <div className='empty-icon'><svg viewBox='0 0 24 24'><circle cx='12' cy='8' r='4' /><path d='M4 20c0-4 3.6-7 8-7s8 3 8 7' /></svg></div>
-              <div className='empty-title'>No influencers found</div>
-              <div className='empty-sub'>Add your first AI influencer to get started.</div>
-              <button className='btn-primary' onClick={() => { setEditTarget(null); setModalOpen(true); }}>Add Influencer</button>
+              <div className='empty-title'>{t('influencers.noInfluencers')}</div>
+              <div className='empty-sub'>{t('influencers.addFirst')}</div>
+              <button className='btn-primary' onClick={() => { setEditTarget(null); setModalOpen(true); }}>{t('influencers.addInfluencer')}</button>
             </div>
           ) : (
             <>
@@ -727,11 +730,11 @@ export default function InfluencersPage() {
                   <div style={{ display: 'flex', borderTop: '1px solid var(--border-soft)', marginTop: '12px' }}>
                     <Link href={`/create?influencer_id=${inf.id}`} style={{ flex: 1, padding: '12px', textAlign: 'center', fontSize: '13px', fontWeight: 600, color: 'var(--blue)', textDecoration: 'none', borderRight: '1px solid var(--border-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }} className='hover:bg-[rgba(51,122,255,0.05)] transition-colors'>
                       <svg viewBox='0 0 24 24' style={{ width: '14px', height: '14px', fill: 'currentColor' }}><polygon points='5,3 19,12 5,21' /></svg>
-                      Use Video
+                      {t('influencers.useVideo')}
                     </Link>
                     <button onClick={() => { setEditTarget(inf); setModalOpen(true); }} style={{ flex: 1, padding: '12px', textAlign: 'center', fontSize: '13px', fontWeight: 600, color: 'var(--text-2)', textDecoration: 'none', border: 'none', background: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }} className='hover:bg-[rgba(0,0,0,0.02)] transition-colors'>
                       <svg viewBox='0 0 24 24' style={{ width: '14px', height: '14px', stroke: 'currentColor', fill: 'none', strokeWidth: '2' }}><path d='M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z' /></svg>
-                      Edit
+                      {t('common.edit')}
                     </button>
                   </div>
                 </div>

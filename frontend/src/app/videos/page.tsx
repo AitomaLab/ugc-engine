@@ -253,7 +253,7 @@ export default function VideosPage() {
                                                 const elapsed = Math.round((Date.now() - new Date(job.created_at).getTime()) / 60000);
                                                 const est = (job as any).product_type === 'digital' ? 5 : 7;
                                                 const remaining = Math.max(est - elapsed, 0);
-                                                return <span style={{ fontSize: '11px', color: 'white', opacity: 0.6 }}>~{remaining > 0 ? `${remaining}m left` : 'finishing...'}</span>;
+                                                return <span style={{ fontSize: '11px', color: 'white', opacity: 0.6 }}>{remaining > 0 ? (t('videos.timeLeft') || '~{min}m left').replace('{min}', String(remaining)) : t('videos.finishing')}</span>;
                                             })()}
                                         </div>
                                     ) : null}

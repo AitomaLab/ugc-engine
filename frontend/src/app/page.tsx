@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { apiFetch } from "@/lib/utils";
 import { useApp } from "@/providers/AppProvider";
+import { useTranslation } from "@/lib/i18n";
 import Link from "next/link";
 
 // ---------------------------------------------------------------------------
@@ -78,6 +79,7 @@ function groupByCampaign(jobs: Job[]): CampaignGroup[] {
 // ---------------------------------------------------------------------------
 
 export default function StudioPage() {
+  const { t } = useTranslation();
   const [stats, setStats] = useState<Stats | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [influencers, setInfluencers] = useState<Influencer[]>([]);
@@ -162,7 +164,7 @@ export default function StudioPage() {
     return (
       <div className="content-area">
         <div className="empty-state">
-          <div className="empty-title">Initializing Studio...</div>
+          <div className="empty-title">{t('dashboard.initStudio')}</div>
         </div>
       </div>
     );
@@ -172,45 +174,45 @@ export default function StudioPage() {
     <div className="content-area">
       <div className="page-header">
         <h1 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          Good morning, <span style={{ color: 'var(--blue)' }}>{userName}</span>
+          {t('dashboard.welcome')}, <span style={{ color: 'var(--blue)' }}>{userName}</span>
         </h1>
-        <p>{welcome.subtitle}</p>
+        <p>{t('dashboard.subtitle')}</p>
       </div>
 
       {/* Stats Row */}
       <div className="stats-row">
         <div className="stat-card">
-          <div className="stat-label">Total Videos</div>
+          <div className="stat-label">{t('dashboard.totalVideos')}</div>
           <div className="stat-value">{stats?.total_jobs ?? 0}</div>
-          <div className="stat-sub">All time</div>
-          {(stats?.total_jobs ?? 0) > 0 && <div className="stat-badge up">+{stats!.total_jobs} generated</div>}
+          <div className="stat-sub">{t('common.allTime')}</div>
+          {(stats?.total_jobs ?? 0) > 0 && <div className="stat-badge up">+{stats!.total_jobs} {t('common.generated')}</div>}
         </div>
         <div className="stat-card">
-          <div className="stat-label">Active Campaigns</div>
+          <div className="stat-label">{t('dashboard.activeJobs')}</div>
           <div className="stat-value">{stats?.processing ?? 0}</div>
-          <div className="stat-sub">Currently generating</div>
-          {(stats?.pending ?? 0) > 0 && <div className="stat-badge blue">{stats!.pending} in queue</div>}
+          <div className="stat-sub">{t('common.currentlyGenerating')}</div>
+          {(stats?.pending ?? 0) > 0 && <div className="stat-badge blue">{stats!.pending} {t('common.inQueue')}</div>}
         </div>
         <div className="stat-card">
-          <div className="stat-label">Success Rate</div>
+          <div className="stat-label">{t('dashboard.successRate')}</div>
           <div className="stat-value">{successRate}%</div>
-          <div className="stat-sub">Last 30 days</div>
-          <div className="stat-badge up">{stats?.success ?? 0} completed</div>
+          <div className="stat-sub">{t('dashboard.last30Days')}</div>
+          <div className="stat-badge up">{stats?.success ?? 0} {t('dashboard.completed')}</div>
         </div>
         <div className="stat-card">
-          <div className="stat-label">AI Influencers</div>
+          <div className="stat-label">{t('influencers.title')}</div>
           <div className="stat-value">{stats?.influencers ?? 0}</div>
-          <div className="stat-sub">Active profiles</div>
+          <div className="stat-sub">{t('dashboard.activeProfiles')}</div>
         </div>
         <div className="stat-card">
-          <div className="stat-label">Scripts</div>
+          <div className="stat-label">{t('nav.scripts')}</div>
           <div className="stat-value">{stats?.scripts ?? 0}</div>
-          <div className="stat-sub">In library</div>
+          <div className="stat-sub">{t('dashboard.inLibrary')}</div>
         </div>
         <div className="stat-card">
-          <div className="stat-label">Projects</div>
+          <div className="stat-label">{t('nav.projects')}</div>
           <div className="stat-value">{stats?.projects ?? 0}</div>
-          <div className="stat-sub">Active</div>
+          <div className="stat-sub">{t('dashboard.active')}</div>
         </div>
       </div>
 
@@ -218,14 +220,14 @@ export default function StudioPage() {
       {campaigns.length > 0 ? (
         <div className="tracker-card">
           <div className="section-title">
-            Campaign Tracker
-            <Link href="/activity">View all</Link>
+            {t('dashboard.campaignTracker')}
+            <Link href="/activity">{t('common.viewAll')}</Link>
           </div>
           <div className="tracker-scroll">
             {campaigns.slice(0, 8).map(campaign => {
               const pct = campaign.total > 0 ? Math.round((campaign.success / campaign.total) * 100) : 0;
               const statusClass = campaign.processing > 0 ? 'active' : campaign.pending > 0 ? 'pending' : campaign.failed > 0 ? 'failed' : 'done';
-              const statusLabel = campaign.processing > 0 ? 'Processing' : campaign.pending > 0 ? 'Queued' : campaign.failed > 0 ? 'Failed' : 'Complete';
+              const statusLabel = campaign.processing > 0 ? t('common.processing') : campaign.pending > 0 ? t('common.queued') : campaign.failed > 0 ? t('common.failed') : t('common.completed');
               return (
                 <div key={campaign.name} className="campaign-row">
                   <div className="campaign-thumb" style={{ background: 'var(--blue-light)' }}>
@@ -233,13 +235,13 @@ export default function StudioPage() {
                   </div>
                   <div className="campaign-info">
                     <div className="campaign-name">{campaign.name}</div>
-                    <div className="campaign-meta">{campaign.total} videos · {campaign.success} completed</div>
+                    <div className="campaign-meta">{campaign.total} {t('dashboard.videosLabel')} · {campaign.success} {t('dashboard.completed')}</div>
                   </div>
                   <div className="campaign-progress">
                     <div className="prog-bar">
                       <div className="prog-fill" style={{ width: `${pct}%` }} />
                     </div>
-                    <div className="prog-label">{campaign.success}/{campaign.total} done</div>
+                    <div className="prog-label">{campaign.success}/{campaign.total} {t('dashboard.done')}</div>
                   </div>
                   <div className={`status-pill ${statusClass}`}>{statusLabel}</div>
                 </div>
@@ -249,15 +251,15 @@ export default function StudioPage() {
         </div>
       ) : (
         <div className="tracker-card">
-          <div className="section-title">Campaign Tracker</div>
+          <div className="section-title">{t('dashboard.campaignTracker')}</div>
           <div className="empty-state" style={{ padding: '32px 20px' }}>
             <div className="empty-icon">
               <svg viewBox="0 0 24 24"><polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" /></svg>
             </div>
-            <div className="empty-title">No campaigns yet</div>
-            <div className="empty-sub">Launch your first video campaign to track progress here.</div>
+            <div className="empty-title">{t('dashboard.noCampaigns')}</div>
+            <div className="empty-sub">{t('dashboard.firstCampaign')}</div>
             <Link href="/create" style={{ display: 'inline-block', marginTop: '12px', padding: '8px 20px', background: 'var(--blue)', color: 'white', borderRadius: '8px', fontSize: '13px', fontWeight: 600, textDecoration: 'none' }}>
-              + Create Your First Video
+              {t('dashboard.createFirst')}
             </Link>
           </div>
         </div>
@@ -267,8 +269,8 @@ export default function StudioPage() {
       {recentVideos.length > 0 ? (
         <>
           <div className="section-title">
-            Recent Videos
-            <Link href="/library">View all</Link>
+            {t('dashboard.recentVideos')}
+            <Link href="/library">{t('common.viewAll')}</Link>
           </div>
           <div className="video-grid">
             {recentVideos.map((job, i) => (
@@ -304,15 +306,15 @@ export default function StudioPage() {
         </>
       ) : (
         <>
-          <div className="section-title">Recent Videos</div>
+          <div className="section-title">{t('dashboard.recentVideos')}</div>
           <div className="empty-state" style={{ padding: '32px 20px', background: 'white', borderRadius: '12px', border: '1px solid var(--border)' }}>
             <div className="empty-icon">
               <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18" /><line x1="7" y1="2" x2="7" y2="22" /><line x1="17" y1="2" x2="17" y2="22" /><line x1="2" y1="12" x2="22" y2="12" /><line x1="2" y1="7" x2="7" y2="7" /><line x1="2" y1="17" x2="7" y2="17" /><line x1="17" y1="7" x2="22" y2="7" /><line x1="17" y1="17" x2="22" y2="17" /></svg>
             </div>
-            <div className="empty-title">No videos yet</div>
-            <div className="empty-sub">Your generated videos will appear here. Create your first one!</div>
+            <div className="empty-title">{t('dashboard.noVideosYet')}</div>
+            <div className="empty-sub">{t('dashboard.noVideosSub')}</div>
             <Link href="/create" style={{ display: 'inline-block', marginTop: '12px', padding: '8px 20px', background: 'var(--blue)', color: 'white', borderRadius: '8px', fontSize: '13px', fontWeight: 600, textDecoration: 'none' }}>
-              + Create Your First Video
+              {t('dashboard.createFirst')}
             </Link>
           </div>
         </>

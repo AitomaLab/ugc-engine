@@ -4,6 +4,7 @@ import { createContext, useContext, useState, useEffect, useCallback, ReactNode 
 import { supabase } from '@/lib/supabaseClient';
 import type { Session } from '@supabase/supabase-js';
 import type { UserProfile, Subscription, CreditWallet, Project } from '@/lib/saas-types';
+import { I18nProvider } from '@/lib/i18n';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -162,7 +163,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     getAuthHeaders,
   };
 
-  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
+  return (
+    <AppContext.Provider value={value}>
+      <I18nProvider>{children}</I18nProvider>
+    </AppContext.Provider>
+  );
 }
 
 export function useApp() {

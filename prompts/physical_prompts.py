@@ -15,6 +15,10 @@ def build_scene_1_veo_prompt(ctx, script_part, product_desc="product", is_last_s
     accent_str = ctx.get('accent', 'neutral English')
     tone_str = ctx.get('tone', 'Enthusiastic').lower()
     setting_str = ctx.get('setting', 'natural environment matching the background visible in the reference image')
+    # i18n: override accent for Spanish videos
+    video_language = ctx.get('video_language', 'en')
+    if video_language == 'es':
+        accent_str = 'native Spanish accent, speaking entirely in Spanish'
 
     dialogue = sanitize_dialogue(script_part) if script_part else "oh my god you guys have to see this"
 
@@ -41,6 +45,9 @@ def build_scene_2_veo_prompt(ctx, script_part, product_desc="product", is_last_s
     accent_str = ctx.get('accent', 'neutral English')
     tone_str = ctx.get('tone', 'Enthusiastic').lower()
     setting_str = ctx.get('setting', 'natural environment matching the background visible in the reference image')
+    video_language = ctx.get('video_language', 'en')
+    if video_language == 'es':
+        accent_str = 'native Spanish accent, speaking entirely in Spanish'
 
     dialogue = sanitize_dialogue(script_part) if script_part else "the quality on this is honestly insane"
 
@@ -68,6 +75,9 @@ def build_scene_3_veo_prompt(ctx, script_part, product_desc="product", is_last_s
     accent_str = ctx.get('accent', 'neutral English')
     tone_str = ctx.get('tone', 'Enthusiastic').lower()
     setting_str = ctx.get('setting', 'natural environment matching the background visible in the reference image')
+    video_language = ctx.get('video_language', 'en')
+    if video_language == 'es':
+        accent_str = 'native Spanish accent, speaking entirely in Spanish'
 
     dialogue = sanitize_dialogue(script_part) if script_part else "and the texture is seriously so good"
 
@@ -95,6 +105,9 @@ def build_scene_4_veo_prompt(ctx, script_part, product_desc="product", is_last_s
     accent_str = ctx.get('accent', 'neutral English')
     tone_str = ctx.get('tone', 'Enthusiastic').lower()
     setting_str = ctx.get('setting', 'natural environment matching the background visible in the reference image')
+    video_language = ctx.get('video_language', 'en')
+    if video_language == 'es':
+        accent_str = 'native Spanish accent, speaking entirely in Spanish'
 
     dialogue = sanitize_dialogue(script_part) if script_part else "seriously you need to try this, link in my bio"
 

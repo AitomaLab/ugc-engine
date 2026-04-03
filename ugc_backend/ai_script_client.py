@@ -163,7 +163,7 @@ class AIScriptClient:
     # Two-Step Persona Pipeline (Private Methods)
     # ------------------------------------------------------------------
 
-    def _generate_raw_script(self, product_analysis: Dict[str, Any], influencer_data: Dict[str, Any], duration: int) -> str:
+    def _generate_raw_script(self, product_analysis: Dict[str, Any], influencer_data: Dict[str, Any], duration: int, video_language: str = "en") -> str:
         """Step 1: Generate a persona-driven raw script using influencer context."""
         brand = product_analysis.get("brand_name") or "the product"
         visuals = product_analysis.get("visual_description", "A product.")
@@ -189,6 +189,10 @@ class AIScriptClient:
             .replace("{{visual_description}}", str(visuals))
             .replace("{{color_scheme}}", color_str)
         )
+
+        # i18n: Inject language directive
+        if video_language == "es":
+            system_prompt += "\n\nLANGUAGE OVERRIDE: You MUST write the ENTIRE script in Spanish. Use natural Latin American or Spain Spanish. All dialogue must be in Spanish."
 
         response = self.client.chat.completions.create(
             model="gpt-4o",
@@ -373,6 +377,7 @@ Generate the {num_parts}-part UGC script now."""
         product_analysis: Optional[Dict[str, Any]] = None,
         website_content: Optional[str] = None,
         duration: int = 15,
+        video_language: str = "en",
     ) -> str:
         """
         Generates a UGC script for a digital product (app/SaaS).
@@ -485,6 +490,10 @@ Part 1 (Hook & CTA combined): Creates immediate curiosity and includes a quick c
 - Use specific details from the website content — vague scripts do not convert
 
 {format_rules}"""
+
+        # i18n: Inject language directive
+        if video_language == "es":
+            system_prompt += "\n\nLANGUAGE OVERRIDE: You MUST write the ENTIRE script in Spanish. Use natural Latin American or Spain Spanish. All dialogue and spoken words must be in Spanish."
 
         user_prompt = f"""**Product Name:** {product_name}
 
@@ -616,6 +625,7 @@ Return ONLY the JSON object, no explanation."""
         product_data: Dict[str, Any],
         creator_persona: str,
         script_structure: str,
+        video_language: str = "en",
     ) -> list:
         """Call 2: Hook Generation. Returns 4 diverse opening lines aligned to the methodology."""
         product_name = product_data.get("brand_name") or product_data.get("name", "the product")
@@ -685,7 +695,9 @@ Rules:
 - No emojis, no hashtags
 
 Return your answer as a valid JSON array of 4 strings.
-Return ONLY the JSON array, no explanation."""
+Return ONLY the JSON array, no explanation.
+
+{('LANGUAGE OVERRIDE: ALL 4 hooks MUST be written entirely in Spanish. Use natural Latin American or Spain Spanish.' if video_language == 'es' else '')}"""
 
         try:
             response = self.client.chat.completions.create(
@@ -719,6 +731,7 @@ Return ONLY the JSON array, no explanation."""
         script_structure: str,
         hook: str,
         video_length: int,
+        video_language: str = "en",
     ) -> Dict[str, Any]:
         """Call 3: Full Script Generation. Returns the complete script_json object."""
         product_name = product_data.get("brand_name") or product_data.get("name", "the product")
@@ -814,6 +827,8 @@ LANGUAGE RULES (non-negotiable):
 - Use specific quantified benefits: saved me 45 minutes, cost me 12 dollars, three taps
 - NEVER use these words or phrases: {self.FORBIDDEN_PHRASES}
 
+{'LANGUAGE OVERRIDE: The ENTIRE script (all scene dialogues, the hook, and the name) MUST be written in Spanish. Use natural Latin American or Spain Spanish. Do NOT mix languages.' if video_language == 'es' else ''}
+
 Return your answer as valid JSON matching this EXACT schema:
 {{
   "name": "A short descriptive name for this script",
@@ -894,6 +909,7 @@ Return ONLY the JSON object, no explanation."""
         video_length: int = 15,
         methodology: Optional[str] = None,
         context: Optional[str] = None,
+        video_language: str = "en",
     ) -> Dict[str, Any]:
         """Public entry point for the v2 three-call prompt chain.
 
@@ -922,10 +938,13 @@ Return ONLY the JSON object, no explanation."""
         strategy = self._select_strategy(product_data, influencer_data, methodology)
         script_structure = strategy.get("script_structure", methodology or "Hook/Benefit/CTA")
         creator_persona = strategy.get("creator_persona", "A friendly content creator.")
-        print(f"      [AIScript v2] Strategy: {script_structure} | Persona: {creator_persona[:60]}...")
+        # i18n: Inject language into persona so all downstream calls inherit it
+        if video_language == "es":
+            creator_persona += " This creator speaks fluent Spanish and MUST write entirely in Spanish."
+        print(f"      [AIScript v2] Strategy: {script_structure} | Persona: {creator_persona[:60]}... | Lang: {video_language}")
 
         print("      [AIScript v2] Call 2/3: Generating hooks...")
-        hooks = self._generate_hooks(product_data, creator_persona, script_structure)
+        hooks = self._generate_hooks(product_data, creator_persona, script_structure, video_language=video_language)
         # Randomly select from generated hooks for diversity
         import random
         selected_hook = random.choice(hooks) if hooks else "Check this out."
@@ -936,6 +955,7 @@ Return ONLY the JSON object, no explanation."""
             product_data, influencer_data,
             creator_persona, script_structure,
             selected_hook, video_length,
+            video_language=video_language,
         )
         print(f"      [AIScript v2] Script generated: {script_json.get('name', 'unnamed')}")
 

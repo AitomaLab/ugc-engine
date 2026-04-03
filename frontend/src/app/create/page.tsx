@@ -865,28 +865,28 @@ function CreateContent() {
                 <div className="config-section">
                     <div className="config-step">
                         <div className={`step-num ${productId ? 'done' : ''}`}>2</div>
-                        <div className="step-text">Video Count</div>
+                        <div className="step-text">{t('create.videoCount')}</div>
                     </div>
                     <div className="video-count-row">
                         <button className="count-btn" onClick={() => setQuantity(Math.max(1, quantity - 1))}>-</button>
                         <div className="count-display">{quantity}</div>
                         <button className="count-btn" onClick={() => setQuantity(Math.min(100, quantity + 1))}>+</button>
                         <div className={`count-label ${isCampaignMode ? 'campaign' : ''}`}>
-                            {isCampaignMode ? 'Campaign' : 'Single'}
+                            {isCampaignMode ? t('create.campaignMode') : t('create.single')}
                         </div>
                     </div>
                     <div className={`count-hint ${isCampaignMode ? 'campaign' : ''}`}>
-                        {isCampaignMode ? `Campaign mode: ${quantity} videos` : '2+ to enable campaign mode'}
+                        {isCampaignMode ? (t('create.campaignModeHint') || 'Campaign mode: {count} videos').replace('{count}', String(quantity)) : t('create.campaignHint')}
                     </div>
                 </div>
 
                 {/* Campaign Mode */}
                 {isCampaignMode && (
                     <div className="config-section">
-                        <div className="config-label">Campaign Name</div>
-                        <input type="text" className="input-field" value={campaignName} onChange={e => setCampaignName(e.target.value)} placeholder="e.g., Spring Promo" />
+                        <div className="config-label">{t('create.campaignName')}</div>
+                        <input type="text" className="input-field" value={campaignName} onChange={e => setCampaignName(e.target.value)} placeholder={t('create.campaignPlaceholder')} />
                         <div style={{ marginTop: '10px' }}>
-                            <div className="config-label">Content Strategy</div>
+                            <div className="config-label">{t('create.contentStrategy')}</div>
                             <div className="pill-group">
                                 {CONTENT_STRATEGIES.map(s => (
                                     <button key={s.value} className={`btn-secondary ${contentStrategy === s.value ? 'active' : ''}`} onClick={() => setContentStrategy(s.value)}>
@@ -916,7 +916,7 @@ function CreateContent() {
 
                 {/* Duration */}
                 <div className="config-section">
-                    <div className="config-label">Duration</div>
+                    <div className="config-label">{t('create.duration')}</div>
                     <div className="pill-group">
                         {[15, 30].map(d => (
                             <button key={d} className={`btn-secondary ${duration === d ? 'active' : ''}`} onClick={() => setDuration(d)}>
@@ -930,7 +930,7 @@ function CreateContent() {
 <div className="config-section">
     <div className="config-step">
         <div className={`step-num ${(customScript || generatedScript || selectedScript) ? 'done' : ''}`}>3</div>
-        <div className="step-text">Script</div>
+        <div className="step-text">{t('create.scriptSection')}</div>
     </div>
     <div style={{ display: 'flex', flexWrap: 'nowrap', gap: '6px', marginBottom: '10px' }}>
         <button
@@ -938,14 +938,14 @@ function CreateContent() {
             onClick={() => { setScriptTab('ai'); setScriptSource('custom'); }}
             style={{ whiteSpace: 'nowrap', padding: '6px 14px', fontSize: '12px' }}
         >
-            AI Generated
+            {t('create.aiGenerated')}
         </button>
         <button
             className={`btn-secondary ${scriptTab === 'library' ? 'active' : ''}`}
             onClick={() => setScriptTab('library')}
             style={{ whiteSpace: 'nowrap', padding: '6px 14px', fontSize: '12px' }}
         >
-            From Library ({(() => {
+            {t('create.fromLibrary')} ({(() => {
                 const sp = products.find(p => p.id === productId);
                 const sc = sp?.category || '';
                 return scripts.filter(s => {
@@ -963,7 +963,7 @@ function CreateContent() {
         <div>
             {/* Script Style — themed dropdown */}
             <div style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-3)', marginBottom: '6px' }}>
-                Script Style
+                {t('create.scriptStyle')}
             </div>
             <Select
                 value={scriptMethodology}
@@ -1012,18 +1012,18 @@ function CreateContent() {
                     disabled={isGeneratingScript || !productId}
                     style={{ fontSize: '11px', color: 'var(--blue)', fontWeight: 600, cursor: 'pointer', background: 'none', border: 'none', opacity: isGeneratingScript ? 0.5 : 1 }}
                 >
-                    {isGeneratingScript ? 'Generating...' : 'Regenerate'}
+                    {isGeneratingScript ? t('create.generating') : t('create.regenerateScript')}
                 </button>
             </div>
 
             <textarea
                 className="config-textarea"
                 rows={6}
-                value={isGeneratingScript ? 'Generating compelling script...' : (scriptSource === 'custom' ? customScript : generatedScript)}
+                value={isGeneratingScript ? t('create.generatingScript') : (scriptSource === 'custom' ? customScript : generatedScript)}
                 onChange={e => { setCustomScript(e.target.value); setScriptSource('custom'); }}
                 placeholder={productType === 'digital'
-                    ? 'AI will generate a script based on your product and website...'
-                    : 'Select a product to generate a script...'}
+                    ? t('create.scriptPlaceholder')
+                    : t('create.scriptPlaceholderPhysical')}
                 disabled={isGeneratingScript}
                 style={{ fontSize: '13px', lineHeight: '1.5' }}
             />
@@ -1096,39 +1096,12 @@ function CreateContent() {
                 {/* VIDEO LANGUAGE */}
                 <div className="config-section">
                     <div className="config-label">{t('create.videoLanguage')}</div>
-                    <div style={{ display: 'flex', gap: '0', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border)' }}>
-                        <button
-                            onClick={() => setVideoLanguage('en')}
-                            style={{
-                                flex: 1,
-                                padding: '8px 16px',
-                                border: 'none',
-                                cursor: 'pointer',
-                                fontSize: '13px',
-                                fontWeight: 600,
-                                background: videoLanguage === 'en' ? 'var(--primary)' : 'var(--surface)',
-                                color: videoLanguage === 'en' ? '#fff' : 'var(--text-secondary)',
-                                transition: 'all 0.15s ease',
-                            }}
-                        >
-                            {t('create.languageEnglish')}
+                    <div className="pill-group">
+                        <button className={`btn-secondary ${videoLanguage === 'en' ? 'active' : ''}`} onClick={() => setVideoLanguage('en')} style={{ flex: 1, textAlign: 'center' }}>
+                            English
                         </button>
-                        <button
-                            onClick={() => setVideoLanguage('es')}
-                            style={{
-                                flex: 1,
-                                padding: '8px 16px',
-                                border: 'none',
-                                borderLeft: '1px solid var(--border)',
-                                cursor: 'pointer',
-                                fontSize: '13px',
-                                fontWeight: 600,
-                                background: videoLanguage === 'es' ? 'var(--primary)' : 'var(--surface)',
-                                color: videoLanguage === 'es' ? '#fff' : 'var(--text-secondary)',
-                                transition: 'all 0.15s ease',
-                            }}
-                        >
-                            {t('create.languageSpanish')}
+                        <button className={`btn-secondary ${videoLanguage === 'es' ? 'active' : ''}`} onClick={() => setVideoLanguage('es')} style={{ flex: 1, textAlign: 'center' }}>
+                            Spanish
                         </button>
                     </div>
                 </div>
@@ -1136,7 +1109,7 @@ function CreateContent() {
                 {/* SUBTITLE CONFIGURATION */}
                 <div className="config-section">
                     <div className="config-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <span>Subtitles</span>
+                        <span>{t('create.subtitles')}</span>
                         <button
                             onClick={() => setSubtitlesEnabled(!subtitlesEnabled)}
                             style={{
@@ -1169,7 +1142,7 @@ function CreateContent() {
 
                             {/* Style Selector */}
                             <div>
-                                <div style={{ marginBottom: '8px', fontSize: '12px', color: '#6B7280' }}>Style</div>
+                                <div style={{ marginBottom: '8px', fontSize: '12px', color: '#6B7280' }}>{t('create.subtitleStyle')}</div>
 <div style={{ display: 'flex', flexWrap: 'nowrap', gap: '8px' }}>
     {[
         { value: 'hormozi', label: 'Hormozi' },
@@ -1190,12 +1163,12 @@ function CreateContent() {
 
                             {/* Placement Selector */}
                             <div>
-                                <div style={{ marginBottom: '8px', fontSize: '12px', color: '#6B7280' }}>Placement</div>
+                                <div style={{ marginBottom: '8px', fontSize: '12px', color: '#6B7280' }}>{t('create.subtitlePlacement')}</div>
                                 <div className="pill-group">
                                     {[
-                                        { value: 'top', label: 'Top' },
-                                        { value: 'middle', label: 'Middle' },
-                                        { value: 'bottom', label: 'Bottom' },
+                                        { value: 'top', label: t('create.top') },
+                                        { value: 'middle', label: t('create.middle') },
+                                        { value: 'bottom', label: t('create.bottom') },
                                     ].map(p => (
                                         <button
                                             key={p.value}
@@ -1210,7 +1183,7 @@ function CreateContent() {
 
                             {/* Live Preview */}
                             <div>
-                                <div style={{ marginBottom: '8px', fontSize: '12px', color: '#6B7280' }}>Preview</div>
+                                <div style={{ marginBottom: '8px', fontSize: '12px', color: '#6B7280' }}>{t('create.subtitlePreview')}</div>
                                 <div style={{
                                     position: 'relative' as const,
                                     width: '100%',
@@ -1288,15 +1261,15 @@ function CreateContent() {
                 <div className="config-section">
                     <button onClick={() => setShowAdvanced(!showAdvanced)} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 500, color: 'var(--text-3)', cursor: 'pointer', background: 'none', border: 'none' }}>
                         <svg style={{ width: 12, height: 12, stroke: 'currentColor', fill: 'none', strokeWidth: 2, transform: showAdvanced ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" /></svg>
-                        Advanced Settings
+                        {t('create.advancedSettings')}
                     </button>
                     {showAdvanced && (
                         <div style={{ marginTop: '10px' }}>
-                            <div className="config-label">AI Hook</div>
+                            <div className="config-label">{t('create.aiHook')}</div>
                             <div style={{ display: 'flex', gap: '6px' }}>
-                                <input type="text" className="input-field" value={hook} onChange={e => setHook(e.target.value)} placeholder="Optional opening hook..." style={{ flex: 1 }} />
+                                <input type="text" className="input-field" value={hook} onChange={e => setHook(e.target.value)} placeholder={t('create.hookPlaceholder')} style={{ flex: 1 }} />
                                 <button className="btn-secondary" style={{ fontSize: '11px', whiteSpace: 'nowrap', padding: '6px 12px' }} onClick={generateHook} disabled={!selectedInfluencer || hookLoading}>
-                                    {hookLoading ? '...' : 'Generate'}
+                                    {hookLoading ? '...' : t('create.generate')}
                                 </button>
                             </div>
                         </div>
@@ -1313,9 +1286,9 @@ function CreateContent() {
                     const creditCost = creditCosts[costKey] || 0;
                     return creditCost > 0 ? (
                         <div className="gen-summary" style={{ marginBottom: '8px' }}>
-                            <div className="gen-summary-row"><span>Per Video</span><span style={{ color: 'var(--blue)', fontWeight: 700 }}>{creditCost} credits</span></div>
+                            <div className="gen-summary-row"><span>{t('create.perVideo')}</span><span style={{ color: 'var(--blue)', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '3px' }}>{creditCost} <img src="/star-blue.png" alt="" style={{ height: '14px', width: '14px' }} /></span></div>
                             {isCampaignMode && (
-                                <div className="gen-summary-row" style={{ marginTop: '2px' }}><span>Campaign ({quantity})</span><span style={{ color: 'var(--blue)', fontWeight: 700 }}>{creditCost * quantity} credits</span></div>
+                                <div className="gen-summary-row" style={{ marginTop: '2px' }}><span>{t('create.campaign')} ({quantity})</span><span style={{ color: 'var(--blue)', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '3px' }}>{creditCost * quantity} <img src="/star-blue.png" alt="" style={{ height: '14px', width: '14px' }} /></span></div>
                             )}
                         </div>
                     ) : null;
@@ -1327,7 +1300,7 @@ function CreateContent() {
                     {creatorMode === 'ai_clone'
                         ? (isSubmittingClone ? (t('create.generating') || 'Launching...') : (t('create.submitClone') || 'Generate AI Clone Video'))
                         : (submitting ? (t('create.generating') || 'Launching...') : isCampaignMode ? (t('create.submitBulk') || 'Launch Campaign') : (t('create.submit') || 'Generate Video'))}
-                    {creatorMode === 'influencer' && creditCosts[`${productType}_${duration}s`] && <span className="credit-cost">{isCampaignMode ? creditCosts[`${productType}_${duration}s`] * quantity : creditCosts[`${productType}_${duration}s`]} cr</span>}
+                    {creatorMode === 'influencer' && creditCosts[`${productType}_${duration}s`] && <span className="credit-cost" style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}>{isCampaignMode ? creditCosts[`${productType}_${duration}s`] * quantity : creditCosts[`${productType}_${duration}s`]} <img src="/star-white.png" alt="" style={{ height: '12px', width: '12px' }} /></span>}
                 </button>
                 </div>
             </div>

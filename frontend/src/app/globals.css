@@ -1099,12 +1099,19 @@ a {
   background: rgba(255, 255, 255, 0.82);
   backdrop-filter: blur(20px);
   border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
+  padding: 24px 20px;
+  overflow-y: auto;
   height: calc(100vh - var(--header-h));
   position: sticky;
   top: var(--header-h);
+}
+
+/* When using the body/footer pattern (e.g. /create), reset panel defaults */
+.config-panel:has(.config-panel-body) {
+  padding: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .config-panel-body {

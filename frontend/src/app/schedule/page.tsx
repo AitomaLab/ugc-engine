@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { apiFetch, formatDate } from '@/lib/utils';
 import type { SocialPost, SocialConnection } from '@/lib/types';
+import { useTranslation } from '@/lib/i18n';
 import SchedulePostModal from '@/components/modals/SchedulePostModal';
 
 /* ── Platform colours ───────────────────────────────────────────────────── */
@@ -38,6 +39,7 @@ function formatMonth(year: number, month: number) {
 
 /* ── Page Component ─────────────────────────────────────────────────────── */
 export default function SchedulePage() {
+    const { t } = useTranslation();
     const [viewDate, setViewDate] = useState(new Date());
     const [posts, setPosts] = useState<SocialPost[]>([]);
     const [connectedCount, setConnectedCount] = useState(0);
@@ -99,15 +101,15 @@ export default function SchedulePage() {
     const today = new Date();
     const isToday = (day: number | null) => day !== null && year === today.getFullYear() && month === today.getMonth() && day === today.getDate();
 
-    const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const DAY_NAMES = t('schedule.dayNames').split(',');
 
     return (
         <div className="content-area">
             {/* Page header with CTA buttons */}
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '24px' }}>
                 <div>
-                    <h1 style={{ margin: 0, fontSize: '24px', fontWeight: 700 }}>Content Calendar</h1>
-                    <p style={{ margin: '4px 0 0', color: 'var(--text-3)', fontSize: '14px' }}>Schedule and manage your social media posts</p>
+                    <h1 style={{ margin: 0, fontSize: '24px', fontWeight: 700 }}>{t('schedule.title')}</h1>
+                    <p style={{ margin: '4px 0 0', color: 'var(--text-3)', fontSize: '14px' }}>{t('schedule.subtitle')}</p>
                 </div>
                 <div style={{ display: 'flex', gap: '10px', flexShrink: 0 }}>
                     <Link href="/connections" style={{
@@ -120,7 +122,7 @@ export default function SchedulePage() {
                         <svg viewBox="0 0 24 24" style={{ width: 16, height: 16, stroke: 'currentColor', fill: 'none', strokeWidth: 2 }}>
                             <circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
                         </svg>
-                        Manage Connections
+                        {t('schedule.manageConnections')}
                     </Link>
                     <button onClick={() => setScheduleModalOpen(true)} style={{
                         display: 'flex', alignItems: 'center', gap: '6px',
@@ -132,7 +134,7 @@ export default function SchedulePage() {
                         <svg viewBox="0 0 24 24" style={{ width: 14, height: 14, stroke: 'currentColor', fill: 'none', strokeWidth: 2.5 }}>
                             <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
                         </svg>
-                        Schedule Posts
+                        {t('schedule.schedulePosts')}
                     </button>
                 </div>
             </div>
@@ -159,7 +161,7 @@ export default function SchedulePage() {
                     </div>
                     <div>
                         <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-1)', lineHeight: 1.1 }}>{stats.total}</div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-3)', fontWeight: 500, marginTop: '2px' }}>Total this month</div>
+                        <div style={{ fontSize: '12px', color: 'var(--text-3)', fontWeight: 500, marginTop: '2px' }}>{t('schedule.totalThisMonth')}</div>
                     </div>
                 </div>
 
@@ -180,7 +182,7 @@ export default function SchedulePage() {
                     </div>
                     <div>
                         <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-1)', lineHeight: 1.1 }}>{stats.posted}</div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-3)', fontWeight: 500, marginTop: '2px' }}>Posts published</div>
+                        <div style={{ fontSize: '12px', color: 'var(--text-3)', fontWeight: 500, marginTop: '2px' }}>{t('schedule.postsPublished')}</div>
                     </div>
                 </div>
 
@@ -201,7 +203,7 @@ export default function SchedulePage() {
                     </div>
                     <div>
                         <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-1)', lineHeight: 1.1 }}>{stats.upcoming}</div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-3)', fontWeight: 500, marginTop: '2px' }}>Upcoming</div>
+                        <div style={{ fontSize: '12px', color: 'var(--text-3)', fontWeight: 500, marginTop: '2px' }}>{t('schedule.upcoming')}</div>
                     </div>
                 </div>
 
@@ -222,7 +224,7 @@ export default function SchedulePage() {
                     </div>
                     <div>
                         <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-1)', lineHeight: 1.1 }}>{connectedCount}</div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-3)', fontWeight: 500, marginTop: '2px' }}>Connected platforms</div>
+                        <div style={{ fontSize: '12px', color: 'var(--text-3)', fontWeight: 500, marginTop: '2px' }}>{t('schedule.connectedPlatforms')}</div>
                     </div>
                 </div>
             </div>
@@ -254,7 +256,7 @@ export default function SchedulePage() {
                                 fontSize: '12px', fontWeight: 600, color: 'var(--blue)',
                                 cursor: 'pointer',
                             }}>
-                                Today
+                                {t('schedule.today')}
                             </button>
                         </div>
                         <button onClick={nextMonth} style={{
@@ -318,7 +320,7 @@ export default function SchedulePage() {
                                                 })}
                                                 {dayPosts.length > 3 && (
                                                     <div style={{ fontSize: '10px', color: 'var(--text-3)', fontWeight: 600 }}>
-                                                        +{dayPosts.length - 3} more
+                                                        +{dayPosts.length - 3} {t('schedule.more')}
                                                     </div>
                                                 )}
                                             </div>
@@ -337,18 +339,18 @@ export default function SchedulePage() {
                         padding: '20px', position: 'sticky', top: '100px',
                     }}>
                         <h3 style={{ fontSize: '15px', fontWeight: 700, marginBottom: '16px' }}>
-                            Upcoming (7 days)
+                            {t('schedule.upcoming7')}
                         </h3>
                         {loading ? (
-                            <div style={{ color: 'var(--text-3)', fontSize: '13px' }}>Loading...</div>
+                            <div style={{ color: 'var(--text-3)', fontSize: '13px' }}>{t('common.loading')}</div>
                         ) : upcoming.length === 0 ? (
                             <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--text-3)' }}>
                                 <svg viewBox="0 0 24 24" style={{ width: 32, height: 32, stroke: 'var(--border)', fill: 'none', strokeWidth: 1.5, marginBottom: '8px' }}>
                                     <rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
                                 </svg>
-                                <div style={{ fontSize: '13px' }}>No upcoming posts</div>
+                                <div style={{ fontSize: '13px' }}>{t('schedule.noUpcoming')}</div>
                                 <Link href="/videos" style={{ fontSize: '12px', color: 'var(--blue)', textDecoration: 'none', fontWeight: 600, marginTop: '8px', display: 'inline-block' }}>
-                                    Schedule from Videos →
+                                    {t('schedule.scheduleFromVideos')}
                                 </Link>
                             </div>
                         ) : (

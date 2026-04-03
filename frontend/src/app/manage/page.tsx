@@ -2,6 +2,7 @@
 
 import { useState, useEffect, Suspense } from 'react';
 import { useApp } from '@/providers/AppProvider';
+import { useTranslation } from '@/lib/i18n';
 import { apiFetch } from '@/lib/utils';
 import { supabase } from '@/lib/supabaseClient';
 import Link from 'next/link';
@@ -24,6 +25,7 @@ export default function ManagePageWrapper() {
 
 function ManagePage() {
   const { profile, subscription, wallet } = useApp();
+  const { t } = useTranslation();
   const [topUpOpen, setTopUpOpen] = useState(false);
   const [topUpLoading, setTopUpLoading] = useState<string | null>(null);
   const searchParams = useSearchParams();
@@ -54,8 +56,8 @@ function ManagePage() {
   return (
     <div className="content-area" style={{ display: 'block' }}>
       <div className="page-header">
-        <h1>Account Settings</h1>
-        <p>Manage your subscription, credits, and preferences</p>
+        <h1>{t('manage.title')}</h1>
+        <p>{t('manage.subtitle')}</p>
       </div>
 
       {/* Two-column layout: left info cards, right credits */}
@@ -66,16 +68,16 @@ function ManagePage() {
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '16px 20px', boxShadow: 'var(--shadow)' }}>
             <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-1)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <svg viewBox="0 0 24 24" style={{ width: 16, height: 16, stroke: 'var(--text-3)', fill: 'none', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
-              Account
+              {t('manage.account')}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid var(--border-soft)' }}>
-              <span style={{ fontSize: '13px', color: 'var(--text-3)', width: '140px', flexShrink: 0, fontWeight: 500 }}>Email</span>
+              <span style={{ fontSize: '13px', color: 'var(--text-3)', width: '140px', flexShrink: 0, fontWeight: 500 }}>{t('profile.email')}</span>
               <span style={{ fontSize: '13px', color: 'var(--text-1)', fontWeight: 500 }}>{profile?.email || '—'}</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', padding: '8px 0' }}>
-              <span style={{ fontSize: '13px', color: 'var(--text-3)', width: '140px', flexShrink: 0, fontWeight: 500 }}>Name</span>
-              <span style={{ fontSize: '13px', color: 'var(--text-1)', fontWeight: 500, flex: 1 }}>{profile?.name || 'Not set'}</span>
-              <Link href="/profile" style={{ fontSize: '12px', color: 'var(--blue)', fontWeight: 600, textDecoration: 'none' }}>Edit</Link>
+              <span style={{ fontSize: '13px', color: 'var(--text-3)', width: '140px', flexShrink: 0, fontWeight: 500 }}>{t('manage.name')}</span>
+              <span style={{ fontSize: '13px', color: 'var(--text-1)', fontWeight: 500, flex: 1 }}>{profile?.name || t('manage.notSet')}</span>
+              <Link href="/profile" style={{ fontSize: '12px', color: 'var(--blue)', fontWeight: 600, textDecoration: 'none' }}>{t('manage.edit')}</Link>
             </div>
           </div>
 
@@ -83,15 +85,15 @@ function ManagePage() {
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '16px 20px', boxShadow: 'var(--shadow)' }}>
             <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-1)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <svg viewBox="0 0 24 24" style={{ width: 16, height: 16, stroke: 'var(--blue)', fill: 'none', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><rect x="1" y="4" width="22" height="16" rx="2" ry="2" /><line x1="1" y1="10" x2="23" y2="10" /></svg>
-              Subscription
+              {t('manage.subscription')}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid var(--border-soft)' }}>
-              <span style={{ fontSize: '13px', color: 'var(--text-3)', width: '140px', flexShrink: 0, fontWeight: 500 }}>Current Plan</span>
+              <span style={{ fontSize: '13px', color: 'var(--text-3)', width: '140px', flexShrink: 0, fontWeight: 500 }}>{t('manage.currentPlan')}</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1 }}>
                 <span style={{ display: 'inline-flex', alignItems: 'center', padding: '4px 14px', borderRadius: '20px', fontSize: '11px', fontWeight: 700, background: 'linear-gradient(135deg, rgba(51,122,255,0.1), rgba(99,102,241,0.1))', color: 'var(--blue)', letterSpacing: '0.02em' }}>{planName}</span>
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
-                <Link href="/upgrade" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '5px 14px', fontSize: '12px', color: 'var(--blue)', fontWeight: 600, textDecoration: 'none', border: '1px solid rgba(51,122,255,0.2)', borderRadius: '6px', transition: 'all 0.15s', whiteSpace: 'nowrap' }}>Change Plan</Link>
+                <Link href="/upgrade" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '5px 14px', fontSize: '12px', color: 'var(--blue)', fontWeight: 600, textDecoration: 'none', border: '1px solid rgba(51,122,255,0.2)', borderRadius: '6px', transition: 'all 0.15s', whiteSpace: 'nowrap' }}>{t('manage.changePlan')}</Link>
                 {planName !== 'Free' && (
                   <button
                     onClick={async () => {
@@ -106,12 +108,12 @@ function ManagePage() {
                       }
                     }}
                     style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '5px 14px', fontSize: '12px', color: 'var(--text-2)', fontWeight: 600, background: 'none', border: '1px solid var(--border)', borderRadius: '6px', cursor: 'pointer', transition: 'all 0.15s', whiteSpace: 'nowrap' }}
-                  >Manage Billing</button>
+                  >{t('manage.manageBilling')}</button>
                 )}
               </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', padding: '10px 0' }}>
-              <span style={{ fontSize: '13px', color: 'var(--text-3)', width: '140px', flexShrink: 0, fontWeight: 500 }}>Billing Period Ends</span>
+              <span style={{ fontSize: '13px', color: 'var(--text-3)', width: '140px', flexShrink: 0, fontWeight: 500 }}>{t('manage.billingPeriodEnds')}</span>
               <span style={{ fontSize: '13px', color: 'var(--text-1)', fontWeight: 600 }}>{periodEnd}</span>
             </div>
           </div>
@@ -120,16 +122,16 @@ function ManagePage() {
           <div style={{ background: 'var(--surface)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 'var(--radius)', padding: '16px 20px', boxShadow: 'var(--shadow)' }}>
             <div style={{ fontSize: '14px', fontWeight: 700, color: '#ef4444', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <svg viewBox="0 0 24 24" style={{ width: 16, height: 16, stroke: '#ef4444', fill: 'none', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
-              Session
+              {t('manage.session')}
             </div>
-            <p style={{ fontSize: '12px', color: 'var(--text-3)', margin: '0 0 10px', lineHeight: 1.5 }}>Sign out of your current session on this device.</p>
+            <p style={{ fontSize: '12px', color: 'var(--text-3)', margin: '0 0 10px', lineHeight: 1.5 }}>{t('manage.sessionDesc')}</p>
             <button
               onClick={handleSignOut}
               style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '7px 16px', background: 'white', color: '#ef4444', border: '1px solid rgba(239,68,68,0.25)', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}
               onMouseEnter={e => (e.currentTarget.style.background = '#fef2f2')}
               onMouseLeave={e => (e.currentTarget.style.background = 'white')}
             >
-              Sign Out
+              {t('manage.signOut')}
             </button>
           </div>
         </div>
@@ -138,22 +140,22 @@ function ManagePage() {
         <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '20px', boxShadow: 'var(--shadow)' }}>
           <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-1)', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <svg viewBox="0 0 24 24" style={{ width: 16, height: 16, stroke: '#22c55e', fill: 'none', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
-            Credits
+            {t('manage.credits')}
           </div>
           <div style={{ textAlign: 'center', padding: '8px 0 16px' }}>
             <div style={{ fontSize: '40px', fontWeight: 800, color: 'var(--text-1)', letterSpacing: '-0.03em', lineHeight: 1 }}>{balance.toLocaleString()}</div>
-            <div style={{ fontSize: '12px', color: 'var(--text-3)', marginTop: '4px', fontWeight: 500 }}>credits remaining</div>
+            <div style={{ fontSize: '12px', color: 'var(--text-3)', marginTop: '4px', fontWeight: 500 }}>{t('manage.creditsRemaining')}</div>
             <div style={{ marginTop: '12px', height: '6px', background: 'var(--bg-2)', borderRadius: '3px', overflow: 'hidden' }}>
               <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg, var(--blue), #a78bfa)', borderRadius: '3px', transition: 'width 0.4s ease' }} />
             </div>
           </div>
           <div style={{ borderTop: '1px solid var(--border-soft)', padding: '10px 0 0' }}>
             <div style={{ display: 'flex', alignItems: 'center', padding: '6px 0' }}>
-              <span style={{ fontSize: '12px', color: 'var(--text-3)', fontWeight: 500 }}>Monthly Allotment</span>
+              <span style={{ fontSize: '12px', color: 'var(--text-3)', fontWeight: 500 }}>{t('manage.monthlyAllotment')}</span>
               <span style={{ fontSize: '12px', color: 'var(--text-1)', fontWeight: 600, marginLeft: 'auto' }}>{monthlyCredits.toLocaleString()}/mo</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', padding: '6px 0' }}>
-              <span style={{ fontSize: '12px', color: 'var(--text-3)', fontWeight: 500 }}>Usage</span>
+              <span style={{ fontSize: '12px', color: 'var(--text-3)', fontWeight: 500 }}>{t('manage.usage')}</span>
               <span style={{ fontSize: '12px', color: 'var(--text-1)', fontWeight: 600, marginLeft: 'auto' }}>{Math.round(pct)}%</span>
             </div>
           </div>
@@ -164,7 +166,7 @@ function ManagePage() {
             onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--blue)'; }}
           >
             <svg viewBox="0 0 24 24" style={{ width: 14, height: 14, stroke: 'currentColor', fill: 'none', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' }}><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
-            Top Up Credits
+            {t('manage.topUpCredits')}
           </button>
         </div>
       </div>
@@ -189,8 +191,8 @@ function ManagePage() {
 
             {/* Header */}
             <div style={{ textAlign: 'center', marginBottom: '28px' }}>
-              <h2 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text-1)', margin: '0 0 6px', letterSpacing: '-0.02em' }}>Top Up Credits</h2>
-              <p style={{ fontSize: '13px', color: 'var(--text-2)', margin: 0 }}>Buy extra credits instantly — added to your current balance</p>
+              <h2 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text-1)', margin: '0 0 6px', letterSpacing: '-0.02em' }}>{t('manage.topUpTitle')}</h2>
+              <p style={{ fontSize: '13px', color: 'var(--text-2)', margin: 0 }}>{t('manage.topUpDesc')}</p>
             </div>
 
             {/* Package grid */}
@@ -216,7 +218,7 @@ function ManagePage() {
                   {/* Popular badge */}
                   {pkg.popular && (
                     <div style={{ position: 'absolute', top: '-11px', left: '50%', transform: 'translateX(-50%)', background: 'linear-gradient(135deg, var(--blue), #a78bfa)', color: 'white', fontSize: '10px', fontWeight: 700, padding: '3px 14px', borderRadius: '20px', textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>
-                      Best Value
+                      {t('manage.bestValue')}
                     </div>
                   )}
 
@@ -229,7 +231,7 @@ function ManagePage() {
                   </div>
 
                   {/* Credits */}
-                  <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--blue)', marginBottom: '4px' }}>{pkg.credits.toLocaleString()} credits</div>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--blue)', marginBottom: '4px' }}>{pkg.credits.toLocaleString()} {t('manage.credits_unit')}</div>
                   <div style={{ fontSize: '11px', color: 'var(--text-2)', marginBottom: '18px' }}>{pkg.perCredit}/credit</div>
 
                   {/* Buy button */}
@@ -274,7 +276,7 @@ function ManagePage() {
                       else { e.currentTarget.style.boxShadow = '0 4px 12px rgba(51,122,255,0.25)'; }
                     }}
                   >
-                    {topUpLoading === pkg.name ? 'Redirecting...' : 'Buy Now'}
+                    {topUpLoading === pkg.name ? t('manage.redirecting') : t('manage.buyNow')}
                   </button>
                 </div>
               ))}
@@ -282,7 +284,7 @@ function ManagePage() {
 
             {/* Footer note */}
             <div style={{ textAlign: 'center', marginTop: '20px', fontSize: '12px', color: '#6b7280' }}>
-              Credits are added instantly and never expire. Valid on all plans.
+              {t('manage.topUpFooter')}
             </div>
           </div>
         </div>

@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { apiFetch } from '@/lib/utils';
 import type { SocialConnection } from '@/lib/types';
+import { useTranslation } from '@/lib/i18n';
 
 /* ── Platform metadata ──────────────────────────────────────────────────── */
 const PLATFORMS = [
@@ -53,6 +54,7 @@ const PLATFORMS = [
 
 /* ── Page Component ─────────────────────────────────────────────────────── */
 export default function ConnectionsPage() {
+    const { t } = useTranslation();
     const [socials, setSocials] = useState<SocialConnection[]>([]);
     const [loading, setLoading] = useState(true);
     const [connecting, setConnecting] = useState(false);
@@ -115,10 +117,10 @@ export default function ConnectionsPage() {
             <div className="content-area">
                 <div className="page-header" style={{ marginBottom: '32px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
-                        <Link href="/schedule" style={{ color: 'var(--blue)', fontSize: '14px', textDecoration: 'none', fontWeight: 500 }}>← Schedule</Link>
+                        <Link href="/schedule" style={{ color: 'var(--blue)', fontSize: '14px', textDecoration: 'none', fontWeight: 500 }}>{t('connections.backSchedule')}</Link>
                     </div>
-                    <h1>Social Connections</h1>
-                    <p>Connect your social media accounts to schedule and publish your UGC videos directly.</p>
+                    <h1>{t('connections.title')}</h1>
+                    <p>{t('connections.subtitle')}</p>
                 </div>
 
                 {/* Info banner */}
@@ -136,8 +138,7 @@ export default function ConnectionsPage() {
                         <circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" />
                     </svg>
                     <span style={{ fontSize: '13px', color: 'var(--text-2)' }}>
-                        Your credentials are handled securely by Ayrshare — we never see your social media passwords.
-                        After connecting a new account, it may take 2–3 minutes to appear as connected on this page.
+                        {t('connections.securityNote')}
                     </span>
                 </div>
 
@@ -169,14 +170,14 @@ export default function ConnectionsPage() {
                             <div style={{ fontWeight: 700, fontSize: '16px', color: 'var(--text-1)' }}>{platform.name}</div>
                             <div style={{ fontSize: '13px', color: 'var(--text-3)', display: 'flex', alignItems: 'center', gap: '6px' }}>
                                 <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--border)', animation: 'pulse 1.5s infinite' }} />
-                                Checking...
+                                {t('connections.checking')}
                             </div>
                             <div style={{
                                 width: '100%', padding: '10px 0', borderRadius: '10px',
                                 border: '1px solid var(--border)', background: 'transparent',
                                 color: 'var(--text-3)', fontSize: '13px', fontWeight: 600, textAlign: 'center',
                             }}>
-                                Loading
+                                {t('common.loading')}
                             </div>
                         </div>
                     ))}
@@ -189,10 +190,10 @@ export default function ConnectionsPage() {
         <div className="content-area">
             <div className="page-header" style={{ marginBottom: '32px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
-                    <Link href="/schedule" style={{ color: 'var(--blue)', fontSize: '14px', textDecoration: 'none', fontWeight: 500 }}>← Schedule</Link>
+                    <Link href="/schedule" style={{ color: 'var(--blue)', fontSize: '14px', textDecoration: 'none', fontWeight: 500 }}>{t('connections.backSchedule')}</Link>
                 </div>
-                <h1>Social Connections</h1>
-                <p>Connect your social media accounts to schedule and publish your UGC videos directly.</p>
+                <h1>{t('connections.title')}</h1>
+                <p>{t('connections.subtitle')}</p>
             </div>
 
             {/* Info banner */}
@@ -269,7 +270,7 @@ export default function ConnectionsPage() {
                                         marginBottom: '4px',
                                     }}>
                                         <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#34C759' }} />
-                                        <span style={{ fontSize: '13px', color: '#34C759', fontWeight: 600 }}>Connected</span>
+                                        <span style={{ fontSize: '13px', color: '#34C759', fontWeight: 600 }}>{t('connections.connected')}</span>
                                     </div>
                                     {conn.username && (
                                         <div style={{ fontSize: '12px', color: 'var(--text-3)' }}>@{conn.username}</div>
@@ -284,7 +285,7 @@ export default function ConnectionsPage() {
                                     gap: '6px',
                                 }}>
                                     <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--border)' }} />
-                                    Not connected
+                                    {t('connections.notConnected')}
                                 </div>
                             )}
 
@@ -305,7 +306,7 @@ export default function ConnectionsPage() {
                                     }}
                                     onClick={handleConnect}
                                 >
-                                    Manage
+                                    {t('connections.manage')}
                                 </button>
                             ) : (
                                 <button
@@ -325,7 +326,7 @@ export default function ConnectionsPage() {
                                     }}
                                     onClick={handleConnect}
                                 >
-                                    {connecting ? 'Connecting...' : 'Connect'}
+                                    {connecting ? t('connections.connecting') : t('connections.connect')}
                                 </button>
                             )}
                         </div>

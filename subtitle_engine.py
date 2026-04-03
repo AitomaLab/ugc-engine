@@ -169,7 +169,7 @@ def _restore_numbers_in_words(words_list, original_script):
     return result
 
 
-def extract_transcription_with_whisper(video_path, brand_names=None, script_text=None):
+def extract_transcription_with_whisper(video_path, brand_names=None, script_text=None, video_language="en"):
     """
     Extracts word-level timestamps using the OpenAI Whisper API.
     
@@ -177,9 +177,10 @@ def extract_transcription_with_whisper(video_path, brand_names=None, script_text
         video_path: Path to the video file
         brand_names: Optional list of brand/product names to guide Whisper spelling
         script_text: Optional known script text to guide Whisper accuracy
+        video_language: Language hint for Whisper (e.g. 'en', 'es'). Defaults to 'en'.
     """
     try:
-        print(f"   🎤 Extracting audio and transcribing with Whisper API...")
+        print(f"   🎤 Extracting audio and transcribing with Whisper API... (lang={video_language})")
         audio_path = Path(video_path).parent / f"{Path(video_path).stem}.mp3"
         ffmpeg_cmd = ["ffmpeg", "-y", "-i", str(video_path), "-q:a", "0", "-map", "a", str(audio_path)]
         subprocess.run(ffmpeg_cmd, check=True, capture_output=True)
@@ -206,6 +207,9 @@ def extract_transcription_with_whisper(video_path, brand_names=None, script_text
             }
             if whisper_prompt:
                 kwargs["prompt"] = whisper_prompt
+            # i18n: Pass language hint to Whisper for improved accuracy
+            if video_language and video_language in ("en", "es"):
+                kwargs["language"] = video_language
             response = client.audio.transcriptions.create(**kwargs)
         
         os.remove(audio_path)

@@ -650,7 +650,8 @@ def run_generation_pipeline(
         if script_text:
             print(f"      [SUBTITLES] Script hint: {script_text[:80]}...")
         transcription = subtitle_engine.extract_transcription_with_whisper(
-            str(final_path), brand_names=brand_names or None, script_text=script_text
+            str(final_path), brand_names=brand_names or None, script_text=script_text,
+            video_language=fields.get("video_language", "en"),
         )
 
         if transcription and transcription.get("words"):

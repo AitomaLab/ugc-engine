@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useApp } from '@/providers/AppProvider';
+import { useTranslation } from '@/lib/i18n';
 import { createProject, updateProject } from '@/lib/supabaseData';
 import { Project } from '@/lib/saas-types';
 
@@ -13,6 +14,7 @@ function ProjectModal({ isOpen, onClose, onSaved, project }: {
   const [description, setDescription] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { t } = useTranslation();
 
   useEffect(() => {
     if (isOpen) {
@@ -31,7 +33,7 @@ function ProjectModal({ isOpen, onClose, onSaved, project }: {
   if (!isOpen) return null;
 
   const handleSave = async () => {
-    if (!name.trim()) { setError('Project name is required.'); return; }
+    if (!name.trim()) { setError(t('projects.nameRequired')); return; }
     setSaving(true);
     setError(null);
     try {
@@ -43,7 +45,7 @@ function ProjectModal({ isOpen, onClose, onSaved, project }: {
       onSaved();
       onClose();
     } catch (e: any) {
-      setError(e.message || 'Failed to save project.');
+      setError(e.message || t('projects.failedSave'));
     } finally {
       setSaving(false);
     }
@@ -53,19 +55,19 @@ function ProjectModal({ isOpen, onClose, onSaved, project }: {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-box" style={{ maxWidth: '440px' }} onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <h3>{project ? 'Edit Project' : 'New Project'}</h3>
+          <h3>{project ? t('projects.editProject') : t('projects.newProject')}</h3>
           <button className="modal-close" onClick={onClose}>
             <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
           </button>
         </div>
         <div className="modal-body">
           <div style={{ marginBottom: '16px' }}>
-            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>Project Name <span style={{ color: 'var(--red)' }}>*</span></label>
-            <input className="input-field" autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Summer Campaign" onKeyDown={e => { if (e.key === 'Enter') handleSave(); }} />
+            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>{t('projects.projectName')} <span style={{ color: 'var(--red)' }}>*</span></label>
+            <input className="input-field" autoFocus value={name} onChange={e => setName(e.target.value)} placeholder={t('projects.projectNamePlaceholder')} onKeyDown={e => { if (e.key === 'Enter') handleSave(); }} />
           </div>
           <div>
-            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>Description (optional)</label>
-            <textarea className="input-field" value={description} onChange={e => setDescription(e.target.value)} placeholder="Brief description..." rows={3} style={{ resize: 'vertical' }} />
+            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '6px' }}>{t('projects.descriptionOptional')}</label>
+            <textarea className="input-field" value={description} onChange={e => setDescription(e.target.value)} placeholder={t('projects.descPlaceholder')} rows={3} style={{ resize: 'vertical' }} />
           </div>
           {error && (
             <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', padding: '8px 12px', marginTop: '12px', fontSize: '12px', color: 'var(--red)' }}>
@@ -74,9 +76,9 @@ function ProjectModal({ isOpen, onClose, onSaved, project }: {
           )}
         </div>
         <div className="modal-footer">
-          <button className="btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn-secondary" onClick={onClose}>{t('common.cancel')}</button>
           <button className="btn-primary" onClick={handleSave} disabled={saving} style={{ opacity: saving ? 0.6 : 1 }}>
-            {saving ? 'Saving...' : project ? 'Save Changes' : 'Create Project'}
+            {saving ? t('common.saving') : project ? t('common.save') : t('projects.createProject')}
           </button>
         </div>
       </div>
@@ -87,6 +89,7 @@ function ProjectModal({ isOpen, onClose, onSaved, project }: {
 /* ── Projects Page ───────────────────────────────────────── */
 export default function ProjectsPage() {
   const { projects, activeProject, setActiveProject, refreshProjects } = useApp();
+  const { t } = useTranslation();
   const [modalOpen, setModalOpen] = useState(false);
   const [editProject, setEditProject] = useState<Project | null>(null);
 
@@ -94,12 +97,12 @@ export default function ProjectsPage() {
     <div className="content-area">
       <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>
-          <h1>My Projects</h1>
-          <p>Organize your assets into separate projects</p>
+          <h1>{t('projects.title')}</h1>
+          <p>{t('projects.subtitle')}</p>
         </div>
         <button className="btn-create" onClick={() => { setEditProject(null); setModalOpen(true); }}>
           <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
-          New Project
+          {t('projects.newProject')}
         </button>
       </div>
 
@@ -109,9 +112,9 @@ export default function ProjectsPage() {
             <div className='empty-icon'>
               <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /></svg>
             </div>
-            <div className='empty-title'>No projects yet</div>
-            <div className='empty-sub'>Create your first project to organize your assets.</div>
-            <button className='btn-primary' onClick={() => { setEditProject(null); setModalOpen(true); }}>Create Project</button>
+            <div className='empty-title'>{t('projects.noProjects')}</div>
+            <div className='empty-sub'>{t('projects.noProjectsSub')}</div>
+            <button className='btn-primary' onClick={() => { setEditProject(null); setModalOpen(true); }}>{t('projects.createProject')}</button>
           </div>
         ) : (
           projects.map(project => {
@@ -134,11 +137,11 @@ export default function ProjectsPage() {
                 <div style={{ flex: 1 }}>
                   <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-1)' }}>
                     {project.name}
-                    {project.is_default && <span style={{ fontSize: '10px', background: '#e5e7eb', borderRadius: '4px', padding: '1px 6px', marginLeft: '8px', color: '#6b7280', fontWeight: 500 }}>Default</span>}
+                    {project.is_default && <span style={{ fontSize: '10px', background: '#e5e7eb', borderRadius: '4px', padding: '1px 6px', marginLeft: '8px', color: '#6b7280', fontWeight: 500 }}>{t('projects.default')}</span>}
                   </div>
                   {project.description && <div style={{ fontSize: '12px', color: 'var(--text-3)', marginTop: '2px' }}>{project.description}</div>}
                   <div style={{ fontSize: '11px', color: 'var(--text-3)', marginTop: '2px' }}>
-                    Created {new Date(project.created_at || Date.now()).toLocaleDateString()}
+                    {t('projects.created')} {new Date(project.created_at || Date.now()).toLocaleDateString()}
                   </div>
                 </div>
                 <button
@@ -156,7 +159,7 @@ export default function ProjectsPage() {
                 </button>
                 {isActive && (
                   <div style={{ padding: '4px 10px', background: 'var(--blue-light)', color: 'var(--blue)', borderRadius: '6px', fontSize: '11px', fontWeight: 600 }}>
-                    Active
+                    {t('projects.active')}
                   </div>
                 )}
               </div>
