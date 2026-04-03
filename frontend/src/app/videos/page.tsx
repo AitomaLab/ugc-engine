@@ -8,8 +8,10 @@ import Select from '@/components/ui/Select';
 import MediaPreviewModal from '@/components/ui/MediaPreviewModal';
 import SchedulePostModal from '@/components/modals/SchedulePostModal';
 import { useProgressiveList } from '@/hooks/useProgressiveList';
+import { useTranslation } from '@/lib/i18n';
 
 export default function VideosPage() {
+    const { t } = useTranslation();
     const [jobs, setJobs] = useState<VideoJob[]>([]);
     const [influencers, setInfluencers] = useState<Influencer[]>([]);
     const [loading, setLoading] = useState(true);
@@ -43,6 +45,14 @@ export default function VideosPage() {
     }, []);
 
     useEffect(() => { fetchData(); }, [fetchData]);
+
+    // Poll every 5s while there are processing/pending jobs
+    useEffect(() => {
+        const hasActiveJobs = jobs.some(j => j.status === 'processing' || j.status === 'pending');
+        if (!hasActiveJobs) return;
+        const interval = setInterval(fetchData, 5000);
+        return () => clearInterval(interval);
+    }, [jobs, fetchData]);
 
     // Re-fetch when user switches projects
     useEffect(() => {
@@ -119,29 +129,29 @@ export default function VideosPage() {
     const { visibleItems: visibleJobs, sentinelRef, hasMore } = useProgressiveList(filteredJobs, 12);
 
     if (loading) {
-        return <div className='content-area'><div className='text-[#94A3B8] text-sm italic animate-pulse py-12 text-center'>Loading videos...</div></div>;
+        return <div className='content-area'><div className='text-[#94A3B8] text-sm italic animate-pulse py-12 text-center'>{t('common.loading')}</div></div>;
     }
 
     return (
         <div className='content-area'>
             <div className='page-header'>
-                <h1>Videos</h1>
-                <p>All your generated UGC videos in one place.</p>
+                <h1>{t('videos.title')}</h1>
+                <p>{t('videos.subtitle')}</p>
             </div>
 
             <div className='asset-toolbar border-b pb-6 mb-8 mt-6 flex justify-between items-center' style={{ borderBottomColor: 'var(--border)' }}>
                 <div className='asset-toolbar-left flex gap-3 flex-1' style={{ display: 'flex', gap: '12px', flex: 1, alignItems: 'center' }}>
                     <div className='search-box' style={{ flex: 1, maxWidth: '280px', display: 'flex', alignItems: 'center', gap: '8px', background: 'white', border: '1px solid var(--border)', borderRadius: '8px', padding: '8px 12px' }}>
                         <svg viewBox='0 0 24 24' style={{ width: '16px', height: '16px', stroke: 'var(--text-3)', fill: 'none', strokeWidth: 2 }}><circle cx='11' cy='11' r='8' /><line x1='21' y1='21' x2='16.65' y2='16.65' /></svg>
-                        <input type='text' style={{ background: 'transparent', border: 'none', outline: 'none', width: '100%', fontSize: '14px', color: 'var(--text-1)' }} placeholder='Search videos...' value={search} onChange={e => setSearch(e.target.value)} />
+                        <input type='text' style={{ background: 'transparent', border: 'none', outline: 'none', width: '100%', fontSize: '14px', color: 'var(--text-1)' }} placeholder={t('videos.searchPlaceholder')} value={search} onChange={e => setSearch(e.target.value)} />
                     </div>
                     <Select
                         className="filter-select"
                         value={influencerFilter}
                         onChange={setInfluencerFilter}
-                        placeholder="All Creators"
+                        placeholder={t('videos.allCreators')}
                         options={[
-                            { value: '', label: 'All Creators' },
+                            { value: '', label: t('videos.allCreators') },
                             ...influencers.map(inf => ({ value: inf.id, label: inf.name })),
                             ...(clones.length > 0 ? [
                                 { value: '__divider_clones__', label: '── AI Clones ──' },
@@ -154,13 +164,13 @@ export default function VideosPage() {
                         className="filter-select"
                         value={statusFilter}
                         onChange={setStatusFilter}
-                        placeholder="All Status"
+                        placeholder={t('videos.allStatus')}
                         options={[
-                            { value: '', label: 'All Status' },
-                            { value: 'success', label: 'Completed' },
-                            { value: 'processing', label: 'Processing' },
-                            { value: 'pending', label: 'Queued' },
-                            { value: 'failed', label: 'Failed' }
+                            { value: '', label: t('videos.allStatus') },
+                            { value: 'success', label: t('common.completed') },
+                            { value: 'processing', label: t('common.processing') },
+                            { value: 'pending', label: t('common.queued') },
+                            { value: 'failed', label: t('common.failed') }
                         ]}
                     />
 
@@ -168,9 +178,9 @@ export default function VideosPage() {
                         className="filter-select"
                         value={campaignFilter}
                         onChange={setCampaignFilter}
-                        placeholder="All Campaigns"
+                        placeholder={t('videos.allCampaigns')}
                         options={[
-                            { value: '', label: 'All Campaigns' },
+                            { value: '', label: t('videos.allCampaigns') },
                             ...campaignNames.map(name => ({ value: name, label: name }))
                         ]}
                     />
@@ -180,13 +190,13 @@ export default function VideosPage() {
                         value={sortOrder}
                         onChange={setSortOrder}
                         options={[
-                            { value: 'newest', label: 'Newest First' },
-                            { value: 'oldest', label: 'Oldest First' }
+                            { value: 'newest', label: t('videos.newestFirst') },
+                            { value: 'oldest', label: t('videos.oldestFirst') }
                         ]}
                     />
                 </div>
                 <Link href='/create' className='btn-primary' style={{ padding: '8px 16px', fontWeight: 600, fontSize: '14px', height: '38px', display: 'flex', alignItems: 'center' }}>
-                    + Create Video
+                    {t('videos.createVideo')}
                 </Link>
             </div>
 
@@ -195,35 +205,35 @@ export default function VideosPage() {
                     <div className='empty-icon'>
                         <svg viewBox='0 0 24 24'><rect x='2' y='3' width='20' height='14' rx='2' /><path d='M8 21h8M12 17v4' /></svg>
                     </div>
-                    <div className='empty-title'>No videos yet</div>
-                    <div className='empty-sub'>Create your first video to get started.</div>
-                    <Link href='/create' className='btn-primary'>Create Video</Link>
+                    <div className='empty-title'>{t('videos.noVideos')}</div>
+                    <div className='empty-sub'>{t('videos.subtitle')}</div>
+                    <Link href='/create' className='btn-primary'>{t('header.createVideo')}</Link>
                 </div>
             ) : (<>
                 {selectedIds.size > 0 && (
                     <div className="bulk-bar">
-                        <span className="bulk-bar-count">{selectedIds.size} selected</span>
+                        <span className="bulk-bar-count">{selectedIds.size} {t('videos.selected')}</span>
                         <div className="bulk-bar-actions">
-                            <button className="btn-secondary" onClick={() => setSelectedIds(new Set(filteredJobs.filter(j => j.final_video_url).map(j => j.id)))}>Select All</button>
+                            <button className="btn-secondary" onClick={() => setSelectedIds(new Set(filteredJobs.filter(j => j.final_video_url).map(j => j.id)))}>{t('videos.selectAll')}</button>
                             <button className="btn-secondary" onClick={bulkDownload}>
                                 <svg viewBox="0 0 24 24" style={{ width: 14, height: 14, fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
-                                Download
+                                {t('videos.download')}
                             </button>
                             <button className="btn-secondary" onClick={bulkShare}>
                                 <svg viewBox="0 0 24 24" style={{ width: 14, height: 14, fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" /></svg>
-                                {copiedFeedback ? 'Copied!' : 'Share Links'}
+                                {copiedFeedback ? t('videos.copied') : t('videos.shareLinks')}
                             </button>
                             <button className="btn-secondary" onClick={() => setScheduleModalOpen(true)} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                 <svg viewBox="0 0 24 24" style={{ width: 14, height: 14, fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>
-                                Schedule
+                                {t('videos.scheduleBtn')}
                             </button>
-                            <button className="btn-secondary" onClick={clearSelection} style={{ color: 'var(--text-3)' }}>Cancel</button>
+                            <button className="btn-secondary" onClick={clearSelection} style={{ color: 'var(--text-3)' }}>{t('common.cancel')}</button>
                         </div>
                     </div>
                 )}
                 <div className='video-grid'>
                     {visibleJobs.map((job, i) => {
-                        const statusLabel = job.status === 'success' ? 'Done' : job.status === 'processing' ? 'Processing...' : job.status === 'pending' ? 'Queued' : 'Failed';
+                        const statusLabel = job.status === 'success' ? t('common.done') : job.status === 'processing' ? t('common.processing') + '...' : job.status === 'pending' ? t('common.queued') : t('common.failed');
                         return (
                             <div key={job.id} className='video-card'>
                                 <div
@@ -231,9 +241,22 @@ export default function VideosPage() {
                                     style={{ cursor: job.final_video_url ? 'zoom-in' : 'default' }}
                                     onClick={() => job.final_video_url && setPreviewAssetUrl(job.final_video_url)}
                                 >
-                                    {job.final_video_url && (
+                                    {job.final_video_url ? (
                                         <video src={job.final_video_url} style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', inset: 0 }} muted loop playsInline preload="metadata" />
-                                    )}
+                                    ) : (job.status === 'processing' || job.status === 'pending') ? (
+                                        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                                            <div className="processing-spinner" />
+                                            <span style={{ fontSize: '12px', fontWeight: 600, color: 'white', opacity: 0.9 }}>
+                                                {job.status === 'pending' ? t('common.queued') : t('common.processing')}
+                                            </span>
+                                            {job.status === 'processing' && job.created_at && (() => {
+                                                const elapsed = Math.round((Date.now() - new Date(job.created_at).getTime()) / 60000);
+                                                const est = (job as any).product_type === 'digital' ? 5 : 7;
+                                                const remaining = Math.max(est - elapsed, 0);
+                                                return <span style={{ fontSize: '11px', color: 'white', opacity: 0.6 }}>~{remaining > 0 ? `${remaining}m left` : 'finishing...'}</span>;
+                                            })()}
+                                        </div>
+                                    ) : null}
                                     <button className={`card-select-btn ${selectedIds.has(job.id) ? 'selected' : ''}`} onClick={(e) => { e.stopPropagation(); toggleSelect(job.id); }} title="Select video">
                                         {selectedIds.has(job.id) && <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" /></svg>}
                                     </button>
@@ -255,11 +278,11 @@ export default function VideosPage() {
                                         <>
                                             <button style={{ flex: 1, padding: '6px 0', backgroundColor: 'var(--surface-hover)', color: 'var(--blue)', borderRadius: '4px', fontSize: '12px', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px', border: '1px solid rgba(51,122,255,0.15)', cursor: 'pointer' }} onClick={() => window.open(job.final_video_url!)}>
                                                 <svg viewBox='0 0 24 24' style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' /><polyline points='7 10 12 15 17 10' /><line x1='12' y1='15' x2='12' y2='3' /></svg>
-                                                Save
+                                                {t('videos.save')}
                                             </button>
                                             <button style={{ flex: 1, padding: '6px 0', backgroundColor: 'transparent', color: 'var(--text-2)', borderRadius: '4px', fontSize: '12px', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px', border: '1px solid var(--border)', cursor: 'pointer' }}>
                                                 <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" /></svg>
-                                                Share
+                                                {t('videos.share')}
                                             </button>
                                         </>
                                     ) : (

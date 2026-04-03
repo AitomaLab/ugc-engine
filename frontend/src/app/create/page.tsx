@@ -3,6 +3,7 @@
 import { Suspense, useState, useRef, useEffect, useMemo } from 'react';
 import { apiFetch, formatDate, getApiUrl } from '@/lib/utils';
 import { useApp } from '@/providers/AppProvider';
+import { useTranslation } from '@/lib/i18n';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { ProductShot } from '@/lib/types';
 import Select from '@/components/ui/Select';
@@ -142,6 +143,10 @@ function CreateContent() {
     const [cloneLooks, setCloneLooks]               = useState<any[]>([]);
     const [isSubmittingClone, setIsSubmittingClone] = useState(false);
 
+    // i18n: video generation language
+    const [videoLanguage, setVideoLanguage] = useState<'en' | 'es'>('en');
+    const { t } = useTranslation();
+
     // Initial data load
     useEffect(() => {
         let mounted = true;
@@ -258,6 +263,7 @@ function CreateContent() {
                         influencer_id: selectedInfluencer || undefined,
                         product_type: productType,
                         methodology: scriptMethodology || undefined,
+                        video_language: videoLanguage,
                     }),
                 });
                 if (res.ok) {
@@ -283,7 +289,7 @@ function CreateContent() {
         // Debounce slightly to avoid rapid firing if user is clicking around
         const timer = setTimeout(generateScript, 500);
         return () => clearTimeout(timer);
-    }, [productType, productId, duration, selectedInfluencer, API_URL, scriptMethodology]);
+    }, [productType, productId, duration, selectedInfluencer, API_URL, scriptMethodology, videoLanguage]);
 
 
     // ... (render)
@@ -351,6 +357,7 @@ function CreateContent() {
                     duration,
                     product_type: 'digital',
                     methodology: scriptMethodology || undefined,
+                    video_language: videoLanguage,
                 }),
             });
             if (res.ok) {
@@ -421,6 +428,7 @@ function CreateContent() {
                         subtitles_enabled: subtitlesEnabled,
                         subtitle_style: subtitleStyle,
                         subtitle_placement: subtitlePlacement,
+                        video_language: videoLanguage,
                     }),
                 });
                 setSuccessMessage(` Campaign "${campaignName || 'Untitled'}" launched with ${quantity} videos!`);
@@ -443,6 +451,7 @@ function CreateContent() {
                         subtitles_enabled: subtitlesEnabled,
                         subtitle_style: subtitleStyle,
                         subtitle_placement: subtitlePlacement,
+                        video_language: videoLanguage,
                     }),
                 });
                 setSuccessMessage(' Video generation started!');
@@ -453,7 +462,7 @@ function CreateContent() {
 
             // Reset after short delay
             setTimeout(() => {
-                router.push('/activity');
+                router.push('/videos');
             }, 2000);
         } catch (err) {
             console.error('Submit error:', err);
@@ -501,11 +510,12 @@ function CreateContent() {
                     subtitles_enabled: subtitlesEnabled,
                     subtitle_style: subtitleStyle,
                     subtitle_placement: subtitlePlacement,
+                    video_language: videoLanguage,
                 }),
             });
             setSuccessMessage('✓ AI Clone video generation started!');
             refreshWallet();
-            setTimeout(() => router.push('/activity'), 2000);
+            setTimeout(() => router.push('/videos'), 2000);
         } catch (err) {
             setSuccessMessage(`✗ Error: ${err instanceof Error ? err.message : 'Unknown error'}`);
         } finally {
@@ -545,8 +555,9 @@ function CreateContent() {
         <div className="create-layout">
             {/* ──── LEFT PANEL: Configuration ──── */}
             <div className="config-panel">
+              <div className="config-panel-body">
                 <div style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-1)', marginBottom: '20px', letterSpacing: '-0.3px' }}>
-                    Create Video
+                    {t('create.title') || 'Create Video'}
                 </div>
 
                 {/* Success Banner */}
@@ -565,16 +576,16 @@ function CreateContent() {
                 <div className="config-section">
                     <div className="config-step">
                         <div className={`step-num ${productId || appClipId ? 'done' : ''}`}>1</div>
-                        <div className="step-text">Choose Product</div>
+                        <div className="step-text">{t('create.selectProduct') || 'Choose Product'}</div>
                     </div>
 
                     {/* Product Type Pills */}
                     <div className="pill-group" style={{ marginTop: '10px' }}>
                         <button className={`btn-secondary ${productType === 'digital' ? 'active' : ''}`} onClick={() => { setProductType('digital'); setProductId(''); setCustomScript(''); setGeneratedScript(''); }}>
-                            Digital App
+                            {t('create.digital') || 'Digital App'}
                         </button>
                         <button className={`btn-secondary ${productType === 'physical' ? 'active' : ''}`} onClick={() => { setProductType('physical'); setProductId(''); setCustomScript(''); setGeneratedScript(''); }}>
-                            Physical Product
+                            {t('create.physical') || 'Physical Product'}
                         </button>
                     </div>
 
@@ -584,7 +595,7 @@ function CreateContent() {
                             {/* Step 1: Select Digital Product */}
                             <div style={{ marginBottom: '12px' }}>
                                 <div style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.6px', color: 'var(--text-3)', marginBottom: '8px' }}>
-                                    Select Digital Product
+                                    {t('create.selectProduct') || 'Select Digital Product'}
                                 </div>
                                 {products.filter(p => p.type === 'digital').length === 0 ? (
                                     <div style={{ fontSize: '12px', color: 'var(--text-3)', fontStyle: 'italic' }}>No digital products found. Add one in Products.</div>
@@ -981,6 +992,7 @@ function CreateContent() {
                                 duration,
                                 influencer_id: selectedInfluencer || undefined,
                                 methodology: scriptMethodology || undefined,
+                                video_language: videoLanguage,
                             }),
                         })
                             .then(res => res.json())
@@ -1081,6 +1093,46 @@ function CreateContent() {
     })()}
 </div>
 
+                {/* VIDEO LANGUAGE */}
+                <div className="config-section">
+                    <div className="config-label">{t('create.videoLanguage')}</div>
+                    <div style={{ display: 'flex', gap: '0', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border)' }}>
+                        <button
+                            onClick={() => setVideoLanguage('en')}
+                            style={{
+                                flex: 1,
+                                padding: '8px 16px',
+                                border: 'none',
+                                cursor: 'pointer',
+                                fontSize: '13px',
+                                fontWeight: 600,
+                                background: videoLanguage === 'en' ? 'var(--primary)' : 'var(--surface)',
+                                color: videoLanguage === 'en' ? '#fff' : 'var(--text-secondary)',
+                                transition: 'all 0.15s ease',
+                            }}
+                        >
+                            {t('create.languageEnglish')}
+                        </button>
+                        <button
+                            onClick={() => setVideoLanguage('es')}
+                            style={{
+                                flex: 1,
+                                padding: '8px 16px',
+                                border: 'none',
+                                borderLeft: '1px solid var(--border)',
+                                cursor: 'pointer',
+                                fontSize: '13px',
+                                fontWeight: 600,
+                                background: videoLanguage === 'es' ? 'var(--primary)' : 'var(--surface)',
+                                color: videoLanguage === 'es' ? '#fff' : 'var(--text-secondary)',
+                                transition: 'all 0.15s ease',
+                            }}
+                        >
+                            {t('create.languageSpanish')}
+                        </button>
+                    </div>
+                </div>
+
                 {/* SUBTITLE CONFIGURATION */}
                 <div className="config-section">
                     <div className="config-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -1162,7 +1214,7 @@ function CreateContent() {
                                 <div style={{
                                     position: 'relative' as const,
                                     width: '100%',
-                                    paddingTop: '177.78%',
+                                    paddingTop: '56%',
                                     backgroundColor: '#1a1a2e',
                                     borderRadius: '12px',
                                     overflow: 'hidden',
@@ -1171,12 +1223,10 @@ function CreateContent() {
                                     <div style={{
                                         position: 'absolute' as const,
                                         left: '50%',
-                                        transform: 'translateX(-50%)',
+                                        top: '50%',
+                                        transform: 'translate(-50%, -50%)',
                                         width: '90%',
                                         textAlign: 'center' as const,
-                                        ...(subtitlePlacement === 'top' ? { top: '8%' } : {}),
-                                        ...(subtitlePlacement === 'middle' ? { top: '50%', transform: 'translate(-50%, -50%)' } : {}),
-                                        ...(subtitlePlacement === 'bottom' ? { bottom: '12%' } : {}),
                                     }}>
                                         {subtitleStyle === 'hormozi' && (
                                             <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '3px' }}>
@@ -1253,18 +1303,19 @@ function CreateContent() {
                     )}
                 </div>
 
+              </div>
+
+                {/* ── Sticky footer: Credit cost + Generate CTA ── */}
+                <div className="config-panel-footer">
                 {/* Credit Cost Summary */}
                 {(() => {
                     const costKey = `${productType}_${duration}s`;
                     const creditCost = creditCosts[costKey] || 0;
                     return creditCost > 0 ? (
-                        <div className="gen-summary">
-                            <div className="gen-summary-title">Credit Cost</div>
-                            <div className="gen-summary-row"><span>Video Type</span><span style={{ textTransform: 'capitalize' }}>{productType} {duration}s</span></div>
-                            <div className="gen-summary-divider" />
-                            <div className="gen-summary-total"><span>Per Video</span><span style={{ color: 'var(--blue)', fontWeight: 700 }}>{creditCost} credits</span></div>
+                        <div className="gen-summary" style={{ marginBottom: '8px' }}>
+                            <div className="gen-summary-row"><span>Per Video</span><span style={{ color: 'var(--blue)', fontWeight: 700 }}>{creditCost} credits</span></div>
                             {isCampaignMode && (
-                                <div className="gen-summary-total" style={{ marginTop: '4px' }}><span>Campaign ({quantity})</span><span style={{ color: 'var(--blue)', fontWeight: 700 }}>{creditCost * quantity} credits</span></div>
+                                <div className="gen-summary-row" style={{ marginTop: '2px' }}><span>Campaign ({quantity})</span><span style={{ color: 'var(--blue)', fontWeight: 700 }}>{creditCost * quantity} credits</span></div>
                             )}
                         </div>
                     ) : null;
@@ -1274,10 +1325,11 @@ function CreateContent() {
                 <button className="btn-generate" onClick={creatorMode === 'ai_clone' ? handleCloneSubmit : handleSubmit} disabled={creatorMode === 'ai_clone' ? (!selectedCloneId || isSubmittingClone) : (!selectedInfluencer || submitting)}>
                     <svg style={{ width: 16, height: 16, stroke: 'white', fill: 'none', strokeWidth: 2 }} viewBox="0 0 24 24"><polygon points="13,2 3,14 12,14 11,22 21,10 12,10" /></svg>
                     {creatorMode === 'ai_clone'
-                        ? (isSubmittingClone ? 'Launching...' : 'Generate AI Clone Video')
-                        : (submitting ? 'Launching...' : isCampaignMode ? 'Launch Campaign' : 'Generate Video')}
+                        ? (isSubmittingClone ? (t('create.generating') || 'Launching...') : (t('create.submitClone') || 'Generate AI Clone Video'))
+                        : (submitting ? (t('create.generating') || 'Launching...') : isCampaignMode ? (t('create.submitBulk') || 'Launch Campaign') : (t('create.submit') || 'Generate Video'))}
                     {creatorMode === 'influencer' && creditCosts[`${productType}_${duration}s`] && <span className="credit-cost">{isCampaignMode ? creditCosts[`${productType}_${duration}s`] * quantity : creditCosts[`${productType}_${duration}s`]} cr</span>}
                 </button>
+                </div>
             </div>
 
             {/* ──── RIGHT PANEL: Workspace ──── */}
@@ -1364,7 +1416,7 @@ function CreateContent() {
                         </div>
                     ) : (
                         <>
-                            <div className="section-title">Select Influencer</div>
+                            <div className="section-title">{t('create.selectInfluencer') || 'Select Influencer'}</div>
                             <div className="influencer-grid">
                                 {influencers.map(inf => (
                                     <div key={inf.id}
