@@ -8,6 +8,17 @@ const inter = Inter({ subsets: ['latin'], weight: ['300', '400', '500', '600', '
 export const metadata: Metadata = {
   title: 'Aitoma Studio',
   description: 'AI-powered UGC video generation engine',
+  openGraph: {
+    title: 'Aitoma Studio',
+    description: 'AI-powered UGC video generation engine',
+    siteName: 'Aitoma Studio',
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Aitoma Studio',
+    description: 'AI-powered UGC video generation engine',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
