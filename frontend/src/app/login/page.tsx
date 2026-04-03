@@ -207,12 +207,12 @@ export default function LoginPage() {
           font-size: 0.9rem;
         }
         .auth-forgot {
-          text-align: right;
-          margin-top: -0.25rem;
+          text-align: center;
+          margin-top: 0.25rem;
         }
         .auth-forgot a {
           color: #6b7280;
-          font-size: 0.82rem;
+          font-size: 0.9rem;
           text-decoration: none;
         }
         .auth-forgot a:hover {
