@@ -13,7 +13,7 @@ export async function middleware(req: NextRequest) {
   const path = req.nextUrl.pathname;
 
   // Public routes that don't require auth
-  const publicRoutes = ['/login', '/signup'];
+  const publicRoutes = ['/login', '/signup', '/forgot-password', '/reset-password'];
   const isPublicRoute = publicRoutes.some(route => path.startsWith(route));
 
   // Check for Supabase auth cookie (set by @supabase/supabase-js client)

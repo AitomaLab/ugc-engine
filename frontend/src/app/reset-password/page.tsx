@@ -1,29 +1,57 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import Link from 'next/link';
 
-export default function LoginPage() {
-  const [email, setEmail] = useState('');
+export default function ResetPasswordPage() {
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState(false);
+  const [error, setError] = useState('');
+  const [sessionReady, setSessionReady] = useState(false);
 
-  const handleLogin = async (e: React.FormEvent) => {
+  useEffect(() => {
+    // Supabase automatically picks up the recovery token from the URL hash
+    // and establishes a session. We wait for that to happen.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setSessionReady(true);
+      }
+    });
+
+    // Also check if we already have a session (e.g. page reload)
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) setSessionReady(true);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    setLoading(true);
 
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters.');
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
+
+    setLoading(true);
+    const { error } = await supabase.auth.updateUser({ password });
 
     if (error) {
       setError(error.message);
-      setLoading(false);
     } else {
-      window.location.href = '/';
+      setSuccess(true);
     }
+    setLoading(false);
   };
 
   return (
@@ -31,57 +59,70 @@ export default function LoginPage() {
       <div className="auth-card">
         <div className="auth-header">
           <img src="/StudioLogo_Black.svg" alt="Aitoma Studio" style={{ height: '36px' }} />
-          <h1>Welcome back</h1>
-          <p>Sign in to your account</p>
+          <h1>{success ? 'Password updated' : 'Set new password'}</h1>
+          <p>{success ? 'You can now sign in with your new password' : 'Enter your new password below'}</p>
         </div>
 
-        <form onSubmit={handleLogin} className="auth-form">
-          {error && <div className="auth-error">{error}</div>}
-
-          <div className="auth-field">
-            <label htmlFor="email">Email</label>
-            <input
-              id="email"
-              type="email"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              placeholder="you@example.com"
-              required
-            />
+        {success ? (
+          <div style={{ textAlign: 'center' }}>
+            <Link href="/login" className="auth-submit" style={{ display: 'block', textAlign: 'center', textDecoration: 'none', padding: '0.7rem', background: '#6366f1', color: 'white', borderRadius: '8px', fontWeight: 600 }}>
+              Go to Sign In
+            </Link>
           </div>
+        ) : !sessionReady ? (
+          <div style={{ textAlign: 'center', color: '#6b7280', padding: '1rem 0' }}>
+            <p>Verifying reset link...</p>
+            <p style={{ fontSize: '0.82rem', marginTop: '0.5rem' }}>
+              If this takes too long, the link may have expired. <Link href="/forgot-password" style={{ color: '#6366f1' }}>Request a new one</Link>.
+            </p>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="auth-form">
+            {error && <div className="auth-error">{error}</div>}
 
-          <div className="auth-field">
-            <label htmlFor="password">Password</label>
-            <div className="password-wrapper">
-              <input
-                id="password"
-                type={showPassword ? 'text' : 'password'}
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                placeholder="Your password"
-                required
-              />
-              <button type="button" className="pw-toggle" onClick={() => setShowPassword(v => !v)} tabIndex={-1}>
-                {showPassword ? (
-                  <svg viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
-                ) : (
-                  <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
-                )}
-              </button>
+            <div className="auth-field">
+              <label htmlFor="password">New Password</label>
+              <div className="password-wrapper">
+                <input
+                  id="password"
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  placeholder="At least 6 characters"
+                  required
+                  minLength={6}
+                />
+                <button type="button" className="pw-toggle" onClick={() => setShowPassword(v => !v)} tabIndex={-1}>
+                  {showPassword ? (
+                    <svg viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
+                  ) : (
+                    <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
+                  )}
+                </button>
+              </div>
             </div>
-          </div>
 
-          <button type="submit" className="auth-submit" disabled={loading}>
-            {loading ? 'Signing in...' : 'Sign In'}
-          </button>
+            <div className="auth-field">
+              <label htmlFor="confirm">Confirm Password</label>
+              <input
+                id="confirm"
+                type={showPassword ? 'text' : 'password'}
+                value={confirmPassword}
+                onChange={e => setConfirmPassword(e.target.value)}
+                placeholder="Confirm your password"
+                required
+                minLength={6}
+              />
+            </div>
 
-          <div className="auth-forgot">
-            <Link href="/forgot-password">Forgot your password?</Link>
-          </div>
-        </form>
+            <button type="submit" className="auth-submit" disabled={loading}>
+              {loading ? 'Updating...' : 'Update Password'}
+            </button>
+          </form>
+        )}
 
         <div className="auth-footer">
-          Don&apos;t have an account? <Link href="/signup">Sign Up</Link>
+          <Link href="/login">Back to Sign In</Link>
         </div>
       </div>
 
@@ -205,18 +246,6 @@ export default function LoginPage() {
           margin-top: 1.5rem;
           color: #6b7280;
           font-size: 0.9rem;
-        }
-        .auth-forgot {
-          text-align: right;
-          margin-top: -0.25rem;
-        }
-        .auth-forgot a {
-          color: #6b7280;
-          font-size: 0.82rem;
-          text-decoration: none;
-        }
-        .auth-forgot a:hover {
-          color: #6366f1;
         }
         .auth-footer a {
           color: #6366f1;
