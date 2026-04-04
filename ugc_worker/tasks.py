@@ -317,7 +317,7 @@ def generate_ugc_video(self, job_id: str):
     try:
         project_name = f"saas_job_{job_id}_{influencer_dict['name'].lower()}"
 
-        final_video_path = core_engine.run_generation_pipeline(
+        result = core_engine.run_generation_pipeline(
             project_name=project_name,
             influencer=influencer_dict,
             app_clip=app_clip_dict,
@@ -325,19 +325,57 @@ def generate_ugc_video(self, job_id: str):
             product_type=job.get("product_type", "digital"),
             fields=fields,
             status_callback=status_callback,
-            skip_music=False,
+            skip_music=not job.get("music_enabled", True),
         )
+
+        # Backwards-compatible: handle both old string return and new dict return
+        if isinstance(result, dict):
+            final_video_path = result["path"]
+            transcription_data = result.get("transcription")
+        else:
+            final_video_path = result
+            transcription_data = None
 
         # 5. Upload final video to Supabase Storage
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         storage_filename = f"{influencer_dict['name'].lower()}_{timestamp}_{job_id[:8]}.mp4"
         final_url = _upload_to_storage(final_video_path, "generated-videos", storage_filename)
 
+        # 5b. Extract video metadata via ffprobe for the editor (non-fatal)
+        video_duration_seconds = None
+        video_width = 1080
+        video_height = 1920
+        try:
+            import subprocess as _sp
+            import json as _json_probe
+            probe = _sp.run(
+                ["ffprobe", "-v", "quiet", "-print_format", "json",
+                 "-show_streams", final_video_path],
+                capture_output=True, text=True, timeout=30
+            )
+            if probe.returncode == 0:
+                probe_data = _json_probe.loads(probe.stdout)
+                for stream in probe_data.get("streams", []):
+                    if stream.get("codec_type") == "video":
+                        video_width = stream.get("width", 1080)
+                        video_height = stream.get("height", 1920)
+                        duration_str = stream.get("duration")
+                        if duration_str:
+                            video_duration_seconds = float(duration_str)
+                        break
+        except Exception as _probe_err:
+            print(f"[EDITOR] ffprobe failed (non-fatal): {_probe_err}")
+
         # 6. Update job as success
         update_job(job_id, {
             "status": "success",
             "progress": 100,
             "final_video_url": final_url,
+            # Editor integration: save transcription + video metadata
+            "transcription": transcription_data,
+            "video_duration_seconds": video_duration_seconds,
+            "video_width": video_width,
+            "video_height": video_height,
         })
 
         print(f"✅ Job {job_id} complete! Video: {final_url}")
@@ -654,6 +692,87 @@ def generate_transition_shot(shot_id: str):
             _update(shot_id, {"status": "failed", "error_message": str(e)[:500]})
         except Exception:
             pass
+
+
+# ---------------------------------------------------------------------------
+# Editor Render Task (Remotion Editor Integration)
+# Completely separate from existing video generation pipeline.
+# ---------------------------------------------------------------------------
+
+@celery.task(name="render_editor_video", bind=True, max_retries=2)
+def render_editor_video(
+    self,
+    job_id: str,
+    user_id: str,
+    editor_state: dict,
+    render_id: str,
+    codec: str = "h264",
+):
+    """
+    Renders an edited video using the remotion_renderer /render-editor endpoint.
+    Updates the in-memory render status store in editor_api.py.
+    """
+    import requests as _req
+    import tempfile
+    import os as _os
+    from datetime import datetime as _dt
+
+    # Import the render status store from editor_api
+    from ugc_backend.editor_api import _editor_renders
+
+    def _update(data: dict):
+        if render_id not in _editor_renders:
+            _editor_renders[render_id] = {}
+        _editor_renders[render_id].update(data)
+
+    try:
+        _update({"status": "processing", "progress": 5})
+
+        remotion_url = _os.getenv("REMOTION_RENDERER_URL", "http://localhost:8090")
+
+        response = _req.post(
+            f"{remotion_url}/render-editor",
+            json={"editorState": editor_state, "codec": codec},
+            timeout=600,
+            stream=True,
+        )
+
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"Remotion renderer returned {response.status_code}: {response.text[:500]}"
+            )
+
+        _update({"progress": 75})
+
+        # Write the streamed MP4 to a temp file
+        timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
+        storage_filename = f"edited_{job_id[:8]}_{timestamp}.mp4"
+
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    tmp.write(chunk)
+            tmp_path = tmp.name
+
+        _update({"progress": 90})
+
+        # Upload to Supabase using the existing upload helper
+        output_url = _upload_to_storage(tmp_path, "generated-videos", storage_filename)
+        output_size = _os.path.getsize(tmp_path)
+        _os.unlink(tmp_path)
+
+        _update({
+            "status": "done",
+            "progress": 100,
+            "output_url": output_url,
+            "output_size": output_size,
+        })
+
+        return {"status": "done", "output_url": output_url}
+
+    except Exception as e:
+        _update({"status": "failed", "error": str(e)})
+        raise
 
 
 # ---------------------------------------------------------------------------

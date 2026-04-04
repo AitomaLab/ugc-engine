@@ -370,7 +370,7 @@ def _dispatch_clone_worker(job_id: str) -> bool:
                     print(f"[CLONE-THREAD] Assembly complete: {assembled_path.stat().st_size / (1024*1024):.1f} MB", flush=True)
 
                 # ── Generate & Mix Music ─────────────────────────────────────────
-                if not job.get("skip_music", False):
+                if job.get("music_enabled", True) and not job.get("skip_music", False):
                     print(f"[CLONE-THREAD] Generating background music...", flush=True)
                     try:
                         import generate_scenes
@@ -672,6 +672,8 @@ class JobCreate(BaseModel):
     subtitle_placement: Optional[str] = "middle"
     # Language
     video_language: str = "en"                   # 'en' or 'es' — defaults to English
+    # Music
+    music_enabled: Optional[bool] = True
 
 class BulkJobCreate(BaseModel):
     influencer_id: str
@@ -692,6 +694,8 @@ class BulkJobCreate(BaseModel):
     subtitle_placement: Optional[str] = "middle"
     # Language
     video_language: str = "en"                   # 'en' or 'es' — defaults to English
+    # Music
+    music_enabled: Optional[bool] = True
 
 class SignedUrlRequest(BaseModel):
     bucket: str = "product-images"
@@ -1134,7 +1138,7 @@ def api_create_job(request: Request, data: JobCreate, user: dict = Depends(get_o
                 "cost_video", "cost_voice", "cost_music", "cost_processing", "total_cost",
                 "cinematic_shot_ids", "error_message",
                 "subtitles_enabled", "subtitle_style", "subtitle_placement",
-                "video_language",
+                "video_language", "music_enabled",
             }
 
         job_data = data.model_dump(exclude_none=True)
@@ -1861,7 +1865,7 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
                 "cost_video", "cost_voice", "cost_music", "cost_processing", "total_cost",
                 "cinematic_shot_ids", "error_message", "variation_prompt",
                 "subtitles_enabled", "subtitle_style", "subtitle_placement",
-                "video_language",
+                "video_language", "music_enabled",
             }
 
         created_jobs = []

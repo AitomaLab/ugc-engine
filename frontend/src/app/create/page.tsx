@@ -115,6 +115,7 @@ function CreateContent() {
     const [selectedLinkedClip, setSelectedLinkedClip] = useState<string>('');
     const [modelApi, setModelApi] = useState('veo-3.1-fast');
     const [subtitlesEnabled, setSubtitlesEnabled] = useState<boolean>(true);
+    const [musicEnabled, setMusicEnabled] = useState<boolean>(true);
     const [subtitleStyle, setSubtitleStyle] = useState<string>('hormozi');
     const [subtitlePlacement, setSubtitlePlacement] = useState<string>('middle');
     const [appClipId, setAppClipId] = useState<string>('');
@@ -427,6 +428,7 @@ function CreateContent() {
                         subtitle_style: subtitleStyle,
                         subtitle_placement: subtitlePlacement,
                         video_language: videoLanguage,
+                        music_enabled: musicEnabled,
                     }),
                 });
                 setSuccessMessage(` Campaign "${campaignName || 'Untitled'}" launched with ${quantity} videos!`);
@@ -450,6 +452,7 @@ function CreateContent() {
                         subtitle_style: subtitleStyle,
                         subtitle_placement: subtitlePlacement,
                         video_language: videoLanguage,
+                        music_enabled: musicEnabled,
                     }),
                 });
                 setSuccessMessage(' Video generation started!');
@@ -509,6 +512,7 @@ function CreateContent() {
                     subtitle_style: subtitleStyle,
                     subtitle_placement: subtitlePlacement,
                     video_language: videoLanguage,
+                    music_enabled: musicEnabled,
                 }),
             });
             setSuccessMessage('✓ AI Clone video generation started!');
@@ -1102,6 +1106,38 @@ function CreateContent() {
                     </div>
                 </div>
 
+                {/* BACKGROUND MUSIC TOGGLE */}
+                <div className="config-section">
+                    <div className="config-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <span>{t('create.backgroundMusic') || 'Background Music'}</span>
+                        <button
+                            onClick={() => setMusicEnabled(!musicEnabled)}
+                            style={{
+                                width: '44px',
+                                height: '24px',
+                                borderRadius: '12px',
+                                border: 'none',
+                                cursor: 'pointer',
+                                backgroundColor: musicEnabled ? '#337AFF' : '#D1D5DB',
+                                position: 'relative' as const,
+                                transition: 'background-color 0.2s',
+                            }}
+                        >
+                            <span style={{
+                                position: 'absolute' as const,
+                                top: '2px',
+                                left: musicEnabled ? '22px' : '2px',
+                                width: '20px',
+                                height: '20px',
+                                borderRadius: '50%',
+                                backgroundColor: '#FFFFFF',
+                                transition: 'left 0.2s',
+                                boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                            }} />
+                        </button>
+                    </div>
+                </div>
+
                 {/* SUBTITLE CONFIGURATION */}
                 <div className="config-section">
                     <div className="config-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -1264,24 +1300,7 @@ function CreateContent() {
                 </div>
 
 
-                {/* Advanced Settings */}
-                <div className="config-section">
-                    <button onClick={() => setShowAdvanced(!showAdvanced)} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 500, color: 'var(--text-3)', cursor: 'pointer', background: 'none', border: 'none' }}>
-                        <svg style={{ width: 12, height: 12, stroke: 'currentColor', fill: 'none', strokeWidth: 2, transform: showAdvanced ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" /></svg>
-                        {t('create.advancedSettings')}
-                    </button>
-                    {showAdvanced && (
-                        <div style={{ marginTop: '10px' }}>
-                            <div className="config-label">{t('create.aiHook')}</div>
-                            <div style={{ display: 'flex', gap: '6px' }}>
-                                <input type="text" className="input-field" value={hook} onChange={e => setHook(e.target.value)} placeholder={t('create.hookPlaceholder')} style={{ flex: 1 }} />
-                                <button className="btn-secondary" style={{ fontSize: '11px', whiteSpace: 'nowrap', padding: '6px 12px' }} onClick={generateHook} disabled={!selectedInfluencer || hookLoading}>
-                                    {hookLoading ? '...' : t('create.generate')}
-                                </button>
-                            </div>
-                        </div>
-                    )}
-                </div>
+
 
               </div>
 
