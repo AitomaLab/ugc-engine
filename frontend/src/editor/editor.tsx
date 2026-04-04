@@ -22,7 +22,7 @@ export const Editor: React.FC = () => {
 	const playerRef = useRef<PlayerRef | null>(null);
 
 	return (
-		<div className="bg-editor-starter-bg flex h-screen w-screen flex-col items-center justify-between">
+		<div className="bg-editor-starter-bg flex h-screen w-screen flex-col items-center justify-between overflow-hidden">
 			<ContextProvider>
 				<WaitForInitialized>
 					<PreviewSizeProvider>
