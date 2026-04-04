@@ -5,7 +5,7 @@ import {clsx} from '../../utils/clsx';
 export const InspectorSection: React.FC<{
 	children: React.ReactNode;
 }> = ({children}) => {
-	return <div className="px-4 py-3">{children}</div>;
+	return <div className="px-5 py-3">{children}</div>;
 };
 
 export const InspectorDivider: React.FC = () => {
@@ -34,7 +34,7 @@ export const CollapsableInspectorSection: React.FC<{
 		<div className={isOpen ? 'py-3' : ''}>
 			<button
 				className={clsx(
-					'flex w-full flex-row items-center px-4',
+					'flex w-full flex-row items-center px-5',
 					isOpen ? '' : 'py-3',
 				)}
 				role="button"
@@ -50,7 +50,7 @@ export const CollapsableInspectorSection: React.FC<{
 				/>
 			</button>
 			{isOpen ? (
-				<div className="px-4">
+				<div className="px-5">
 					<div className="h-2"></div>
 					{children}
 				</div>
