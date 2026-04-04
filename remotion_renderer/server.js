@@ -230,6 +230,108 @@ app.post('/render', async (req, res) => {
   }
 });
 
+// ============================================================================
+// EDITOR RENDER ENDPOINT
+// Renders a full Remotion composition from the Editor's UndoableState JSON.
+// Completely separate from the subtitle-only /render endpoint above.
+// ============================================================================
+
+let editorBundlePromise = null;
+
+async function getEditorBundle() {
+  if (!editorBundlePromise) {
+    console.log('[Remotion] Bundling editor composition (first-time)...');
+    const { bundle } = await import('@remotion/bundler');
+    const entryPoint = path.join(__dirname, 'src/editor-entry.ts');
+    if (!fs.existsSync(entryPoint)) {
+      throw new Error(`Editor entry point not found: ${entryPoint}. Copy it from the editor-starter.`);
+    }
+    editorBundlePromise = bundle({ entryPoint });
+    editorBundlePromise.then(url => console.log('[Remotion] Editor bundle ready:', url));
+  }
+  return editorBundlePromise;
+}
+
+app.post('/render-editor', async (req, res) => {
+  const { editorState, codec = 'h264' } = req.body;
+
+  if (!editorState) {
+    return res.status(400).json({ error: 'editorState is required', success: false });
+  }
+
+  console.log(`[Remotion] Editor render request (codec=${codec})`);
+
+  try {
+    const bundleUrl = await getEditorBundle();
+    const { renderMedia, selectComposition } = await import('@remotion/renderer');
+
+    const fps = editorState.fps || 24;
+    const width = editorState.compositionWidth || 1080;
+    const height = editorState.compositionHeight || 1920;
+
+    // Calculate total duration from tracks
+    let maxFrame = 0;
+    const tracks = editorState.tracks || [];
+    const items = editorState.items || {};
+    for (const track of tracks) {
+      for (const itemId of (track.items || [])) {
+        const item = items[itemId];
+        if (item) {
+          const end = (item.from || 0) + (item.durationInFrames || 0);
+          if (end > maxFrame) maxFrame = end;
+        }
+      }
+    }
+    if (maxFrame === 0) maxFrame = fps * 30; // fallback: 30 seconds
+
+    const outputLocation = path.join('/tmp', `editor_render_${Date.now()}.mp4`);
+
+    const composition = await selectComposition({
+      serveUrl: bundleUrl,
+      id: 'EditorComposition',
+      inputProps: editorState,
+      chromiumOptions: { gl: 'angle' },
+    });
+
+    // Override composition dimensions/duration
+    composition.width = width;
+    composition.height = height;
+    composition.fps = fps;
+    composition.durationInFrames = maxFrame;
+
+    await renderMedia({
+      composition,
+      serveUrl: bundleUrl,
+      codec: codec === 'vp8' ? 'vp8' : 'h264',
+      outputLocation,
+      chromiumOptions: {
+        gl: 'angle',
+        enableMultiProcessOnLinux: true,
+        headless: true,
+      },
+      offthreadVideoCacheSizeInBytes: OFFTHREAD_CACHE_SIZE,
+    });
+
+    console.log(`[Remotion] Editor render complete: ${outputLocation}`);
+
+    const stat = fs.statSync(outputLocation);
+    res.writeHead(200, {
+      'Content-Type': 'video/mp4',
+      'Content-Length': stat.size,
+      'Content-Disposition': 'attachment; filename="edited_video.mp4"',
+    });
+    fs.createReadStream(outputLocation).pipe(res);
+
+    res.on('finish', () => {
+      try { if (fs.existsSync(outputLocation)) fs.unlinkSync(outputLocation); } catch (_) {}
+    });
+
+  } catch (err) {
+    console.error('[Remotion] Editor render failed:', err.message);
+    res.status(500).json({ error: err.message, success: false });
+  }
+});
+
 // Start server and pre-warm the bundle
 app.listen(PORT, () => {
   console.log(`[Remotion] Renderer listening on port ${PORT}`);

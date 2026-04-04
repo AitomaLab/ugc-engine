@@ -326,3 +326,179 @@ def trigger_clone_job(request: dict):
     process_clone_video.spawn(job_id)
 
     return {"status": "dispatched", "job_id": job_id}
+
+
+# ---------------------------------------------------------------------------
+# Editor Render — Remotion-based server-side video rendering
+# ---------------------------------------------------------------------------
+
+@app.function(
+    image=worker_image,
+    timeout=600,           # 10 min max per editor render
+    cpu=2.0,
+    memory=4096,           # 4 GB RAM for Chromium + video rendering
+)
+def render_editor_video(render_id: str, editor_state: dict, codec: str = "h264"):
+    """
+    Renders a Remotion composition from the Editor's state JSON.
+    Runs the Remotion renderer server as a subprocess, posts the editor state,
+    streams the resulting MP4, and uploads to Supabase Storage.
+    """
+    import subprocess
+    import time
+    import json
+    import tempfile
+    import requests as _req
+
+    project_root = "/root/project"
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
+    remotion_dir = "/root/remotion_renderer"
+    server_script = os.path.join(remotion_dir, "server.js")
+
+    if not os.path.isfile(server_script):
+        raise RuntimeError(f"Remotion server.js not found: {server_script}")
+
+    # Start the Remotion renderer HTTP server on a random port
+    port = 8090
+    print(f"[EDITOR RENDER] Starting Remotion renderer on port {port}...")
+    env = os.environ.copy()
+    env["PORT"] = str(port)
+    env["DBUS_SESSION_BUS_ADDRESS"] = "/dev/null"
+
+    proc = subprocess.Popen(
+        ["node", server_script],
+        cwd=remotion_dir,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+
+    # Wait for server to be ready (up to 60s for first-time bundle)
+    renderer_url = f"http://localhost:{port}"
+    ready = False
+    for i in range(120):
+        time.sleep(0.5)
+        try:
+            resp = _req.get(f"{renderer_url}/health", timeout=2)
+            if resp.status_code == 200:
+                ready = True
+                print(f"[EDITOR RENDER] Renderer ready after {(i+1)*0.5:.1f}s")
+                break
+        except Exception:
+            pass
+
+    if not ready:
+        proc.kill()
+        stdout = proc.stdout.read().decode() if proc.stdout else ""
+        raise RuntimeError(f"Remotion renderer failed to start. Output: {stdout[:2000]}")
+
+    try:
+        # Call the /render-editor endpoint
+        print(f"[EDITOR RENDER] Sending editor state to renderer...")
+        response = _req.post(
+            f"{renderer_url}/render-editor",
+            json={"editorState": editor_state, "codec": codec},
+            timeout=540,
+            stream=True,
+        )
+
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"Renderer returned {response.status_code}: {response.text[:500]}"
+            )
+
+        # Stream the MP4 to a temp file
+        from datetime import datetime as _dt
+        timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
+        storage_filename = f"edited_{render_id[:8]}_{timestamp}.mp4"
+
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    tmp.write(chunk)
+            tmp_path = tmp.name
+
+        output_size = os.path.getsize(tmp_path)
+        print(f"[EDITOR RENDER] Rendered {output_size / 1024 / 1024:.1f} MB")
+
+        # Upload to Supabase Storage
+        from ugc_db.db_manager import get_supabase
+        sb = get_supabase()
+        with open(tmp_path, "rb") as f:
+            sb.storage.from_("generated-videos").upload(
+                storage_filename, f,
+                file_options={"content-type": "video/mp4"},
+            )
+        output_url = sb.storage.from_("generated-videos").get_public_url(storage_filename)
+
+        os.unlink(tmp_path)
+        print(f"[EDITOR RENDER] ✓ Render {render_id} done: {output_url}")
+
+        # Notify the backend so the frontend progress polling picks up the result
+        callback_base = os.environ.get("BACKEND_CALLBACK_URL", "https://studio.aitoma.ai")
+        try:
+            _req.post(
+                f"{callback_base}/api/editor/render/{render_id}/callback",
+                json={
+                    "status": "done",
+                    "output_url": output_url,
+                    "output_size": output_size,
+                },
+                timeout=10,
+            )
+            print(f"[EDITOR RENDER] Callback sent to {callback_base}")
+        except Exception as cb_err:
+            print(f"[EDITOR RENDER] Callback failed (non-fatal): {cb_err}")
+
+        return {
+            "status": "done",
+            "render_id": render_id,
+            "output_url": output_url,
+            "output_size": output_size,
+        }
+
+    except Exception as e:
+        print(f"[EDITOR RENDER] ✗ Render {render_id} failed: {e}")
+        # Notify backend of failure
+        callback_base = os.environ.get("BACKEND_CALLBACK_URL", "https://studio.aitoma.ai")
+        try:
+            _req.post(
+                f"{callback_base}/api/editor/render/{render_id}/callback",
+                json={"status": "failed", "error": str(e)[:500]},
+                timeout=10,
+            )
+        except Exception:
+            pass
+        raise
+
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+@app.function(
+    image=worker_image,
+    timeout=10,
+)
+@modal.fastapi_endpoint(method="POST")
+def trigger_editor_render(request: dict):
+    """
+    HTTP webhook endpoint for Editor render jobs.
+    Called by the FastAPI backend.
+
+    Expects JSON body: {"render_id": "<uuid>", "editor_state": {...}, "codec": "h264"}
+    Returns immediately after spawning the render function.
+    """
+    render_id = request.get("render_id")
+    editor_state = request.get("editor_state")
+    codec = request.get("codec", "h264")
+
+    if not render_id or not editor_state:
+        return {"error": "render_id and editor_state are required"}, 400
+
+    # Spawn the heavy rendering as a separate Modal function call
+    render_editor_video.spawn(render_id, editor_state, codec)
+
+    return {"status": "dispatched", "render_id": render_id}

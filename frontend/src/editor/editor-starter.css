@@ -1,0 +1,190 @@
+@import 'tailwindcss';
+
+/* Editor Starter CSS — Aitoma Integration
+ * This CSS file is imported by editor.tsx as a component-level stylesheet.
+ * It uses @import 'tailwindcss' which creates its own Tailwind context,
+ * separate from the main app's globals.css.
+ */
+
+@theme {
+	--color-editor-starter-bg: #28282e;
+	--color-editor-starter-panel: #212126;
+	--color-editor-starter-border: #000;
+	--color-editor-starter-accent: #0b84f3;
+	--color-editor-starter-scrollbar-track: rgba(255, 255, 255, 0.04);
+	--color-editor-starter-scrollbar-thumb: rgba(255, 255, 255, 0.2);
+}
+
+/* Focus ring utility — expanded as plain CSS */
+.editor-starter-focus-ring {
+	border: 1px solid transparent;
+	outline: none;
+}
+.editor-starter-focus-ring:focus-visible,
+.editor-starter-focus-ring[data-focused="true"] {
+	border-color: var(--color-editor-starter-accent);
+}
+
+/* Field utility — expanded as plain CSS */
+.editor-starter-field {
+	border-radius: 2px;
+	border: 1px solid transparent;
+	background-color: var(--color-editor-starter-bg);
+	outline: none;
+}
+.editor-starter-field:hover {
+	border-color: #404040;
+}
+.editor-starter-field:focus,
+.editor-starter-field[data-focused="true"] {
+	border-color: var(--color-editor-starter-accent);
+}
+
+/* ═══════════════════════════════════════════════════════
+ * UI SCALING OVERRIDES — Aitoma
+ * Makes the editor feel consistent with SaaS app typography.
+ * Scoped to .bg-editor-starter-bg to avoid leaking into other pages.
+ * ═══════════════════════════════════════════════════════ */
+
+/* --- Inspector panel: labels (was text-xs / 12px → 13px) --- */
+.bg-editor-starter-bg .text-xs {
+	font-size: 13px !important;
+	line-height: 1.4 !important;
+}
+
+/* --- Inspector sub-labels (was 0.7rem / 11.2px → 12px) --- */
+.bg-editor-starter-bg .text-\[0\.7rem\] {
+	font-size: 12px !important;
+}
+
+/* --- Inspector inputs: bigger padding & text --- */
+.bg-editor-starter-bg .editor-starter-field {
+	font-size: 13px !important;
+	padding: 6px 10px !important;
+	border-radius: 4px !important;
+}
+
+/* --- Collapsible section headers: more click area --- */
+.bg-editor-starter-bg .px-4.py-3,
+.bg-editor-starter-bg button.px-4 {
+	padding-left: 16px;
+	padding-right: 16px;
+	padding-top: 14px;
+	padding-bottom: 14px;
+}
+
+/* --- Section inner content: more breathing room --- */
+.bg-editor-starter-bg .px-4 > .h-2 {
+	height: 10px !important;
+}
+
+/* --- Slider controls: taller for easier interaction --- */
+.bg-editor-starter-bg input[type="range"] {
+	height: 6px;
+	cursor: pointer;
+}
+
+/* --- Source info text: slightly bigger --- */
+.bg-editor-starter-bg .text-\[0\.7rem\].text-neutral-400,
+.bg-editor-starter-bg .text-\[0\.7rem\].text-neutral-300 {
+	font-size: 12px !important;
+}
+
+/* --- Action row toolbar icons: slightly bigger click targets --- */
+.bg-editor-starter-bg .h-screen > div:first-child button {
+	min-width: 32px;
+	min-height: 32px;
+}
+
+/* --- Playback controls text --- */
+.bg-editor-starter-bg .text-\[0\.75rem\] {
+	font-size: 13px !important;
+}
+
+/* --- Timeline track labels --- */
+.bg-editor-starter-bg .text-\[10px\] {
+	font-size: 11px !important;
+}
+
+/* --- Color picker / select dropdowns --- */
+.bg-editor-starter-bg select {
+	font-size: 13px !important;
+	padding: 5px 8px !important;
+	border-radius: 4px !important;
+}
+
+/* --- Inspector panel: prevent right-edge clipping --- */
+.bg-editor-starter-bg .border-l-editor-starter-border {
+	padding-right: 6px !important;
+}
+
+/* --- Inspector sections: more right padding to prevent clipping --- */
+.bg-editor-starter-bg .px-4 {
+	padding-right: 20px !important;
+}
+
+/* --- Vertical spacing between each control group inside sections --- */
+.bg-editor-starter-bg .px-4 > div + div {
+	margin-top: 10px !important;
+}
+
+/* --- Sub-labels: more space above for visual grouping --- */
+.bg-editor-starter-bg .mt-2 {
+	margin-top: 12px !important;
+}
+
+/* --- Slider row: ensure value text doesn't clip --- */
+.bg-editor-starter-bg .min-w-\[40px\] {
+	min-width: 48px !important;
+}
+
+/* ═══════════════════════════════════════════════════════
+ * TOOLBAR — Uniform spacing for all buttons
+ * ═══════════════════════════════════════════════════════ */
+
+/* --- Toolbar container: uniform gap between ALL buttons --- */
+[data-toolbar="main"] {
+	gap: 4px !important;
+}
+
+/* --- Group separator (between tools and actions) --- */
+[data-toolbar-separator="group"] {
+	margin-left: 8px !important;
+	margin-right: 8px !important;
+}
+
+/* --- Every toolbar button: uniform size & spacing --- */
+[data-toolbar-btn] {
+	padding-left: 12px !important;
+	padding-right: 12px !important;
+	gap: 7px !important;
+	border-radius: 6px !important;
+}
+
+/* --- Toolbar button labels --- */
+[data-toolbar-btn] > span {
+	font-size: 12.5px !important;
+	font-weight: 500 !important;
+	letter-spacing: 0.01em !important;
+	white-space: nowrap !important;
+}
+
+/* --- Render button: primary action with blue accent --- */
+[data-toolbar-btn][data-render] {
+	background-color: rgb(37, 99, 235) !important;
+	padding-left: 16px !important;
+	padding-right: 16px !important;
+}
+
+[data-toolbar-btn][data-render]:hover:not(:disabled) {
+	background-color: rgb(59, 130, 246) !important;
+}
+
+[data-toolbar-btn][data-render]:disabled {
+	opacity: 0.5 !important;
+	cursor: not-allowed !important;
+}
+
+[data-toolbar-btn][data-render] > span {
+	font-weight: 600 !important;
+}

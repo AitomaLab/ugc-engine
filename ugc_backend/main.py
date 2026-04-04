@@ -541,8 +541,8 @@ def _resolve_project_id(request: Request, user: dict | None) -> str | None:
         return default_proj["id"] if default_proj else None
     return None
 
-# CORS — allow origins from environment (comma-separated), defaulting to localhost
-_cors_env = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
+# CORS — allow origins from environment (comma-separated), defaulting to localhost + production
+_cors_env = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,https://studio.aitoma.ai")
 _cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()]
 
 app.add_middleware(
@@ -554,6 +554,10 @@ app.add_middleware(
 )
 
 app.include_router(clones_router)
+
+# Remotion Editor integration — isolated microservice
+from ugc_backend.editor_api import router as editor_router
+app.include_router(editor_router)
 
 
 # ---------------------------------------------------------------------------
@@ -934,6 +938,7 @@ class ScriptGenerateRequest(BaseModel):
     methodology: Optional[str] = None      # Force a specific methodology
     context: Optional[str] = None          # Additional user instructions
     video_language: str = "en"             # 'en' or 'es' — defaults to English
+    model_api: str = ""                    # AI model (e.g. "seedance-2.0") for adapted word counts
 
 @app.post("/api/scripts/generate")
 def api_generate_script(data: ScriptGenerateRequest):
@@ -985,6 +990,8 @@ def api_generate_script(data: ScriptGenerateRequest):
                 methodology=data.methodology,
                 context=data.context,
                 video_language=data.video_language,
+                model_api=data.model_api,
+                product_type=data.product_type,
             )
             return {"script_json": script_json, "product_id": data.product_id}
 
@@ -996,6 +1003,8 @@ def api_generate_script(data: ScriptGenerateRequest):
                 duration=data.duration,
                 product_name=product.get("name", "Product"),
                 influencer_data=influencer_data,
+                model_api=data.model_api,
+                video_language=data.video_language,
             )
         else:
             visuals = product.get("visual_description") or {}
@@ -1015,6 +1024,7 @@ def api_generate_script(data: ScriptGenerateRequest):
                 product_analysis=visuals,
                 website_content=website_content,
                 duration=data.duration,
+                video_language=data.video_language,
             )
 
         return {"script": script, "product_id": data.product_id}
