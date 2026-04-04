@@ -34,9 +34,8 @@ export const ActionRow: React.FC<{
 				<div data-toolbar-separator="group" className="w-px h-5 bg-white/20 mx-3"></div>
 				<RenderButton />
 			</div>
-			<div className="ml-4">
-				<TasksIndicator />
-			</div>
+			<div data-toolbar-separator="group" className="w-px h-5 bg-white/20 mx-3"></div>
+			<TasksIndicator />
 			<div className="flex-1"></div>
 			{FEATURE_CANVAS_ZOOM_CONTROLS ? <CanvasZoomControls /> : null}
 		</div>
