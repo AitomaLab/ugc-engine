@@ -234,7 +234,78 @@ def _build_editor_state(job: dict) -> dict:
 
 
 # ============================================================================
+# ROUTE: GET /api/editor/jobs
+# Returns a lightweight list of the user's videos eligible for editing.
+# ============================================================================
+
+@router.get("/jobs")
+def list_editor_jobs(user: dict = Depends(get_current_user)):
+    """
+    Returns completed video jobs for the current user that are eligible
+    for editing. Merges results from video_jobs and clone_video_jobs.
+    Sorted by most recently updated first.
+    """
+    user_id = str(user["id"])
+    sb = get_supabase()
+    jobs = []
+
+    # 1. video_jobs
+    try:
+        result = sb.table("video_jobs").select(
+            "id,campaign_name,final_video_url,status,created_at,updated_at,editor_state"
+        ).eq("user_id", user_id).in_(
+            "status", ["success"]
+        ).not_.is_("final_video_url", "null").order(
+            "updated_at", desc=True
+        ).limit(50).execute()
+
+        for row in result.data or []:
+            jobs.append({
+                "id": row["id"],
+                "name": row.get("campaign_name") or "Untitled Video",
+                "final_video_url": row["final_video_url"],
+                "status": row["status"],
+                "created_at": row.get("created_at"),
+                "updated_at": row.get("updated_at"),
+                "has_editor_state": row.get("editor_state") is not None,
+                "source": "video_jobs",
+            })
+    except Exception as e:
+        print(f"[EDITOR JOBS] Error fetching video_jobs: {e}")
+
+    # 2. clone_video_jobs
+    try:
+        result = sb.table("clone_video_jobs").select(
+            "id,status,final_video_url,created_at,updated_at"
+        ).eq("user_id", user_id).in_(
+            "status", ["complete"]
+        ).not_.is_("final_video_url", "null").order(
+            "updated_at", desc=True
+        ).limit(50).execute()
+
+        for row in result.data or []:
+            jobs.append({
+                "id": row["id"],
+                "name": "Clone Video",
+                "final_video_url": row["final_video_url"],
+                "status": row["status"],
+                "created_at": row.get("created_at"),
+                "updated_at": row.get("updated_at"),
+                "has_editor_state": False,  # clone jobs may not have editor_state column
+                "source": "clone_video_jobs",
+            })
+    except Exception as e:
+        print(f"[EDITOR JOBS] Error fetching clone_video_jobs: {e}")
+
+    # Sort merged list by updated_at DESC
+    jobs.sort(key=lambda j: j.get("updated_at") or j.get("created_at") or "", reverse=True)
+
+    return {"jobs": jobs[:50]}
+
+
+# ============================================================================
 # ROUTE: GET /api/editor/state/{job_id}
+
 # Returns the UndoableState JSON for a given job.
 # ============================================================================
 

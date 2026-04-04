@@ -632,5 +632,6 @@
   "header.plan": "Plan",
   "header.of": "of",
   "header.used": "Used:",
-  "header.remaining": "remaining"
+  "header.remaining": "remaining",
+  "nav.editor": "Editor"
 }

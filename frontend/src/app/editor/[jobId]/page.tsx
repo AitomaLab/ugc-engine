@@ -1,11 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { apiFetch } from '@/lib/utils';
 
-// Dynamically import the editor (SSR disabled — Remotion requires browser APIs)
 const EditorComponent = dynamic(
   () => import('@/editor/editor').then((mod) => ({ default: mod.Editor })),
   {
@@ -64,7 +63,6 @@ function EditorLoadingScreen({ message, error }: { message: string; error?: stri
 
 export default function EditorPage() {
   const params = useParams();
-  const router = useRouter();
   const jobId = params?.jobId as string;
 
   const [loading, setLoading] = useState(true);
@@ -83,10 +81,7 @@ export default function EditorPage() {
         setLoading(true);
         setError(null);
 
-        // Use apiFetch (same as rest of app) — calls backend directly with auth token
         const editorState = await apiFetch(`/api/editor/state/${jobId}`);
-
-        // Inject state into URL hash for the Editor Starter's state-from-url.ts
         const encodedState = btoa(JSON.stringify(editorState));
         window.location.hash = `#state=${encodedState}`;
 
@@ -139,7 +134,7 @@ export default function EditorPage() {
 
   return (
     <div className="editor-page" style={{ width: '100vw', height: '100vh', overflow: 'hidden' }}>
-      <EditorComponent />
+      <EditorComponent initialJobId={jobId} />
     </div>
   );
 }

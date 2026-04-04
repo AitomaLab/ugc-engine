@@ -28,6 +28,8 @@ const IconLogOut = () => <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2
 const IconFilm = () => <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18" /><line x1="7" y1="2" x2="7" y2="22" /><line x1="17" y1="2" x2="17" y2="22" /><line x1="2" y1="12" x2="22" y2="12" /><line x1="2" y1="7" x2="7" y2="7" /><line x1="2" y1="17" x2="7" y2="17" /><line x1="17" y1="7" x2="22" y2="7" /><line x1="17" y1="17" x2="22" y2="17" /></svg>;
 const IconCalendar = () => <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>;
 
+const IconEdit = () => <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>;
+
 const NAV_ITEMS = [
     { href: '/', labelKey: 'nav.dashboard', label: 'Home', Icon: IconHome },
     { divider: true },
@@ -36,6 +38,7 @@ const NAV_ITEMS = [
     { href: '/scripts', labelKey: 'nav.scripts', label: 'Scripts', Icon: IconFile },
     { href: '/products', labelKey: 'nav.products', label: 'Products', Icon: IconBox },
     { href: '/schedule', labelKey: 'nav.schedule', label: 'Schedule', Icon: IconCalendar },
+    { href: '/editor', labelKey: 'nav.editor', label: 'Editor', Icon: IconEdit },
     { divider: true },
     { href: '/activity', labelKey: 'nav.activity', label: 'Activity', Icon: IconActivity },
 ];
