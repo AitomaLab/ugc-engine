@@ -25,7 +25,7 @@ export const Inspector: React.FC = () => {
 
 	return (
 		<div
-			className="border-l-editor-starter-border bg-editor-starter-panel w-[350px] overflow-y-auto border-l-[1px] pl-2 text-white"
+			className="border-l-editor-starter-border bg-editor-starter-panel w-[350px] overflow-y-auto border-l-[1px] pl-3 text-white"
 			style={style}
 			ref={ref}
 		>
