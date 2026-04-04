@@ -14,7 +14,10 @@ export async function middleware(req: NextRequest) {
 
   // Public routes that don't require auth
   const publicRoutes = ['/login', '/signup', '/forgot-password', '/reset-password'];
+  // Server-to-server callback routes (no auth cookies)
+  const serverRoutes = ['/api/editor/render/'];
   const isPublicRoute = publicRoutes.some(route => path.startsWith(route));
+  const isServerRoute = serverRoutes.some(route => path.startsWith(route) && path.includes('/callback'));
 
   // Check for Supabase auth cookie (set by @supabase/supabase-js client)
   // Supabase stores tokens in cookies like "sb-<project-ref>-auth-token"
@@ -24,7 +27,7 @@ export async function middleware(req: NextRequest) {
   );
 
   // If not logged in and not on a public route, redirect to login
-  if (!hasAuthCookie && !isPublicRoute) {
+  if (!hasAuthCookie && !isPublicRoute && !isServerRoute) {
     const loginUrl = new URL('/login', req.url);
     loginUrl.searchParams.set('redirectTo', path);
     return NextResponse.redirect(loginUrl);
