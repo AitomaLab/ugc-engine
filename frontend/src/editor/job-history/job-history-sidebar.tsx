@@ -99,6 +99,8 @@ const JobCard: React.FC<{
   );
 };
 
+const TOGGLE_TAB_WIDTH = 16;
+
 const ToggleButton: React.FC<{
   isOpen: boolean;
   onClick: () => void;
@@ -108,14 +110,18 @@ const ToggleButton: React.FC<{
       onClick={onClick}
       style={{
         position: 'absolute',
-        right: -12,
+        // When open: stick to the right edge of the sidebar panel
+        // When closed: sit at the left edge of the wrapper
+        right: isOpen ? -TOGGLE_TAB_WIDTH : undefined,
+        left: isOpen ? undefined : 0,
         top: '50%',
         transform: 'translateY(-50%)',
         zIndex: 10,
-        width: 24,
+        width: TOGGLE_TAB_WIDTH,
         height: 40,
         background: 'var(--editor-starter-panel, #28282e)',
-        border: '1px solid rgba(255,255,255,0.1)',
+        border: '1px solid rgba(255,255,255,0.12)',
+        borderLeft: isOpen ? '1px solid rgba(255,255,255,0.12)' : 'none',
         borderRadius: '0 6px 6px 0',
         display: 'flex',
         alignItems: 'center',
@@ -124,8 +130,8 @@ const ToggleButton: React.FC<{
         color: '#999',
         transition: 'background 0.15s',
       }}
-      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; }}
-      onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--editor-starter-panel, #28282e)'; }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.12)'; e.currentTarget.style.color = '#ddd'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--editor-starter-panel, #28282e)'; e.currentTarget.style.color = '#999'; }}
       title={isOpen ? 'Collapse sidebar' : 'Expand sidebar'}
     >
       <svg
@@ -158,7 +164,7 @@ export const JobHistorySidebar: React.FC = () => {
   }), [sidebarOpen]);
 
   return (
-    <div style={{ position: 'relative', flexShrink: 0, width: sidebarOpen ? SIDEBAR_WIDTH : 0 }}>
+    <div style={{ position: 'relative', flexShrink: 0, width: sidebarOpen ? SIDEBAR_WIDTH : TOGGLE_TAB_WIDTH, transition: 'width 200ms ease' }}>
       <ToggleButton isOpen={sidebarOpen} onClick={toggleSidebar} />
       <div style={containerStyle}>
         {sidebarOpen && (
