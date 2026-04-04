@@ -5,23 +5,13 @@ import {
   Img,
   Sequence,
   Audio,
-  useCurrentFrame,
-  useVideoConfig,
-  interpolate,
 } from 'remotion';
 
 /**
  * Server-side Remotion composition that renders the Editor's UndoableState.
  *
- * This is a simplified renderer that handles the most common item types:
- * - video: rendered with OffthreadVideo
- * - image: rendered with Img
- * - audio: rendered with Audio
- * - text: rendered as styled HTML text
- * - solid: rendered as a colored rectangle
- * - captions: rendered as timed subtitle text
- *
- * Items are layered according to the tracks array (last track = topmost layer).
+ * Items use `assetId` to reference assets which contain `remoteUrl` for the media.
+ * Position is stored as `top`/`left` (not x/y).
  */
 
 type Track = {
@@ -31,40 +21,30 @@ type Track = {
   muted: boolean;
 };
 
-type BaseItem = {
+/**
+ * Generic item type — we accept 'any' shape from the editor state
+ * and resolve the needed fields dynamically.
+ */
+type AnyItem = {
   id: string;
+  type: string;
   from: number;
   durationInFrames: number;
-  x?: number;
-  y?: number;
-  width?: number;
-  height?: number;
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+  opacity: number;
   rotation?: number;
-  opacity?: number;
-};
-
-type VideoItemData = BaseItem & {
-  type: 'video';
-  src: string;
-  volume?: number;
-  trimStart?: number;
-};
-
-type ImageItemData = BaseItem & {
-  type: 'image';
-  src: string;
-};
-
-type AudioItemData = BaseItem & {
-  type: 'audio';
-  src: string;
-  volume?: number;
-  trimStart?: number;
-};
-
-type TextItemData = BaseItem & {
-  type: 'text';
-  text: string;
+  borderRadius?: number;
+  assetId?: string;
+  // Video-specific
+  videoStartFromInSeconds?: number;
+  decibelAdjustment?: number;
+  playbackRate?: number;
+  keepAspectRatio?: boolean;
+  // Text-specific
+  text?: string;
   fontSize?: number;
   fontFamily?: string;
   fontWeight?: number;
@@ -73,34 +53,23 @@ type TextItemData = BaseItem & {
   textAlign?: string;
   lineHeight?: number;
   letterSpacing?: number;
+  // Solid-specific
+  fill?: string;
+  // Audio-specific
+  volume?: number;
 };
-
-type SolidItemData = BaseItem & {
-  type: 'solid';
-  fill: string;
-};
-
-type CaptionsItemData = BaseItem & {
-  type: 'captions';
-  captions?: any;
-  transcription?: any;
-  subtitleStyle?: string;
-};
-
-type AnyItem =
-  | VideoItemData
-  | ImageItemData
-  | AudioItemData
-  | TextItemData
-  | SolidItemData
-  | CaptionsItemData;
 
 type Asset = {
   id: string;
-  url?: string;
-  remoteUrl?: string | null;
-  localUrl?: string | null;
-  type?: string;
+  type: string;
+  filename: string;
+  remoteUrl: string | null;
+  remoteFileKey: string | null;
+  mimeType: string;
+  size: number;
+  width?: number;
+  height?: number;
+  durationInSeconds?: number;
 };
 
 type EditorCompositionProps = {
@@ -113,18 +82,13 @@ type EditorCompositionProps = {
 };
 
 /**
- * Resolve an item's media source URL from either the item's src or the linked asset.
+ * Resolve the media URL for an item by looking up its asset.
  */
-function resolveItemSrc(item: AnyItem, assets: Record<string, Asset>): string {
-  if ('src' in item && item.src) {
-    // If src is an asset ID, look it up
-    const asset = assets[item.src];
-    if (asset) {
-      return asset.remoteUrl || asset.url || asset.localUrl || item.src;
-    }
-    return item.src;
-  }
-  return '';
+function resolveAssetUrl(item: AnyItem, assets: Record<string, Asset>): string {
+  if (!item.assetId) return '';
+  const asset = assets[item.assetId];
+  if (!asset) return '';
+  return asset.remoteUrl || '';
 }
 
 const RenderItem: React.FC<{
@@ -132,36 +96,49 @@ const RenderItem: React.FC<{
   assets: Record<string, Asset>;
   compositionWidth: number;
   compositionHeight: number;
-  muted: boolean;
-}> = ({item, assets, compositionWidth, compositionHeight, muted}) => {
-  const src = resolveItemSrc(item, assets);
+  trackMuted: boolean;
+}> = ({item, assets, compositionWidth, compositionHeight, trackMuted}) => {
+  const src = resolveAssetUrl(item, assets);
 
-  // Common positioning
   const style: React.CSSProperties = {
     position: 'absolute',
-    left: item.x ?? 0,
-    top: item.y ?? 0,
+    left: item.left ?? 0,
+    top: item.top ?? 0,
     width: item.width ?? compositionWidth,
     height: item.height ?? compositionHeight,
     opacity: item.opacity ?? 1,
     transform: item.rotation ? `rotate(${item.rotation}deg)` : undefined,
     transformOrigin: 'center center',
+    borderRadius: item.borderRadius ?? 0,
+    overflow: 'hidden',
   };
 
   switch (item.type) {
-    case 'video':
+    case 'video': {
+      if (!src) {
+        // No source — render black placeholder instead of crashing
+        return <div style={{...style, backgroundColor: '#000'}} />;
+      }
+      const startFrom = item.videoStartFromInSeconds
+        ? Math.round(item.videoStartFromInSeconds * 30)
+        : 0;
       return (
         <div style={style}>
           <OffthreadVideo
             src={src}
             style={{width: '100%', height: '100%', objectFit: 'cover'}}
-            volume={muted ? 0 : (item.volume ?? 1)}
-            startFrom={item.trimStart ?? 0}
+            volume={trackMuted ? 0 : 1}
+            startFrom={startFrom}
+            playbackRate={item.playbackRate ?? 1}
           />
         </div>
       );
+    }
 
-    case 'image':
+    case 'image': {
+      if (!src) {
+        return <div style={{...style, backgroundColor: '#333'}} />;
+      }
       return (
         <div style={style}>
           <Img
@@ -170,15 +147,17 @@ const RenderItem: React.FC<{
           />
         </div>
       );
+    }
 
-    case 'audio':
+    case 'audio': {
+      if (!src) return null;
       return (
         <Audio
           src={src}
-          volume={muted ? 0 : (item.volume ?? 1)}
-          startFrom={item.trimStart ?? 0}
+          volume={trackMuted ? 0 : 1}
         />
       );
+    }
 
     case 'text':
       return (
@@ -196,7 +175,6 @@ const RenderItem: React.FC<{
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            overflow: 'hidden',
             wordBreak: 'break-word',
           }}
           dangerouslySetInnerHTML={{__html: item.text || ''}}
@@ -213,9 +191,20 @@ const RenderItem: React.FC<{
         />
       );
 
+    case 'gif': {
+      if (!src) return null;
+      return (
+        <div style={style}>
+          <Img
+            src={src}
+            style={{width: '100%', height: '100%', objectFit: 'cover'}}
+          />
+        </div>
+      );
+    }
+
     case 'captions':
-      // Captions are complex — render a placeholder for now
-      // The full caption rendering would require the subtitle engine
+      // Captions rendering would require the full subtitle engine
       return null;
 
     default:
@@ -230,7 +219,6 @@ export const EditorComposition: React.FC<EditorCompositionProps> = ({
   compositionWidth,
   compositionHeight,
 }) => {
-  // Render tracks from bottom to top (first track = bottom layer)
   return (
     <AbsoluteFill style={{backgroundColor: '#000'}}>
       {tracks.map((track) => {
@@ -252,7 +240,7 @@ export const EditorComposition: React.FC<EditorCompositionProps> = ({
                 assets={assets}
                 compositionWidth={compositionWidth}
                 compositionHeight={compositionHeight}
-                muted={track.muted}
+                trackMuted={track.muted}
               />
             </Sequence>
           );

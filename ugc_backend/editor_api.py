@@ -662,7 +662,7 @@ def get_render_progress(render_id: str, user: dict = Depends(get_current_user)):
     """Returns the progress of an editor render job."""
     render = _editor_renders.get(render_id)
     if not render:
-        return {"type": "in-progress", "overallProgress": 0}
+        return {"type": "in-progress", "overallProgress": 0.0}
 
     if render.get("status") == "done":
         return {
@@ -674,7 +674,7 @@ def get_render_progress(render_id: str, user: dict = Depends(get_current_user)):
     if render.get("status") == "failed":
         return {"type": "error", "error": render.get("error", "Render failed")}
 
-    return {"type": "in-progress", "overallProgress": render.get("progress", 0)}
+    return {"type": "in-progress", "overallProgress": render.get("progress", 0) / 100}
 
 
 # ============================================================================
