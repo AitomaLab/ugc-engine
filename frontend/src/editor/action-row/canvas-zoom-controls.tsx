@@ -77,7 +77,7 @@ export const CanvasZoomControls: React.FC = () => {
 	};
 
 	return (
-		<div className="flex h-full items-center rounded bg-white/5 text-white">
+		<div className="flex h-full items-center rounded bg-white/5 text-white mr-2">
 			{!isFitMode && (
 				<button
 					onClick={handleFit}
