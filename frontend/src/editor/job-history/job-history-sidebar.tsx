@@ -67,18 +67,33 @@ const JobCard: React.FC<{
           style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
         />
         {/* Status badge */}
-        <div style={{ position: 'absolute', top: 6, right: 6 }}>
-          <span style={{
-            fontSize: 10,
-            fontWeight: 500,
-            padding: '2px 6px',
-            borderRadius: 99,
-            background: job.has_editor_state ? 'rgba(245,158,11,0.2)' : 'rgba(16,185,129,0.2)',
-            color: job.has_editor_state ? '#f59e0b' : '#10b981',
-          }}>
-            {job.has_editor_state ? 'Editing' : 'New'}
-          </span>
-        </div>
+        {isActive ? (
+          <div style={{ position: 'absolute', top: 6, right: 6 }}>
+            <span style={{
+              fontSize: 10,
+              fontWeight: 600,
+              padding: '2px 6px',
+              borderRadius: 99,
+              background: 'rgba(59,130,246,0.25)',
+              color: '#60a5fa',
+            }}>
+              Active
+            </span>
+          </div>
+        ) : job.has_editor_state ? (
+          <div style={{ position: 'absolute', top: 6, right: 6 }}>
+            <span style={{
+              fontSize: 10,
+              fontWeight: 500,
+              padding: '2px 6px',
+              borderRadius: 99,
+              background: 'rgba(245,158,11,0.2)',
+              color: '#f59e0b',
+            }}>
+              Edited
+            </span>
+          </div>
+        ) : null}
       </div>
 
       {/* Info */}

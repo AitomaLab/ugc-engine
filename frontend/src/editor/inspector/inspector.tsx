@@ -20,12 +20,13 @@ export const Inspector: React.FC = () => {
 		return {
 			...scrollbarStyle,
 			width: INSPECTOR_WIDTH,
+			paddingLeft: 12,
 		};
 	}, []);
 
 	return (
 		<div
-			className="border-l-editor-starter-border bg-editor-starter-panel w-[350px] overflow-y-auto border-l-[1px] pl-3 text-white"
+			className="border-l-editor-starter-border bg-editor-starter-panel w-[350px] overflow-y-auto border-l-[1px] text-white"
 			style={style}
 			ref={ref}
 		>
