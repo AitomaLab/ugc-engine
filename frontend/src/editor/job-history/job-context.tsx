@@ -50,6 +50,7 @@ export function JobHistoryProvider({
     try {
       setLoading(true);
       const data = await apiFetch<{ jobs: EditorJob[] }>('/api/editor/jobs');
+      console.log('[JobHistory] Fetched jobs:', data?.jobs?.length ?? 0);
       setJobs(data.jobs || []);
     } catch (err) {
       console.error('[JobHistory] Failed to fetch jobs:', err);

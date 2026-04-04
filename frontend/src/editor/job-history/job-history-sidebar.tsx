@@ -26,10 +26,10 @@ const JobCard: React.FC<{
   return (
     <button
       onClick={onClick}
-      className={`w-full text-left p-3 rounded-lg transition-all duration-150 group ${
+      className={`w-full text-left p-2.5 rounded-lg transition-all duration-150 group ${
         isActive
           ? 'bg-blue-600/20 border border-blue-500/50'
-          : 'bg-white/5 border border-transparent hover:bg-white/10 hover:border-white/10'
+          : 'bg-white/[0.04] border border-transparent hover:bg-white/[0.08] hover:border-white/10'
       }`}
     >
       {/* Thumbnail */}
@@ -55,10 +55,10 @@ const JobCard: React.FC<{
       </div>
 
       {/* Info */}
-      <div className="truncate text-sm font-medium text-white/90">
+      <div className="truncate text-xs font-medium text-neutral-200">
         {job.name}
       </div>
-      <div className="text-[11px] text-white/40 mt-0.5">
+      <div className="text-[11px] text-neutral-500 mt-0.5">
         {timeAgo(job.updated_at || job.created_at)}
       </div>
     </button>
@@ -106,14 +106,14 @@ export const JobHistorySidebar: React.FC = () => {
         style={style}
       >
         {sidebarOpen && (
-          <div className="p-3">
-            {/* Header */}
+          <div className="p-4">
+            {/* Header — matches InspectorLabel style: text-xs font-bold text-neutral-300 */}
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-white/50">
-                Video History
-              </h3>
-              <span className="text-[10px] text-white/30">
-                {jobs.length} videos
+              <span className="text-xs font-bold text-neutral-300">
+                History
+              </span>
+              <span className="text-[10px] font-medium text-neutral-500">
+                {jobs.length}
               </span>
             </div>
 
@@ -121,17 +121,21 @@ export const JobHistorySidebar: React.FC = () => {
             {loading ? (
               <div className="flex flex-col gap-2">
                 {[1, 2, 3].map((i) => (
-                  <div key={i} className="w-full bg-white/5 rounded-lg animate-pulse">
-                    <div className="aspect-video rounded bg-white/5 mb-2" />
-                    <div className="h-3 bg-white/5 rounded w-3/4 mx-3 mb-2" />
-                    <div className="h-2 bg-white/5 rounded w-1/2 mx-3 mb-3" />
+                  <div key={i} className="w-full rounded-lg p-2.5">
+                    <div className="aspect-video rounded bg-white/[0.06] mb-2 animate-pulse" />
+                    <div className="h-3 bg-white/[0.06] rounded w-3/4 mb-1.5 animate-pulse" />
+                    <div className="h-2 bg-white/[0.04] rounded w-1/2 animate-pulse" />
                   </div>
                 ))}
               </div>
             ) : jobs.length === 0 ? (
-              <div className="text-center py-8">
-                <div className="text-white/30 text-sm mb-1">No videos yet</div>
-                <div className="text-white/20 text-xs">
+              <div className="text-center py-6 px-2">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mx-auto mb-2 text-neutral-600">
+                  <rect x="2" y="3" width="20" height="14" rx="2" />
+                  <path d="M8 21h8M12 17v4" />
+                </svg>
+                <div className="text-neutral-400 text-xs font-medium mb-0.5">No videos yet</div>
+                <div className="text-neutral-600 text-[11px] leading-relaxed">
                   Generate a video to start editing
                 </div>
               </div>
