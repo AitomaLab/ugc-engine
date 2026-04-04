@@ -26,39 +26,73 @@ const JobCard: React.FC<{
   return (
     <button
       onClick={onClick}
-      className={`w-full text-left p-2.5 rounded-lg transition-all duration-150 group ${
-        isActive
-          ? 'bg-blue-600/20 border border-blue-500/50'
-          : 'bg-white/[0.04] border border-transparent hover:bg-white/[0.08] hover:border-white/10'
-      }`}
+      style={{
+        display: 'block',
+        width: '100%',
+        textAlign: 'left',
+        padding: 10,
+        borderRadius: 8,
+        border: isActive ? '1px solid rgba(59,130,246,0.5)' : '1px solid transparent',
+        background: isActive ? 'rgba(59,130,246,0.15)' : 'rgba(255,255,255,0.03)',
+        cursor: 'pointer',
+        transition: 'all 0.15s ease',
+      }}
+      onMouseEnter={(e) => {
+        if (!isActive) {
+          e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
+          e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
+        }
+      }}
+      onMouseLeave={(e) => {
+        if (!isActive) {
+          e.currentTarget.style.background = 'rgba(255,255,255,0.03)';
+          e.currentTarget.style.borderColor = 'transparent';
+        }
+      }}
     >
       {/* Thumbnail */}
-      <div className="relative w-full aspect-video rounded overflow-hidden bg-black/40 mb-2">
+      <div style={{
+        position: 'relative',
+        width: '100%',
+        aspectRatio: '16/9',
+        borderRadius: 6,
+        overflow: 'hidden',
+        background: 'rgba(0,0,0,0.4)',
+        marginBottom: 8,
+      }}>
         <video
           src={`${job.final_video_url}#t=0.5`}
           muted
           preload="metadata"
-          className="w-full h-full object-cover"
+          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
         />
         {/* Status badge */}
-        <div className="absolute top-1.5 right-1.5">
-          <span
-            className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
-              job.has_editor_state
-                ? 'bg-amber-500/20 text-amber-400'
-                : 'bg-emerald-500/20 text-emerald-400'
-            }`}
-          >
+        <div style={{ position: 'absolute', top: 6, right: 6 }}>
+          <span style={{
+            fontSize: 10,
+            fontWeight: 500,
+            padding: '2px 6px',
+            borderRadius: 99,
+            background: job.has_editor_state ? 'rgba(245,158,11,0.2)' : 'rgba(16,185,129,0.2)',
+            color: job.has_editor_state ? '#f59e0b' : '#10b981',
+          }}>
             {job.has_editor_state ? 'Editing' : 'New'}
           </span>
         </div>
       </div>
 
       {/* Info */}
-      <div className="truncate text-xs font-medium text-neutral-200">
+      <div style={{
+        fontSize: 12,
+        fontWeight: 500,
+        color: '#e5e5e5',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+      }}>
         {job.name}
       </div>
-      <div className="text-[11px] text-neutral-500 mt-0.5">
+      <div style={{ fontSize: 11, color: '#737373', marginTop: 2 }}>
         {timeAgo(job.updated_at || job.created_at)}
       </div>
     </button>
@@ -72,7 +106,26 @@ const ToggleButton: React.FC<{
   return (
     <button
       onClick={onClick}
-      className="absolute -right-3 top-1/2 -translate-y-1/2 z-10 w-6 h-10 bg-editor-starter-panel border border-white/10 rounded-r-md flex items-center justify-center hover:bg-white/10 transition-colors"
+      style={{
+        position: 'absolute',
+        right: -12,
+        top: '50%',
+        transform: 'translateY(-50%)',
+        zIndex: 10,
+        width: 24,
+        height: 40,
+        background: 'var(--editor-starter-panel, #28282e)',
+        border: '1px solid rgba(255,255,255,0.1)',
+        borderRadius: '0 6px 6px 0',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: 'pointer',
+        color: '#999',
+        transition: 'background 0.15s',
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--editor-starter-panel, #28282e)'; }}
       title={isOpen ? 'Collapse sidebar' : 'Expand sidebar'}
     >
       <svg
@@ -80,7 +133,7 @@ const ToggleButton: React.FC<{
         height="10"
         viewBox="0 0 10 10"
         fill="none"
-        className={`transition-transform ${isOpen ? '' : 'rotate-180'}`}
+        style={{ transition: 'transform 0.15s', transform: isOpen ? 'none' : 'rotate(180deg)' }}
       >
         <path d="M6.5 1.5L3.5 5L6.5 8.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
@@ -91,56 +144,59 @@ const ToggleButton: React.FC<{
 export const JobHistorySidebar: React.FC = () => {
   const { jobs, loading, activeJobId, setActiveJobId, sidebarOpen, toggleSidebar } = useJobHistory();
 
-  const style = useMemo((): React.CSSProperties => ({
+  const containerStyle = useMemo((): React.CSSProperties => ({
     ...scrollbarStyle,
     width: sidebarOpen ? SIDEBAR_WIDTH : 0,
     minWidth: sidebarOpen ? SIDEBAR_WIDTH : 0,
+    height: '100%',
+    overflowY: 'auto',
+    overflowX: 'hidden',
+    borderRight: '1px solid var(--editor-starter-border, rgba(255,255,255,0.08))',
+    background: 'var(--editor-starter-panel, #28282e)',
+    color: '#fff',
     transition: 'width 200ms ease, min-width 200ms ease',
   }), [sidebarOpen]);
 
   return (
-    <div className="relative flex-shrink-0" style={{ width: sidebarOpen ? SIDEBAR_WIDTH : 0 }}>
+    <div style={{ position: 'relative', flexShrink: 0, width: sidebarOpen ? SIDEBAR_WIDTH : 0 }}>
       <ToggleButton isOpen={sidebarOpen} onClick={toggleSidebar} />
-      <div
-        className="border-r-editor-starter-border bg-editor-starter-panel h-full overflow-y-auto overflow-x-hidden border-r text-white"
-        style={style}
-      >
+      <div style={containerStyle}>
         {sidebarOpen && (
-          <div className="p-4">
-            {/* Header — matches InspectorLabel style: text-xs font-bold text-neutral-300 */}
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-bold text-neutral-300">
+          <div style={{ padding: '16px 14px 16px 16px' }}>
+            {/* Header — matches InspectorLabel: text-xs font-bold text-neutral-300 */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: '#d4d4d4' }}>
                 History
               </span>
-              <span className="text-[10px] font-medium text-neutral-500">
+              <span style={{ fontSize: 10, fontWeight: 500, color: '#737373' }}>
                 {jobs.length}
               </span>
             </div>
 
             {/* Job List */}
             {loading ? (
-              <div className="flex flex-col gap-2">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {[1, 2, 3].map((i) => (
-                  <div key={i} className="w-full rounded-lg p-2.5">
-                    <div className="aspect-video rounded bg-white/[0.06] mb-2 animate-pulse" />
-                    <div className="h-3 bg-white/[0.06] rounded w-3/4 mb-1.5 animate-pulse" />
-                    <div className="h-2 bg-white/[0.04] rounded w-1/2 animate-pulse" />
+                  <div key={i} style={{ padding: 10, borderRadius: 8 }}>
+                    <div style={{ aspectRatio: '16/9', borderRadius: 6, background: 'rgba(255,255,255,0.05)', marginBottom: 8 }} />
+                    <div style={{ height: 12, borderRadius: 4, background: 'rgba(255,255,255,0.05)', width: '75%', marginBottom: 6 }} />
+                    <div style={{ height: 10, borderRadius: 4, background: 'rgba(255,255,255,0.03)', width: '50%' }} />
                   </div>
                 ))}
               </div>
             ) : jobs.length === 0 ? (
-              <div className="text-center py-6 px-2">
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mx-auto mb-2 text-neutral-600">
+              <div style={{ textAlign: 'center', padding: '24px 8px' }}>
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#525252" strokeWidth="1.5" style={{ margin: '0 auto 8px' }}>
                   <rect x="2" y="3" width="20" height="14" rx="2" />
                   <path d="M8 21h8M12 17v4" />
                 </svg>
-                <div className="text-neutral-400 text-xs font-medium mb-0.5">No videos yet</div>
-                <div className="text-neutral-600 text-[11px] leading-relaxed">
+                <div style={{ color: '#a3a3a3', fontSize: 12, fontWeight: 500, marginBottom: 2 }}>No videos yet</div>
+                <div style={{ color: '#525252', fontSize: 11, lineHeight: 1.5 }}>
                   Generate a video to start editing
                 </div>
               </div>
             ) : (
-              <div className="flex flex-col gap-2">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {jobs.map((job) => (
                   <JobCard
                     key={job.id}

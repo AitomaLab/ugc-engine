@@ -43,7 +43,6 @@ export function JobHistoryProvider({
   const [jobs, setJobs] = useState<EditorJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const isSaving = useRef(false);
 
   // Fetch the list of editor-eligible jobs
   const refreshJobs = useCallback(async () => {
@@ -63,54 +62,15 @@ export function JobHistoryProvider({
     refreshJobs();
   }, [refreshJobs]);
 
-  // Save current editor state before switching
-  const saveCurrentState = useCallback(async (jobId: string) => {
-    if (isSaving.current) return;
-    isSaving.current = true;
-    try {
-      const hash = window.location.hash;
-      if (!hash.startsWith('#state=')) return;
-      const encoded = hash.slice('#state='.length);
-      const state = JSON.parse(atob(encoded));
-      await apiFetch(`/api/editor/state/${jobId}`, {
-        method: 'POST',
-        body: JSON.stringify(state),
-      });
-    } catch {
-      // Silent fail
-    } finally {
-      isSaving.current = false;
-    }
-  }, []);
-
-  // Load a job's editor state into the URL hash
-  const loadJobState = useCallback(async (jobId: string) => {
-    try {
-      const editorState = await apiFetch(`/api/editor/state/${jobId}`);
-      const encodedState = btoa(JSON.stringify(editorState));
-      window.location.hash = `#state=${encodedState}`;
-    } catch (err) {
-      console.error('[JobHistory] Failed to load job state:', err);
-    }
-  }, []);
-
-  // Switch to a different job
-  const setActiveJobId = useCallback(async (newJobId: string) => {
+  // Switch to a different job — full page navigation so the editor
+  // re-initializes with the new job's state from the API.
+  const setActiveJobId = useCallback((newJobId: string) => {
     if (newJobId === activeJobId) return;
 
-    // Save current job's state first
-    if (activeJobId) {
-      await saveCurrentState(activeJobId);
-    }
-
-    // Load new job's state
-    await loadJobState(newJobId);
-
-    // Update URL without full page reload
-    window.history.replaceState({}, '', `/editor/${newJobId}`);
-
-    setActiveJobIdRaw(newJobId);
-  }, [activeJobId, saveCurrentState, loadJobState]);
+    // Navigate to the new job URL — this triggers a full page load
+    // which runs the editor page's useEffect to fetch + inject state.
+    window.location.href = `/editor/${newJobId}`;
+  }, [activeJobId]);
 
   const toggleSidebar = useCallback(() => {
     setSidebarOpen(prev => !prev);
