@@ -61,12 +61,8 @@ interface CostEstimate {
 }
 
 const AI_MODELS = [
-    { value: 'seedance-1.5-pro', label: 'Seedance 1.5 Pro', desc: 'Lip-sync + Spanish · $0.28/clip' },
-    { value: 'seedance-2.0', label: 'Seedance 2.0', desc: '2K quality · Faster lip-sync' },
-    { value: 'kling-2.6', label: 'Kling 2.6', desc: 'Silent video only' },
     { value: 'veo-3.1-fast', label: 'Veo 3.1 Fast', desc: 'Google · Speech + audio · $0.30/clip' },
-    { value: 'veo-3.1', label: 'Veo 3.1', desc: 'Google · Highest quality, slower' },
-    { value: 'infinitalk-audio', label: 'InfiniteTalk', desc: 'Realistic lip-sync dialog' },
+    { value: 'seedance-2.0', label: 'Seedance 2.0', desc: '2K quality · Faster lip-sync · $0.35/clip' },
 ];
 
 const CONTENT_STRATEGIES = [
@@ -264,6 +260,7 @@ function CreateContent() {
                         product_type: productType,
                         methodology: scriptMethodology || undefined,
                         video_language: videoLanguage,
+                        model_api: modelApi,
                     }),
                 });
                 if (res.ok) {
@@ -289,7 +286,7 @@ function CreateContent() {
         // Debounce slightly to avoid rapid firing if user is clicking around
         const timer = setTimeout(generateScript, 500);
         return () => clearTimeout(timer);
-    }, [productType, productId, duration, selectedInfluencer, API_URL, scriptMethodology, videoLanguage]);
+    }, [productType, productId, duration, selectedInfluencer, API_URL, scriptMethodology, videoLanguage, modelApi]);
 
 
     // ... (render)
@@ -358,6 +355,7 @@ function CreateContent() {
                     product_type: 'digital',
                     methodology: scriptMethodology || undefined,
                     video_language: videoLanguage,
+                    model_api: modelApi,
                 }),
             });
             if (res.ok) {
@@ -898,7 +896,6 @@ function CreateContent() {
                     </div>
                 )}
 
-                {/* AI MODEL SELECTOR — HIDDEN: Defaulting to Veo 3.1. Uncomment to re-enable.
                 <div className="config-section">
                     <div className="config-step">
                         <div className="step-num">3</div>
@@ -912,7 +909,6 @@ function CreateContent() {
                         ))}
                     </div>
                 </div>
-                */}
 
                 {/* Duration */}
                 <div className="config-section">
@@ -929,7 +925,7 @@ function CreateContent() {
 {/* ── SCRIPT ── */}
 <div className="config-section">
     <div className="config-step">
-        <div className={`step-num ${(customScript || generatedScript || selectedScript) ? 'done' : ''}`}>3</div>
+        <div className={`step-num ${(customScript || generatedScript || selectedScript) ? 'done' : ''}`}>4</div>
         <div className="step-text">{t('create.scriptSection')}</div>
     </div>
     <div style={{ display: 'flex', flexWrap: 'nowrap', gap: '6px', marginBottom: '10px' }}>
@@ -1136,6 +1132,17 @@ function CreateContent() {
                             }} />
                         </button>
                     </div>
+
+                    {/* Subtitle editing hint */}
+                    <p style={{
+                        fontSize: '12px',
+                        color: '#9CA3AF',
+                        lineHeight: 1.4,
+                        marginTop: '8px',
+                        marginBottom: 0,
+                    }}>
+                        {t('create.subtitleHint')}
+                    </p>
 
                     {subtitlesEnabled && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '12px' }}>

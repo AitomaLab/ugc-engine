@@ -3481,3 +3481,10 @@ select.input-field {
   .header { padding: 0 8px; }
   .stat-value { font-size: 20px; }
 }
+/* ─── REMOTION EDITOR — CSS Variables ──────────── */
+/* NOTE: @theme + Tailwind utilities are in editor/editor-starter.css */
+
+/* Editor page: prevent back gesture when scrolling timeline */
+.editor-page {
+  overscroll-behavior-x: none;
+}
