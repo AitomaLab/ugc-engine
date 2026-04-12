@@ -29,11 +29,15 @@ export default function VideosPage() {
 
     const fetchData = useCallback(async () => {
         try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 15000);
+            const opts = { signal: controller.signal };
             const [jobsData, infData, clonesData] = await Promise.all([
-                apiFetch<any[]>('/jobs?limit=200&include_clones=true'),
-                apiFetch<Influencer[]>('/influencers'),
-                apiFetch<any[]>('/api/clones').catch(() => []),
+                apiFetch<any[]>('/jobs?limit=200&include_clones=true', opts).catch(() => []),
+                apiFetch<Influencer[]>('/influencers', opts).catch(() => []),
+                apiFetch<any[]>('/api/clones', opts).catch(() => []),
             ]);
+            clearTimeout(timeout);
             setJobs(jobsData);
             setInfluencers(infData);
             setClones(clonesData);
@@ -245,16 +249,85 @@ export default function VideosPage() {
                                         <video src={job.final_video_url} style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', inset: 0 }} muted loop playsInline preload="metadata" />
                                     ) : (job.status === 'processing' || job.status === 'pending') ? (
                                         <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                                            <div className="processing-spinner" />
-                                            <span style={{ fontSize: '12px', fontWeight: 600, color: 'white', opacity: 0.9 }}>
-                                                {job.status === 'pending' ? t('common.queued') : t('common.processing')}
-                                            </span>
-                                            {job.status === 'processing' && job.created_at && (() => {
-                                                const elapsed = Math.round((Date.now() - new Date(job.created_at).getTime()) / 60000);
-                                                const est = (job as any).product_type === 'digital' ? 5 : 7;
-                                                const remaining = Math.max(est - elapsed, 0);
-                                                return <span style={{ fontSize: '11px', color: 'white', opacity: 0.6 }}>{remaining > 0 ? (t('videos.timeLeft') || '~{min}m left').replace('{min}', String(remaining)) : t('videos.finishing')}</span>;
-                                            })()}
+                                            {/* Progressive preview: show scene image or video */}
+                                            {(job as any).preview_url && (job as any).preview_type === 'video' ? (
+                                                <video
+                                                    key={(job as any).preview_url}
+                                                    src={(job as any).preview_url}
+                                                    style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+                                                    autoPlay muted loop playsInline
+                                                    onError={(e) => { (e.target as HTMLVideoElement).style.display = 'none'; }}
+                                                />
+                                            ) : (job as any).preview_url && (job as any).preview_type === 'image' ? (
+                                                <img
+                                                    key={(job as any).preview_url}
+                                                    src={(job as any).preview_url}
+                                                    alt="Scene preview"
+                                                    style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+                                                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                                                />
+                                            ) : null}
+
+                                            {/* Overlay with status — positioned at bottom for readability */}
+                                            <div style={{
+                                                position: 'absolute', inset: 0,
+                                                background: (job as any).preview_url ? 'linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.3) 40%, transparent 70%)' : 'transparent',
+                                                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end',
+                                                paddingBottom: '16px', gap: '6px',
+                                            }}>
+                                                {!(job as any).preview_url && <div className="processing-spinner" style={{ marginBottom: 'auto', marginTop: 'auto' }} />}
+                                                {/* Status badge with solid background for readability */}
+                                                <div style={{
+                                                    background: 'rgba(0,0,0,0.6)',
+                                                    backdropFilter: 'blur(8px)',
+                                                    borderRadius: '20px',
+                                                    padding: '5px 14px',
+                                                    display: 'flex', alignItems: 'center', gap: '6px',
+                                                }}>
+                                                    {/* Pulsing dot */}
+                                                    <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#337AFF', animation: 'pulse 1.5s ease-in-out infinite' }} />
+                                                    <span style={{ fontSize: '12px', fontWeight: 600, color: 'white' }}>
+                                                        {(() => {
+                                                            const msg = (job as any).status_message || '';
+                                                            const hasPreview = !!(job as any).preview_url;
+                                                            if (!msg) return job.status === 'pending' ? t('common.queued') : t('common.processing');
+                                                            // "Composite Image" — show "Generating image" until preview_url appears, then "Image ready"
+                                                            if (msg.includes('Composite Image')) return hasPreview ? (t('videos.previewImageReady') || 'Influencer image ready') : 'Generating image...';
+                                                            if (msg.includes('Animating')) return hasPreview ? (t('videos.previewAnimating') || 'Animating scene') : 'Animating scene...';
+                                                            if (msg.includes('Building scenes')) return 'Preparing scenes...';
+                                                            if (msg.includes('Generating scenes')) return 'Generating scenes...';
+                                                            if (msg.includes('Analyzing Product')) return 'Analyzing product...';
+                                                            if (msg.includes('Adding Music')) return 'Adding music...';
+                                                            if (msg.includes('Assembling')) return 'Assembling video...';
+                                                            if (msg.includes('Subtitling')) return 'Adding captions...';
+                                                            if (msg.includes('Voiceover')) return 'Generating voiceover...';
+                                                            if (msg.includes('Extend:') || msg.includes('Gen:')) {
+                                                                const match = msg.match(/\((\d+)\/(\d+)\)/);
+                                                                return match ? `Generating scene ${match[1]}/${match[2]}...` : 'Generating scene...';
+                                                            }
+                                                            return msg;
+                                                        })()}
+                                                    </span>
+                                                </div>
+                                                {/* Progress bar */}
+                                                {job.status === 'processing' && job.progress > 0 && (
+                                                    <div style={{ width: '70%', height: '4px', borderRadius: '2px', backgroundColor: 'rgba(255,255,255,0.2)', overflow: 'hidden' }}>
+                                                        <div style={{
+                                                            width: `${job.progress}%`,
+                                                            height: '100%',
+                                                            borderRadius: '2px',
+                                                            backgroundColor: '#337AFF',
+                                                            transition: 'width 0.5s ease',
+                                                        }} />
+                                                    </div>
+                                                )}
+                                                {job.status === 'processing' && job.created_at && (() => {
+                                                    const elapsed = Math.round((Date.now() - new Date(job.created_at).getTime()) / 60000);
+                                                    const est = (job as any).product_type === 'digital' ? 5 : 7;
+                                                    const remaining = Math.max(est - elapsed, 0);
+                                                    return <span style={{ fontSize: '11px', color: 'white', opacity: 0.7 }}>{remaining > 0 ? (t('videos.timeLeft') || '~{min}m left').replace('{min}', String(remaining)) : t('videos.finishing')}</span>;
+                                                })()}
+                                            </div>
                                         </div>
                                     ) : null}
                                     <button className={`card-select-btn ${selectedIds.has(job.id) ? 'selected' : ''}`} onClick={(e) => { e.stopPropagation(); toggleSelect(job.id); }} title="Select video">

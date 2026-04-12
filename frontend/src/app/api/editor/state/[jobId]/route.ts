@@ -11,7 +11,13 @@ export async function GET(
     const token = request.cookies.get('sb-access-token')?.value
       || request.headers.get('Authorization')?.replace('Bearer ', '');
 
-    const res = await fetch(`${BACKEND_URL}/api/editor/state/${jobId}`, {
+    // Forward query params (e.g. ?force_rebuild=true) to the backend
+    const backendUrl = new URL(`${BACKEND_URL}/api/editor/state/${jobId}`);
+    request.nextUrl.searchParams.forEach((value, key) => {
+      backendUrl.searchParams.set(key, value);
+    });
+
+    const res = await fetch(backendUrl.toString(), {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',

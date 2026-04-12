@@ -9,6 +9,7 @@ export interface Influencer {
     target_audience?: string;
     image_url?: string;
     elevenlabs_voice_id?: string;
+    character_views?: string[];  // Character sheet view URLs (closeup, front, profile, full body)
 }
 
 export interface ScriptScene {
@@ -69,6 +70,7 @@ export interface Product {
     website_url?: string;
     job_count?: number;
     visual_description?: any;
+    product_views?: string[];
     created_at?: string;
 }
 
@@ -89,6 +91,10 @@ export interface VideoJob {
     cost_music?: number;
     cost_processing?: number;
     total_cost?: number;
+    // Progressive scene previews
+    preview_url?: string;
+    preview_type?: string;  // "image" or "video"
+    status_message?: string;
 }
 
 export interface Notification {

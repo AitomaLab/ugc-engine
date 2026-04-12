@@ -104,7 +104,7 @@ export const CaptionsLayer = ({
 					nextPage
 						? (nextPage.startMs / 1000) * fps - captionOffsetInSeconds * fps
 						: Infinity,
-					subtitleStartFrame + SWITCH_CAPTIONS_EVERY_MS,
+					subtitleStartFrame + (SWITCH_CAPTIONS_EVERY_MS / 1000) * fps,
 				);
 				const durationInFrames = subtitleEndFrame - subtitleStartFrame;
 				if (durationInFrames <= 0) {

@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { Suspense, useEffect, useState } from 'react';
+import { useParams, useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { apiFetch } from '@/lib/utils';
 
@@ -61,10 +61,12 @@ function EditorLoadingScreen({ message, error }: { message: string; error?: stri
   );
 }
 
-export default function EditorPage() {
+function EditorPageInner() {
   const params = useParams();
   const jobId = params?.jobId as string;
 
+  const searchParams = useSearchParams();
+  const forceRebuild = searchParams?.get('force_rebuild') === 'true';
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
@@ -81,8 +83,12 @@ export default function EditorPage() {
         setLoading(true);
         setError(null);
 
-        const editorState = await apiFetch(`/api/editor/state/${jobId}`);
-        const encodedState = btoa(JSON.stringify(editorState));
+        const qs = forceRebuild ? '?force_rebuild=true' : '';
+        const editorState = await apiFetch(`/api/editor/state/${jobId}${qs}`);
+        // Unicode-safe Base64: encode via TextEncoder to handle emoji/non-Latin1 chars
+        const encodedState = btoa(
+          Array.from(new TextEncoder().encode(JSON.stringify(editorState)), (b) => String.fromCharCode(b)).join('')
+        );
         window.location.hash = `#state=${encodedState}`;
 
         setReady(true);
@@ -94,6 +100,7 @@ export default function EditorPage() {
     };
 
     loadEditorState();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId]);
 
   // Auto-save editor state every 30 seconds
@@ -106,7 +113,10 @@ export default function EditorPage() {
         if (!hash.startsWith('#state=')) return;
 
         const encoded = hash.slice('#state='.length);
-        const state = JSON.parse(atob(encoded));
+        // Unicode-safe Base64 decode
+        const state = JSON.parse(
+          new TextDecoder().decode(Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0)))
+        );
 
         await apiFetch(`/api/editor/state/${jobId}`, {
           method: 'POST',
@@ -136,5 +146,13 @@ export default function EditorPage() {
     <div className="editor-page" style={{ width: '100vw', height: '100vh', overflow: 'hidden' }}>
       <EditorComponent initialJobId={jobId} />
     </div>
+  );
+}
+
+export default function EditorPage() {
+  return (
+    <Suspense fallback={<EditorLoadingScreen message="Loading video editor..." />}>
+      <EditorPageInner />
+    </Suspense>
   );
 }

@@ -73,7 +73,7 @@ export const GenerateCaptionSection: React.FC<{
 
 		const defaultLineHeight = 1.2;
 		const defaultLetterSpacing = 0;
-		const defaultFontSize = 80;
+		const defaultFontSize = 72;
 		const defaultMaxLines = 2;
 
 		const width = Math.min(compositionWidth, 900) - 40;
@@ -102,26 +102,26 @@ export const GenerateCaptionSection: React.FC<{
 						id: captionItemId,
 						isDraggingInTimeline: false,
 						left: (state.undoableState.compositionWidth - width) / 2,
-						top: state.undoableState.compositionHeight / 2 + 150,
+						top: state.undoableState.compositionHeight * 0.45,
 						width: width,
 						opacity: 1,
-						fontFamily: 'TikTok Sans',
+						fontFamily: 'Anton',
 						fontStyle: {
 							variant: 'normal',
-							weight: '600',
+							weight: '400',
 						},
 						rotation: 0,
 						lineHeight: defaultLineHeight,
 						letterSpacing: defaultLetterSpacing,
 						fontSize: defaultFontSize,
 						align: 'center',
-						color: 'white',
-						highlightColor: DEFAULT_HIGHLIGHT_COLOR,
+						color: '#FFFFFF',
+						highlightColor: '#FFFF00',
 						direction: 'ltr',
-						pageDurationInMilliseconds: 2000,
+						pageDurationInMilliseconds: 800,
 						captionStartInSeconds: startInSeconds ?? 0,
-						strokeWidth: 4,
-						strokeColor: 'black',
+						strokeWidth: 8,
+						strokeColor: '#000000',
 						maxLines: defaultMaxLines,
 						fadeInDurationInSeconds: 0,
 						fadeOutDurationInSeconds: 0,

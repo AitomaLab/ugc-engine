@@ -19,7 +19,7 @@ export const getFadeValue = ({
 		fadeProperty === 'audioFadeOutDurationInSeconds'
 	) {
 		if (getCanFadeAudio(item)) {
-			return item[fadeProperty];
+			return item[fadeProperty] ?? 0;
 		}
 
 		throw new Error(`Cannot audio fade ${item.type}`);
@@ -30,7 +30,7 @@ export const getFadeValue = ({
 		fadeProperty === 'fadeOutDurationInSeconds'
 	) {
 		if (getCanFadeVisual(item)) {
-			return item[fadeProperty];
+			return item[fadeProperty] ?? 0;
 		}
 
 		throw new Error(`Cannot visually fade ${item.type}`);

@@ -234,6 +234,8 @@
   "create.generate": "Generate",
   "videos.timeLeft": "~{min}m left",
   "videos.finishing": "finishing...",
+  "videos.previewImageReady": "Influencer image ready",
+  "videos.previewAnimating": "Animating scene",
   "dashboard.recentVideos": "Recent Videos",
   "dashboard.noCampaigns": "No campaigns yet",
   "dashboard.firstCampaign": "Launch your first video campaign to track progress here.",
@@ -634,5 +636,6 @@
   "header.of": "of",
   "header.used": "Used:",
   "header.remaining": "remaining",
-  "nav.editor": "Editor"
+  "nav.editor": "Editor",
+  "nav.studio": "Creative OS"
 }

@@ -41,6 +41,8 @@ const NAV_ITEMS = [
     { href: '/editor', labelKey: 'nav.editor', label: 'Editor', Icon: IconEdit },
     { divider: true },
     { href: '/activity', labelKey: 'nav.activity', label: 'Activity', Icon: IconActivity },
+    { divider: true },
+    { href: '/studio', labelKey: 'nav.studio', label: 'Creative OS', Icon: IconGrid },
 ];
 
 // ── Language Toggle ────────────────────────────────────────────────────

@@ -31,11 +31,30 @@ export const TextLayer = ({
 
 	const textItemHoverPreview = useContext(TextItemHoverPreviewContext);
 	const item = useMemo(
-		() =>
-			overrideTextItemWithHoverPreview({
+		() => {
+			const base = overrideTextItemWithHoverPreview({
 				textItem: itemWithoutHoverPreview,
 				hoverPreview: textItemHoverPreview,
-			}),
+			});
+			// Defensive defaults — agent-injected items may lack required fields
+			return {
+				...base,
+				opacity: base.opacity ?? 1,
+				fadeInDurationInSeconds: base.fadeInDurationInSeconds ?? 0,
+				fadeOutDurationInSeconds: base.fadeOutDurationInSeconds ?? 0,
+				fontStyle: base.fontStyle ?? { variant: 'normal', weight: '400' },
+				fontFamily: base.fontFamily ?? 'Roboto',
+				lineHeight: base.lineHeight ?? 1.2,
+				letterSpacing: base.letterSpacing ?? 0,
+				rotation: base.rotation ?? 0,
+				strokeWidth: base.strokeWidth ?? 0,
+				strokeColor: base.strokeColor ?? '#000000',
+				background: base.background ?? null,
+				direction: base.direction ?? 'ltr',
+				align: base.align ?? 'center',
+				isDraggingInTimeline: base.isDraggingInTimeline ?? false,
+			};
+		},
 		[itemWithoutHoverPreview, textItemHoverPreview],
 	);
 

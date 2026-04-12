@@ -4,7 +4,18 @@ import {hasAssetsWithErrors} from '../utils/asset-status-utils';
 import {hasUploadingAssets} from '../utils/upload-status';
 import {UndoableState} from './types';
 
-const key = 'remotion-editor-starter-state-v3';
+const BASE_KEY = 'remotion-editor-starter-state-v3';
+
+/**
+ * Get a job-specific localStorage key.
+ * When editing /editor/{jobId}, each job gets its own saved state
+ * so opening a different video never loads stale data.
+ */
+const getKey = (): string => {
+	if (typeof window === 'undefined') return BASE_KEY;
+	const match = window.location.pathname.match(/\/editor\/([^/]+)/);
+	return match ? `${BASE_KEY}:${match[1]}` : BASE_KEY;
+};
 
 export const loadState = (): UndoableState | null => {
 	if (!FEATURE_SAVE_BUTTON) {
@@ -15,7 +26,8 @@ export const loadState = (): UndoableState | null => {
 		return null;
 	}
 
-	const state = localStorage.getItem(key);
+	const jobKey = getKey();
+	const state = localStorage.getItem(jobKey);
 	if (!state) {
 		return null;
 	}
@@ -45,7 +57,7 @@ export const saveState = (
 		return;
 	}
 
-	localStorage.setItem(key, JSON.stringify(state));
+	localStorage.setItem(getKey(), JSON.stringify(state));
 	// eslint-disable-next-line no-console
 	console.log('Saved state to Local Storage.', state);
 };
