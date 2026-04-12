@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
-from anthropic import AsyncAnthropic, NotFoundError
+from anthropic import AsyncAnthropic, BadRequestError, NotFoundError
 from dotenv import load_dotenv
 
 # Defensive env load — works in both local dev (deep nesting) and Railway (/app/).
@@ -2108,10 +2108,37 @@ class ManagedAgentClient:
             print(f"[ManagedAgent] could not snapshot prior events: {e}")
 
         # Send the user brief.
-        await self._client.beta.sessions.events.send(
-            session_id,
-            events=[{"type": "user.message", "content": [{"type": "text", "text": brief}]}],
-        )
+        # If the session has a pending tool call from a crashed/interrupted run,
+        # the API rejects user.message. In that case, interrupt and start fresh.
+        try:
+            await self._client.beta.sessions.events.send(
+                session_id,
+                events=[{"type": "user.message", "content": [{"type": "text", "text": brief}]}],
+            )
+        except BadRequestError as e:
+            if "waiting on responses" in str(e):
+                print(f"[ManagedAgent] session {session_id} has pending tool calls, resetting")
+                try:
+                    await self.interrupt_session(session_id)
+                except Exception:
+                    pass
+                session_id = await self._create_session(brief, project_id)
+                yield {"type": "session", "session_id": session_id}
+                seen_event_ids.clear()
+                try:
+                    existing = await self._client.beta.sessions.events.list(session_id, limit=100, order="desc")
+                    async for ev in existing:
+                        ev_id = getattr(ev, "id", None)
+                        if ev_id:
+                            seen_event_ids.add(ev_id)
+                except Exception:
+                    pass
+                await self._client.beta.sessions.events.send(
+                    session_id,
+                    events=[{"type": "user.message", "content": [{"type": "text", "text": brief}]}],
+                )
+            else:
+                raise
 
         try:
             while True:
