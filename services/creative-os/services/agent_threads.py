@@ -15,11 +15,9 @@ from pathlib import Path
 from typing import Optional
 
 import httpx
-from dotenv import load_dotenv
 
-_root = Path(__file__).resolve().parents[3]
-for _candidate in ("env.saas", ".env.saas", "env", ".env"):
-    load_dotenv(_root / _candidate, override=False)
+from env_loader import load_env
+load_env(Path(__file__))
 
 MAX_TURNS = 50
 _TIMEOUT = 15.0

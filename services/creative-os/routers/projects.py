@@ -68,8 +68,8 @@ async def _fetch_project_images(client: CoreAPIClient, influencer_map: dict | No
     if not client.project_id:
         return []
 
-    _root = Path(__file__).parent.parent.parent
-    load_dotenv(_root / ".env.saas", override=False)
+    from env_loader import load_env
+    load_env(Path(__file__))
     supabase_url = os.getenv("SUPABASE_URL")
     anon_key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
 

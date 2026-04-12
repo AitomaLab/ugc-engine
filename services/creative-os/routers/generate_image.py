@@ -500,9 +500,8 @@ async def _generate_nanobanana_direct(
     from pathlib import Path
     from dotenv import load_dotenv
 
-    _root = Path(__file__).parent.parent.parent.parent
-    load_dotenv(_root / ".env.saas", override=False)
-    load_dotenv(_root / ".env", override=False)
+    from env_loader import load_env
+    load_env(Path(__file__))
 
     kie_url = os.getenv("KIE_API_URL", "https://api.kie.ai")
     kie_key = os.getenv("KIE_API_KEY", "")
@@ -668,9 +667,8 @@ async def generate_influencer(user: dict = Depends(get_current_user)):
     from pathlib import Path
     from dotenv import load_dotenv
 
-    _root = Path(__file__).parent.parent.parent.parent
-    load_dotenv(_root / ".env.saas", override=False)
-    load_dotenv(_root / ".env", override=False)
+    from env_loader import load_env
+    load_env(Path(__file__))
 
     # ── Step 1: Generate persona + image prompt via GPT ──
     print("[Generate Influencer] Step 1/2: Generating persona via GPT-4o...")
@@ -951,9 +949,8 @@ async def generate_identity(
     from pathlib import Path
     from dotenv import load_dotenv
 
-    _root = Path(__file__).parent.parent.parent.parent
-    load_dotenv(_root / ".env.saas", override=False)
-    load_dotenv(_root / ".env", override=False)
+    from env_loader import load_env
+    load_env(Path(__file__))
 
     # ── Step 1: GPT-4o Vision → description + character sheet prompt ──
     print(f"[Generate Identity] Step 1/3: Analyzing profile via GPT-4o Vision...")
@@ -1173,9 +1170,8 @@ async def generate_product_shots(
     from pathlib import Path
     from dotenv import load_dotenv
 
-    _root = Path(__file__).parent.parent.parent.parent
-    load_dotenv(_root / ".env.saas", override=False)
-    load_dotenv(_root / ".env", override=False)
+    from env_loader import load_env
+    load_env(Path(__file__))
 
     # ── Step 1: GPT-4o Vision → NanoBanana prompt ──
     print(f"[Generate Product Shots] Step 1/3: Analyzing product via GPT-4o Vision...")

@@ -17,9 +17,8 @@ from core_api_client import CoreAPIClient
 from dotenv import load_dotenv
 from pathlib import Path
 
-_root = Path(__file__).parent.parent.parent.parent
-load_dotenv(_root / ".env.saas", override=False)
-load_dotenv(_root / ".env", override=False)
+from env_loader import load_env
+load_env(Path(__file__))
 
 KIE_API_URL = os.getenv("KIE_API_URL", "https://api.kie.ai")
 KIE_API_KEY = os.getenv("KIE_API_KEY", "")
@@ -126,8 +125,8 @@ async def _run_animation_pipeline(job_id: str, data: AnimateRequest, token: str)
     from pathlib import Path as _Path
     from dotenv import load_dotenv as _load_dotenv
 
-    _root = _Path(__file__).parent.parent.parent.parent
-    _load_dotenv(_root / ".env.saas", override=False)
+    from env_loader import load_env as _load_env
+    _load_env(_Path(__file__))
 
     supabase_url = os.getenv("SUPABASE_URL")
     anon_key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")

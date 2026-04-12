@@ -129,8 +129,8 @@ async def _update_video_job_via_api(token: str, project_id: str, job_id: str, up
     import httpx
     from pathlib import Path
     from dotenv import load_dotenv
-    _root = Path(__file__).parent.parent.parent.parent
-    load_dotenv(_root / ".env.saas", override=False)
+    from env_loader import load_env
+    load_env(Path(__file__))
 
     supabase_url = os.getenv("SUPABASE_URL")
     anon_key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
@@ -608,9 +608,13 @@ async def _run_cinematic_clip_pipeline(
     import sys
     from pathlib import Path
 
-    project_root = str(Path(__file__).parent.parent.parent.parent)
-    if project_root not in sys.path:
-        sys.path.insert(0, project_root)
+    # Add repo root to sys.path for core engine imports (local dev only).
+    # On Railway standalone, these imports won't resolve — but the full
+    # video pipeline runs on Modal/Celery, not on Creative OS directly.
+    from env_loader import load_env
+    _root = load_env(Path(__file__))
+    if _root and str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
 
     import asyncio
     import httpx
@@ -1108,9 +1112,13 @@ async def _run_ugc_clip_pipeline(
     from pathlib import Path
 
     # Add project root to path for core engine imports
-    project_root = str(Path(__file__).parent.parent.parent.parent)
-    if project_root not in sys.path:
-        sys.path.insert(0, project_root)
+    # Add repo root to sys.path for core engine imports (local dev only).
+    # On Railway standalone, these imports won't resolve — but the full
+    # video pipeline runs on Modal/Celery, not on Creative OS directly.
+    from env_loader import load_env
+    _root = load_env(Path(__file__))
+    if _root and str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
 
     import asyncio
     import generate_scenes

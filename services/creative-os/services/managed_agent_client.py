@@ -25,15 +25,15 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 from anthropic import AsyncAnthropic, NotFoundError
 from dotenv import load_dotenv
 
-# Defensive env load — covers both `env.saas` (no dot) and `.env.saas` variants
-# that exist at the repo root, plus their `.env` counterparts.
-_repo_root = Path(__file__).resolve().parents[3]
-for _candidate in ("env.saas", ".env.saas", "env", ".env"):
-    load_dotenv(_repo_root / _candidate, override=False)
+# Defensive env load — works in both local dev (deep nesting) and Railway (/app/).
+from env_loader import load_env
+_repo_root = load_env(Path(__file__))
 
 # Ensure repo root is importable so `ugc_backend.*` resolves for credit cost lookups.
+# On Railway (Creative OS deployed standalone), ugc_backend isn't present — the
+# credit_cost_service fallback in _credits_for_op handles this gracefully.
 import sys as _sys
-if str(_repo_root) not in _sys.path:
+if _repo_root and str(_repo_root) not in _sys.path:
     _sys.path.insert(0, str(_repo_root))
 
 from core_api_client import CoreAPIClient
@@ -876,17 +876,28 @@ def _record_artifact(ctx: ToolContext, artifact: dict) -> None:
 def _credits_for_op(operation: str, params: dict) -> int:
     """Single source of truth for Creative OS operation credit costs.
 
-    Reads from `ugc_backend.credit_cost_service` so the agent and the rest
-    of the SaaS share the same prices.
+    Tries to import from `ugc_backend.credit_cost_service` (available when
+    running locally with repo root on sys.path). Falls back to a bundled
+    copy when deployed standalone on Railway.
     """
-    from ugc_backend.credit_cost_service import (
-        get_animate_image_credit_cost,
-        get_clone_video_credit_cost,
-        get_creative_os_image_credit_cost,
-        get_editor_render_credit_cost,
-        get_video_clip_credit_cost,
-        get_video_credit_cost,
-    )
+    try:
+        from ugc_backend.credit_cost_service import (
+            get_animate_image_credit_cost,
+            get_clone_video_credit_cost,
+            get_creative_os_image_credit_cost,
+            get_editor_render_credit_cost,
+            get_video_clip_credit_cost,
+            get_video_credit_cost,
+        )
+    except ImportError:
+        from services.credit_costs import (
+            get_animate_image_credit_cost,
+            get_clone_video_credit_cost,
+            get_creative_os_image_credit_cost,
+            get_editor_render_credit_cost,
+            get_video_clip_credit_cost,
+            get_video_credit_cost,
+        )
 
     if operation in ("generate_image", "generate_influencer", "generate_identity", "generate_product_shots"):
         return get_creative_os_image_credit_cost()
