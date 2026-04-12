@@ -746,11 +746,12 @@ async def _smart_split_and_upload(
     Used by both character identity and product shots pipelines.
     """
     import io
+    import os
     import uuid
     import httpx
     import numpy as np
     from PIL import Image
-    from ugc_db.db_manager import get_supabase
+    from supabase import create_client
 
     if view_labels is None:
         view_labels = ["view_1", "view_2", "view_3", "view_4"]
@@ -822,7 +823,10 @@ async def _smart_split_and_upload(
 
     # ── Step C: Crop, upload each view ──
     views = []
-    sb = get_supabase()
+    sb = create_client(
+        os.getenv("SUPABASE_URL"),
+        os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY"),
+    )
 
     for i in range(4):
         left = split_points[i]
