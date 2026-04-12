@@ -373,7 +373,9 @@ export function AgentPanel({ projectId, onArtifact }: AgentPanelProps) {
                         e.name === 'animate_image'
                             ? 'Animating image (Kling 3.0, ~1-3 min)…'
                             : e.name === 'generate_video'
-                                ? 'Generating UGC clip (Veo 3.1, ~1-3 min)…'
+                                ? (e.input_summary?.includes('cinematic')
+                                    ? 'Generating cinematic clip (Kling 3.0, ~1-3 min)…'
+                                    : 'Generating UGC clip (Veo 3.1, ~1-3 min)…')
                                 : e.name === 'create_ugc_video' || e.name === 'create_clone_video'
                                     ? `Producing full video (${e.name}, ~5-12 min)…`
                                     : e.name === 'create_bulk_campaign'
