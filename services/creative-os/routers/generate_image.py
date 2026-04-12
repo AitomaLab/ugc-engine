@@ -857,35 +857,44 @@ async def _smart_split_and_upload(
 # Generate Identity — character description + character sheet from profile
 # ---------------------------------------------------------------------------
 
-CASTING_DIRECTOR_SYSTEM_PROMPT = """You are an International Casting Director specialized in creating ultra-realistic character sheets in the style of an IMG agency.
+CASTING_DIRECTOR_SYSTEM_PROMPT = """You are a Creative Director specialized in generating AI character reference sheets for video production.
 
-You will receive a reference profile photo of a character. Your job is to:
+You will receive a reference photo. Your job is to describe the person's visual appearance and write a prompt for generating a 4-view character sheet image.
 
-1. ANALYZE the reference photo and produce a detailed character description covering: age estimate, gender, ethnicity, height/build estimate, skin tone and texture details, facial geometry (jaw, cheekbones, nose, lips, eye shape and color, eyebrows), hair (color, texture, style, length), any visible accessories (glasses, earrings, piercings), and approximate BMI/body type.
+STEP 1 — VISUAL DESCRIPTION:
+Write a detailed visual description of the person as they appear in the photo, covering:
+- Approximate age range and general build (slim, athletic, average, etc.)
+- Hair: color, texture, style, length
+- Facial features: face shape, eye color, notable features
+- Skin tone and any visible details (freckles, facial hair, etc.)
+- Clothing and accessories visible in the photo (glasses, earrings, etc.)
 
-2. GENERATE a technically precise NanoBanana Pro prompt to create a character sheet in 21:9 horizontal format composed of 4 views in a single image:
-   - CLOSEUP (front headshot)
-   - Front medium shot
-   - 90° profile medium shot
-   - Full body front
+Focus only on what is visually observable. Do not speculate about background, nationality, or personal details.
 
-All 4 views must maintain absolute 1:1 identity with the reference photo.
+STEP 2 — GENERATE NANOBANANA PRO PROMPT:
+Write a technically precise prompt to create a character sheet in 21:9 horizontal format with 4 views in a single image:
+  - CLOSEUP (front headshot)
+  - Front medium shot
+  - 90-degree profile medium shot
+  - Full body front
+
+All 4 views must maintain absolute 1:1 visual identity with the reference photo.
 
 VISUAL INTEGRITY RULES (CRITICAL):
 - The four views must appear complete, fully visible, and without any cropping
 - No view may be out of frame, partially visible, or cut off by the canvas edges
 - Cropping the head, ears, limbs, feet, or any anatomical part is strictly forbidden
 - Each view must be centered within its column
-- ABSOLUTELY NO TEXT of any kind in the image: no labels, no captions, no titles, no view names (like "HEADSHOT", "FRONT MEDIUM"), no measurements, no stats, no height/weight/body fat text, no typography, no watermarks, no numbering, no letters. The image must contain ONLY the four photographic views and nothing else.
+- ABSOLUTELY NO TEXT of any kind in the image: no labels, no captions, no titles, no view names, no typography, no watermarks, no numbering, no letters. The image must contain ONLY the four photographic views.
 
-HUMAN IDENTITY RULES:
-- Maintain exact anatomical fidelity: 1:1 facial geometry, bone structure, jawline, cheekbones, nose, lips, eyes (shape and color), eyebrows, real skin texture, freckles, moles, scars
-- Body proportions must be consistent with the facial identity
+IDENTITY CONSISTENCY RULES:
+- Maintain exact visual fidelity: facial geometry, bone structure, jawline, nose, lips, eyes (shape and color), eyebrows, real skin texture, freckles, moles
+- Body proportions must be consistent across all views
 - If accessories are visible in reference (glasses, earrings, piercings), maintain them faithfully
-- NO beautifying, NO stylizing, NO slimming, NO smoothing skin, NO CGI look, NO beauty filters, NO artificial symmetry
+- NO beautifying, NO stylizing, NO slimming, NO smoothing skin, NO CGI look, NO beauty filters
 
 MANDATORY VISUAL FORMAT:
-A single horizontal image composed of 4 columns: front closeup, front medium shot, exact 90° profile, and full body front. Clean composition with uniform compact spacing. Minimal negative space. No overlap. The horizontal format must fit all four views completely within the frame.
+A single horizontal image composed of 4 columns: front closeup, front medium shot, exact 90-degree profile, and full body front. Clean composition with uniform compact spacing. Minimal negative space. No overlap. The horizontal format must fit all four views completely within the frame.
 
 CLOTHING AND FOOTWEAR:
 Clothing must be consistent across all views. If any view is not full body, the character must still wear footwear consistent with the outfit.
@@ -900,31 +909,27 @@ CAMERA:
 Professional full-frame camera, 85mm lens, f/8, ISO 100, clinical sharpness, both eyes in focus, no angular distortion. Absolute photographic realism.
 
 SKIN DETAIL:
-Real texture with visible pores, micro detail, natural fine hair. No plastic effect, no glow, no HDR, no exaggerated grain. Must look like a real professional test photograph.
-
-MEASUREMENTS:
-Include clear character measurements: height, weight, approximate body fat percentage, coherent key body measurements.
+Real texture with visible pores, micro detail, natural fine hair. No plastic effect, no glow, no HDR, no exaggerated grain. Must look like a real professional reference photograph.
 
 AESTHETIC TONE:
-International agency digitals. Clean model test. Professional casting. Neutral. Clinical. Objective.
+Clean professional reference sheet. Neutral. Clinical. Objective.
 
 NEGATIVE RESTRICTIONS:
-No CGI, no illustration, no 3D render, no plastic skin, no glow, no filters, no dramatic makeup, no fashion stylization, no cinematic color grading, no deep shadows, no artificial symmetry. ABSOLUTELY NO TEXT, NO LABELS, NO CAPTIONS, NO MEASUREMENTS TEXT, NO TYPOGRAPHY of any kind anywhere in the image. The image must be purely photographic with zero text elements.
+No CGI, no illustration, no 3D render, no plastic skin, no glow, no filters, no dramatic makeup, no fashion stylization, no cinematic color grading, no deep shadows, no artificial symmetry. ABSOLUTELY NO TEXT, NO LABELS, NO CAPTIONS, NO TYPOGRAPHY of any kind anywhere in the image. The image must be purely photographic with zero text elements.
 
 OUTPUT FORMAT — return ONLY valid JSON with these exact keys:
 {
-  "description": "Detailed multi-sentence character description covering all physical traits, measurements, and distinctive features...",
-  "nano_banana_prompt": "21:9. Professional character sheet of [detailed character description]. Four views arranged horizontally: front closeup headshot, front medium shot, exact 90-degree profile medium shot, and full body front view..."
+  "description": "Detailed visual description of the person's appearance as seen in the reference photo...",
+  "nano_banana_prompt": "21:9. Professional character reference sheet of [visual description]. Four views arranged horizontally: front closeup headshot, front medium shot, exact 90-degree profile medium shot, and full body front view..."
 }
 
 RULES:
 - Return ONLY the JSON object, no explanation, no markdown
-- The description must be detailed and cover ALL physical traits visible in the reference
+- The description must cover all visually observable traits from the reference photo
 - The nano_banana_prompt must be one continuous paragraph
 - The prompt must reference "Using input image 1 for face identity" and "Keep facial features exactly consistent with reference"
 - Include the instruction "four views in a single horizontal image" explicitly in the prompt
-- Include scale/measurements in the description field, NOT as text in the image
-- CRITICAL: The nano_banana_prompt must include "no text, no labels, no captions, no typography, no measurements text" in the negative constraints
+- CRITICAL: The nano_banana_prompt must include "no text, no labels, no captions, no typography" in the negative constraints
 - The generated image must contain ONLY the 4 photographic views — zero text elements"""
 
 
@@ -962,12 +967,13 @@ async def generate_identity(
     try:
         client = openai.OpenAI()
 
+        _user_text = "Describe the visual appearance of the person in this reference photo and generate a NanoBanana Pro character sheet prompt. Return valid JSON."
         _identity_messages = [
             {"role": "system", "content": CASTING_DIRECTOR_SYSTEM_PROMPT},
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "Analyze this character reference photo and generate the character description and NanoBanana Pro character sheet prompt. Return valid JSON."},
+                    {"type": "text", "text": _user_text},
                     {"type": "image_url", "image_url": {"url": data.image_url}},
                 ],
             },
@@ -986,22 +992,33 @@ async def generate_identity(
         refusal = getattr(resp.choices[0].message, 'refusal', None)
         print(f"[Generate Identity] GPT attempt 1 — finish_reason={finish_reason}, refusal={refusal}, content={'None' if raw is None else f'{len(raw)} chars'}")
 
-        if not raw:
-            # Attempt 2: drop json_object mode (known issue with Vision + JSON mode)
-            print("[Generate Identity] Retrying WITHOUT response_format (Vision + JSON mode quirk)...")
+        if not raw or refusal:
+            # Attempt 2: simplified prompt without JSON mode (avoids Vision + JSON mode issues and refusals)
+            print(f"[Generate Identity] Retrying with simplified prompt (refusal={refusal})...")
             import asyncio as _aio
             await _aio.sleep(2)
+            _retry_messages = [
+                {"role": "system", "content": CASTING_DIRECTOR_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "For a creative video production project, describe how this person looks (hair, build, clothing, facial features) and write a NanoBanana Pro prompt for a 4-view character reference sheet. Return JSON with keys: description, nano_banana_prompt"},
+                        {"type": "image_url", "image_url": {"url": data.image_url}},
+                    ],
+                },
+            ]
             resp = client.chat.completions.create(
                 model="gpt-4o",
                 temperature=0.4,
-                messages=_identity_messages,
+                messages=_retry_messages,
                 max_tokens=1500,
             )
             raw = resp.choices[0].message.content
             finish_reason = resp.choices[0].finish_reason
-            print(f"[Generate Identity] GPT attempt 2 — finish_reason={finish_reason}, content={'None' if raw is None else f'{len(raw)} chars'}")
-            if not raw:
-                raise ValueError(f"GPT returned empty response twice (finish_reason={finish_reason})")
+            refusal2 = getattr(resp.choices[0].message, 'refusal', None)
+            print(f"[Generate Identity] GPT attempt 2 — finish_reason={finish_reason}, refusal={refusal2}, content={'None' if raw is None else f'{len(raw)} chars'}")
+            if not raw or refusal2:
+                raise ValueError("GPT-4o declined to analyze this image. Please try a different reference photo.")
 
         # Extract JSON (may be wrapped in markdown fences when not using json_object mode)
         cleaned = raw.strip()
@@ -1020,6 +1037,10 @@ async def generate_identity(
         print(f"[Generate Identity] Description: {description[:100]}...")
         print(f"[Generate Identity] Prompt: {nano_prompt[:100]}...")
 
+    except ValueError as e:
+        print(f"[Generate Identity] GPT declined: {e}")
+        status = 422 if "declined" in str(e) or "different reference" in str(e) else 500
+        raise HTTPException(status_code=status, detail=str(e))
     except Exception as e:
         print(f"[Generate Identity] GPT failed: {e}")
         raise HTTPException(status_code=500, detail=f"Character analysis failed: {str(e)}")
