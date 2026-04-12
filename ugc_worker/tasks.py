@@ -92,6 +92,12 @@ def generate_ugc_video(self, job_id: str):
         if not job:
             raise RuntimeError(f"Job {job_id} not found in database")
 
+        # Idempotency guard: skip if already processing or done
+        current_status = (job.get("status") or "").lower()
+        if current_status in ("processing", "success", "complete", "completed"):
+            print(f"[SKIP] Job {job_id} already '{current_status}' — skipping duplicate run")
+            return {"status": "skipped", "reason": f"already {current_status}", "job_id": job_id}
+
         influencer = get_influencer(job["influencer_id"])
         if not influencer:
             raise RuntimeError(f"Influencer {job['influencer_id']} not found")
@@ -253,6 +259,17 @@ def generate_ugc_video(self, job_id: str):
             "elevenlabs_voice_id": influencer.get("elevenlabs_voice_id", ""),
             "setting": influencer.get("setting", ""),
         }
+
+        # Override reference image if a custom one was provided via Creative OS.
+        # This is stored in job.metadata.reference_image_url by _generate_full_video().
+        # Core engine jobs don't set this field, so they're unaffected.
+        job_metadata = job.get("metadata") or {}
+        custom_ref_image = job_metadata.get("reference_image_url")
+        if custom_ref_image:
+            influencer_dict["image_url"] = custom_ref_image
+            influencer_dict["reference_image_url"] = custom_ref_image
+            print(f"      🖼️ Custom reference image from metadata: {custom_ref_image[:80]}...")
+
         print(f"      📦 Influencer Dict for Engine: {influencer_dict}")
 
         # Pass variation_prompt from job into influencer_dict (if set)
@@ -263,7 +280,6 @@ def generate_ugc_video(self, job_id: str):
 
 
         # Read auto_transition_type from metadata JSONB (where api stores it)
-        job_metadata = job.get("metadata") or {}
         auto_trans_type = job_metadata.get("auto_transition_type") or job.get("auto_transition_type")
 
         fields = {
@@ -290,8 +306,8 @@ def generate_ugc_video(self, job_id: str):
     job_metadata["processing_started_at"] = datetime.now(tz.utc).isoformat()
     update_job(job_id, {"status": "processing", "progress": 5, "metadata": job_metadata})
 
-    # 3. Status callback for progress tracking
-    def status_callback(msg):
+    # 3. Status callback for progress tracking (with progressive preview support)
+    def status_callback(msg, preview_url=None, preview_type=None):
         try:
             self.update_state(state="PROGRESS", meta={"status": msg})
         except Exception:
@@ -299,19 +315,29 @@ def generate_ugc_video(self, job_id: str):
         print(f"      [Job {job_id}] {msg}")
 
         progress_map = {
+            "Analyzing Product": 3,
             "Building scenes": 5,
             "Generating scenes": 10,
+            "Gen: Composite Image": 15,
             "Gen: Hook": 20,
+            "Gen: Animating": 25,
             "Gen: Reaction": 40,
+            "Extend:": 50,
             "Gen: App Demo": 60,
             "Gen: Cta": 80,
+            "Adding Music": 85,
             "Subtitling": 90,
             "Assembling": 95,
         }
+        update_data = {"status_message": msg}
         for key, val in progress_map.items():
             if key in msg:
-                update_job(job_id, {"progress": val})
+                update_data["progress"] = val
                 break
+        if preview_url:
+            update_data["preview_url"] = preview_url
+            update_data["preview_type"] = preview_type or "image"
+        update_job(job_id, update_data)
 
     # 4. Run the core generation pipeline
     try:
@@ -366,11 +392,14 @@ def generate_ugc_video(self, job_id: str):
         except Exception as _probe_err:
             print(f"[EDITOR] ffprobe failed (non-fatal): {_probe_err}")
 
-        # 6. Update job as success
+        # 6. Update job as success (clear preview fields — final video replaces them)
         update_job(job_id, {
             "status": "success",
             "progress": 100,
             "final_video_url": final_url,
+            "preview_url": None,
+            "preview_type": None,
+            "status_message": None,
             # Editor integration: save transcription + video metadata
             "transcription": transcription_data,
             "video_duration_seconds": video_duration_seconds,
@@ -490,14 +519,26 @@ def generate_product_shot_image(shot_id: str):
         if not product:
             raise RuntimeError(f"Product {shot['product_id']} not found.")
 
-        # 1. Build SEALCaM Prompt
-        prompt = build_sealcam_prompt(shot["shot_type"], product)
-        update_product_shot(shot_id, {"prompt": prompt})
+        # 1. Build or reuse prompt
+        existing_prompt = shot.get("prompt")
+        if existing_prompt:
+            prompt = existing_prompt
+            print(f"   Using pre-set prompt: {prompt[:80]}...")
+        else:
+            prompt = build_sealcam_prompt(shot["shot_type"], product)
+            update_product_shot(shot_id, {"prompt": prompt})
 
         # 2. Generate Image via Nano Banana Pro
+        # Check if an influencer/model reference image was provided (stored in analysis_json)
+        analysis = shot.get("analysis_json") or {}
+        influencer_image_url = analysis.get("influencer_image_url") if isinstance(analysis, dict) else None
+        if influencer_image_url:
+            print(f"   Influencer ref image: {influencer_image_url[:60]}...")
+
         image_url = generate_scenes.generate_cinematic_product_image(
             prompt=prompt,
-            product_image_url=product["image_url"]
+            product_image_url=product["image_url"],
+            influencer_image_url=influencer_image_url,
         )
 
         # 3. Re-upload to Supabase Storage for permanent URL

@@ -18,6 +18,9 @@ dist/
 .env
 .env.*
 !.env.saas.example
+env
+env.saas
+frontend/env.local
 
 # OS / IDE
 .vscode/
@@ -44,3 +47,18 @@ frontend/dev.log
 temp_*.py
 test_*.py
 test_out.txt
+
+# Artifacts / scratch
+temp/
+Archive.zip
+editor-starter-main/
+References/inputs/
+Enhancements/
+pnpm-lock.yaml
+!frontend/pnpm-lock.yaml
+scripts/managed_agents_hello.py
+
+# Allow nested JSON configs that are NOT data
+!ugc_backend/cost_config.json
+!remotion_renderer/package.json
+!remotion_renderer/tsconfig.json

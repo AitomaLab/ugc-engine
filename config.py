@@ -15,6 +15,12 @@ _venv_scripts_path = Path(__file__).parent / ".venv" / _venv_sub
 if _venv_scripts_path.exists():
     os.environ["PATH"] = f"{_venv_scripts_path}{os.pathsep}{os.environ.get('PATH', '')}"
 
+# Ensure Homebrew bin is in PATH (macOS) — ffmpeg/ffprobe live here
+if _plat.system() == "Darwin":
+    _brew_path = "/opt/homebrew/bin"
+    if _brew_path not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = f"{_brew_path}{os.pathsep}{os.environ.get('PATH', '')}"
+
 
 # Load .env from project root (override=False so platform env vars always win in production)
 PROJECT_ROOT = Path(__file__).parent
@@ -82,6 +88,47 @@ SCENE_DURATIONS = {
     },
 }
 
+# ---------------------------------------------------------------------------
+# Seedance 2.0 — Cost-Optimised Scene Durations
+# Strategy: minimise expensive "no video input" seconds (41 credits/s)
+#           maximise cheap  "with video input" seconds  (28 credits/s)
+# ---------------------------------------------------------------------------
+SEEDANCE_SCENE_DURATIONS = {
+    "15s_physical": {                 # 4s + 12s = 16s → trim 1s → $2.59
+        "scenes": [
+            {"name": "hook",    "duration": 4,  "has_video_input": False},
+            {"name": "main",    "duration": 12, "has_video_input": True},
+        ],
+    },
+    "15s_digital": {                  # 8s AI + 7s clip = 15s → $1.64
+        "scenes": [
+            {"name": "hook",    "duration": 8,  "has_video_input": False},
+            {"name": "app_demo","duration": 7,  "has_video_input": None},  # clip, free
+        ],
+    },
+    "30s_physical": {                 # 4+12+12+4 = 32s → trim 2s → $4.83
+        "scenes": [
+            {"name": "hook",     "duration": 4,  "has_video_input": False},
+            {"name": "main",     "duration": 12, "has_video_input": True},
+            {"name": "reaction", "duration": 12, "has_video_input": True},
+            {"name": "cta",      "duration": 4,  "has_video_input": True},
+        ],
+    },
+    "30s_digital": {                  # 4+10(clip)+4+12 = 30s → $3.32
+        "scenes": [
+            {"name": "hook",     "duration": 4,  "has_video_input": False},
+            {"name": "app_demo", "duration": 10, "has_video_input": None},  # clip, free
+            {"name": "reaction", "duration": 4,  "has_video_input": False},
+            {"name": "cta",      "duration": 12, "has_video_input": True},
+        ],
+    },
+}
+
+def get_seedance_durations(length, product_type):
+    """Get Seedance 2.0 scene duration config for a given length + product type."""
+    key = f"{length}_{product_type}"
+    return SEEDANCE_SCENE_DURATIONS.get(key, SEEDANCE_SCENE_DURATIONS["15s_digital"])
+
 VIDEO_MAX_DURATION = 35  # Absolute cap to prevent runaway files
 
 def get_max_duration(length):
@@ -98,7 +145,7 @@ def get_scene_durations(length):
 # Supported models and their Kie.ai API identifiers:
 MODEL_REGISTRY = {
     "seedance-1.5-pro": "bytedance/seedance-1.5-pro",      # $0.28/clip 720p+audio, lip-sync, Spanish
-    "seedance-2.0":     "seedance-2-0",           # Feb 24 — 2K, faster, better lip-sync
+    "seedance-2.0":     "bytedance/seedance-2",   # Feb 24 — 2K, faster, better lip-sync
     "veo-3.1-fast":     "veo3_fast",              # $0.30/clip, speech+audio (no lang control)
     "veo-3.1":          "veo3",                    # higher quality, slower
     "kling-2.6":        "kling-2.6/image-to-video", # silent video only, requires image_urls
@@ -137,7 +184,9 @@ LIPSYNC_QUALITY = os.getenv("LIPSYNC_QUALITY", "720p")
 # Output Paths
 # ---------------------------------------------------------------------------
 OUTPUT_DIR = PROJECT_ROOT / "outputs"
-TEMP_DIR = PROJECT_ROOT / "temp"
+# Use a system temp directory for generation artifacts so that file writes
+# don't trigger uvicorn's WatchFiles reloader and kill background job threads.
+TEMP_DIR = Path(os.getenv("UGC_TEMP_DIR", "/tmp/ugc-engine"))
 OUTPUT_DIR.mkdir(exist_ok=True)
 TEMP_DIR.mkdir(exist_ok=True)
 
