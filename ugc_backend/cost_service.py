@@ -50,7 +50,8 @@ class CostService:
         duration: int = 15,
         model: str = "seedance-1.5-pro",
         product_type: str = "digital",
-        num_scenes: int = 2
+        num_scenes: int = 2,
+        music_enabled: bool = True,
     ) -> dict:
         """
         Returns a full cost breakdown dict.
@@ -86,7 +87,7 @@ class CostService:
         else:
             cost_voice = 0.0
 
-        cost_music = self.calculate_music_cost()
+        cost_music = self.calculate_music_cost() if music_enabled else 0.0
         cost_processing = self.calculate_processing_cost()
         total_cost = round(cost_video + cost_image + cost_voice + cost_music + cost_processing, 5)
 

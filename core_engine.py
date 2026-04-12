@@ -24,6 +24,20 @@ import assemble_video
 import elevenlabs_client
 import storage_helper
 import random
+
+
+def _upload_scene_preview(video_path):
+    """Upload a scene video to Supabase Storage and return its public URL.
+    Non-fatal: returns None on failure so the pipeline never blocks."""
+    try:
+        import time as _t
+        dest = f"scene-previews/{int(_t.time())}_{Path(video_path).name}"
+        url = storage_helper.upload_to_supabase_storage(str(video_path), "generated-videos", dest)
+        print(f"      [PREVIEW] Uploaded scene preview: {url}")
+        return url
+    except Exception as e:
+        print(f"      [PREVIEW] Upload failed (non-fatal): {e}")
+        return None
 from ugc_backend.transcription_client import TranscriptionClient
 try:
     from kie_ai.nano_banana_client import client as nano_client
@@ -45,6 +59,105 @@ def should_use_extend_pipeline(scenes):
     return leading_veo_count >= 2
 
 
+def run_seedance_chain_pipeline(scenes, output_dir, model_api, status_callback=None):
+    """
+    Isolated pipeline for Seedance 2.0 multi-scene chaining.
+
+    Cost-optimised strategy:
+      - First AI scene: short (4s), no video input → expensive rate but minimal seconds
+      - Subsequent AI scenes: longer (12s), with video input → cheaper rate
+      - Clips break the chain (reset last_frame_url)
+      - Only the first AI scene in each chain generates a Nano Banana composite
+
+    This function is completely separate from the Veo Extend pipeline.
+    """
+    print(f"      [SEEDANCE] Starting Seedance chain pipeline for {len(scenes)} scenes")
+    video_paths = []
+    last_frame_url = None
+    nano_banana_generated = False  # Only generate NB for the first AI scene in a chain
+
+    for i, scene in enumerate(scenes, 1):
+        if status_callback:
+            status_callback(f"Gen: {scene['name'].title()} ({i}/{len(scenes)})")
+
+        output_path = output_dir / f"scene_{i}_{scene['name']}.mp4"
+
+        if scene["type"] in ("veo", "physical_product_scene"):
+            # Get this scene's Seedance-specific duration (default 12 for safety)
+            scene_duration = scene.get("seedance_duration", 12)
+
+            # Determine if we need the last frame for chaining to the next AI scene
+            # Look ahead past any clip scenes to find the next AI scene
+            needs_last_frame = False
+            for j in range(i, len(scenes)):  # i is 1-indexed, scenes[i] = next scene
+                next_scene = scenes[j]
+                if next_scene["type"] in ("veo", "physical_product_scene"):
+                    needs_last_frame = True
+                    break
+                elif next_scene["type"] == "clip":
+                    # Clips break visual continuity — no chaining across clips
+                    break
+
+            if scene["type"] == "physical_product_scene" and not nano_banana_generated:
+                # Nano Banana composite for the first AI scene only
+                if status_callback:
+                    status_callback(f"Gen: Composite Image ({i}/{len(scenes)})")
+                composite_url = generate_scenes.generate_composite_image_with_retry(
+                    scene=scene, influencer=None, product=None, seed=scene.get("seed")
+                )
+                ref_image = composite_url
+                nano_banana_generated = True
+                # Preview: show the composite image immediately
+                if status_callback:
+                    status_callback(f"Gen: Animating Scene ({i}/{len(scenes)})", preview_url=composite_url, preview_type="image")
+            elif last_frame_url:
+                # Chained scene: use last frame as ref, no need for NB or influencer ref
+                ref_image = None  # first_frame_url handles visual continuity
+            else:
+                ref_image = scene.get("reference_image_url")
+
+            # Generate with Seedance 2.0 (chaining via first_frame_url / return_last_frame)
+            print(f"      [SEEDANCE] Scene {i}: duration={scene_duration}s, "
+                  f"has_video_input={bool(last_frame_url)}, return_last_frame={needs_last_frame}")
+
+            result = generate_scenes.generate_video_with_retry(
+                prompt=scene.get("video_animation_prompt") or scene.get("prompt", ""),
+                reference_image_url=ref_image,
+                model_api=model_api,
+                first_frame_url=last_frame_url,
+                return_last_frame=needs_last_frame,
+                duration=scene_duration,
+            )
+
+            generate_scenes.download_video(result["videoUrl"], output_path)
+
+            # Preview: upload completed scene video
+            if status_callback:
+                preview = _upload_scene_preview(output_path)
+                if preview:
+                    status_callback(f"Gen: {scene['name'].title()} ({i}/{len(scenes)}) ✓", preview_url=preview, preview_type="video")
+
+            # Store the last frame for the next iteration
+            last_frame_url = result.get("lastFrameUrl")
+            print(f"      [SEEDANCE] Scene {i} complete. Last frame URL: "
+                  f"{'set' if last_frame_url else 'None'}")
+
+        elif scene["type"] == "clip":
+            generate_scenes.download_video(scene["video_url"], output_path)
+            # Clips break the visual chain — reset last_frame_url
+            last_frame_url = None
+            nano_banana_generated = False  # Next AI chain may need its own NB
+
+        elif scene["type"] == "cinematic_shot":
+            generate_scenes.download_video(scene["video_url"], output_path)
+
+        scene["path"] = str(output_path)
+        video_paths.append(scene)
+
+    print(f"      [SEEDANCE] Chain pipeline complete: {len(video_paths)} segments ready")
+    return video_paths
+
+
 def run_generation_pipeline(
     project_name: str,
     influencer: dict,
@@ -59,6 +172,9 @@ def run_generation_pipeline(
     The main industrial generation flow.
     Takes discrete data objects instead of Airtable record IDs.
     """
+    # Editor integration: ensure transcription is always defined
+    transcription = None
+
     # 0. Product Analysis (Just-in-Time)
     if product and not product.get("visual_description") and not product.get("visual_analysis"):
         try:
@@ -94,9 +210,25 @@ def run_generation_pipeline(
         status_callback("Building scenes")
 
     scenes = scene_builder.build_scenes(fields, influencer, app_clip, product=product, product_type=product_type)
-    
 
-    
+    # --- Seedance 2.0: Stamp cost-optimised durations onto scenes ---
+    model_api = fields.get("model_api", "infinitalk-audio")
+    if "seedance" in model_api.lower():
+        length = fields.get("Length", "15s")
+        if length not in config.VALID_LENGTHS:
+            length = "15s"
+        seedance_cfg = config.get_seedance_durations(length, product_type)
+        seedance_scenes = seedance_cfg["scenes"]
+        for idx, scene in enumerate(scenes):
+            if idx < len(seedance_scenes):
+                sc = seedance_scenes[idx]
+                scene["seedance_duration"] = sc["duration"]
+                scene["target_duration"] = sc["duration"]  # Override for assembly trimming
+                print(f"      [SEEDANCE] Scene {idx+1} '{scene['name']}': "
+                      f"duration={sc['duration']}s, video_input={sc['has_video_input']}")
+            else:
+                print(f"      [SEEDANCE] Scene {idx+1} '{scene['name']}': "
+                      f"no config (extra scene, will use default 12s)")    
     # 2. Generate all scene videos (Multi-API Support)
     if status_callback:
         status_callback("Generating scenes")
@@ -105,11 +237,16 @@ def run_generation_pipeline(
     output_dir = config.TEMP_DIR / project_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Extract model preference
-    model_api = fields.get("model_api", "infinitalk-audio")
 
-    # --- Decide whether to use the Veo Extend pipeline ---
-    use_extend = should_use_extend_pipeline(scenes)
+    # model_api already extracted above (line 192) for Seedance duration stamping
+    # --- NEW: Route to isolated Seedance Chain Pipeline ---
+    # If model is Seedance 2.0, use the dedicated chain pipeline and skip Veo logic entirely.
+    if "seedance" in model_api.lower():
+        video_paths = run_seedance_chain_pipeline(scenes, output_dir, model_api, status_callback)
+        use_extend = False  # Signal to skip Veo extend / fallback blocks below
+    else:
+        # --- Decide whether to use the Veo Extend pipeline (VEO ONLY) ---
+        use_extend = should_use_extend_pipeline(scenes)
 
     if use_extend:
         try:
@@ -152,8 +289,9 @@ def run_generation_pipeline(
                 )
                 print(f"      [EXTEND] Composite ready: {composite_url}")
 
+                # Preview: show composite image immediately
                 if status_callback:
-                    status_callback(f"Gen: Animating Scene (1/{len(scenes)})")
+                    status_callback(f"Gen: Animating Scene (1/{len(scenes)})", preview_url=composite_url, preview_type="image")
                 result = generate_scenes.animate_image(
                     image_url=composite_url,
                     scene=scene_1
@@ -175,6 +313,12 @@ def run_generation_pipeline(
             extend_chunks.append(chunk_0_path)
             print(f"      [EXTEND] Scene 1 downloaded: {chunk_0_path}")
 
+            # Preview: upload Scene 1 video
+            if status_callback:
+                preview = _upload_scene_preview(chunk_0_path)
+                if preview:
+                    status_callback(f"Gen: {scene_1['name'].title()} (1/{len(scenes)})", preview_url=preview, preview_type="video")
+
             # -- Step 2: Extend chain (Scenes 2..N) --
             for idx, ext_scene in enumerate(veo_scenes[1:], 2):
                 if status_callback:
@@ -193,6 +337,12 @@ def run_generation_pipeline(
                 extend_chunks.append(chunk_idx_path)
                 current_task_id = result["taskId"]
                 print(f"      [EXTEND] Scene {idx} extended successfully")
+
+                # Preview: upload extended scene video
+                if status_callback:
+                    preview = _upload_scene_preview(chunk_idx_path)
+                    if preview:
+                        status_callback(f"Extend: {ext_scene['name'].title()} ({idx}/{len(scenes)}) ✓", preview_url=preview, preview_type="video")
 
             # -- Step 2(b): Concatenate extend chunks --
             # -- Step 2(b): Concatenate extend chunks --
@@ -339,7 +489,7 @@ def run_generation_pipeline(
             use_extend = False
             video_paths = []
 
-    if not use_extend:
+    if not use_extend and not video_paths:
         # === ORIGINAL PIPELINE (scene-by-scene) ===
         for i, scene in enumerate(scenes, 1):
             if status_callback:
@@ -364,7 +514,8 @@ def run_generation_pipeline(
                     print(f"      Composite Ready: {composite_url}")
 
                     # Step 2: Veo Animation (Image-to-Video)
-                    if status_callback: status_callback(f"Gen: Animating Scene ({i}/{len(scenes)})")
+                    # Preview: show composite image immediately
+                    if status_callback: status_callback(f"Gen: Animating Scene ({i}/{len(scenes)})", preview_url=composite_url, preview_type="image")
                     print(f"      Animating with Veo...")
 
                     result = generate_scenes.animate_image(
@@ -373,6 +524,12 @@ def run_generation_pipeline(
                     )
 
                     generate_scenes.download_video(result["videoUrl"], output_path)
+
+                    # Preview: upload completed scene video
+                    if status_callback:
+                        preview = _upload_scene_preview(output_path)
+                        if preview:
+                            status_callback(f"Gen: {scene['name'].title()} ({i}/{len(scenes)})", preview_url=preview, preview_type="video")
 
                     # Veo 3.1 image-to-video produces native audio/speech.
                     # Skip ElevenLabs — just extract transcription for subtitle sync.
@@ -501,6 +658,12 @@ def run_generation_pipeline(
                         video_url = result["videoUrl"]
 
                     generate_scenes.download_video(video_url, output_path)
+
+                    # Preview: upload completed veo scene video
+                    if status_callback:
+                        preview = _upload_scene_preview(output_path)
+                        if preview:
+                            status_callback(f"Gen: {scene['name'].title()} ({i}/{len(scenes)})", preview_url=preview, preview_type="video")
 
                     # Post-generation voiceover for silent models
                     if not has_native_audio and scene.get("subtitle_text"):
@@ -758,5 +921,10 @@ def run_generation_pipeline(
     # 7. Cleanup temp files
     assemble_video.cleanup_temp(project_name)
 
-    return str(final_output_path)
+    return {
+        "path": str(final_output_path),
+        "transcription": transcription if (
+            isinstance(transcription, dict) and transcription.get("words")
+        ) else None,
+    }
 

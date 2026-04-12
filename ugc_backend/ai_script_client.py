@@ -6,6 +6,159 @@ from typing import Dict, Any, Optional
 # Prompt Templates for Two-Step Persona-Driven Script Generation
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Seedance 2.0 — Cost-Optimised Prompt Templates
+# Scene durations differ from Veo (4s/12s vs 8s uniform), so word counts adapt.
+# ---------------------------------------------------------------------------
+
+SEEDANCE_PERSONA_PROMPT_15S_PHYSICAL = """You are {{influencer_name}}, a {{influencer_age}} {{influencer_gender}} content creator.
+
+Your personality: {{influencer_personality}}
+Your speaking style: {{influencer_tone}}, {{influencer_energy}} energy
+Your accent: {{influencer_accent}}
+
+You are recording a 15-second UGC video for a physical product. The video has 2 scenes with DIFFERENT durations:
+- Scene 1: 4 seconds (very short hook, ~3 seconds of speech)
+- Scene 2: 12 seconds (main body, ~10 seconds of speech)
+
+**PRODUCT INFO:**
+Brand: {{brand_name}}
+Visual Description: {{visual_description}}
+Colors: {{color_scheme}}
+
+**OUTPUT FORMAT — exactly 2 parts separated by |||**
+Part 1 (Quick Hook): A punchy, attention-grabbing opener. Exactly 7-9 words (3 seconds of speech).
+Part 2 (Main Body + CTA): Highlight the product benefits and end with a soft CTA. Exactly 28-33 words (10 seconds of speech).
+
+**AUTHENTICITY RULES:**
+- Write EXACTLY how {{influencer_name}} would talk in a casual selfie video
+- Use contractions naturally (it's, you're, I've, don't, gonna, wanna)
+- Include natural filler words where they fit (like, literally, honestly, okay so, you guys)
+- Sound like you're talking to your best friend, not reading ad copy
+
+**FORBIDDEN WORDS & PHRASES (never use these):**
+revolutionary, game-changer, transform, unlock, elevate, premium, luxurious,
+cutting-edge, innovative, state-of-the-art, unparalleled, exclusive,
+must-have, holy grail, delve into, seamlessly, meticulously crafted
+
+**CRITICAL FORMAT RULES:**
+- Output ONLY the exact words to be spoken, separated by |||
+- Do NOT include emojis, hashtags, stage directions, scene labels
+- Do NOT use ellipsis (...). Use a comma or period instead
+- NEVER repeat the last word(s) of one part at the beginning of the next
+
+**WORD COUNT IS A STRICT TECHNICAL REQUIREMENT:**
+- Part 1 MUST be exactly 7-9 words. Part 2 MUST be exactly 28-33 words.
+- Parts outside these ranges will be REJECTED. Count carefully."""
+
+SEEDANCE_PERSONA_PROMPT_30S_PHYSICAL = """You are {{influencer_name}}, a {{influencer_age}} {{influencer_gender}} content creator.
+
+Your personality: {{influencer_personality}}
+Your speaking style: {{influencer_tone}}, {{influencer_energy}} energy
+Your accent: {{influencer_accent}}
+
+You are recording a 30-second UGC video for a physical product. The video has 4 scenes with DIFFERENT durations:
+- Scene 1: 4 seconds (very short hook, ~3 seconds of speech)
+- Scene 2: 12 seconds (main benefits, ~10 seconds of speech)
+- Scene 3: 12 seconds (reaction/experience, ~10 seconds of speech)
+- Scene 4: 4 seconds (quick CTA, ~3 seconds of speech)
+
+**PRODUCT INFO:**
+Brand: {{brand_name}}
+Visual Description: {{visual_description}}
+Colors: {{color_scheme}}
+
+**OUTPUT FORMAT — exactly 4 parts separated by |||**
+Part 1 (Quick Hook): Punchy attention-grabber. Exactly 7-9 words (3 seconds).
+Part 2 (Benefits): Product's best feature with genuine enthusiasm. Exactly 28-33 words (10 seconds).
+Part 3 (Reaction): Personal experience or amazement. Exactly 28-33 words (10 seconds).
+Part 4 (Quick CTA): Short warm call-to-action. Exactly 7-9 words (3 seconds).
+
+**AUTHENTICITY RULES:**
+- Write EXACTLY how {{influencer_name}} would talk in a casual selfie video
+- Use contractions naturally
+- Include natural filler words where they fit
+- Sound like you're talking to your best friend, not reading ad copy
+
+**FORBIDDEN WORDS & PHRASES (never use these):**
+revolutionary, game-changer, transform, unlock, elevate, premium, luxurious,
+cutting-edge, innovative, state-of-the-art, unparalleled, exclusive,
+must-have, holy grail, delve into, seamlessly, meticulously crafted
+
+**CRITICAL FORMAT RULES:**
+- Output ONLY the exact words to be spoken, separated by |||
+- Do NOT include emojis, hashtags, stage directions, scene labels
+- NEVER repeat the last word(s) of one part at the beginning of the next
+
+**WORD COUNT IS A STRICT TECHNICAL REQUIREMENT:**
+- Parts 1 & 4 MUST be 7-9 words each. Parts 2 & 3 MUST be 28-33 words each.
+- Count carefully before outputting. Parts outside ranges will be REJECTED."""
+
+# ---------------------------------------------------------------------------
+# Single Clip — Adaptive Duration (5s / 8s / 10s)
+# One-part output, no ||| delimiter. Word count adapts to clip length.
+# ---------------------------------------------------------------------------
+
+PERSONA_PROMPT_CLIP = """You are {{influencer_name}}, a {{influencer_age}} {{influencer_gender}} content creator.
+
+Your personality: {{influencer_personality}}
+Your speaking style: {{influencer_tone}}, {{influencer_energy}} energy
+Your accent: {{influencer_accent}}
+
+You are recording a single {{clip_seconds}}-second UGC clip for a product. This is ONE continuous take — a quick, punchy selfie-style video.
+
+**PRODUCT INFO:**
+Brand: {{brand_name}}
+Visual Description: {{visual_description}}
+Colors: {{color_scheme}}
+
+**CREATIVE DIRECTION:**
+{{user_context}}
+
+**OUTPUT FORMAT — exactly ONE block of spoken text (NO ||| delimiter)**
+The dialogue must be exactly {{word_min}}-{{word_max}} words to fill {{speech_seconds}} seconds of speech.
+
+**INTERNAL RHYTHM (follow this structure but output ONLY the spoken words):**
+1. Open with a hook that creates instant curiosity or names a relatable problem (first sentence)
+2. Introduce the product naturally, as if you just discovered it
+3. State ONE clear benefit as a micro-transformation (before → after in the viewer's mind)
+4. Close with a soft CTA or personal recommendation
+
+**AUTHENTICITY — sound like a real person, not an ad:**
+- Write in {{influencer_name}}'s natural voice and speech patterns
+- Use contractions and casual rhythm (it's, you're, I've, gonna, wanna)
+- Let sentence length vary — mix short punchy fragments with a longer flowing thought
+- Reference personal experience when it fits ("I've been using...", "my skin has never...")
+- The script should feel spontaneous, like talking to a friend on camera
+
+**MICRO-TRANSFORMATION:**
+- Every script needs a before/after moment — show the viewer what changes
+- Example: "my mornings used to be chaos, now I actually have time to sit down with my coffee"
+- This is the single most persuasive element. Never skip it.
+
+**FORBIDDEN WORDS & PHRASES (never use these):**
+revolutionary, game-changer, transform, unlock, elevate, premium, luxurious,
+cutting-edge, innovative, state-of-the-art, unparalleled, exclusive,
+must-have, holy grail, delve into, seamlessly, meticulously crafted,
+showcasing, play a significant role, testament to,
+in today's fast-paced world, it's not just about X it's about Y
+
+**PROHIBITED MISTAKES:**
+- Do NOT sound like a traditional commercial or TV ad
+- Do NOT use a weak or generic hook ("So I found this product...")
+- Do NOT write robotic or stiff phrasing — no teleprompter energy
+- Do NOT front-load the product name in the first 3 words
+
+**CRITICAL FORMAT RULES:**
+- Output ONLY the exact words to be spoken — nothing else
+- No emojis, hashtags, stage directions, scene labels, or annotations
+- No ellipsis (...). Use a comma or period instead
+- The script must be exactly {{word_min}}-{{word_max}} words. Count carefully."""
+
+# ---------------------------------------------------------------------------
+# 15-Second Full Video — 2 Scenes (8s each)
+# ---------------------------------------------------------------------------
+
 PERSONA_PROMPT_15S = """You are {{influencer_name}}, a {{influencer_age}} {{influencer_gender}} content creator.
 
 Your personality: {{influencer_personality}}
@@ -19,17 +172,30 @@ Brand: {{brand_name}}
 Visual Description: {{visual_description}}
 Colors: {{color_scheme}}
 
-**OUTPUT FORMAT — exactly 2 parts separated by |||**
-Part 1 (Hook): An attention-grabbing opener that creates curiosity. Exactly 19-21 words (7 seconds of speech).
-Part 2 (Benefits + CTA): Highlight the key benefit and end with a soft call-to-action. Exactly 19-21 words (7 seconds of speech).
+**CREATIVE DIRECTION:**
+{{user_context}}
 
-**AUTHENTICITY RULES:**
-- Write EXACTLY how {{influencer_name}} would talk in a casual selfie video
-- Use contractions naturally (it's, you're, I've, don't, gonna, wanna)
-- Include natural filler words where they fit (like, literally, honestly, okay so, you guys)
-- Reference personal experience ("I've been using this for...", "my skin has never...")
-- Mix short punchy sentences with slightly longer ones
-- Sound like you're talking to your best friend, not reading ad copy
+**OUTPUT FORMAT — exactly 2 parts separated by |||**
+Part 1 (Hook): An attention-grabbing opener that creates curiosity or names a relatable problem. Exactly 19-21 words (7 seconds of speech).
+Part 2 (Benefit + CTA): State the product's key benefit as a micro-transformation (before → after) and close with a soft CTA. Exactly 19-21 words (7 seconds of speech).
+
+**INTERNAL RHYTHM (follow this flow but output ONLY the spoken words):**
+1. Hook → create instant curiosity, insight, or name a relatable problem
+2. Introduce the product naturally within the first few words of Part 2
+3. State ONE clear benefit as a micro-transformation
+4. Close with a warm, soft recommendation or CTA
+
+**AUTHENTICITY — sound like a real person, not an ad:**
+- Write in {{influencer_name}}'s natural voice and speech patterns
+- Use contractions and casual rhythm (it's, you're, I've, gonna, wanna)
+- Let sentence length vary — mix short punchy fragments with a longer flowing thought
+- Reference personal experience when it fits ("I've been using...", "my skin has never...")
+- The script should feel spontaneous, like talking to a friend on camera
+
+**MICRO-TRANSFORMATION:**
+- Part 2 must contain a before/after moment — show the viewer what changes
+- Example: "my mornings used to be chaos, now I actually have time to sit down with coffee"
+- This is the single most persuasive element. Never skip it.
 
 **FORBIDDEN WORDS & PHRASES (never use these):**
 revolutionary, game-changer, transform, unlock, elevate, premium, luxurious,
@@ -38,20 +204,23 @@ must-have, holy grail, delve into, seamlessly, meticulously crafted,
 showcasing, play a significant role, testament to,
 in today's fast-paced world, it's not just about X it's about Y
 
+**PROHIBITED MISTAKES:**
+- Do NOT sound like a traditional commercial or TV ad
+- Do NOT use a weak or generic hook ("So I found this product...")
+- Do NOT write robotic or stiff phrasing — no teleprompter energy
+- Do NOT front-load the product name in the first 3 words
+
 **CRITICAL FORMAT RULES — the script will be spoken aloud by an AI video model:**
 - Output ONLY the exact words to be spoken, separated by |||
-- Do NOT include emojis, hashtags, or special symbols
-- Do NOT include stage directions, actions, or annotations like [Shows product], (holds up), *smiles*, etc.
-- Do NOT include scene labels like "Hook:", "Scene 1:", "Part 1:", etc.
-- Do NOT use ellipsis (...). Use a comma or period instead for pauses
+- No emojis, hashtags, stage directions, scene labels, or annotations
+- No ellipsis (...). Use a comma or period instead for pauses
 - Do NOT add any text before Part 1 or after Part 2
-- NEVER repeat the last word(s) of one part at the beginning of the next part. Each part must flow into the next without repetition.
-- Do NOT end any part with hanging words or transition noises (e.g., "uh", "um", "and", "so", "but", "like").
+- NEVER repeat the last word(s) of one part at the beginning of the next
+- Do NOT end any part with hanging words ("and", "so", "but", "like")
 
 **WORD COUNT IS A STRICT TECHNICAL REQUIREMENT:**
 - Each part MUST be exactly 19-21 words. Count carefully before outputting.
-- Parts with fewer than 18 or more than 20 words will be REJECTED and replaced with generic fallbacks.
-- After writing each part, count the words and adjust if needed before outputting."""
+- Parts outside this range will be REJECTED. Count and adjust before outputting."""
 
 PERSONA_PROMPT_30S = """You are {{influencer_name}}, a {{influencer_age}} {{influencer_gender}} content creator.
 
@@ -66,20 +235,34 @@ Brand: {{brand_name}}
 Visual Description: {{visual_description}}
 Colors: {{color_scheme}}
 
-**OUTPUT FORMAT — exactly 4 parts separated by |||**
-Part 1 (Hook): An attention-grabbing opener that creates curiosity about the product. Exactly 19-21 words (7 seconds of speech).
-Part 2 (Benefits): Highlight the product's best feature or quality with genuine enthusiasm. Exactly 19-21 words (7 seconds of speech).
-Part 3 (Reaction): Show genuine amazement or personal experience with the product. Exactly 19-21 words (7 seconds of speech).
-Part 4 (CTA): Encourage viewers to check it out with a warm call-to-action. Exactly 19-21 words (7 seconds of speech).
+**CREATIVE DIRECTION:**
+{{user_context}}
 
-**AUTHENTICITY RULES:**
-- Write EXACTLY how {{influencer_name}} would talk in a casual selfie video
-- Use contractions naturally (it's, you're, I've, don't, gonna, wanna)
-- Include natural filler words where they fit (like, literally, honestly, okay so, you guys)
-- Reference personal experience ("I've been using this for...", "my skin has never...")
-- Mix short punchy sentences with slightly longer ones
-- Sound like you're talking to your best friend, not reading ad copy
+**OUTPUT FORMAT — exactly 4 parts separated by |||**
+Part 1 (Hook): An attention-grabbing opener that creates instant curiosity, an insight, or names a relatable problem. Exactly 19-21 words.
+Part 2 (Problem + Product): Develop the problem or context, then introduce the product naturally. Include a micro-transformation (before → after). Exactly 19-21 words.
+Part 3 (Benefit + Reaction): Show genuine amazement or personal experience — make the benefit tangible and specific. Exactly 19-21 words.
+Part 4 (CTA): Close with a warm, personal recommendation. Exactly 19-21 words.
+
+**INTERNAL RHYTHM (follow this flow but output ONLY the spoken words):**
+1. Hook → curiosity, problem, or pattern interrupt
+2. Context → develop the problem, introduce product naturally
+3. Benefit → micro-transformation, specific personal result
+4. CTA → warm recommendation, not a hard sell
+The 4 parts must flow as one continuous conversation, progressively building interest.
+
+**AUTHENTICITY — sound like a real person, not an ad:**
+- Write in {{influencer_name}}'s natural voice and speech patterns
+- Use contractions and casual rhythm (it's, you're, I've, gonna, wanna)
+- Let sentence length vary — mix short punchy fragments with longer flowing thoughts
+- Reference personal experience when it fits
 - Part 2 should feel like a natural continuation of Part 1, not a separate ad read
+- The script should feel spontaneous, like talking to a friend on camera
+
+**MICRO-TRANSFORMATION:**
+- At least one part (ideally Part 2 or 3) must contain a clear before/after moment
+- Example: "I used to spend twenty minutes on this every morning, now it literally takes me two"
+- Show the viewer what changes. This is the most persuasive element.
 
 **FORBIDDEN WORDS & PHRASES (never use these):**
 revolutionary, game-changer, transform, unlock, elevate, premium, luxurious,
@@ -88,20 +271,23 @@ must-have, holy grail, delve into, seamlessly, meticulously crafted,
 showcasing, play a significant role, testament to,
 in today's fast-paced world, it's not just about X it's about Y
 
+**PROHIBITED MISTAKES:**
+- Do NOT sound like a traditional commercial or TV ad
+- Do NOT use a weak or generic hook ("So I found this product...")
+- Do NOT write robotic or stiff phrasing — no teleprompter energy
+- Do NOT front-load the product name in the first 3 words of Part 1
+
 **CRITICAL FORMAT RULES — the script will be spoken aloud by an AI video model:**
 - Output ONLY the exact words to be spoken, separated by |||
-- Do NOT include emojis, hashtags, or special symbols
-- Do NOT include stage directions, actions, or annotations like [Shows product], (holds up), *smiles*, etc.
-- Do NOT include scene labels like "Hook:", "Scene 1:", "Part 1:", etc.
-- Do NOT use ellipsis (...). Use a comma or period instead for pauses
+- No emojis, hashtags, stage directions, scene labels, or annotations
+- No ellipsis (...). Use a comma or period instead for pauses
 - Do NOT add any text before Part 1 or after Part 4
-- NEVER repeat the last word(s) of one part at the beginning of the next part. Each part must flow into the next without repetition.
-- Do NOT end any part with hanging words or transition noises (e.g., "uh", "um", "and", "so", "but", "like").
+- NEVER repeat the last word(s) of one part at the beginning of the next
+- Do NOT end any part with hanging words ("and", "so", "but", "like")
 
 **WORD COUNT IS A STRICT TECHNICAL REQUIREMENT:**
 - Each part MUST be exactly 19-21 words. Count carefully before outputting.
-- Parts with fewer than 18 or more than 20 words will be REJECTED and replaced with generic fallbacks.
-- After writing each part, count the words and adjust if needed before outputting."""
+- Parts outside this range will be REJECTED. Count and adjust before outputting."""
 
 HUMANIZE_PROMPT_TEMPLATE = """You are a dialogue polish editor. Your only job is to make this script sound like a real person talking spontaneously on camera.
 
@@ -163,8 +349,14 @@ class AIScriptClient:
     # Two-Step Persona Pipeline (Private Methods)
     # ------------------------------------------------------------------
 
-    def _generate_raw_script(self, product_analysis: Dict[str, Any], influencer_data: Dict[str, Any], duration: int, video_language: str = "en") -> str:
-        """Step 1: Generate a persona-driven raw script using influencer context."""
+    def _generate_raw_script(self, product_analysis: Dict[str, Any], influencer_data: Dict[str, Any], duration: int, video_language: str = "en", model_api: str = "", context: str = "") -> str:
+        """Step 1: Generate a persona-driven raw script using influencer context.
+
+        Supports all durations:
+        - 5s/8s/10s: Single clip (PERSONA_PROMPT_CLIP, no ||| delimiter)
+        - 15s: 2-part ||| script (PERSONA_PROMPT_15S)
+        - 30s: 4-part ||| script (PERSONA_PROMPT_30S)
+        """
         brand = product_analysis.get("brand_name") or "the product"
         visuals = product_analysis.get("visual_description", "A product.")
         colors = product_analysis.get("color_scheme", [])
@@ -172,10 +364,31 @@ class AIScriptClient:
             [c.get("name", "") for c in colors if isinstance(c, dict)]
         ) if isinstance(colors, list) else ""
 
-        # Select template based on duration (30s = 4 parts, 15s = 2 parts)
-        template = PERSONA_PROMPT_30S if duration >= 30 else PERSONA_PROMPT_15S
-        num_parts = 4 if duration >= 30 else 2
+        # Prepare user context string (safe fallback)
+        user_context = context.strip() if context else "No specific direction — write a strong, natural UGC script."
 
+        # Select template based on model + duration
+        is_seedance = "seedance" in model_api.lower() if model_api else False
+        is_clip = duration <= 10 and not is_seedance
+
+        if is_clip:
+            # Single clip mode — adaptive word count, no ||| delimiter
+            CLIP_WORD_MAP = {
+                5: {"word_min": 12, "word_max": 15, "speech_seconds": 4},
+                8: {"word_min": 20, "word_max": 24, "speech_seconds": 7},
+                10: {"word_min": 25, "word_max": 30, "speech_seconds": 9},
+            }
+            clip_cfg = CLIP_WORD_MAP.get(duration, CLIP_WORD_MAP[8])
+            template = PERSONA_PROMPT_CLIP
+            num_parts = 1
+        elif is_seedance:
+            template = SEEDANCE_PERSONA_PROMPT_30S_PHYSICAL if duration >= 30 else SEEDANCE_PERSONA_PROMPT_15S_PHYSICAL
+            num_parts = 4 if duration >= 30 else 2
+        else:
+            template = PERSONA_PROMPT_30S if duration >= 30 else PERSONA_PROMPT_15S
+            num_parts = 4 if duration >= 30 else 2
+
+        # Build system prompt with all template variables
         system_prompt = (
             template
             .replace("{{influencer_name}}", influencer_data.get("name", "the creator"))
@@ -188,17 +401,39 @@ class AIScriptClient:
             .replace("{{brand_name}}", brand)
             .replace("{{visual_description}}", str(visuals))
             .replace("{{color_scheme}}", color_str)
+            .replace("{{user_context}}", user_context)
         )
+
+        # Clip-specific replacements
+        if is_clip:
+            system_prompt = (
+                system_prompt
+                .replace("{{clip_seconds}}", str(duration))
+                .replace("{{word_min}}", str(clip_cfg["word_min"]))
+                .replace("{{word_max}}", str(clip_cfg["word_max"]))
+                .replace("{{speech_seconds}}", str(clip_cfg["speech_seconds"]))
+            )
 
         # i18n: Inject language directive
         if video_language == "es":
             system_prompt += "\n\nLANGUAGE OVERRIDE: You MUST write the ENTIRE script in Spanish. Use natural Latin American or Spain Spanish. All dialogue must be in Spanish."
 
+        # Adjust user prompt based on mode
+        if is_clip:
+            user_msg = f"Generate the UGC clip script now. It MUST be exactly {clip_cfg['word_min']}-{clip_cfg['word_max']} words. Sound like a real person, not an ad."
+        elif is_seedance:
+            if num_parts == 2:
+                user_msg = f"Generate the {num_parts}-part UGC script now. Part 1 MUST be 7-9 words. Part 2 MUST be 28-33 words. Sound like a real person, not an ad."
+            else:
+                user_msg = f"Generate the {num_parts}-part UGC script now. Parts 1 & 4 MUST be 7-9 words. Parts 2 & 3 MUST be 28-33 words. Sound like a real person."
+        else:
+            user_msg = f"Generate the {num_parts}-part UGC script now. Remember: sound like a real person, not an ad. Each part MUST be exactly 19-21 words."
+
         response = self.client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Generate the {num_parts}-part UGC script now. Remember: sound like a real person, not an ad. Each part MUST be exactly 19-21 words."}
+                {"role": "user", "content": user_msg}
             ],
             max_tokens=300 if duration >= 30 else 150,
             temperature=0.85,
@@ -242,7 +477,10 @@ class AIScriptClient:
         product_analysis: Dict[str, Any],
         duration: int,
         product_name: str = "",
-        influencer_data: Optional[Dict[str, Any]] = None
+        influencer_data: Optional[Dict[str, Any]] = None,
+        model_api: str = "",
+        video_language: str = "en",
+        context: str = "",
     ) -> str:
         """
         Generates a compelling UGC script for a physical product.
@@ -271,7 +509,7 @@ class AIScriptClient:
         if influencer_data and influencer_data.get("name"):
             try:
                 print("      [AIScript] Generating persona-driven script (single-step)...")
-                raw_script = self._generate_raw_script(product_analysis, influencer_data, duration)
+                raw_script = self._generate_raw_script(product_analysis, influencer_data, duration, video_language=video_language, model_api=model_api, context=context)
                 try:
                     safe_raw = raw_script.encode('ascii', 'ignore').decode('ascii')
                     print(f"      [AIScript] Script: {safe_raw[:80]}...")
@@ -732,6 +970,8 @@ Return ONLY the JSON array, no explanation.
         hook: str,
         video_length: int,
         video_language: str = "en",
+        model_api: str = "",
+        product_type: str = "physical",
     ) -> Dict[str, Any]:
         """Call 3: Full Script Generation. Returns the complete script_json object."""
         product_name = product_data.get("brand_name") or product_data.get("name", "the product")
@@ -741,67 +981,113 @@ Return ONLY the JSON array, no explanation.
         num_scenes = 4 if video_length >= 30 else 2
         target_duration = 30 if video_length >= 30 else 15
 
+        # Seedance 2.0: variable durations per scene → different word counts
+        is_seedance = "seedance" in model_api.lower() if model_api else False
+        if is_seedance:
+            import config as _cfg
+            seedance_cfg = _cfg.get_seedance_durations(f"{video_length}s", product_type)
+            seedance_scenes = seedance_cfg["scenes"]
+            # Filter to AI scenes only (skip clips) for word count mapping
+            ai_scenes = [s for s in seedance_scenes if s["has_video_input"] is not None]
+            num_scenes = len(ai_scenes)
+            # Build per-scene word count instructions
+            scene_word_specs = []
+            for idx, sc in enumerate(ai_scenes):
+                dur = sc["duration"]
+                if dur <= 4:
+                    word_range = "7-9"
+                    speech_sec = 3
+                elif dur <= 8:
+                    word_range = "19-21"
+                    speech_sec = 7
+                else:  # 12s
+                    word_range = "28-33"
+                    speech_sec = 10
+                scene_word_specs.append((word_range, speech_sec, dur))
+        else:
+            scene_word_specs = [("19-21", 7, 8)] * num_scenes
+
         inf_name = influencer_data.get("name", "the creator")
         inf_age = influencer_data.get("age", "25-year-old")
         inf_gender = influencer_data.get("gender", "Female")
 
         # Build STRONG per-methodology scene instructions
+        # Use Seedance-aware word counts when applicable
+        def _scene_spec(idx):
+            """Return 'exactly X-Y words, Z seconds' string for scene idx."""
+            if idx < len(scene_word_specs):
+                wr, ss, _ = scene_word_specs[idx]
+                return f"exactly {wr} words, {ss} seconds"
+            return "exactly 19-21 words, 7 seconds"
+
         if num_scenes == 2:
             methodology_scene_templates = {
                 "Problem/Agitate/Solve": f"""Generate exactly 2 scenes following Problem/Agitate/Solve:
-Scene 1 - Problem: Use the hook to describe a relatable problem or frustration. Agitate the pain. exactly 19-21 words, 7 seconds.
-Scene 2 - Solve + CTA: Show how {product_name} solves the problem, end with a soft CTA. exactly 19-21 words, 7 seconds.""",
+Scene 1 - Problem: Use the hook to describe a relatable problem or frustration. Agitate the pain. {_scene_spec(0)}.
+Scene 2 - Solve + CTA: Show how {product_name} solves the problem, end with a soft CTA. {_scene_spec(1)}.""",
                 "Hook/Benefit/CTA": f"""Generate exactly 2 scenes following Hook/Benefit/CTA:
-Scene 1 - Hook/Benefit: Use the hook to highlight the product's best benefit. exactly 19-21 words, 7 seconds.
-Scene 2 - CTA: Reinforce the benefit and end with a warm call-to-action. exactly 19-21 words, 7 seconds.""",
+Scene 1 - Hook/Benefit: Use the hook to highlight the product's best benefit. {_scene_spec(0)}.
+Scene 2 - CTA: Reinforce the benefit and end with a warm call-to-action. {_scene_spec(1)}.""",
                 "Contrarian/Shock": f"""Generate exactly 2 scenes following Contrarian/Shock:
-Scene 1 - Shocking Statement: Use the hook to challenge conventional wisdom or make a bold contrarian claim. exactly 19-21 words, 7 seconds.
-Scene 2 - Resolution + CTA: Explain why the shocking claim is true because of {product_name}, CTA. exactly 19-21 words, 7 seconds.""",
+Scene 1 - Shocking Statement: Use the hook to challenge conventional wisdom or make a bold contrarian claim. {_scene_spec(0)}.
+Scene 2 - Resolution + CTA: Explain why the shocking claim is true because of {product_name}, CTA. {_scene_spec(1)}.""",
                 "Social Proof": f"""Generate exactly 2 scenes following Social Proof:
-Scene 1 - Proof/Result: Use the hook to share a specific result, number, or reference to other people's experience. exactly 19-21 words, 7 seconds.
-Scene 2 - Product + CTA: Connect the proof to {product_name} and end with a CTA. exactly 19-21 words, 7 seconds.""",
+Scene 1 - Proof/Result: Use the hook to share a specific result, number, or reference to other people's experience. {_scene_spec(0)}.
+Scene 2 - Product + CTA: Connect the proof to {product_name} and end with a CTA. {_scene_spec(1)}.""",
                 "Aspiration/Dream": f"""Generate exactly 2 scenes following Aspiration/Dream:
-Scene 1 - Dream Outcome: Use the hook to paint the ideal aspirational scenario the viewer desires. exactly 19-21 words, 7 seconds.
-Scene 2 - Bridge + CTA: Show {product_name} as the bridge to that dream, end with CTA. exactly 19-21 words, 7 seconds.""",
+Scene 1 - Dream Outcome: Use the hook to paint the ideal aspirational scenario the viewer desires. {_scene_spec(0)}.
+Scene 2 - Bridge + CTA: Show {product_name} as the bridge to that dream, end with CTA. {_scene_spec(1)}.""",
                 "Curiosity/Cliffhanger": f"""Generate exactly 2 scenes following Curiosity/Cliffhanger:
-Scene 1 - Open Loop: Use the hook to create an irresistible curiosity gap or cliffhanger. exactly 19-21 words, 7 seconds.
-Scene 2 - Reveal + CTA: Reveal the answer is {product_name}, end with CTA. exactly 19-21 words, 7 seconds.""",
+Scene 1 - Open Loop: Use the hook to create an irresistible curiosity gap or cliffhanger. {_scene_spec(0)}.
+Scene 2 - Reveal + CTA: Reveal the answer is {product_name}, end with CTA. {_scene_spec(1)}.""",
             }
             scene_instructions = methodology_scene_templates.get(script_structure, methodology_scene_templates["Hook/Benefit/CTA"])
         else:
             methodology_scene_templates = {
                 "Problem/Agitate/Solve": f"""Generate exactly 4 scenes following Problem/Agitate/Solve:
-Scene 1 - Problem Hook: Use the hook to present a relatable problem. exactly 19-21 words, 7 seconds.
-Scene 2 - Agitate: Make the problem feel urgent and unbearable. exactly 19-21 words, 7 seconds.
-Scene 3 - Solve: Show how {product_name} is the perfect solution. exactly 19-21 words, 7 seconds.
-Scene 4 - CTA: End with a warm call-to-action. exactly 19-21 words, 7 seconds.""",
+Scene 1 - Problem Hook: Use the hook to present a relatable problem. {_scene_spec(0)}.
+Scene 2 - Agitate: Make the problem feel urgent and unbearable. {_scene_spec(1)}.
+Scene 3 - Solve: Show how {product_name} is the perfect solution. {_scene_spec(2)}.
+Scene 4 - CTA: End with a warm call-to-action. {_scene_spec(3)}.""",
                 "Hook/Benefit/CTA": f"""Generate exactly 4 scenes following Hook/Benefit/CTA:
-Scene 1 - Hook: Use the hook to grab attention with the key benefit. exactly 19-21 words, 7 seconds.
-Scene 2 - Key Benefit: Detail the product's strongest selling point. exactly 19-21 words, 7 seconds.
-Scene 3 - Supporting Benefit: Share a second benefit or personal experience. exactly 19-21 words, 7 seconds.
-Scene 4 - CTA: Warm call-to-action to try {product_name}. exactly 19-21 words, 7 seconds.""",
+Scene 1 - Hook: Use the hook to grab attention with the key benefit. {_scene_spec(0)}.
+Scene 2 - Key Benefit: Detail the product's strongest selling point. {_scene_spec(1)}.
+Scene 3 - Supporting Benefit: Share a second benefit or personal experience. {_scene_spec(2)}.
+Scene 4 - CTA: Warm call-to-action to try {product_name}. {_scene_spec(3)}.""",
                 "Contrarian/Shock": f"""Generate exactly 4 scenes following Contrarian/Shock:
-Scene 1 - Shocking Statement: Use the hook to make a bold, contrarian claim. exactly 19-21 words, 7 seconds.
-Scene 2 - Explanation: Back up the shocking claim with reasoning. exactly 19-21 words, 7 seconds.
-Scene 3 - Product Resolution: Introduce {product_name} as the proof. exactly 19-21 words, 7 seconds.
-Scene 4 - CTA: End with a confident call-to-action. exactly 19-21 words, 7 seconds.""",
+Scene 1 - Shocking Statement: Use the hook to make a bold, contrarian claim. {_scene_spec(0)}.
+Scene 2 - Explanation: Back up the shocking claim with reasoning. {_scene_spec(1)}.
+Scene 3 - Product Resolution: Introduce {product_name} as the proof. {_scene_spec(2)}.
+Scene 4 - CTA: End with a confident call-to-action. {_scene_spec(3)}.""",
                 "Social Proof": f"""Generate exactly 4 scenes following Social Proof:
-Scene 1 - Result/Review: Use the hook to share specific social proof or results. exactly 19-21 words, 7 seconds.
-Scene 2 - Product Intro: Introduce {product_name} as the reason for the results. exactly 19-21 words, 7 seconds.
-Scene 3 - Demo/Experience: Share personal experience using the product. exactly 19-21 words, 7 seconds.
-Scene 4 - CTA: End with social-proof-reinforced CTA. exactly 19-21 words, 7 seconds.""",
+Scene 1 - Result/Review: Use the hook to share specific social proof or results. {_scene_spec(0)}.
+Scene 2 - Product Intro: Introduce {product_name} as the reason for the results. {_scene_spec(1)}.
+Scene 3 - Demo/Experience: Share personal experience using the product. {_scene_spec(2)}.
+Scene 4 - CTA: End with social-proof-reinforced CTA. {_scene_spec(3)}.""",
                 "Aspiration/Dream": f"""Generate exactly 4 scenes following Aspiration/Dream:
-Scene 1 - Dream Outcome: Use the hook to paint the ideal aspirational scenario. exactly 19-21 words, 7 seconds.
-Scene 2 - Current Reality Gap: Describe the gap between where the viewer is and where they want to be. exactly 19-21 words, 7 seconds.
-Scene 3 - Product Bridge: Show how {product_name} bridges that gap. exactly 19-21 words, 7 seconds.
-Scene 4 - CTA: End with an inspiring call-to-action. exactly 19-21 words, 7 seconds.""",
+Scene 1 - Dream Outcome: Use the hook to paint the ideal aspirational scenario. {_scene_spec(0)}.
+Scene 2 - Current Reality Gap: Describe the gap between where the viewer is and where they want to be. {_scene_spec(1)}.
+Scene 3 - Product Bridge: Show how {product_name} bridges that gap. {_scene_spec(2)}.
+Scene 4 - CTA: End with an inspiring call-to-action. {_scene_spec(3)}.""",
                 "Curiosity/Cliffhanger": f"""Generate exactly 4 scenes following Curiosity/Cliffhanger:
-Scene 1 - Open Loop: Use the hook to create an irresistible curiosity gap. exactly 19-21 words, 7 seconds.
-Scene 2 - Tension Building: Build suspense, hint at the answer without revealing. exactly 19-21 words, 7 seconds.
-Scene 3 - Reveal: Reveal {product_name} as the answer, show specific results. exactly 19-21 words, 7 seconds.
-Scene 4 - CTA: End with a curiosity-driven CTA. exactly 19-21 words, 7 seconds.""",
+Scene 1 - Open Loop: Use the hook to create an irresistible curiosity gap. {_scene_spec(0)}.
+Scene 2 - Tension Building: Build suspense, hint at the answer without revealing. {_scene_spec(1)}.
+Scene 3 - Reveal: Reveal {product_name} as the answer, show specific results. {_scene_spec(2)}.
+Scene 4 - CTA: End with a curiosity-driven CTA. {_scene_spec(3)}.""",
             }
             scene_instructions = methodology_scene_templates.get(script_structure, methodology_scene_templates["Hook/Benefit/CTA"])
+
+        # Build word count instruction for the system prompt
+        if is_seedance:
+            word_count_instruction = "IMPORTANT: Each scene has a DIFFERENT word count requirement based on its duration. Follow the per-scene word counts specified below EXACTLY."
+            json_dialogue_example = "<spoken text, follow the word count for this scene>"
+            json_word_count_example = "<integer matching scene requirement>"
+            json_duration_example = "<speech seconds for this scene>"
+        else:
+            word_count_instruction = "Each scene's dialogue must be exactly 19-21 words long to fit within a 7-second speaking duration."
+            json_dialogue_example = "<spoken text, exactly 19-21 words>"
+            json_word_count_example = "<integer>"
+            json_duration_example = "7.0"
 
         system_prompt = f"""You are writing a complete UGC video script.
 
@@ -814,8 +1100,8 @@ Hook to use: "{hook}"
 
 STRICT TECHNICAL REQUIREMENT:
 You must generate dialogue for exactly {num_scenes} scenes.
-Each scene's dialogue must be exactly 19-21 words long to fit within a 7-second speaking duration.
-Do not exceed this word count for any scene. This is a strict technical requirement.
+{word_count_instruction}
+Do not exceed the word count for any scene. This is a strict technical requirement.
 
 {scene_instructions}
 
@@ -824,7 +1110,7 @@ LANGUAGE RULES (non-negotiable):
 - The dialogue MUST flow as one continuous, natural spoken conversation across all scenes. 
 - DO NOT start every scene with disjointed openers like "Okay but" or "Honestly" unless it naturally connects to the previous sentence.
 - Use imperfect spoken grammar: sentence fragments, trailing thoughts
-- Use specific quantified benefits: saved me 45 minutes, cost me 12 dollars, three taps
+- When mentioning benefits, use SPECIFIC numbers and details that are relevant to THIS product. Invent realistic quantities based on the product category (e.g. time saved, money saved, steps reduced). NEVER default to generic numbers.
 - NEVER use these words or phrases: {self.FORBIDDEN_PHRASES}
 
 {'LANGUAGE OVERRIDE: The ENTIRE script (all scene dialogues, the hook, and the name) MUST be written in Spanish. Use natural Latin American or Spain Spanish. Do NOT mix languages.' if video_language == 'es' else ''}
@@ -840,9 +1126,9 @@ Return your answer as valid JSON matching this EXACT schema:
     {{
       "scene_number": 1,
       "scene_title": "<title like Hook, Problem, CTA>",
-      "dialogue": "<spoken text, exactly 19-21 words>",
-      "word_count": <integer>,
-      "estimated_duration_sec": 7.0,
+      "dialogue": "{json_dialogue_example}",
+      "word_count": {json_word_count_example},
+      "estimated_duration_sec": {json_duration_example},
       "visual_cue": "<brief director note for the visual>",
       "on_screen_text": "<optional overlay text or empty string>"
     }}
@@ -865,9 +1151,13 @@ Return ONLY the JSON object, no explanation."""
             import json
             result = json.loads(response.choices[0].message.content.strip())
 
-            # Enforce estimated_duration_sec = 7.0 on all scenes
-            for scene in result.get("scenes", []):
-                scene["estimated_duration_sec"] = 7.0
+            # Set estimated_duration_sec per scene based on config
+            for idx, scene in enumerate(result.get("scenes", [])):
+                if idx < len(scene_word_specs):
+                    _, speech_sec, _ = scene_word_specs[idx]
+                    scene["estimated_duration_sec"] = float(speech_sec)
+                else:
+                    scene["estimated_duration_sec"] = 7.0
 
             return result
         except Exception as e:
@@ -910,6 +1200,8 @@ Return ONLY the JSON object, no explanation."""
         methodology: Optional[str] = None,
         context: Optional[str] = None,
         video_language: str = "en",
+        model_api: str = "",
+        product_type: str = "physical",
     ) -> Dict[str, Any]:
         """Public entry point for the v2 three-call prompt chain.
 
@@ -956,6 +1248,8 @@ Return ONLY the JSON object, no explanation."""
             creator_persona, script_structure,
             selected_hook, video_length,
             video_language=video_language,
+            model_api=model_api,
+            product_type=product_type,
         )
         print(f"      [AIScript v2] Script generated: {script_json.get('name', 'unnamed')}")
 

@@ -61,6 +61,18 @@ def sanitize_dialogue(text: str) -> str:
     # Expand numbers+symbols BEFORE the regex strips symbols
     text = _expand_numbers_and_symbols(text)
 
+    # Strip system prompt artifacts that GPT-4o sometimes injects
+    # e.g. "They say this in English in a natural tone: <actual dialogue>"
+    text = re.sub(
+        r'^(?:They\s+say\s+this\s+in\s+\w+\s+in\s+a\s+\w+\s+tone:\s*)',
+        '', text, flags=re.IGNORECASE
+    )
+    # Also catch variations: "She says in English:", "He says naturally:", etc.
+    text = re.sub(
+        r'^(?:(?:She|He|They)\s+says?\s+(?:this\s+)?in\s+\w+(?:\s+in\s+a\s+\w+\s+tone)?:\s*)',
+        '', text, flags=re.IGNORECASE
+    )
+
     # Remove bracketed action/stage directions: [Shows pouch], (holds product)
     text = re.sub(r"\[.*?\]", "", text)
     text = re.sub(r"\(.*?\)", "", text)

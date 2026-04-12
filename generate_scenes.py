@@ -49,7 +49,7 @@ def _get_model_family(model_name=None):
     return "veo"
 
 
-def generate_video(prompt, reference_image_url=None, model_api=None):
+def generate_video(prompt, reference_image_url=None, model_api=None, first_frame_url=None, return_last_frame=False, duration=12, kling_elements=None, max_poll_seconds=None):
     """
     Generate video using specified AI model API (Seedance/Kie.ai).
 
@@ -73,33 +73,47 @@ def generate_video(prompt, reference_image_url=None, model_api=None):
     endpoints = MODEL_ENDPOINTS[family]
 
     if family == "seedance":
-        # --- Seedance payload (as per official documentation) ---
+        # --- Seedance 2.0 payload (bytedance/seedance-2 API spec) ---
         payload = {
             "model": model_api,
             "input": {
                 "prompt": prompt,
-                "input_urls": [reference_image_url] if reference_image_url else [],
                 "aspect_ratio": config.VIDEO_ASPECT_RATIO,
                 "resolution": config.SEEDANCE_QUALITY,
-                "duration": str(config.AI_CLIP_DURATION),
+                "duration": duration,  # Seedance 2.0 accepts 4/8/12 (integer)
                 "generate_audio": config.SEEDANCE_AUDIO,
-                "fixed_lens": False
+                "web_search": False,
             },
             "callBackUrl": "https://example.com/callback",
         }
+
+        # Handle reference images (up to 9 supported, we use 1 for influencer/product)
+        if reference_image_url:
+            payload["input"]["reference_image_urls"] = [reference_image_url]
+
+        # Handle scene chaining parameters (Seedance 2.0 chain pipeline)
+        if first_frame_url:
+            payload["input"]["first_frame_url"] = first_frame_url
+        if return_last_frame:
+            payload["input"]["return_last_frame"] = True
     elif family == "kling":
-        # --- Kling payload (uses image_urls, no audio) ---
-        # Kling only accepts duration "5" or "10"
-        kling_duration = "5" if config.AI_CLIP_DURATION <= 5 else "10"
-        payload = {
-            "model": model_api,
-            "input": {
-                "prompt": prompt,
-                "image_urls": [reference_image_url] if reference_image_url else [],
-                "sound": False,
-                "duration": kling_duration,
-            }
+        # --- Kling 3.0 payload (full spec: elements, mode, aspect_ratio) ---
+        kling_duration = str(max(3, min(15, duration)))
+        kling_input = {
+            "prompt": prompt,
+            "image_urls": [reference_image_url] if reference_image_url else [],
+            "sound": True,
+            "duration": kling_duration,
+            "aspect_ratio": "9:16",
+            "mode": "pro",
+            "multi_shots": False,
+            "multi_prompt": [],
         }
+        # Add element references (Kling 3.0 kling_elements)
+        if kling_elements:
+            kling_input["kling_elements"] = kling_elements
+            print(f"      [Kling] Payload includes {len(kling_elements)} element(s): {[e['name'] for e in kling_elements]}")
+        payload = {"model": model_api, "input": kling_input}
     else:
         # --- Veo 3.1 payload (flat format, dedicated /veo/generate endpoint) ---
         payload = {
@@ -136,7 +150,8 @@ def generate_video(prompt, reference_image_url=None, model_api=None):
     print(f"      Task: {task_id[:30]}...")
 
     # Poll for completion — typically 1-3 minutes, up to 15-20min for complex scenes
-    for i in range(120):  # 20 minutes max
+    poll_limit = (max_poll_seconds // 10) if max_poll_seconds else 120  # default 20 min
+    for i in range(poll_limit):
         time.sleep(10)
 
         try:
@@ -192,9 +207,14 @@ def generate_video(prompt, reference_image_url=None, model_api=None):
                 try:
                     result_data = json.loads(result_json_str)
                     video_url = result_data.get("resultUrls", [None])[0]
+                    last_frame_url = result_data.get("lastFrameUrl")  # Seedance 2.0 chain
                     if video_url:
                         print(f"      [OK] Generation complete! ({i * 10}s)")
-                        return {"taskId": task_id, "videoUrl": video_url}
+                        return {
+                            "taskId": task_id,
+                            "videoUrl": video_url,
+                            "lastFrameUrl": last_frame_url,
+                        }
                 except Exception as e:
                     print(f"      ⚠️ Error parsing resultJson: {e}")
                     continue
@@ -207,31 +227,472 @@ def generate_video(prompt, reference_image_url=None, model_api=None):
             else:
                 print(f"      ⚠️ Unknown state: {state} ({i * 10}s)")
 
-    raise RuntimeError(f"{model_display} generation timed out after 20 minutes")
+    timeout_mins = (max_poll_seconds // 60) if max_poll_seconds else 20
+    raise RuntimeError(f"{model_display} generation timed out after {timeout_mins} minutes")
 
 
-def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, max_retries=3):
+# ---------------------------------------------------------------------------
+# Provider Router — Pre-flight Health Probe + Circuit Breaker
+# ---------------------------------------------------------------------------
+import threading
+
+class ProviderRouter:
     """
-    Generate video with automatic retry on transient errors.
-    Retries on: 500 errors, internal errors, timeouts, and unknown generation errors.
+    Smart API provider routing with PRE-FLIGHT health probes.
+
+    Before sending any Veo generation job, this system:
+      1. Pings both Kie.ai and WaveSpeed endpoints (3s timeout)
+      2. Measures response time + HTTP status
+      3. Routes to the healthy/fastest provider IMMEDIATELY
+      4. Tracks past generation outcomes as a secondary signal
+
+    This ensures users NEVER wait for Kie.ai to fail before WaveSpeed kicks in.
+
+    Providers:
+      - "kie"        → Kie.ai (primary, cheapest)
+      - "wavespeed"  → WaveSpeed (fallback, higher reliability)
     """
-    RETRIABLE_PATTERNS = ("500", "internal error", "unknown generation error", "timed out", "timeout")
-    for attempt in range(max_retries):
+
+    # Health check probe endpoints (lightweight — return fast even on error)
+    PROBE_ENDPOINTS = {
+        "kie_veo": {
+            "url": f"{config.KIE_API_URL}/api/v1/veo/record-info",
+            "method": "GET",
+            "params": {"taskId": "health_probe"},
+        },
+        "kie_kling": {
+            "url": f"{config.KIE_API_URL}/api/v1/jobs/recordInfo",
+            "method": "GET",
+            "params": {"taskId": "health_probe"},
+        },
+        "wavespeed": {
+            "url": "https://api.wavespeed.ai/api/v3/predictions/health_probe/result",
+            "method": "GET",
+        },
+    }
+
+    def __init__(self, probe_timeout: float = 3.0, cache_ttl: int = 60, window_seconds: int = 600):
+        self._probe_timeout = probe_timeout   # Max time to wait for health probe
+        self._cache_ttl = cache_ttl           # Cache health results for N seconds
+        self._window = window_seconds         # Rolling window for generation outcomes
+        self._health_cache: dict[str, tuple[float, bool, float]] = {}  # {key: (timestamp, is_healthy, response_ms)}
+        self._results: dict[str, list[tuple[float, bool]]] = {}        # {key: [(timestamp, success), ...]}
+        self._lock = threading.Lock()
+
+    # ── Health Probing ───────────────────────────────────────────────────
+
+    def _probe_kie(self, model_family: str) -> tuple[bool, float]:
+        """
+        Probe Kie.ai's health for a specific model family.
+        Returns (is_healthy, response_time_ms).
+
+        Healthy = responds within probe_timeout with any HTTP status < 500.
+        (Even a 400/404 means the server is UP and processing requests.)
+        """
+        probe_key = f"kie_{model_family}"
+        probe_cfg = self.PROBE_ENDPOINTS.get(probe_key, self.PROBE_ENDPOINTS["kie_veo"])
+
         try:
-            return generate_video(prompt, reference_image_url, model_api)
+            start = time.time()
+            resp = requests.get(
+                probe_cfg["url"],
+                headers=config.KIE_HEADERS,
+                params=probe_cfg.get("params", {}),
+                timeout=self._probe_timeout,
+            )
+            elapsed_ms = (time.time() - start) * 1000
+            is_healthy = resp.status_code < 500
+            return is_healthy, elapsed_ms
+        except requests.exceptions.Timeout:
+            return False, self._probe_timeout * 1000
+        except Exception:
+            return False, self._probe_timeout * 1000
+
+    def _probe_wavespeed(self) -> tuple[bool, float]:
+        """
+        Probe WaveSpeed's health.
+        Returns (is_healthy, response_time_ms).
+        """
+        ws_key = os.getenv("WAVESPEED_API_KEY", "")
+        if not ws_key:
+            return False, 0
+
+        probe_cfg = self.PROBE_ENDPOINTS["wavespeed"]
+        try:
+            start = time.time()
+            resp = requests.get(
+                probe_cfg["url"],
+                headers={"Authorization": f"Bearer {ws_key}"},
+                timeout=self._probe_timeout,
+            )
+            elapsed_ms = (time.time() - start) * 1000
+            is_healthy = resp.status_code < 500
+            return is_healthy, elapsed_ms
+        except requests.exceptions.Timeout:
+            return False, self._probe_timeout * 1000
+        except Exception:
+            return False, self._probe_timeout * 1000
+
+    def probe_health(self, model_family: str) -> dict[str, tuple[bool, float]]:
+        """
+        Probe both providers' health, using cache if fresh.
+        Returns {provider: (is_healthy, response_ms)}.
+
+        Probes run in PARALLEL (threaded) to avoid adding latency.
+        Results are cached for cache_ttl seconds.
+        """
+        now = time.time()
+        kie_key = f"kie_{model_family}"
+        ws_key = "wavespeed"
+        results = {}
+
+        # Check cache first
+        with self._lock:
+            kie_cached = self._health_cache.get(kie_key)
+            ws_cached = self._health_cache.get(ws_key)
+
+        kie_fresh = kie_cached and (now - kie_cached[0]) < self._cache_ttl
+        ws_fresh = ws_cached and (now - ws_cached[0]) < self._cache_ttl
+
+        if kie_fresh and ws_fresh:
+            results["kie"] = (kie_cached[1], kie_cached[2])
+            results["wavespeed"] = (ws_cached[1], ws_cached[2])
+            return results
+
+        # Probe in parallel for speed
+        kie_result = [None]
+        ws_result = [None]
+
+        def _probe_kie_thread():
+            kie_result[0] = self._probe_kie(model_family)
+
+        def _probe_ws_thread():
+            ws_result[0] = self._probe_wavespeed()
+
+        threads = []
+        if not kie_fresh:
+            t = threading.Thread(target=_probe_kie_thread)
+            t.start()
+            threads.append(t)
+        if not ws_fresh:
+            t = threading.Thread(target=_probe_ws_thread)
+            t.start()
+            threads.append(t)
+
+        for t in threads:
+            t.join(timeout=self._probe_timeout + 1)
+
+        # Store results
+        with self._lock:
+            if kie_result[0] is not None:
+                self._health_cache[kie_key] = (now, kie_result[0][0], kie_result[0][1])
+                results["kie"] = kie_result[0]
+            elif kie_cached:
+                results["kie"] = (kie_cached[1], kie_cached[2])
+            else:
+                results["kie"] = (True, 0)  # No data, assume healthy
+
+            if ws_result[0] is not None:
+                self._health_cache[ws_key] = (now, ws_result[0][0], ws_result[0][1])
+                results["wavespeed"] = ws_result[0]
+            elif ws_cached:
+                results["wavespeed"] = (ws_cached[1], ws_cached[2])
+            else:
+                results["wavespeed"] = (False, 0)  # No key = unavailable
+
+        return results
+
+    # ── Generation Outcome Tracking ──────────────────────────────────────
+
+    def record(self, provider: str, success: bool):
+        """Record a generation outcome for a provider."""
+        now = time.time()
+        with self._lock:
+            if provider not in self._results:
+                self._results[provider] = []
+            self._results[provider].append((now, success))
+            cutoff = now - self._window
+            self._results[provider] = [
+                (t, s) for t, s in self._results[provider] if t > cutoff
+            ]
+
+    def get_success_rate(self, provider: str) -> tuple[float, int]:
+        """Get recent success rate. Returns (rate 0.0-1.0, sample_count)."""
+        now = time.time()
+        cutoff = now - self._window
+        with self._lock:
+            entries = [
+                (t, s) for t, s in self._results.get(provider, []) if t > cutoff
+            ]
+        if not entries:
+            return 1.0, 0
+        successes = sum(1 for _, s in entries if s)
+        return successes / len(entries), len(entries)
+
+    # ── Routing Decision ─────────────────────────────────────────────────
+
+    def choose_provider(self, model_family: str) -> str:
+        """
+        Choose the best provider by running pre-flight health probes.
+
+        Decision logic:
+          1. Probe both providers (parallel, 3s max, cached 60s)
+          2. If only one is healthy → use that one
+          3. If both healthy → check past success rates for tiebreak
+          4. If both healthy + no history → use Kie.ai (cheaper)
+          5. If neither healthy → use Kie.ai (default, might recover)
+
+        Only applies to "veo" family. Other families always use Kie.ai.
+        """
+        if model_family != "veo":
+            return "kie"
+
+        if not os.getenv("WAVESPEED_API_KEY", ""):
+            return "kie"
+
+        # ── Step 1: Pre-flight health probes ──
+        health = self.probe_health(model_family)
+        kie_healthy, kie_ms = health.get("kie", (True, 0))
+        ws_healthy, ws_ms = health.get("wavespeed", (False, 0))
+
+        # ── Step 2: Get past generation success rates ──
+        kie_rate, kie_count = self.get_success_rate("kie_veo")
+        ws_rate, ws_count = self.get_success_rate("wavespeed_veo")
+
+        # ── Step 3: Make routing decision ──
+        # Kie.ai is 4x cheaper ($0.30 vs $1.20) so it stays PRIMARY.
+        # BUT we use a fast-fail timeout (3 min) on the first attempt.
+        # If Kie.ai doesn't complete in 3 min → bail to WaveSpeed.
+        # After a failure, the circuit breaker routes directly to WaveSpeed
+        # for the next 10 minutes (no 3-min probe overhead).
+
+        if kie_healthy and not ws_healthy:
+            choice = "kie"
+            reason = "WaveSpeed unavailable"
+        elif ws_healthy and not kie_healthy:
+            choice = "wavespeed"
+            reason = "Kie.ai server unreachable"
+        elif not kie_healthy and not ws_healthy:
+            choice = "kie"  # Both down, try the cheaper one
+            reason = "both unhealthy — trying Kie.ai (cheaper)"
+        else:
+            # Both servers respond — use circuit breaker for routing
+            if kie_count >= 2 and kie_rate < 0.5:
+                # Kie.ai recently failed → skip it, go straight to WaveSpeed
+                choice = "wavespeed"
+                reason = f"Kie.ai failing ({kie_rate:.0%} of {kie_count}) → WaveSpeed"
+            elif ws_count >= 2 and ws_rate < 0.5 and kie_rate > ws_rate:
+                choice = "kie"
+                reason = f"WaveSpeed degraded ({ws_rate:.0%}), Kie.ai better ({kie_rate:.0%})"
+            else:
+                choice = "kie"  # Default — 4x cheaper
+                reason = "default (Kie.ai primary, $0.30/clip)"
+
+        print(f"      [Router] ──────────────────────────────────────────")
+        print(f"      [Router] Health probe: kie={'✅' if kie_healthy else '❌'} ({kie_ms:.0f}ms) | "
+              f"ws={'✅' if ws_healthy else '❌'} ({ws_ms:.0f}ms)")
+        print(f"      [Router] History:      kie={kie_rate:.0%} ({kie_count}) | "
+              f"ws={ws_rate:.0%} ({ws_count})")
+        print(f"      [Router] Decision:     → {choice.upper()} ({reason})")
+        print(f"      [Router] ──────────────────────────────────────────")
+        return choice
+
+    def status_summary(self) -> str:
+        """Return a human-readable summary of provider health."""
+        kie_rate, kie_n = self.get_success_rate("kie_veo")
+        ws_rate, ws_n = self.get_success_rate("wavespeed_veo")
+        return f"kie={kie_rate:.0%}({kie_n}) ws={ws_rate:.0%}({ws_n})"
+
+
+# Global singleton — shared across all generation calls in this process
+provider_router = ProviderRouter(probe_timeout=3.0, cache_ttl=60, window_seconds=600)
+
+
+def generate_video_wavespeed(prompt, reference_image_url=None, duration=8):
+    """
+    Generate video using WaveSpeed's Veo 3.1 API.
+
+    Supports:
+      - reference-to-video (image + prompt → video)
+      - text-to-video (prompt only → video)
+
+    Returns:
+        dict with 'taskId' (str) and 'videoUrl' (str).
+    """
+    WAVESPEED_API_KEY = os.getenv("WAVESPEED_API_KEY", "")
+    if not WAVESPEED_API_KEY:
+        raise RuntimeError("WAVESPEED_API_KEY not set — cannot use WaveSpeed")
+
+    ws_headers = {
+        "Authorization": f"Bearer {WAVESPEED_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    if reference_image_url:
+        # ── Reference-to-video (image-to-video) ──
+        endpoint = "https://api.wavespeed.ai/api/v3/google/veo3.1/reference-to-video"
+        payload = {
+            "images": [reference_image_url],
+            "prompt": prompt,
+            "resolution": "1080p",
+            "generate_audio": True,
+        }
+        print(f"      [WaveSpeed] Using reference-to-video with image")
+    else:
+        # ── Text-to-video ──
+        endpoint = "https://api.wavespeed.ai/api/v3/google/veo3.1-fast/text-to-video"
+        ws_duration = min(8, max(4, duration))
+        if ws_duration not in (4, 6, 8):
+            ws_duration = 8
+        payload = {
+            "prompt": prompt,
+            "aspect_ratio": "9:16",
+            "duration": ws_duration,
+            "resolution": "1080p",
+            "generate_audio": True,
+        }
+        print(f"      [WaveSpeed] Using text-to-video (duration={ws_duration}s)")
+
+    payload["negative_prompt"] = (
+        "no auditory hallucinations, no filler words, no stuttering, "
+        "no extra limbs, no mutated hands, no extra fingers"
+    )
+
+    print(f"      [WaveSpeed] Submitting to {endpoint}...")
+    try:
+        resp = requests.post(endpoint, headers=ws_headers, json=payload, timeout=60)
+    except Exception as e:
+        raise RuntimeError(f"WaveSpeed network error: {str(e)}")
+
+    if resp.status_code != 200:
+        raise RuntimeError(f"WaveSpeed API error ({resp.status_code}): {resp.text[:300]}")
+
+    api_result = resp.json()
+    result_data = api_result.get("data", api_result)
+    prediction_id = result_data.get("id")
+    if not prediction_id:
+        raise RuntimeError(f"WaveSpeed — no prediction ID: {str(api_result)[:300]}")
+
+    status_url = result_data.get("urls", {}).get("get", "")
+    if not status_url:
+        status_url = f"https://api.wavespeed.ai/api/v3/predictions/{prediction_id}/result"
+
+    print(f"      [WaveSpeed] Task: {prediction_id}")
+
+    # ── Poll for completion ──
+    for i in range(120):  # 20 minutes max
+        wait_secs = 10 if i < 30 else 20
+        time.sleep(wait_secs)
+
+        try:
+            poll_resp = requests.get(status_url, headers=ws_headers, timeout=30)
+            poll_data = poll_resp.json()
+        except Exception as poll_err:
+            elapsed = sum(10 if j < 30 else 20 for j in range(i + 1))
+            print(f"      [WaveSpeed] Poll warning at ~{elapsed}s: {poll_err}")
+            continue
+
+        poll_inner = poll_data.get("data", poll_data)
+        status = poll_inner.get("status", "processing").lower()
+
+        if status == "completed":
+            outputs = poll_inner.get("outputs", [])
+            if outputs:
+                video_url = outputs[0]
+                elapsed = sum(10 if j < 30 else 20 for j in range(i + 1))
+                print(f"      [WaveSpeed] ✅ Complete after ~{elapsed}s: {video_url[:80]}...")
+                return {"taskId": prediction_id, "videoUrl": video_url}
+            print(f"      [WaveSpeed] Completed but no outputs — retrying poll...")
+        elif status == "failed":
+            error_msg = poll_inner.get("error", "Unknown WaveSpeed error")
+            raise RuntimeError(f"WaveSpeed generation failed: {error_msg}")
+        else:
+            if i % 6 == 0:
+                elapsed = sum(10 if j < 30 else 20 for j in range(i + 1))
+                print(f"      [WaveSpeed] ⏳ Generating... (~{elapsed}s, status={status})")
+
+    raise RuntimeError("WaveSpeed Veo 3.1 generation timed out after 20 minutes")
+
+
+def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, first_frame_url=None, return_last_frame=False, duration=12, max_retries=3, kling_elements=None):
+    """
+    Smart video generation with pre-flight health routing.
+
+    For Veo models:
+      1. BEFORE sending any job: probe Kie.ai + WaveSpeed health (parallel, ~3s)
+      2. Route job to the healthiest provider immediately
+      3. If selected provider fails → try the other one
+      4. Record outcomes to improve future routing
+
+    For non-Veo models (Seedance, Kling):
+      - Standard Kie.ai retry logic (WaveSpeed doesn't support these)
+    """
+    RETRIABLE_PATTERNS = ("500", "internal error", "unknown generation error", "timed out", "timeout", "generation failed")
+    family = _get_model_family(model_api or config.VIDEO_MODEL)
+
+    # ── Non-Veo models: standard Kie.ai retry ──
+    if family != "veo":
+        for attempt in range(max_retries):
+            try:
+                return generate_video(prompt, reference_image_url, model_api, first_frame_url, return_last_frame, duration, kling_elements=kling_elements)
+            except RuntimeError as e:
+                error_str = str(e).lower()
+                is_retriable = any(p in error_str for p in RETRIABLE_PATTERNS)
+                if is_retriable and attempt < max_retries - 1:
+                    wait_time = (2 ** attempt) * 5
+                    print(f"      [RETRY] '{e}' — retrying in {wait_time}s (attempt {attempt + 2}/{max_retries})")
+                    time.sleep(wait_time)
+                    continue
+                raise
+
+    # ── Veo models: pre-flight health probe → smart routing ──
+    primary = provider_router.choose_provider(family)
+    secondary = "wavespeed" if primary == "kie" else "kie"
+
+    has_wavespeed = bool(os.getenv("WAVESPEED_API_KEY", ""))
+    providers_to_try = [primary]
+    if has_wavespeed:
+        providers_to_try.append(secondary)
+
+    last_error = None
+    for provider in providers_to_try:
+        try:
+            if provider == "kie":
+                # Fast-fail: 3 min timeout on Kie.ai (instead of 20 min)
+                # If it succeeds, great ($0.30). If not, bail fast to WaveSpeed.
+                print(f"      [Router] → Sending job to Kie.ai (3-min fast-fail)...")
+                result = generate_video(
+                    prompt, reference_image_url, model_api,
+                    first_frame_url, return_last_frame, duration,
+                    kling_elements=kling_elements,
+                    max_poll_seconds=180,  # 3 minutes fast-fail
+                )
+            else:
+                # WaveSpeed gets full timeout (it's the fallback, no next option)
+                print(f"      [Router] → Sending job to WaveSpeed ($1.20/clip)...")
+                result = generate_video_wavespeed(prompt, reference_image_url, duration)
+
+            # ✅ Success — record and return
+            provider_router.record(f"{provider}_veo", True)
+            print(f"      [Router] ✅ {provider} succeeded ({provider_router.status_summary()})")
+            return result
+
         except RuntimeError as e:
+            # ❌ Failed — record and try fallback provider
+            provider_router.record(f"{provider}_veo", False)
+            last_error = e
+            print(f"      [Router] ❌ {provider} failed: {e}")
+            print(f"      [Router] Health: {provider_router.status_summary()}")
+
             error_str = str(e).lower()
             is_retriable = any(p in error_str for p in RETRIABLE_PATTERNS)
-            if is_retriable and attempt < max_retries - 1:
-                # Longer wait for timeouts (server overload) vs regular errors
-                if "timed out" in error_str or "timeout" in error_str:
-                    wait_time = (2 ** attempt) * 15  # 15s, 30s
-                else:
-                    wait_time = (2 ** attempt) * 5   # 5s, 10s
-                print(f"      [RETRY] '{e}' — retrying in {wait_time}s (attempt {attempt + 2}/{max_retries})")
-                time.sleep(wait_time)
-                continue
-            raise
+            if not is_retriable:
+                print(f"      [Router] Non-retriable error — not trying fallback")
+                raise
+
+    # Both providers failed
+    if last_error:
+        raise last_error
 
 
 def extend_video(task_id, prompt, seed=None, model="veo-3.1-fast"):
@@ -804,32 +1265,52 @@ def animate_image(image_url: str, scene: dict) -> dict:
 # Cinematic Product Shots (Standalone stills + animation)
 # ---------------------------------------------------------------------------
 
-def generate_cinematic_product_image(prompt: str, product_image_url: str, seed: int = None) -> str:
+def generate_cinematic_product_image(prompt: str, product_image_url: str, influencer_image_url: str = None, seed: int = None) -> str:
     """
     Calls Nano Banana Pro to generate a single cinematic still image.
-    Product-only (no influencer reference image).
+    Supports product-only or product + influencer reference images.
     """
     print("   Generating cinematic product image with Nano Banana Pro...")
     endpoint = f"{config.KIE_API_URL}/api/v1/jobs/createTask"
-    negative_prompt = (
-        "(deformed, distorted, disfigured:1.3), poorly drawn, bad anatomy, wrong anatomy, "
-        "extra limb, missing limb, floating limbs, (mutated hands and fingers:1.4), "
-        "disconnected limbs, mutation, mutated, ugly, disgusting, blurry, amputation, "
-        "human, person, character, people"
-    )
+
+    # Build image_input: influencer first (face reference), product second (subject reference)
+    image_input = []
+    if influencer_image_url:
+        image_input.append(influencer_image_url)
+        print(f"      Model ref: {influencer_image_url[:60]}...")
+    image_input.append(product_image_url)
+    print(f"      Product ref: {product_image_url[:60]}...")
+
+    # Negative prompt: only block humans when there's NO influencer reference
+    if influencer_image_url:
+        negative_prompt = (
+            "(deformed, distorted, disfigured:1.3), poorly drawn, bad anatomy, wrong anatomy, "
+            "(extra limb:1.5), (third arm:1.5), (extra hand:1.5), missing limb, floating limbs, "
+            "(mutated hands and fingers:1.4), disconnected limbs, mutation, mutated, ugly, "
+            "disgusting, blurry, amputation, different person, extra fingers"
+        )
+    else:
+        negative_prompt = (
+            "(deformed, distorted, disfigured:1.3), poorly drawn, bad anatomy, wrong anatomy, "
+            "extra limb, missing limb, floating limbs, (mutated hands and fingers:1.4), "
+            "disconnected limbs, mutation, mutated, ugly, disgusting, blurry, amputation, "
+            "human, person, character, people"
+        )
 
     payload = {
         "model": "nano-banana-pro",
         "input": {
             "prompt": prompt,
             "negative_prompt": negative_prompt,
-            "image_input": [product_image_url],
+            "image_input": image_input,
             "aspect_ratio": "9:16",
             "resolution": "2K"
         }
     }
     if seed:
         payload["input"]["seed"] = seed
+
+    print(f"      Payload: {json.dumps(payload, indent=2)}")
 
     resp = requests.post(endpoint, headers=config.KIE_HEADERS, json=payload)
     if resp.status_code != 200:

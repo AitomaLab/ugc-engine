@@ -214,7 +214,7 @@ def extract_transcription_with_whisper(video_path, brand_names=None, script_text
         
         os.remove(audio_path)
         
-        result = response.model_dump()
+        result = json.loads(response.model_dump_json())
         
         # Post-process: fix any remaining brand misspellings in word-level data
         if brand_names and result and result.get("words"):

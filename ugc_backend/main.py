@@ -588,6 +588,7 @@ class InfluencerCreate(BaseModel):
     image_url: Optional[str] = None
     elevenlabs_voice_id: Optional[str] = None
     setting: Optional[str] = None  # Background/environment description (e.g. "outdoor garden with trees")
+    character_views: Optional[list] = None  # JSON array of character sheet view URLs
 
 class ScriptCreate(BaseModel):
     """Create a script. Supports both legacy (text only) and v2 (structured JSON)."""
@@ -636,6 +637,7 @@ class ProductCreate(BaseModel):
     category: Optional[str] = None
     image_url: Optional[str] = None      # Optional for digital products (auto-populated from clip frame)
     website_url: Optional[str] = None      # NEW: For dual-source AI analysis
+    product_views: Optional[list] = None   # 4-view product shots from Generate Shots
 
 class AppClipUpdate(BaseModel):            # NEW: For PATCH endpoint
     product_id: Optional[str] = None
@@ -646,6 +648,8 @@ class AppClipUpdate(BaseModel):            # NEW: For PATCH endpoint
 class ShotGenerateRequest(BaseModel):
     shot_type: str
     variations: int = 1
+    prompt: Optional[str] = None  # Custom prompt (e.g. from Creative OS enhance flow)
+    influencer_image_url: Optional[str] = None  # Model/influencer face reference for NanoBanana Pro
 
 class TransitionShotRequest(BaseModel):
     transition_type: str = "match_cut"      # 'match_cut', 'whip_pan', 'focus_pull'
@@ -705,6 +709,7 @@ class CostEstimateRequest(BaseModel):
     script_text: str = ""
     duration: int = 15
     model: str = "seedance-1.5-pro"
+    music_enabled: Optional[bool] = True
 
 
 # ... (existing classes)
@@ -861,6 +866,47 @@ def api_analyze_product(data: ProductAnalyzeRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class ProductAnalyzeImageRequest(BaseModel):
+    image_url: str
+    product_id: Optional[str] = None  # If provided, saves result to product
+
+@app.post("/api/products/analyze-image")
+def api_analyze_product_image(data: ProductAnalyzeImageRequest):
+    """Analyze a product image directly — no saved product required.
+
+    If product_id is provided, also persists the result to the product record.
+    """
+    try:
+        from ugc_backend.llm_vision_client import LLMVisionClient
+
+        if not data.image_url:
+            raise HTTPException(status_code=400, detail="image_url is required")
+
+        print(f"DEBUG: Analyzing product image directly: {data.image_url[:80]}...")
+
+        client = LLMVisionClient()
+        analysis = client.describe_product_image(data.image_url)
+
+        if not analysis:
+            raise HTTPException(status_code=500, detail="Vision analysis failed or returned empty")
+
+        print(f"DEBUG: Analysis result: {analysis}")
+
+        # Persist to product if product_id is provided
+        if data.product_id:
+            from ugc_db.db_manager import update_product
+            update_product(data.product_id, {"visual_description": analysis})
+            print(f"DEBUG: Saved analysis to product {data.product_id}")
+
+        return analysis
+
+    except Exception as e:
+        print(f"ERROR in api_analyze_product_image: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/products/{product_id}/analyze-digital")
 def api_analyze_digital_product(product_id: str):
     """
@@ -1009,6 +1055,7 @@ def api_generate_script(data: ScriptGenerateRequest):
                 influencer_data=influencer_data,
                 model_api=data.model_api,
                 video_language=data.video_language,
+                context=data.context or "",
             )
         else:
             visuals = product.get("visual_description") or {}
@@ -1045,7 +1092,12 @@ def api_generate_script(data: ScriptGenerateRequest):
 # ---------------------------------------------------------------------------
 
 @app.post("/jobs")
-def api_create_job(request: Request, data: JobCreate, user: dict = Depends(get_optional_user)):
+def api_create_job(
+    request: Request,
+    data: JobCreate,
+    user: dict = Depends(get_optional_user),
+    skip_dispatch: bool = False,
+):
     """
     Creates a new video generation job.
     Supports both digital (app demo) and physical product flows.
@@ -1117,7 +1169,8 @@ def api_create_job(request: Request, data: JobCreate, user: dict = Depends(get_o
             script_text=script_text,
             duration=data.length,
             model=data.model_api,
-            product_type=data.product_type
+            product_type=data.product_type,
+            music_enabled=data.music_enabled if data.music_enabled is not None else True,
         )
 
         # 6. Prepare Job Data — dynamically detect actual DB columns
@@ -1133,12 +1186,13 @@ def api_create_job(request: Request, data: JobCreate, user: dict = Depends(get_o
             db_columns = {
                 "id", "user_id", "influencer_id", "app_clip_id", "script_id",
                 "status", "progress", "final_video_url", "created_at", "updated_at",
-                "product_type", "product_id", "cost_image",
+                "product_type", "product_id", "project_id", "cost_image",
                 "hook", "model_api", "assistant_type", "length", "campaign_name",
                 "cost_video", "cost_voice", "cost_music", "cost_processing", "total_cost",
                 "cinematic_shot_ids", "error_message",
                 "subtitles_enabled", "subtitle_style", "subtitle_placement",
                 "video_language", "music_enabled",
+                "preview_url", "preview_type", "status_message",
             }
 
         job_data = data.model_dump(exclude_none=True)
@@ -1202,8 +1256,12 @@ def api_create_job(request: Request, data: JobCreate, user: dict = Depends(get_o
                 refund_credits(user["id"], credit_cost, {"reason": "job_creation_failed"})
             raise HTTPException(status_code=500, detail="Job creation returned empty result")
 
-        # 9. Dispatch to Worker (non-blocking)
-        worker_dispatched = _dispatch_worker(job["id"])
+        # 9. Dispatch to Worker (non-blocking) — skip when caller handles its own pipeline
+        if skip_dispatch:
+            print(f"[Creative OS] Job {job['id']} created (skip_dispatch=True — no worker)")
+            worker_dispatched = False
+        else:
+            worker_dispatched = _dispatch_worker(job["id"])
 
         return {**job, "worker_dispatched": worker_dispatched, "credits_deducted": credit_cost}
 
@@ -1276,11 +1334,16 @@ def api_generate_shot_image(product_id: str, data: ShotGenerateRequest):
     try:
         created_shots = []
         for _ in range(data.variations):
-            shot = create_product_shot({
+            shot_data = {
                 "product_id": product_id,
                 "shot_type": data.shot_type,
                 "status": "image_pending"
-            })
+            }
+            if data.prompt:
+                shot_data["prompt"] = data.prompt
+            if data.influencer_image_url:
+                shot_data["analysis_json"] = {"influencer_image_url": data.influencer_image_url}
+            shot = create_product_shot(shot_data)
             _dispatch_shot_task(generate_product_shot_image, shot["id"], "generate_product_shot_image")
             created_shots.append(shot)
         return created_shots
@@ -1866,6 +1929,7 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
                 "cinematic_shot_ids", "error_message", "variation_prompt",
                 "subtitles_enabled", "subtitle_style", "subtitle_placement",
                 "video_language", "music_enabled",
+                "preview_url", "preview_type", "status_message",
             }
 
         created_jobs = []
@@ -1918,7 +1982,8 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
                 script_text=script_text,
                 duration=data.duration,
                 model=data.model_api,
-                product_type=data.product_type
+                product_type=data.product_type,
+                music_enabled=data.music_enabled if hasattr(data, 'music_enabled') and data.music_enabled is not None else True,
             )
 
             job_data = {
@@ -2013,16 +2078,31 @@ def api_list_jobs(request: Request, status: Optional[str] = None, limit: int = Q
 
     # Also fetch clone video jobs and normalize them to match the VideoJob shape
     sb = get_supabase()
-    q = (
-        sb.table("clone_video_jobs")
-        .select("*")
-        .eq("user_id", user["id"])
-        .order("created_at", desc=True)
-        .limit(limit)
-    )
-    if status:
-        q = q.eq("status", status)
-    clone_jobs_raw = q.execute().data or []
+    try:
+        q = (
+            sb.table("clone_video_jobs")
+            .select("*")
+            .eq("user_id", user["id"])
+            .order("created_at", desc=True)
+            .limit(limit)
+        )
+        if pid:
+            q = q.eq("project_id", pid)
+        if status:
+            q = q.eq("status", status)
+        clone_jobs_raw = q.execute().data or []
+    except Exception:
+        # Fallback: project_id column may not exist yet (pre-migration)
+        q = (
+            sb.table("clone_video_jobs")
+            .select("*")
+            .eq("user_id", user["id"])
+            .order("created_at", desc=True)
+            .limit(limit)
+        )
+        if status:
+            q = q.eq("status", status)
+        clone_jobs_raw = q.execute().data or []
 
     if not clone_jobs_raw:
         return regular_jobs
@@ -2109,7 +2189,12 @@ def api_get_stats(user: dict = Depends(get_optional_user)):
 @app.post("/estimate")
 def api_estimate_cost(data: CostEstimateRequest):
     """Real-time cost estimation for the Create page."""
-    return cost_service.estimate_total_cost(data.script_text, data.duration, data.model)
+    return cost_service.estimate_total_cost(
+        script_text=data.script_text,
+        duration=data.duration,
+        model=data.model,
+        music_enabled=data.music_enabled if data.music_enabled is not None else True,
+    )
 
 
 @app.get("/stats/costs")
@@ -2657,10 +2742,11 @@ class CloneJobCreate(BaseModel):
     subtitle_style: str = "hormozi"
     subtitle_placement: str = "middle"
     video_language: str = "en"             # 'en' or 'es' — defaults to English
+    project_id: Optional[str] = None       # Project this clone video belongs to
 
 
 @app.post("/api/clone-jobs")
-def create_clone_job(data: CloneJobCreate, user: dict = Depends(get_optional_user)):
+def create_clone_job(data: CloneJobCreate, request: Request, user: dict = Depends(get_optional_user)):
     """
     Create a new AI Clone video job and dispatch it to the clone worker.
     This endpoint is completely separate from POST /jobs (standard pipeline).
@@ -2682,6 +2768,8 @@ def create_clone_job(data: CloneJobCreate, user: dict = Depends(get_optional_use
         raise HTTPException(status_code=404, detail="Clone not found")
 
     # Create the job record
+    # Resolve project_id from request header or payload
+    pid = data.project_id or _resolve_project_id(request, user)
     row = {
         "user_id": user["id"],
         "clone_id": data.clone_id,
@@ -2697,7 +2785,14 @@ def create_clone_job(data: CloneJobCreate, user: dict = Depends(get_optional_use
         "status": "pending",
         "progress": 0,
     }
-    result = sb.table("clone_video_jobs").insert(row).execute()
+    if pid:
+        row["project_id"] = pid
+    try:
+        result = sb.table("clone_video_jobs").insert(row).execute()
+    except Exception:
+        # project_id column may not exist yet — retry without it
+        row.pop("project_id", None)
+        result = sb.table("clone_video_jobs").insert(row).execute()
     if not result.data:
         raise HTTPException(status_code=500, detail="Failed to create clone job")
 

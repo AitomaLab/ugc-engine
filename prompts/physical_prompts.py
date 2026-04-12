@@ -168,17 +168,22 @@ def generate_physical_image_prompt(ctx, close_up=False):
     else:
         return (
             f"action: character holds {brand} product naturally in one hand, showing label to camera\n"
-            f"anatomy: exactly one person with exactly two arms and two hands, "
+            f"anatomy: exactly one person with exactly two arms and two hands, accurate hands with realistic proportions, "
             f"one hand holds product, other hand relaxed at side or not visible\n"
             f"character: {ctx['age']} {ctx['gender'].lower()}, {ctx['visuals']}, "
-            f"natural skin texture with visible pores, subtle grain, not airbrushed\n"
-            f"product: {desc}, featuring colors {colors}, all visible text clear and accurate\n"
-            f"setting: {ctx.get('setting', 'natural environment matching the background visible in the reference image')}, natural lighting\n"
-            f"camera: amateur iPhone selfie, slightly uneven framing, warm tones\n"
+            f"natural skin texture with visible pores, subtle grain, not airbrushed, natural highlight roll-off on skin\n"
+            f"product: {desc}, featuring colors {colors}, all visible text clear and accurate, "
+            f"preserve exact product proportions, do not redesign or reinterpret the product\n"
+            f"setting: {ctx.get('setting', 'natural environment matching the background visible in the reference image')}, "
+            f"tidy and clean with premium casual art direction\n"
+            f"lighting: soft directional natural window light, subtle shadows for depth, natural highlight roll-off on skin\n"
+            f"camera: iPhone 1x aesthetic, clean but slightly organic composition, naturally blurred background, slightly uneven framing\n"
             f"style: candid UGC look, no filters, realism, high detail, skin texture\n"
             f"text_accuracy: preserve all visible product text exactly as in reference image\n"
             f"negative: no third arm, no third hand, no extra limbs, no extra arms, no extra hands, "
-            f"no extra fingers, no airbrushed skin, no studio backdrop, no geometric distortion"
+            f"no extra fingers, no airbrushed skin, no plastic skin, no waxy skin, "
+            f"no studio backdrop, no geometric distortion, "
+            f"no flat lighting, no overexposed lighting, no blown highlights"
         )
 
 
@@ -227,11 +232,15 @@ def build_physical_product_scenes(fields, influencer, product, durations, ctx, m
                 product_analysis = {**product_analysis, "brand_name": product.get("name")}
 
             video_duration = int(str(fields.get("Length", "15s")).replace("s", ""))
+            model_api = fields.get("model_api", "")
+            video_language = fields.get("video_language", "en")
             client = AIScriptClient()
             script = client.generate_physical_product_script(
                 product_analysis=product_analysis,
                 duration=video_duration,
                 influencer_data=influencer,
+                model_api=model_api,
+                video_language=video_language,
             )
             print(f"      [Script] AI persona-generated: {script[:60]}...")
         except Exception as e:
@@ -338,38 +347,53 @@ def build_physical_product_scenes(fields, influencer, product, durations, ctx, m
         
         script_parts = script_parts[:num_scenes]
 
-        # POST-SPLIT VALIDATION: Replace any part that's too short or too long for a 7s scene
-        MIN_WORDS_PER_PART = 17  # ~7 seconds of speech needs at least 17 words
-        MAX_WORDS_PER_PART = 23  # Cap to prevent speed-talking
+        # POST-SPLIT VALIDATION: Replace any part outside word count range
+        # Seedance 2.0 uses variable durations (4s/12s) → different word counts per scene
+        is_seedance = "seedance" in str(fields.get("model_api", "")).lower()
+        if is_seedance and video_length == "15s":
+            # 15s physical: Part 1 (4s → 7-9 words), Part 2 (12s → 28-33 words)
+            word_ranges = [(5, 12), (25, 38)]
+        elif is_seedance and video_length == "30s":
+            # 30s physical: Part 1 (4s), Part 2 (12s), Part 3 (12s), Part 4 (4s)
+            word_ranges = [(5, 12), (25, 38), (25, 38), (5, 12)]
+        else:
+            # Veo: uniform 8s scenes → 17-23 words each
+            word_ranges = [(17, 23)] * num_scenes
+
         for idx, part in enumerate(script_parts):
             word_count = len(part.split())
-            if word_count < MIN_WORDS_PER_PART:
+            min_w, max_w = word_ranges[idx] if idx < len(word_ranges) else (17, 23)
+            if word_count < min_w:
                 old_part = part
                 script_parts[idx] = _fallbacks[idx % len(_fallbacks)]
-                print(f"      [Script] Part {idx+1} too short ({len(old_part.split())} words: '{old_part}'). Replaced with fallback.")
-            elif word_count > MAX_WORDS_PER_PART:
+                print(f"      [Script] Part {idx+1} too short ({len(old_part.split())} words, min {min_w}: '{old_part}'). Replaced with fallback.")
+            elif word_count > max_w:
                 old_part = part
                 script_parts[idx] = _fallbacks[idx % len(_fallbacks)]
-                print(f"      [Script] Part {idx+1} too long ({len(old_part.split())} words). Replaced with fallback.")
+                print(f"      [Script] Part {idx+1} too long ({len(old_part.split())} words, max {max_w}). Replaced with fallback.")
 
     # Generate Scenes
     for i, desc in enumerate(scene_descriptions):
         nano_banana_prompt = (
             f"action: character {desc}, casually presenting the product\n"
-            f"anatomy: exactly one person with exactly two arms and two hands, "
+            f"anatomy: exactly one person with exactly two arms and two hands, accurate hands with realistic proportions, "
             f"one hand explicitly holds the product, other arm rests naturally TO THE PERSON'S SIDE\n"
             f"character: infer exact appearance from reference image, preserve facial features and skin tone, "
-            f"natural skin texture with visible pores and subtle grain, fine lines, skin imperfections, unretouched complexion, not airbrushed\n"
+            f"natural skin texture with visible pores and subtle grain, fine lines, skin imperfections, unretouched complexion, not airbrushed, natural highlight roll-off on skin\n"
             f"product: the {visual_desc_str} is clearly visible, "
-            f"preserve all visible text and logos exactly as in reference image\n"
-            f"setting: {ctx.get('setting', 'natural environment matching the background visible in the reference image')}, natural lighting\n"
-            f"camera: amateur iPhone selfie, slightly uneven framing\n"
+            f"preserve all visible text and logos exactly as in reference image, "
+            f"preserve exact product proportions, do not redesign or reinterpret the product\n"
+            f"setting: {ctx.get('setting', 'natural environment matching the background visible in the reference image')}, "
+            f"tidy and clean with premium casual art direction\n"
+            f"lighting: soft directional natural window light, subtle shadows for depth, natural highlight roll-off on skin\n"
+            f"camera: iPhone 1x aesthetic, clean but slightly organic composition, naturally blurred background, slightly uneven framing\n"
             f"style: candid UGC look, no filters, realism, high detail, skin texture, visible pores, micro skin texture, raw unedited photo quality\n"
-            f"negative: no smooth skin, no poreless skin, no beauty filter, no skin retouching, "
+            f"negative: no smooth skin, no poreless skin, no plastic skin, no waxy skin, no beauty filter, no skin retouching, "
             f"no third arm, no third hand, no extra limbs, no extra fingers, "
             f"no airbrushed skin, no studio backdrop, no geometric distortion, "
             f"no mutated hands, no floating limbs, disconnected limbs, mutation, "
-            f"no arm crossing screen, no unnatural arm position"
+            f"no arm crossing screen, no unnatural arm position, "
+            f"no flat lighting, no overexposed lighting, no blown highlights"
         )
         
         scene_script = script_parts[i] if i < len(script_parts) else ""

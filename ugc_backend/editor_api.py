@@ -67,7 +67,7 @@ def _build_editor_state(job: dict) -> dict:
         raise ValueError("Job has no final_video_url")
 
     # Handle different column naming: video_jobs uses video_duration_seconds, clone_video_jobs uses duration
-    duration_seconds = job.get("video_duration_seconds") or job.get("duration") or 30.0
+    duration_seconds = job.get("video_duration_seconds") or job.get("duration") or job.get("length") or 30.0
     if isinstance(duration_seconds, str):
         try:
             duration_seconds = float(duration_seconds)
@@ -150,7 +150,7 @@ def _build_editor_state(job: dict) -> dict:
                 continue
 
             captions.append({
-                "text": word + " ",
+                "text": " " + word,
                 "startMs": round(start * 1000),
                 "endMs": round(end * 1000),
                 "timestampMs": round(start * 1000),
@@ -189,24 +189,21 @@ def _build_editor_state(job: dict) -> dict:
             "left": round(width * 0.05),
             "width": round(width * 0.90),
             "height": round(height * 0.20),
-            # opacity=0: captions are already burned into the video pixels.
-            # The track exists in the timeline so users can view/edit the text,
-            # but it doesn't render a duplicate overlay on the canvas.
-            "opacity": 0,
+            "opacity": 1,
             "isDraggingInTimeline": False,
             "rotation": 0,
-            "fontFamily": "Montserrat",
-            "fontStyle": {"variant": "normal", "weight": 800},
+            "fontFamily": "Anton",
+            "fontStyle": {"variant": "normal", "weight": 400},
             "lineHeight": 1.2,
             "letterSpacing": 0,
             "fontSize": 72,
             "align": "center",
             "color": "#FFFFFF",
             "highlightColor": "#FFFF00",
-            "strokeWidth": 3,
+            "strokeWidth": 8,
             "strokeColor": "#000000",
             "direction": "ltr",
-            "pageDurationInMilliseconds": 1200,
+            "pageDurationInMilliseconds": 800,
             "captionStartInSeconds": 0,
             "maxLines": 2,
             "fadeInDurationInSeconds": 0,
@@ -310,10 +307,11 @@ def list_editor_jobs(user: dict = Depends(get_current_user)):
 # ============================================================================
 
 @router.get("/state/{job_id}")
-def get_editor_state(job_id: str, user: dict = Depends(get_current_user)):
+def get_editor_state(job_id: str, force_rebuild: bool = False, user: dict = Depends(get_current_user)):
     """
     Returns the UndoableState JSON for a given job.
     The frontend base64-encodes this and appends it to the editor URL as #state=<encoded>.
+    Pass ?force_rebuild=true to discard the cached state and rebuild from the job row.
     """
     try:
         job, table = _get_job_any(job_id)
@@ -330,7 +328,7 @@ def get_editor_state(job_id: str, user: dict = Depends(get_current_user)):
             raise HTTPException(status_code=400, detail="Job has no final video")
 
         # Return saved editor state if it exists (from a previous edit session)
-        if job.get("editor_state"):
+        if job.get("editor_state") and not force_rebuild:
             return job["editor_state"]
 
         # If no transcription data, auto-transcribe the video so captions are editable
@@ -507,7 +505,7 @@ def generate_captions(req: CaptionsRequest, user: dict = Depends(get_current_use
                     end = float(getattr(w, "end", 0))
 
                 captions.append({
-                    "text": word,
+                    "text": " " + word.strip(),
                     "startMs": round(start * 1000),
                     "endMs": round(end * 1000),
                     "timestampMs": round(start * 1000),
@@ -519,6 +517,259 @@ def generate_captions(req: CaptionsRequest, user: dict = Depends(get_current_use
     except HTTPException:
         raise
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# ROUTE: POST /api/editor/caption-video/{job_id}
+# Server-side captioning: transcribes video audio with Whisper and injects
+# a proper captions track into the editor state. This is the same pipeline
+# the frontend "Caption video" button uses, but driven entirely server-side
+# so the Creative Agent can trigger it without a browser.
+# ============================================================================
+
+# Caption style presets — matches the Remotion editor's CaptionsItem schema.
+# "hormozi" mirrors the frontend default in caption-section.tsx.
+CAPTION_STYLES = {
+    "hormozi": {
+        "fontFamily": "Anton", "fontSize": 72, "color": "#FFFFFF",
+        "highlightColor": "#FFFF00", "strokeWidth": 8, "strokeColor": "#000000",
+        "maxLines": 2, "pageDurationInMilliseconds": 800,
+    },
+    "minimal": {
+        "fontFamily": "Inter", "fontSize": 48, "color": "#FFFFFF",
+        "highlightColor": "#FFFF00", "strokeWidth": 4, "strokeColor": "#000000",
+        "maxLines": 1, "pageDurationInMilliseconds": 800,
+    },
+    "bold": {
+        "fontFamily": "Bebas Neue", "fontSize": 84, "color": "#FFFFFF",
+        "highlightColor": "#FF3366", "strokeWidth": 10, "strokeColor": "#000000",
+        "maxLines": 2, "pageDurationInMilliseconds": 800,
+    },
+    "karaoke": {
+        "fontFamily": "Anton", "fontSize": 64, "color": "#FFFFFF",
+        "highlightColor": "#337AFF", "strokeWidth": 6, "strokeColor": "#000000",
+        "maxLines": 1, "pageDurationInMilliseconds": 800,
+    },
+}
+
+
+class CaptionVideoRequest(BaseModel):
+    style: Optional[str] = "hormozi"
+    placement: Optional[str] = "middle"
+
+
+@router.post("/caption-video/{job_id}")
+def caption_video(job_id: str, body: CaptionVideoRequest = CaptionVideoRequest(), user: dict = Depends(get_current_user)):
+    """
+    Server-side captioning endpoint. Reuses the same Whisper transcription
+    pipeline as the frontend 'Caption video' button.
+
+    Flow:
+    1. Load job → get final_video_url + existing transcription
+    2. If no transcription yet, run _auto_transcribe_video (Whisper)
+    3. Load or build the editor state
+    4. Inject caption asset + item into the state (same schema as caption-section.tsx)
+    5. Save updated state to DB
+    6. Return summary
+    """
+    try:
+        job, table = _get_job_any(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        video_url = job.get("final_video_url")
+        if not video_url:
+            raise HTTPException(status_code=400, detail="Job has no final video URL")
+
+        # ── Step 1: Get or create transcription ──────────────────────
+        transcription = job.get("transcription")
+        if not transcription or not transcription.get("words"):
+            print(f"[CAPTION] No existing transcription for {job_id}, running Whisper...")
+            transcription = _auto_transcribe_video(video_url)
+            if not transcription or not transcription.get("words"):
+                raise HTTPException(status_code=500, detail="Whisper transcription returned no words")
+            # Persist so we don't re-transcribe next time
+            _save_transcription(job_id, table, transcription)
+        else:
+            print(f"[CAPTION] Reusing existing transcription for {job_id} ({len(transcription['words'])} words)")
+
+        # ── Step 2: Build captions array (Remotion Caption format) ───
+        captions = []
+        for w in transcription["words"]:
+            if isinstance(w, dict):
+                word = w.get("word", "")
+                start = float(w.get("start", 0))
+                end = float(w.get("end", 0))
+            else:
+                word = getattr(w, "word", "")
+                start = float(getattr(w, "start", 0))
+                end = float(getattr(w, "end", 0))
+            word = word.strip()
+            if not word:
+                continue
+            captions.append({
+                "text": " " + word,
+                "startMs": round(start * 1000),
+                "endMs": round(end * 1000),
+                "timestampMs": round(start * 1000),
+                "confidence": None,
+            })
+
+        if not captions:
+            raise HTTPException(status_code=500, detail="Transcription produced no usable words")
+
+        # ── Step 3: Load or build editor state ───────────────────────
+        editor_state = job.get("editor_state")
+        if not editor_state:
+            editor_state = _build_editor_state(job)
+
+        undoable = editor_state.get("undoableState", editor_state)
+        fps = editor_state.get("fps", 24)
+        width = undoable.get("compositionWidth", 1080)
+        height = undoable.get("compositionHeight", 1920)
+
+        # Duration from the existing state
+        existing_tracks = undoable.get("tracks", [])
+        existing_items = undoable.get("items", {})
+        existing_assets = undoable.get("assets", {})
+
+        # Remove any existing caption tracks/items/assets before adding new ones
+        caption_item_ids = set()
+        caption_asset_ids = set()
+        for item_id, item in list(existing_items.items()):
+            if item.get("type") == "captions":
+                caption_item_ids.add(item_id)
+                caption_asset_ids.add(item.get("assetId", ""))
+        for item_id in caption_item_ids:
+            existing_items.pop(item_id, None)
+        for asset_id in caption_asset_ids:
+            existing_assets.pop(asset_id, None)
+        existing_tracks = [
+            t for t in existing_tracks
+            if not all(i in caption_item_ids for i in t.get("items", []))
+        ]
+
+        # ── Step 4: Build caption asset + item ───────────────────────
+        style_name = (body.style or "hormozi").lower()
+        style_props = CAPTION_STYLES.get(style_name, CAPTION_STYLES["hormozi"])
+
+        placement = (body.placement or "middle").lower()
+        caption_top_map = {
+            "top": round(height * 0.10),
+            "middle": round(height * 0.45),
+            "bottom": round(height * 0.75),
+        }
+        caption_top = caption_top_map.get(placement, round(height * 0.45))
+
+        caption_asset_id = str(uuid.uuid4())
+        caption_item_id = str(uuid.uuid4())
+        caption_track_id = str(uuid.uuid4())
+
+        # Compute duration from the last caption word
+        last_end_ms = max(c["endMs"] for c in captions)
+        duration_frames = round((last_end_ms / 1000) * fps)
+
+        caption_asset = {
+            "id": caption_asset_id,
+            "type": "caption",
+            "filename": "captions.json",
+            "size": 0,
+            "mimeType": "application/json",
+            "remoteUrl": None,
+            "remoteFileKey": None,
+            "captions": captions,
+        }
+
+        caption_width = min(width, 900) - 40
+        caption_item = {
+            "id": caption_item_id,
+            "type": "captions",
+            "assetId": caption_asset_id,
+            "durationInFrames": duration_frames,
+            "from": 0,
+            "top": caption_top,
+            "left": round((width - caption_width) / 2),
+            "width": caption_width,
+            "height": round(style_props["fontSize"] * 1.2 * style_props["maxLines"]),
+            "opacity": 1,
+            "isDraggingInTimeline": False,
+            "rotation": 0,
+            "fontFamily": style_props["fontFamily"],
+            "fontStyle": {"variant": "normal", "weight": 400},
+            "lineHeight": 1.2,
+            "letterSpacing": 0,
+            "fontSize": style_props["fontSize"],
+            "align": "center",
+            "color": style_props["color"],
+            "highlightColor": style_props["highlightColor"],
+            "strokeWidth": style_props["strokeWidth"],
+            "strokeColor": style_props["strokeColor"],
+            "direction": "ltr",
+            "pageDurationInMilliseconds": style_props["pageDurationInMilliseconds"],
+            "captionStartInSeconds": 0,
+            "maxLines": style_props["maxLines"],
+            "fadeInDurationInSeconds": 0,
+            "fadeOutDurationInSeconds": 0,
+        }
+
+        # ── Step 5: Inject into state and save ───────────────────────
+        existing_assets[caption_asset_id] = caption_asset
+        existing_items[caption_item_id] = caption_item
+
+        # Find the video track index to place captions directly above it
+        video_track_idx = 0
+        for idx, track in enumerate(existing_tracks):
+            for ti in track.get("items", []):
+                item_obj = existing_items.get(ti, {})
+                if item_obj.get("type") == "video":
+                    video_track_idx = idx
+                    break
+
+        caption_track = {
+            "id": caption_track_id,
+            "items": [caption_item_id],
+            "hidden": False,
+            "muted": False,
+        }
+        # Insert above the video track (higher index = rendered on top)
+        existing_tracks.insert(video_track_idx + 1, caption_track)
+
+        undoable["tracks"] = existing_tracks
+        undoable["items"] = existing_items
+        undoable["assets"] = existing_assets
+
+        # Write back
+        if "undoableState" in editor_state:
+            editor_state["undoableState"] = undoable
+        else:
+            editor_state = undoable
+
+        # Persist to DB
+        if table == "clone_video_jobs":
+            try:
+                sb = get_supabase()
+                sb.table("clone_video_jobs").update(
+                    {"editor_state": editor_state}
+                ).eq("id", job_id).execute()
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Failed to save editor state: {e}")
+        else:
+            update_job(job_id, {"editor_state": editor_state})
+
+        print(f"[CAPTION] Done: {len(captions)} words, style={style_name}, placement={placement}")
+        return {
+            "status": "ok",
+            "word_count": len(captions),
+            "duration_seconds": round(last_end_ms / 1000, 1),
+            "style": style_name,
+            "placement": placement,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[CAPTION] Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

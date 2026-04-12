@@ -75,8 +75,18 @@ class TranscriptionClient:
                                     w['word'] = w.get('word', '').replace(stripped, brand)
                                 break
 
-            print(f"      [OK] Transcription complete: {len(words)} words found.")
-            return {"words": words, "text": response.text}
+            # Convert Pydantic TranscriptionWord objects to plain dicts for JSON serialization
+            words_plain = []
+            for w in words:
+                if hasattr(w, 'model_dump'):
+                    words_plain.append(w.model_dump())
+                elif isinstance(w, dict):
+                    words_plain.append(w)
+                else:
+                    words_plain.append({"word": str(getattr(w, 'word', '')), "start": getattr(w, 'start', 0), "end": getattr(w, 'end', 0)})
+
+            print(f"      [OK] Transcription complete: {len(words_plain)} words found.")
+            return {"words": words_plain, "text": response.text}
 
         except Exception as e:
             print(f"      [FAIL] Transcription failed: {e}")
