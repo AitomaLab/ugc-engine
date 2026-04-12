@@ -8,11 +8,8 @@ import os
 import re
 from pathlib import Path
 from openai import AsyncOpenAI
-from dotenv import load_dotenv
-
-_root = Path(__file__).parent.parent.parent.parent
-load_dotenv(_root / ".env.saas", override=False)
-load_dotenv(_root / ".env", override=False)
+from env_loader import load_env
+load_env(Path(__file__))
 
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 

@@ -8,13 +8,10 @@ import os
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from supabase import create_client, ClientOptions
-from dotenv import load_dotenv
 from pathlib import Path
 
-# Load env from project root
-_root = Path(__file__).parent.parent.parent
-load_dotenv(_root / ".env.saas", override=False)
-load_dotenv(_root / ".env", override=False)
+from env_loader import load_env
+load_env(Path(__file__))
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 _auth_client = None

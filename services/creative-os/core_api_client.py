@@ -8,12 +8,10 @@ backend can scope data by user and project.
 import os
 import httpx
 from typing import Optional
-from dotenv import load_dotenv
 from pathlib import Path
 
-_root = Path(__file__).parent.parent.parent
-load_dotenv(_root / ".env.saas", override=False)
-load_dotenv(_root / ".env", override=False)
+from env_loader import load_env
+load_env(Path(__file__))
 
 CORE_API_URL = os.getenv("CORE_API_URL", "http://localhost:8000")
 
@@ -107,10 +105,8 @@ class CoreAPIClient:
         """
         import os
         from pathlib import Path
-        from dotenv import load_dotenv
-
-        _root = Path(__file__).parent.parent.parent
-        load_dotenv(_root / ".env.saas", override=False)
+        from env_loader import load_env
+        load_env(Path(__file__))
 
         supabase_url = os.getenv("SUPABASE_URL")
         anon_key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
@@ -139,10 +135,8 @@ class CoreAPIClient:
         """Fetch all shots for a project via Supabase REST (including standalone ones)."""
         import os
         from pathlib import Path
-        from dotenv import load_dotenv
-
-        _root = Path(__file__).parent.parent.parent
-        load_dotenv(_root / ".env.saas", override=False)
+        from env_loader import load_env
+        load_env(Path(__file__))
 
         supabase_url = os.getenv("SUPABASE_URL")
         anon_key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")

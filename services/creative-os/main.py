@@ -10,15 +10,14 @@ import sys
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
-
 # Ensure service directory is on the path for local imports
 sys.path.insert(0, str(Path(__file__).parent))
 
 # Load env
-_root = Path(__file__).parent.parent.parent
-load_dotenv(_root / ".env.saas", override=False)
-load_dotenv(_root / ".env", override=False)
+from env_loader import load_env
+load_env(Path(__file__))
+
+print(f"[Creative OS] CORE_API_URL = {os.getenv('CORE_API_URL', 'NOT SET')}")
 
 # ── App ─────────────────────────────────────────────────────────────────
 app = FastAPI(
@@ -162,7 +161,12 @@ async def upload_file_multipart(
 # ── Health Check ────────────────────────────────────────────────────────
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "service": "creative-os", "version": "1.0.0"}
+    return {
+        "status": "ok",
+        "service": "creative-os",
+        "version": "1.0.0",
+        "core_api_url": os.getenv("CORE_API_URL", "NOT SET"),
+    }
 
 
 @app.get("/creative-os/config")
