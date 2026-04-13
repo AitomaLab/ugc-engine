@@ -53,6 +53,7 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
     const [bgMusic, setBgMusic] = useState(true);
     const [captions, setCaptions] = useState(true);
     const [multiShot, setMultiShot] = useState(false);
+    const [multiShotLength, setMultiShotLength] = useState(10);
 
     // Asset references
     const [selectedProduct, setSelectedProduct] = useState<any>(null);
@@ -336,7 +337,7 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                     product_id: resolvedProductId, influencer_id: resolvedInfluencerId,
                     reference_image_url: selectedImage?.image_url || uploadedImageUrl || undefined,
                     language: language.toLowerCase(),
-                    clip_length: isCinematicMulti ? 15 : (fullVideo ? videoLength : clipLength),
+                    clip_length: isCinematicMulti ? multiShotLength : (fullVideo ? videoLength : clipLength),
                     full_video_mode: fullVideo, video_length: videoLength,
                     background_music: bgMusic, captions,
                     multi_shot_mode: isCinematicMulti,
@@ -655,10 +656,26 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                                     )}
 
                                     {mode === 'cinematic_video' ? (
-                                        <div className="co-toggle-inline">
-                                            <ToggleSwitch checked={multiShot} onChange={(v) => { setMultiShot(v); if (v) setFullVideo(false); }} />
-                                            <span className="co-toggle-label">Multi-Shot{multiShot ? <span className="co-toggle-badge">ON</span> : ''}</span>
-                                        </div>
+                                        <>
+                                            <div className="co-toggle-inline">
+                                                <ToggleSwitch checked={multiShot} onChange={(v) => { setMultiShot(v); if (v) setFullVideo(false); }} />
+                                                <span className="co-toggle-label">Multi-Shot{multiShot ? <span className="co-toggle-badge">ON</span> : ''}</span>
+                                            </div>
+                                            {multiShot && (
+                                                <div className="co-slider-inline">
+                                                    <input
+                                                        type="range"
+                                                        min={3}
+                                                        max={15}
+                                                        step={1}
+                                                        value={multiShotLength}
+                                                        onChange={e => setMultiShotLength(Number(e.target.value))}
+                                                        className="co-duration-slider"
+                                                    />
+                                                    <span className="co-slider-value">{multiShotLength}s</span>
+                                                </div>
+                                            )}
+                                        </>
                                     ) : (
                                         <div className="co-toggle-inline">
                                             <ToggleSwitch checked={fullVideo} onChange={(v) => { setFullVideo(v); if (v) setMultiShot(false); }} />
@@ -741,6 +758,37 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                     .co-row3-label { font-size: 11px; font-weight: 700; color: #337AFF; letter-spacing: 0.5px; text-transform: uppercase; margin-right: 2px; }
                     .co-cost-label { font-size: 12px; color: #4A5578; white-space: nowrap; flex-shrink: 0; }
                     .co-cost-label strong { color: #337AFF; font-weight: 700; }
+
+                    /* Multi-Shot Duration Slider */
+                    .co-slider-inline {
+                        display: flex; align-items: center; gap: 6px;
+                        padding: 2px 8px 2px 4px; border-radius: 8px;
+                        background: rgba(51,122,255,0.04); border: 1px solid rgba(51,122,255,0.12);
+                    }
+                    .co-duration-slider {
+                        -webkit-appearance: none; appearance: none;
+                        width: 80px; height: 4px; border-radius: 2px;
+                        background: linear-gradient(90deg, #337AFF 0%, #A0A8C4 100%);
+                        outline: none; cursor: pointer;
+                    }
+                    .co-duration-slider::-webkit-slider-thumb {
+                        -webkit-appearance: none; appearance: none;
+                        width: 14px; height: 14px; border-radius: 50%;
+                        background: #337AFF; border: 2px solid white;
+                        box-shadow: 0 1px 4px rgba(51,122,255,0.4);
+                        cursor: pointer; transition: transform 0.1s;
+                    }
+                    .co-duration-slider::-webkit-slider-thumb:hover { transform: scale(1.2); }
+                    .co-duration-slider::-moz-range-thumb {
+                        width: 14px; height: 14px; border-radius: 50%;
+                        background: #337AFF; border: 2px solid white;
+                        box-shadow: 0 1px 4px rgba(51,122,255,0.4);
+                        cursor: pointer;
+                    }
+                    .co-slider-value {
+                        font-size: 12px; font-weight: 700; color: #337AFF;
+                        min-width: 24px; text-align: center;
+                    }
 
                     /* Generate Button */
                     .co-bar-generate {
