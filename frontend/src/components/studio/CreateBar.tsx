@@ -274,19 +274,13 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
             } else {
                 // Videos: call video endpoint directly (no enhance step)
 
-                // Multi-Shot mode requires a product to be selected
-                if (fullVideo && !selectedProduct?.id && !selectedImage?.product_id) {
-                    setError('Multi-Shot mode requires a product. Please select a product from the inputs before generating.');
-                    setPrompt(userPrompt);
-                    setBarState('idle');
-                    return;
-                }
-
                 setBarState('generating');
 
                 // Parse @mentions from prompt and build element_refs
                 const mentionRegex = /@([\w]+)/g;
                 const elementRefs: Array<{ name: string; type: string; image_url?: string }> = [];
+                let mentionedProductId: string | undefined;
+                let mentionedInfluencerId: string | undefined;
                 let match;
                 while ((match = mentionRegex.exec(userPrompt)) !== null) {
                     const tag = match[1].toLowerCase();
@@ -303,21 +297,29 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                             type: 'product',
                             image_url: matchedProduct.image_url,
                         });
+                        // Also resolve product_id from @mention (first match wins)
+                        if (!mentionedProductId) {
+                            mentionedProductId = matchedProduct.id;
+                            console.log('[CreateBar] @mention resolved product_id:', mentionedProductId, `(@${tag})`);
+                        }
                     } else if (matchedInfluencer) {
                         elementRefs.push({
                             name: `element_${tag}`,
                             type: 'influencer',
                             image_url: matchedInfluencer.image_url,
                         });
+                        // Also resolve influencer_id from @mention (first match wins)
+                        if (!mentionedInfluencerId) {
+                            mentionedInfluencerId = matchedInfluencer.id;
+                            console.log('[CreateBar] @mention resolved influencer_id:', mentionedInfluencerId, `(@${tag})`);
+                        }
                     }
                 }
 
                 // ── Resolve product_id and influencer_id ──
-                // Priority: explicitly selected > inherited from selected image > undefined
-                // Pre-generated images store the influencer/product they were created with,
-                // so users don't need to re-select them when animating that image.
-                let resolvedProductId = selectedProduct?.id;
-                let resolvedInfluencerId = selectedInfluencer?.id;
+                // Priority: explicitly selected > @mention > inherited from selected image > undefined
+                let resolvedProductId = selectedProduct?.id || mentionedProductId;
+                let resolvedInfluencerId = selectedInfluencer?.id || mentionedInfluencerId;
 
                 if (selectedImage && !resolvedProductId && selectedImage.product_id) {
                     resolvedProductId = selectedImage.product_id;
@@ -329,6 +331,14 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                         resolvedInfluencerId = imgMeta.influencer_id;
                         console.log('[CreateBar] Inherited influencer_id from selected image:', resolvedInfluencerId);
                     }
+                }
+
+                // Multi-Shot mode requires a product (from any source)
+                if (fullVideo && !resolvedProductId) {
+                    setError('Multi-Shot mode requires a product. Select one, use @product_name in your prompt, or select a generated image.');
+                    setPrompt(userPrompt);
+                    setBarState('idle');
+                    return;
                 }
 
                 const isCinematicMulti = mode === 'cinematic_video' && multiShot;
