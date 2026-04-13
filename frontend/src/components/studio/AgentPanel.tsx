@@ -395,6 +395,9 @@ export function AgentPanel({ projectId, onArtifact }: AgentPanelProps) {
                 case 'tool_result':
                     setActivity('');
                     break;
+                case 'keepalive':
+                    // SSE keepalive ping — prevents connection timeout, no UI action needed
+                    break;
                 case 'artifact': {
                     const art = e.artifact as AgentArtifact;
                     updatePlaceholder((t) => ({

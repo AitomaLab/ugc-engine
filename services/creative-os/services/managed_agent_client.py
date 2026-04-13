@@ -2181,7 +2181,22 @@ class ManagedAgentClient:
                         else:
                             try:
                                 print(f"[ManagedAgent] tool {name}({_summarize_input(tool_input, 120)})")
-                                result_text = await fn(ctx, **tool_input)
+                                # Run the tool in a task and emit keepalive pings every
+                                # 15 s so the SSE stream doesn't go idle and get killed
+                                # by Railway's reverse proxy or the browser.
+                                tool_task = asyncio.create_task(fn(ctx, **tool_input))
+                                elapsed = 0
+                                while not tool_task.done():
+                                    try:
+                                        await asyncio.wait_for(asyncio.shield(tool_task), timeout=15.0)
+                                    except asyncio.TimeoutError:
+                                        elapsed += 15
+                                        yield {
+                                            "type": "keepalive",
+                                            "tool_use_id": tool_use_id,
+                                            "elapsed_seconds": elapsed,
+                                        }
+                                result_text = tool_task.result()
                                 is_error = False
                             except Exception as e:
                                 result_text = json.dumps({"error": str(e)})

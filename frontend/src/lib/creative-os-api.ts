@@ -201,6 +201,7 @@ export type AgentStreamEvent =
     | { type: 'artifact'; artifact: AgentArtifact }
     | { type: 'done'; session_id: string }
     | { type: 'interrupted' }
+    | { type: 'keepalive'; tool_use_id: string; elapsed_seconds: number }
     | { type: 'error'; message: string };
 
 /** Load the persisted thread for the current project. */
