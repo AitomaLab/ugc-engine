@@ -274,9 +274,9 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
             } else {
                 // Videos: call video endpoint directly (no enhance step)
 
-                // Full Video mode requires a product to be selected
+                // Multi-Shot mode requires a product to be selected
                 if (fullVideo && !selectedProduct?.id && !selectedImage?.product_id) {
-                    setError('Full Video mode requires a product. Please select a product from the inputs before generating.');
+                    setError('Multi-Shot mode requires a product. Please select a product from the inputs before generating.');
                     setPrompt(userPrompt);
                     setBarState('idle');
                     return;
@@ -680,7 +680,7 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                                     ) : (
                                         <div className="co-toggle-inline">
                                             <ToggleSwitch checked={fullVideo} onChange={(v) => { setFullVideo(v); if (v) setMultiShot(false); }} />
-                                            <span className="co-toggle-label">Full Video{fullVideo ? <span className="co-toggle-badge">ON</span> : ''}</span>
+                                            <span className="co-toggle-label">Multi-Shot{fullVideo ? <span className="co-toggle-badge">ON</span> : ''}</span>
                                         </div>
                                     )}
 
