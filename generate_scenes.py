@@ -534,7 +534,8 @@ def generate_video_wavespeed(prompt, reference_image_url=None, duration=8):
         payload = {
             "images": [reference_image_url],
             "prompt": prompt,
-            "resolution": "1080p",
+            "aspect_ratio": "9:16",
+            "resolution": "720p",
             "generate_audio": True,
         }
         print(f"      [WaveSpeed] Using reference-to-video with image")
@@ -548,7 +549,7 @@ def generate_video_wavespeed(prompt, reference_image_url=None, duration=8):
             "prompt": prompt,
             "aspect_ratio": "9:16",
             "duration": ws_duration,
-            "resolution": "1080p",
+            "resolution": "720p",
             "generate_audio": True,
         }
         print(f"      [WaveSpeed] Using text-to-video (duration={ws_duration}s)")
