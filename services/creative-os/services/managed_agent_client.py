@@ -1760,6 +1760,35 @@ async def _tool_render_edited_video(ctx: ToolContext, **kwargs: Any) -> str:
 
 
 # ── Video combination ─────────────────────────────────────────────────
+
+def _get_ffmpeg_path() -> str:
+    """Resolve the ffmpeg binary path. Tries system ffmpeg first, then imageio-ffmpeg."""
+    import shutil as _sh
+    system_ffmpeg = _sh.which("ffmpeg")
+    if system_ffmpeg:
+        return system_ffmpeg
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except ImportError:
+        pass
+    return "ffmpeg"  # last resort — will fail with a clear error
+
+
+def _get_ffprobe_path() -> str:
+    """Resolve ffprobe binary path."""
+    import shutil as _sh
+    system = _sh.which("ffprobe")
+    if system:
+        return system
+    # imageio-ffmpeg doesn't bundle ffprobe, so derive from ffmpeg path
+    ffmpeg = _get_ffmpeg_path()
+    probe = ffmpeg.replace("ffmpeg", "ffprobe")
+    if _sh.which(probe) or os.path.isfile(probe):
+        return probe
+    return "ffprobe"
+
+
 async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
     """Combine multiple videos with dissolve transitions. Gated tool."""
     import subprocess
@@ -1789,6 +1818,11 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
     try:
         import httpx
 
+        # Resolve ffmpeg binary paths
+        FFMPEG = _get_ffmpeg_path()
+        FFPROBE = _get_ffprobe_path()
+        print(f"[combine_videos] Using ffmpeg={FFMPEG}, ffprobe={FFPROBE}")
+
         # 1. Download all videos
         print(f"[combine_videos] Downloading {len(video_urls)} videos...")
         local_paths: list[str] = []
@@ -1808,7 +1842,7 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
         for i, path in enumerate(local_paths):
             norm_path = os.path.join(work_dir, f"norm_{i}.mp4")
             cmd = [
-                "ffmpeg", "-y", "-i", path,
+                FFMPEG, "-y", "-i", path,
                 "-vf", f"scale={target_res}:force_original_aspect_ratio=decrease,"
                        f"pad={target_res}:(ow-iw)/2:(oh-ih)/2:color=black",
                 "-c:v", "libx264", "-preset", "fast", "-crf", "23",
@@ -1822,7 +1856,7 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
             if result.returncode != 0:
                 # Retry without audio (clip may have no audio track)
                 cmd_noaudio = [
-                    "ffmpeg", "-y", "-i", path,
+                    FFMPEG, "-y", "-i", path,
                     "-vf", f"scale={target_res}:force_original_aspect_ratio=decrease,"
                            f"pad={target_res}:(ow-iw)/2:(oh-ih)/2:color=black",
                     "-c:v", "libx264", "-preset", "fast", "-crf", "23",
@@ -1841,7 +1875,7 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
         for path in normalized:
             probe = await asyncio.to_thread(
                 subprocess.run,
-                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                [FFPROBE, "-v", "error", "-show_entries", "format=duration",
                  "-of", "default=noprint_wrappers=1:nokey=1", path],
                 capture_output=True, text=True,
             )
@@ -1859,7 +1893,7 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
                     f.write(f"file '{path}'\n")
             output_path = os.path.join(work_dir, "combined.mp4")
             cmd = [
-                "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                FFMPEG, "-y", "-f", "concat", "-safe", "0",
                 "-i", concat_list,
                 "-c:v", "libx264", "-preset", "fast", "-crf", "23",
                 "-c:a", "aac",
@@ -1911,7 +1945,7 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
                 input_args.extend(["-i", path])
 
             cmd = [
-                "ffmpeg", "-y",
+                FFMPEG, "-y",
                 *input_args,
                 "-filter_complex", filter_str,
                 "-map", "[v]",
@@ -1932,7 +1966,7 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
                     for path in normalized:
                         f.write(f"file '{path}'\n")
                 cmd = [
-                    "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                    FFMPEG, "-y", "-f", "concat", "-safe", "0",
                     "-i", concat_list,
                     "-c:v", "libx264", "-preset", "fast", "-crf", "23",
                     "-c:a", "aac",
