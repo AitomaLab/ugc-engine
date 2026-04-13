@@ -593,13 +593,16 @@ async def _generate_kling_video(
 
 
 async def _split_prompt_into_shots(
+    user_prompt: str,
     enhanced_prompt: str,
     target_duration: int = 10,
     element_tags: str = "",
+    element_context: list[dict] | None = None,
 ) -> list[dict] | None:
-    """Use GPT-4o to split an enhanced cinematic prompt into Kling 3.0 multi-shot format.
+    """Use GPT-4o to split a user prompt into Kling 3.0 multi-shot format.
 
-    Returns a list of dicts like [{"prompt": "...", "duration": 3}, ...] or None on failure.
+    Uses the user's ORIGINAL prompt as the narrative source, enriched by the
+    enhanced prompt's visual style. Returns [{"prompt": ..., "duration": ...}] or None.
     """
     import json
     from openai import AsyncOpenAI
@@ -608,28 +611,46 @@ async def _split_prompt_into_shots(
     try:
         client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+        # Build element info string
+        element_info = ""
+        if element_context:
+            for e in element_context:
+                element_info += f"  - @{e['name']}: {e.get('description', 'N/A')}\n"
+
         system = (
-            "You are a cinematic shot planner for Kling 3.0 multi-shot video generation.\n"
-            "Given an enhanced cinematic prompt, split it into 2-5 distinct shots.\n\n"
-            "Rules:\n"
-            "- Each shot MUST have a different camera distance (wide/medium/close/detail)\n"
-            "- Each shot duration: 1-12 seconds (integer only)\n"
-            "- The SUM of all shot durations must equal the target total duration exactly\n"
-            "- Each shot prompt: max 500 characters, written in English\n"
-            "- Maintain visual continuity between shots\n"
-            "- Do NOT include dialogue or speech in any language\n"
-            "- If element tags are provided, append them at the END of EACH shot prompt\n\n"
-            "Respond with a JSON object containing a \"shots\" array:\n"
+            "You are a cinematic multi-shot director for Kling 3.0 AI video generation.\n"
+            "Your job is to convert the user's narrative into a multi-shot video sequence.\n\n"
+            "CRITICAL RULES:\n"
+            "1. The user's original prompt describes WHAT HAPPENS. You MUST follow their narrative exactly.\n"
+            "   - If they say a character picks up a product, one shot MUST show that action.\n"
+            "   - If they describe a sequence of events, your shots must follow that sequence.\n"
+            "2. The enhanced prompt provides VISUAL STYLE guidance (lighting, camera work, mood).\n"
+            "   Use it for visual direction, NOT for overriding the user's narrative.\n"
+            "3. Each shot MUST have:\n"
+            "   - A different camera distance (wide/medium/close-up/detail)\n"
+            "   - Clear physical ACTION (movement, gesture, interaction — NOT static poses)\n"
+            "   - Duration: 1-12 seconds (integer only)\n"
+            "4. The SUM of all shot durations MUST equal the target total duration exactly.\n"
+            "5. Each shot prompt: max 500 characters, written in English.\n"
+            "6. Do NOT write static product-only shots unless the user specifically asks for them.\n"
+            "   Characters must MOVE, INTERACT, and PERFORM actions.\n"
+            "7. Do NOT include dialogue or speech in any language.\n"
+            "8. If element tags are provided, append ALL of them at the END of EACH shot prompt.\n\n"
+            "Respond with a JSON object:\n"
             '{"shots": [{"prompt": "shot description...", "duration": 3}, ...]}'
         )
 
-        user_msg = f"Target total duration: {target_duration}s\n"
+        user_msg = f"Target total duration: {target_duration}s\n\n"
+        user_msg += f"USER'S ORIGINAL PROMPT (this is the narrative you MUST follow):\n{user_prompt}\n\n"
+        user_msg += f"ENHANCED VISUAL STYLE (use for visual direction only):\n{enhanced_prompt}\n"
+        if element_info:
+            user_msg += f"\nELEMENT REFERENCES:\n{element_info}"
         if element_tags.strip():
-            user_msg += f"Element tags to append to each shot: {element_tags.strip()}\n"
-        user_msg += f"\nEnhanced cinematic prompt to split into shots:\n{enhanced_prompt}"
+            user_msg += f"\nElement tags to append to each shot: {element_tags.strip()}\n"
 
         print(f"[MultiShot] Calling GPT-4o to split into shots (target {target_duration}s)...")
-        print(f"[MultiShot] Input prompt ({len(enhanced_prompt)} chars): {enhanced_prompt[:200]}...")
+        print(f"[MultiShot] User prompt: {user_prompt[:150]}...")
+        print(f"[MultiShot] Enhanced prompt ({len(enhanced_prompt)} chars): {enhanced_prompt[:150]}...")
 
         resp = await client.chat.completions.create(
             model="gpt-4o",
@@ -650,12 +671,10 @@ async def _split_prompt_into_shots(
         # Extract the shots array from the JSON object
         shots = None
         if isinstance(parsed, dict):
-            # Try common keys
             for key in ("shots", "multi_prompt", "prompts", "sequence"):
                 if key in parsed and isinstance(parsed[key], list):
                     shots = parsed[key]
                     break
-            # Fallback: find any list value
             if shots is None:
                 for v in parsed.values():
                     if isinstance(v, list) and len(v) >= 2:
@@ -685,7 +704,7 @@ async def _split_prompt_into_shots(
         total = sum(s["duration"] for s in valid_shots)
         print(f"[MultiShot] Success: {len(valid_shots)} shots, total {total}s")
         for i, s in enumerate(valid_shots):
-            print(f"  Shot {i+1} ({s['duration']}s): {s['prompt'][:80]}...")
+            print(f"  Shot {i+1} ({s['duration']}s): {s['prompt'][:100]}...")
         return valid_shots
 
     except Exception as e:
@@ -923,7 +942,11 @@ async def _run_cinematic_clip_pipeline(
                 "progress": 42,
             })
             multi_prompt_payload = await _split_prompt_into_shots(
-                raw_enhanced_text, data.clip_length, element_tags if kling_elements else ""
+                user_prompt=data.prompt,
+                enhanced_prompt=raw_enhanced_text,
+                target_duration=data.clip_length,
+                element_tags=element_tags if kling_elements else "",
+                element_context=element_context if kling_elements else None,
             )
             if multi_prompt_payload:
                 duration = max(3, min(15, sum(s["duration"] for s in multi_prompt_payload)))
