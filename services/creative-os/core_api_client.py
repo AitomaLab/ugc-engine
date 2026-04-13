@@ -29,16 +29,30 @@ class CoreAPIClient:
         if project_id:
             self._headers["X-Project-Id"] = project_id
 
-    async def _request(self, method: str, path: str, **kwargs) -> dict:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.request(
-                method,
-                f"{CORE_API_URL}{path}",
-                headers=self._headers,
-                **kwargs,
-            )
-            resp.raise_for_status()
-            return resp.json()
+    async def _request(self, method: str, path: str, _retries: int = 3, **kwargs) -> dict:
+        import asyncio as _aio
+
+        last_exc = None
+        for attempt in range(1, _retries + 1):
+            try:
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    resp = await client.request(
+                        method,
+                        f"{CORE_API_URL}{path}",
+                        headers=self._headers,
+                        **kwargs,
+                    )
+                    resp.raise_for_status()
+                    return resp.json()
+            except (httpx.RemoteProtocolError, httpx.ReadError, httpx.ConnectError) as e:
+                last_exc = e
+                if attempt < _retries:
+                    wait = 2 ** (attempt - 1)
+                    print(f"[CoreAPI] {method} {path} — transient error ({e}), retry {attempt}/{_retries} in {wait}s")
+                    await _aio.sleep(wait)
+                else:
+                    print(f"[CoreAPI] {method} {path} — failed after {_retries} attempts: {e}")
+                    raise
 
     # ── Projects ──────────────────────────────────────────────────────
     async def list_projects(self) -> list:

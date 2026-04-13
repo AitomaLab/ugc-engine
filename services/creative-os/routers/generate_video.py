@@ -456,16 +456,16 @@ async def generate_video(
         try:
             product = await client.get_product(data.product_id)
             product_image_url = product.get("image_url") if product else None
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[Video Gen] WARNING: Failed to fetch product {data.product_id}: {e}")
 
     if data.influencer_id:
         try:
             influencers = await client.list_influencers()
             inf = next((i for i in influencers if i["id"] == data.influencer_id), None)
             influencer_image_url = inf.get("image_url") if inf else None
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[Video Gen] WARNING: Failed to fetch influencer {data.influencer_id}: {e}")
 
     # Build the best reference image: prefer explicit selection > product > influencer.
     # Exception: in UGC mode with both product + influencer, leave reference_image_url
@@ -475,6 +475,10 @@ async def generate_video(
             pass  # Let _run_ugc_clip_pipeline handle the composite
         else:
             data.reference_image_url = product_image_url or influencer_image_url
+
+    print(f"[Video Gen] Resolved images: product={product_image_url is not None} "
+          f"influencer={influencer_image_url is not None} "
+          f"reference={data.reference_image_url is not None}")
 
     if data.mode == "ai_clone":
         return await _generate_clone_video(data, client)
@@ -555,15 +559,15 @@ async def _generate_kling_video(
         try:
             product = await client.get_product(data.product_id)
             product_image_url = product.get("image_url") if product else None
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[Cinematic] WARNING: Failed to fetch product image: {e}")
     if data.influencer_id:
         try:
             influencers_list = await client.list_influencers()
             inf = next((i for i in influencers_list if i["id"] == data.influencer_id), None)
             influencer_image_url = inf.get("image_url") if inf else None
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[Cinematic] WARNING: Failed to fetch influencer image: {e}")
 
     # 2. Launch background pipeline
     background_tasks.add_task(
