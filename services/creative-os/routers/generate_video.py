@@ -923,8 +923,16 @@ async def _run_cinematic_clip_pipeline(
             prompt = data.prompt
             raw_enhanced_text = prompt
 
-        # Append element tags to prompt if not already present
+        # Sanitize @tags in prompt — replace user @mentions with plain text, keep only valid element tags
         if kling_elements:
+            import re
+            valid_element_names = {e["name"] for e in kling_elements}
+            # Replace any @tags that aren't valid element names with plain text
+            all_at_tags = re.findall(r'@(\w+)', prompt)
+            for tag in all_at_tags:
+                if tag not in valid_element_names:
+                    prompt = prompt.replace(f"@{tag}", tag.replace("_", " "))
+            # Ensure all valid element tags are appended
             for tag in element_tags.strip().split():
                 if tag not in prompt:
                     prompt += f" {tag}"
@@ -949,6 +957,21 @@ async def _run_cinematic_clip_pipeline(
                 element_context=element_context if kling_elements else None,
             )
             if multi_prompt_payload:
+                # Sanitize @tags in shot prompts — only keep tags matching actual kling_elements
+                import re
+                valid_element_names = {e["name"] for e in kling_elements} if kling_elements else set()
+                for shot in multi_prompt_payload:
+                    # Find all @tags in the prompt
+                    all_tags = re.findall(r'@(\w+)', shot["prompt"])
+                    for tag in all_tags:
+                        if tag not in valid_element_names:
+                            # Remove invalid @tag (user @mention that doesn't match an element)
+                            shot["prompt"] = shot["prompt"].replace(f"@{tag}", tag.replace("_", " "))
+                            print(f"[MultiShot] Replaced invalid @{tag} with plain text in shot prompt")
+                    # Ensure all valid element tags are present at the end
+                    for ename in valid_element_names:
+                        if f"@{ename}" not in shot["prompt"]:
+                            shot["prompt"] += f" @{ename}"
                 duration = max(3, min(15, sum(s["duration"] for s in multi_prompt_payload)))
                 print(f"[Cinematic] Auto-split into {len(multi_prompt_payload)} shots, total {duration}s")
             else:
