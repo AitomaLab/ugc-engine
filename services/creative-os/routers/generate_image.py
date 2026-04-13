@@ -1190,7 +1190,7 @@ async def generate_identity(
                 image_input=[data.image_url],  # Reference image for face identity
                 has_influencer=True,            # Preserve face from reference
                 aspect_ratio="21:9",
-                quality="4k",
+                quality="2k",
             )
             print(f"[Generate Identity] Character sheet generated: {sheet_url[:80]}...")
             break  # Success — exit retry loop
@@ -1406,7 +1406,7 @@ async def generate_product_shots(
                 image_input=[data.image_url],
                 has_influencer=False,
                 aspect_ratio="21:9",
-                quality="4k",
+                quality="2k",
             )
             print(f"[Generate Product Shots] Product sheet generated: {sheet_url[:80]}...")
             break
