@@ -769,7 +769,7 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                     )}
                 </div>
 
-                <style>{`
+                <style suppressHydrationWarning>{`
                     .co-bar-wrapper {
                         position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
                         width: 94%; max-width: 900px; z-index: 1000;
