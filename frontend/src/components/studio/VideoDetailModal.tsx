@@ -84,6 +84,44 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
     const [generating, setGenerating] = useState(false);
     const [copied, setCopied] = useState(false);
 
+    // ── Editable title ──────────────────────────────────────────────
+    const displayName = asset.campaign_name || asset.influencer_name || 'Video';
+    const [title, setTitle] = useState(displayName);
+    const [editingTitle, setEditingTitle] = useState(false);
+    const [savingTitle, setSavingTitle] = useState(false);
+    const titleInputRef = useRef<HTMLInputElement>(null);
+
+    const handleSaveTitle = useCallback(async () => {
+        const trimmed = title.trim();
+        if (!trimmed || trimmed === displayName) {
+            setTitle(displayName);
+            setEditingTitle(false);
+            return;
+        }
+        setSavingTitle(true);
+        try {
+            await creativeFetch(`/creative-os/projects/${projectId}/assets/videos/${asset.id}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ name: trimmed }),
+            });
+            asset.campaign_name = trimmed; // update local ref
+            onRefresh?.();
+        } catch (err) {
+            console.error('Rename failed:', err);
+            setTitle(displayName); // revert on error
+        } finally {
+            setSavingTitle(false);
+            setEditingTitle(false);
+        }
+    }, [title, displayName, projectId, asset, onRefresh]);
+
+    useEffect(() => {
+        if (editingTitle && titleInputRef.current) {
+            titleInputRef.current.focus();
+            titleInputRef.current.select();
+        }
+    }, [editingTitle]);
+
     const videoUrl = asset.final_video_url || asset.video_url || '';
     const createdAgo = timeAgo(asset.created_at);
     const mode = modeLabel(asset.model_api, asset.metadata);
@@ -362,12 +400,64 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                                 color: 'white',
                                 fontWeight: 700,
                             }}>
-                                {(asset.campaign_name || asset.influencer_name || 'V').charAt(0).toUpperCase()}
+                                {title.charAt(0).toUpperCase()}
                             </div>
-                            <div>
-                                <div style={{ fontSize: '14px', fontWeight: 600, color: '#0D1B3E', lineHeight: 1.2 }}>
-                                    {asset.campaign_name || asset.influencer_name || 'Video'}
-                                </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                                {editingTitle ? (
+                                    <input
+                                        ref={titleInputRef}
+                                        value={title}
+                                        onChange={e => setTitle(e.target.value)}
+                                        onBlur={handleSaveTitle}
+                                        onKeyDown={e => {
+                                            if (e.key === 'Enter') handleSaveTitle();
+                                            if (e.key === 'Escape') {
+                                                setTitle(displayName);
+                                                setEditingTitle(false);
+                                            }
+                                        }}
+                                        disabled={savingTitle}
+                                        style={{
+                                            fontSize: '14px',
+                                            fontWeight: 600,
+                                            color: '#0D1B3E',
+                                            lineHeight: 1.2,
+                                            border: '1px solid rgba(51,122,255,0.3)',
+                                            borderRadius: '6px',
+                                            padding: '2px 6px',
+                                            outline: 'none',
+                                            width: '100%',
+                                            background: 'rgba(51,122,255,0.04)',
+                                            fontFamily: 'inherit',
+                                            boxSizing: 'border-box',
+                                        }}
+                                    />
+                                ) : (
+                                    <div
+                                        onClick={() => setEditingTitle(true)}
+                                        style={{
+                                            fontSize: '14px',
+                                            fontWeight: 600,
+                                            color: '#0D1B3E',
+                                            lineHeight: 1.2,
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '5px',
+                                        }}
+                                        title="Click to rename"
+                                    >
+                                        {title}
+                                        <svg viewBox="0 0 24 24" style={{
+                                            width: '12px', height: '12px',
+                                            fill: 'none', stroke: '#8A93B0',
+                                            strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round',
+                                            opacity: 0.6, flexShrink: 0,
+                                        }}>
+                                            <path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+                                        </svg>
+                                    </div>
+                                )}
                                 <div style={{ fontSize: '12px', color: '#8A93B0', marginTop: '1px' }}>
                                     {createdAgo || 'Video'}
                                 </div>

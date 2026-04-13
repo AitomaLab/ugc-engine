@@ -374,3 +374,32 @@ async def bulk_delete_assets(project_id: str, data: dict, user: dict = Depends(g
     deleted = sum(1 for r in results if not isinstance(r, Exception))
     failed = sum(1 for r in results if isinstance(r, Exception))
     return {"deleted": deleted, "failed": failed, "total": len(image_ids) + len(video_ids)}
+
+
+@router.patch("/{project_id}/assets/images/{shot_id}")
+async def rename_project_image(project_id: str, shot_id: str, data: dict, user: dict = Depends(get_current_user)):
+    """Rename an image (product shot) — updates product_name in product_shots."""
+    name = (data.get("name") or "").strip()
+    if not name:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="name is required")
+    client = CoreAPIClient(token=user["token"], project_id=project_id)
+    return await client.update_shot(shot_id, {"product_name": name})
+
+
+@router.patch("/{project_id}/assets/videos/{job_id}")
+async def rename_project_video(project_id: str, job_id: str, data: dict, user: dict = Depends(get_current_user)):
+    """Rename a video (job) — updates campaign_name in video_jobs."""
+    name = (data.get("name") or "").strip()
+    if not name:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="name is required")
+    # Update directly via Supabase REST (core API has no PATCH /jobs/:id)
+    import os
+    from supabase import create_client
+    sb = create_client(
+        os.getenv("SUPABASE_URL"),
+        os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY"),
+    )
+    result = sb.table("video_jobs").update({"campaign_name": name}).eq("id", job_id).execute()
+    return result.data[0] if result.data else {"id": job_id, "campaign_name": name}

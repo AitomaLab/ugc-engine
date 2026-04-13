@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { creativeFetch } from '@/lib/creative-os-api';
 
 /* Renders the animation preview clip; falls back to a large emoji tile on load error.
@@ -121,6 +121,44 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
     const [actionLoading, setActionLoading] = useState<string | null>(null);
     const [copied, setCopied] = useState(false);
     const [showAnimateModal, setShowAnimateModal] = useState(false);
+
+    // ── Editable title ──────────────────────────────────────────────
+    const displayName = asset.product_name || 'Image';
+    const [title, setTitle] = useState(displayName);
+    const [editingTitle, setEditingTitle] = useState(false);
+    const [savingTitle, setSavingTitle] = useState(false);
+    const titleInputRef = useRef<HTMLInputElement>(null);
+
+    const handleSaveTitle = useCallback(async () => {
+        const trimmed = title.trim();
+        if (!trimmed || trimmed === displayName) {
+            setTitle(displayName);
+            setEditingTitle(false);
+            return;
+        }
+        setSavingTitle(true);
+        try {
+            await creativeFetch(`/creative-os/projects/${projectId}/assets/images/${asset.id}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ name: trimmed }),
+            });
+            asset.product_name = trimmed; // update local ref
+            onGenerated?.(); // triggers gallery refresh
+        } catch (err) {
+            console.error('Rename failed:', err);
+            setTitle(displayName); // revert on error
+        } finally {
+            setSavingTitle(false);
+            setEditingTitle(false);
+        }
+    }, [title, displayName, projectId, asset, onGenerated]);
+
+    useEffect(() => {
+        if (editingTitle && titleInputRef.current) {
+            titleInputRef.current.focus();
+            titleInputRef.current.select();
+        }
+    }, [editingTitle]);
 
     const imageUrl = asset.image_url || asset.result_url || '';
     const createdAgo = asset.created_at
@@ -332,29 +370,82 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                         borderBottom: '1px solid rgba(0,0,0,0.06)',
                         marginBottom: '16px',
                     }}>
-                        {asset.product_name ? (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                <div style={{
-                                    width: '36px', height: '36px',
-                                    borderRadius: '50%',
-                                    background: 'linear-gradient(135deg, #337AFF, #6C5CE7)',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    fontSize: '14px',
-                                    color: 'white',
-                                    fontWeight: 700,
-                                }}>
-                                    {asset.product_name.charAt(0).toUpperCase()}
-                                </div>
-                                <div>
-                                    <div style={{ fontSize: '14px', fontWeight: 600, color: '#0D1B3E', lineHeight: 1.2 }}>
-                                        {asset.product_name}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
+                            <div style={{
+                                width: '36px', height: '36px',
+                                borderRadius: '50%',
+                                background: 'linear-gradient(135deg, #337AFF, #6C5CE7)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '14px',
+                                color: 'white',
+                                fontWeight: 700,
+                                flexShrink: 0,
+                            }}>
+                                {title.charAt(0).toUpperCase()}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                                {editingTitle ? (
+                                    <input
+                                        ref={titleInputRef}
+                                        value={title}
+                                        onChange={e => setTitle(e.target.value)}
+                                        onBlur={handleSaveTitle}
+                                        onKeyDown={e => {
+                                            if (e.key === 'Enter') handleSaveTitle();
+                                            if (e.key === 'Escape') {
+                                                setTitle(displayName);
+                                                setEditingTitle(false);
+                                            }
+                                        }}
+                                        disabled={savingTitle}
+                                        style={{
+                                            fontSize: '14px',
+                                            fontWeight: 600,
+                                            color: '#0D1B3E',
+                                            lineHeight: 1.2,
+                                            border: '1px solid rgba(51,122,255,0.3)',
+                                            borderRadius: '6px',
+                                            padding: '2px 6px',
+                                            outline: 'none',
+                                            width: '100%',
+                                            background: 'rgba(51,122,255,0.04)',
+                                            fontFamily: 'inherit',
+                                            boxSizing: 'border-box',
+                                        }}
+                                    />
+                                ) : (
+                                    <div
+                                        onClick={() => setEditingTitle(true)}
+                                        style={{
+                                            fontSize: '14px',
+                                            fontWeight: 600,
+                                            color: '#0D1B3E',
+                                            lineHeight: 1.2,
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '5px',
+                                        }}
+                                        title="Click to rename"
+                                    >
+                                        {title}
+                                        <svg viewBox="0 0 24 24" style={{
+                                            width: '12px', height: '12px',
+                                            fill: 'none', stroke: '#8A93B0',
+                                            strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round',
+                                            opacity: 0.6, flexShrink: 0,
+                                        }}>
+                                            <path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+                                        </svg>
                                     </div>
-                                    <div style={{ fontSize: '12px', color: '#8A93B0', marginTop: '1px' }}>Product</div>
+                                )}
+                                <div style={{ fontSize: '12px', color: '#8A93B0', marginTop: '1px' }}>
+                                    {createdAgo || 'Image'}
                                 </div>
                             </div>
-                        ) : <div />}
+                        </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
                             <button
                                 onClick={handleDownload}
