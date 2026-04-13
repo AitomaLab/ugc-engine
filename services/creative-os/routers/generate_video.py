@@ -628,7 +628,7 @@ async def _split_prompt_into_shots(
             "   Use it for visual direction, NOT for overriding the user's narrative.\n"
             "3. Each shot MUST have:\n"
             "   - A different camera distance (wide/medium/close-up/detail)\n"
-            "   - Clear physical ACTION (movement, gesture, interaction — NOT static poses)\n"
+            "   - Clear physical ACTION (movement, gesture, interaction - NOT static poses)\n"
             "   - Duration: 1-12 seconds (integer only)\n"
             "4. The SUM of all shot durations MUST equal the target total duration exactly.\n"
             "5. Each shot prompt: max 500 characters, written in English.\n"
@@ -697,7 +697,7 @@ async def _split_prompt_into_shots(
                 })
 
         if len(valid_shots) < 2:
-            print(f"[MultiShot] Only {len(valid_shots)} valid shots parsed — need at least 2")
+            print(f"[MultiShot] Only {len(valid_shots)} valid shots parsed - need at least 2")
             return None
 
         valid_shots = valid_shots[:5]  # Kling max 5 shots
@@ -827,12 +827,12 @@ async def _run_cinematic_clip_pipeline(
             existing_urls = {e["element_input_urls"][0] for e in kling_elements if e.get("element_input_urls")}
             for ref in data.element_refs:
                 if ref.name in existing_names:
-                    continue  # Skip — already have this element
+                    continue  # Skip - already have this element
                 if ref.image_url in existing_urls:
-                    print(f"[Cinematic] Skipping @mention element {ref.name} — image already used by another element")
-                    continue  # Skip — same image already covered
+                    print(f"[Cinematic] Skipping @mention element {ref.name} - image already used by another element")
+                    continue  # Skip - same image already covered
                 if len(kling_elements) >= 3:
-                    print(f"[Cinematic] Skipping @mention element {ref.name} — Kling max 3 elements reached")
+                    print(f"[Cinematic] Skipping @mention element {ref.name} - Kling max 3 elements reached")
                     break
                 kling_elements.append({
                     "name": ref.name,
