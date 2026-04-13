@@ -347,6 +347,7 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                 }
                 console.log('[CreateBar] Video payload:', {
                     mode, full_video_mode: fullVideo, multi_shot_mode: isCinematicMulti,
+                    clip_length: videoPayload.clip_length,
                     reference_image_url: videoPayload.reference_image_url,
                     product_id: videoPayload.product_id,
                     influencer_id: videoPayload.influencer_id,

@@ -52,19 +52,23 @@ function timeAgo(iso?: string): string {
     return days === 1 ? 'Yesterday' : `${days}d ago`;
 }
 
-function modeLabel(api?: string): string {
-    if (!api) return 'Video';
-    const map: Record<string, string> = {
-        kling: 'UGC',
-        kie: 'UGC',
-        wavespeed: 'UGC',
-        veo: 'Cinematic',
-        cinematic: 'Cinematic',
-    };
-    const lower = api.toLowerCase();
-    for (const [key, label] of Object.entries(map)) {
-        if (lower.includes(key)) return label;
+function modeLabel(api?: string, metadata?: Record<string, unknown>): string {
+    // Prefer the explicit mode stored in metadata
+    const storedMode = metadata?.mode as string | undefined;
+    if (storedMode) {
+        const modeMap: Record<string, string> = {
+            cinematic_video: 'Cinematic',
+            ugc: 'UGC',
+            ai_clone: 'AI Clone',
+        };
+        if (modeMap[storedMode]) return modeMap[storedMode];
     }
+    // Fallback: derive from model_api
+    if (!api) return 'Video';
+    const lower = api.toLowerCase();
+    if (lower.includes('kling-3') || lower.includes('kling3')) return 'Cinematic';
+    if (lower.includes('veo')) return 'UGC';
+    if (lower.includes('seedance')) return 'Cinematic';
     return 'Video';
 }
 
@@ -82,7 +86,7 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
 
     const videoUrl = asset.final_video_url || asset.video_url || '';
     const createdAgo = timeAgo(asset.created_at);
-    const mode = modeLabel(asset.model_api);
+    const mode = modeLabel(asset.model_api, asset.metadata);
 
     /* ── Video player controls ─────────────────────────────────── */
 

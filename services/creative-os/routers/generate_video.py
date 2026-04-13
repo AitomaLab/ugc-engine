@@ -854,6 +854,7 @@ async def _run_cinematic_clip_pipeline(
 
         # ── Step 2: Enhance prompt with kling_director ──
         is_multi = data.multi_shot_mode
+        print(f"[Cinematic] clip_length={data.clip_length}, multi_shot_mode={is_multi}")
         await _update_video_job_via_api(token, project_id, job_id, {
             "status_message": f"Building cinematic {'multi-shot ' if is_multi else ''}prompt...",
             "progress": 35,
@@ -1009,6 +1010,7 @@ async def _run_cinematic_clip_pipeline(
             "preview_url": None,
             "preview_type": None,
             "status_message": None,
+            "metadata": {"mode": "cinematic_video", "multi_shot": bool(multi_prompt_payload)},
         })
         print(f"[Cinematic] Job {job_id} complete! Video: {final_url[:80]}...")
 
