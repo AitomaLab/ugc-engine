@@ -656,19 +656,21 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                                     )}
 
                                     {mode === 'cinematic_video' ? (
-                                        <div className="co-toggle-inline">
-                                            <ToggleSwitch checked={multiShot} onChange={(v) => { setMultiShot(v); if (v) setFullVideo(false); }} />
-                                            <span className="co-toggle-label">Multi-Shot{multiShot ? <span className="co-toggle-badge">ON</span> : ''}</span>
-                                        </div>
-                                        {multiShot && (
-                                            <Dropdown label={`${multiShotLength}s`} id="msl" activeDropdown={activeDropdown} onToggle={toggleDropdown}>
-                                                {[5, 10, 15].map(ms => (
-                                                    <button key={ms} className={`co-dd-item ${multiShotLength === ms ? 'active' : ''}`} onClick={() => { setMultiShotLength(ms); setActiveDropdown(null); }}>
-                                                        {ms}s
-                                                    </button>
-                                                ))}
-                                            </Dropdown>
-                                        )}
+                                        <>
+                                            <div className="co-toggle-inline">
+                                                <ToggleSwitch checked={multiShot} onChange={(v) => { setMultiShot(v); if (v) setFullVideo(false); }} />
+                                                <span className="co-toggle-label">Multi-Shot{multiShot ? <span className="co-toggle-badge">ON</span> : ''}</span>
+                                            </div>
+                                            {multiShot && (
+                                                <Dropdown label={`${multiShotLength}s`} id="msl" activeDropdown={activeDropdown} onToggle={toggleDropdown}>
+                                                    {[5, 10, 15].map(ms => (
+                                                        <button key={ms} className={`co-dd-item ${multiShotLength === ms ? 'active' : ''}`} onClick={() => { setMultiShotLength(ms); setActiveDropdown(null); }}>
+                                                            {ms}s
+                                                        </button>
+                                                    ))}
+                                                </Dropdown>
+                                            )}
+                                        </>
                                     ) : (
                                         <div className="co-toggle-inline">
                                             <ToggleSwitch checked={fullVideo} onChange={(v) => { setFullVideo(v); if (v) setMultiShot(false); }} />
