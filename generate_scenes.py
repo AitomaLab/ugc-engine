@@ -49,7 +49,7 @@ def _get_model_family(model_name=None):
     return "veo"
 
 
-def generate_video(prompt, reference_image_url=None, model_api=None, first_frame_url=None, return_last_frame=False, duration=12, kling_elements=None, max_poll_seconds=None):
+def generate_video(prompt, reference_image_url=None, model_api=None, first_frame_url=None, return_last_frame=False, duration=12, kling_elements=None, max_poll_seconds=None, multi_prompt=None):
     """
     Generate video using specified AI model API (Seedance/Kie.ai).
 
@@ -99,16 +99,19 @@ def generate_video(prompt, reference_image_url=None, model_api=None, first_frame
     elif family == "kling":
         # --- Kling 3.0 payload (full spec: elements, mode, aspect_ratio) ---
         kling_duration = str(max(3, min(15, duration)))
+        is_multi = bool(multi_prompt and len(multi_prompt) > 0)
         kling_input = {
-            "prompt": prompt,
+            "prompt": prompt if not is_multi else "",
             "image_urls": [reference_image_url] if reference_image_url else [],
             "sound": True,
             "duration": kling_duration,
             "aspect_ratio": "9:16",
             "mode": "pro",
-            "multi_shots": False,
-            "multi_prompt": [],
+            "multi_shots": is_multi,
+            "multi_prompt": multi_prompt if is_multi else [],
         }
+        if is_multi:
+            print(f"      [Kling] Multi-shot mode: {len(multi_prompt)} shot(s), total {sum(s.get('duration', 3) for s in multi_prompt)}s")
         # Add element references (Kling 3.0 kling_elements)
         if kling_elements:
             kling_input["kling_elements"] = kling_elements
@@ -615,7 +618,7 @@ def generate_video_wavespeed(prompt, reference_image_url=None, duration=8):
     raise RuntimeError("WaveSpeed Veo 3.1 generation timed out after 20 minutes")
 
 
-def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, first_frame_url=None, return_last_frame=False, duration=12, max_retries=3, kling_elements=None):
+def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, first_frame_url=None, return_last_frame=False, duration=12, max_retries=3, kling_elements=None, multi_prompt=None):
     """
     Smart video generation with pre-flight health routing.
 
@@ -635,7 +638,7 @@ def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, 
     if family != "veo":
         for attempt in range(max_retries):
             try:
-                return generate_video(prompt, reference_image_url, model_api, first_frame_url, return_last_frame, duration, kling_elements=kling_elements)
+                return generate_video(prompt, reference_image_url, model_api, first_frame_url, return_last_frame, duration, kling_elements=kling_elements, multi_prompt=multi_prompt)
             except RuntimeError as e:
                 error_str = str(e).lower()
                 is_retriable = any(p in error_str for p in RETRIABLE_PATTERNS)

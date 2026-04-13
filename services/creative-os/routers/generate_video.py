@@ -62,6 +62,11 @@ class ElementRef(BaseModel):
     image_url: Optional[str] = None
 
 
+class MultiShotPrompt(BaseModel):
+    prompt: str
+    duration: int  # 1-12 seconds
+
+
 class VideoGenerateRequest(BaseModel):
     prompt: str
     mode: str  # "ugc", "cinematic_video", "ai_clone"
@@ -76,6 +81,8 @@ class VideoGenerateRequest(BaseModel):
     background_music: bool = True
     captions: bool = True
     element_refs: Optional[list[ElementRef]] = None  # @mention-based element refs from frontend
+    multi_shot_mode: bool = False  # Kling 3.0 multi-shot mode (cinematic only)
+    multi_shot_prompts: Optional[list[MultiShotPrompt]] = None  # Per-shot prompts + durations
 
 
 # ── Job record helpers (via core API — handles auth + RLS) ───────────
@@ -777,10 +784,20 @@ async def _run_cinematic_clip_pipeline(
             prompt = re.sub(r'\s*@element_\w+', '', prompt).strip()
 
         # ── Step 3: Submit to Kling 3.0 with element refs ──
-        duration = max(3, min(15, data.clip_length))
+        # In multi-shot mode, total duration = sum of shot durations
+        multi_prompt_payload = None
+        if data.multi_shot_mode and data.multi_shot_prompts:
+            multi_prompt_payload = [
+                {"prompt": s.prompt, "duration": max(1, min(12, s.duration))}
+                for s in data.multi_shot_prompts
+            ]
+            duration = max(3, min(15, sum(s.duration for s in data.multi_shot_prompts)))
+            print(f"[Cinematic] Multi-shot: {len(multi_prompt_payload)} shots, total {duration}s")
+        else:
+            duration = max(3, min(15, data.clip_length))
 
         await _update_video_job_via_api(token, project_id, job_id, {
-            "status_message": "Generating cinematic video with Kling 3.0...",
+            "status_message": f"Generating cinematic video with Kling 3.0{' (multi-shot)' if multi_prompt_payload else ''}...",
             "progress": 50,
         })
 
@@ -792,6 +809,7 @@ async def _run_cinematic_clip_pipeline(
                 model_api="kling-3.0/video",
                 duration=duration,
                 kling_elements=kling_elements if kling_elements else None,
+                multi_prompt=multi_prompt_payload,
             )
             video_url = result["videoUrl"]
             print(f"[Cinematic] Kling animation complete: {video_url[:80]}...")
