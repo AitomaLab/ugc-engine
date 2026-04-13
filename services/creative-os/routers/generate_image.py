@@ -261,7 +261,7 @@ async def execute_image_generation(data: ExecuteRequest, user: dict = Depends(ge
                 project_id: str,
             ):
                 try:
-                    image_url = await _generate_nanobanana_direct(
+                    image_url = await _generate_image_with_fallback(
                         prompt=composite_prompt,
                         image_input=image_input,
                         has_influencer=has_influencer,
@@ -346,7 +346,7 @@ async def execute_image_generation(data: ExecuteRequest, user: dict = Depends(ge
 
             async def _qa_background(shot_id, prompt, image_input, has_inf, ar, q, token, pid):
                 try:
-                    image_url = await _generate_nanobanana_direct(
+                    image_url = await _generate_image_with_fallback(
                         prompt=prompt, image_input=image_input,
                         has_influencer=has_inf, aspect_ratio=ar, quality=q,
                     )
@@ -446,7 +446,7 @@ async def execute_image_generation(data: ExecuteRequest, user: dict = Depends(ge
 
         async def _direct_background(shot_id, prompt, image_input, has_inf, ar, q, token, pid):
             try:
-                image_url = await _generate_nanobanana_direct(
+                image_url = await _generate_image_with_fallback(
                     prompt=prompt, image_input=image_input,
                     has_influencer=has_inf, aspect_ratio=ar, quality=q,
                 )
@@ -602,6 +602,137 @@ async def _generate_nanobanana_direct(
     raise RuntimeError("NanoBanana generation timed out after 10 minutes")
 
 
+# ── WaveSpeed fallback for NanoBanana Pro ──
+
+_KIE_UNAVAILABLE_PATTERNS = (
+    "service is currently unavailable",
+    "high demand",
+    "e003",
+    "too many requests",
+    "rate limit",
+    "429",
+    "503",
+)
+
+
+async def _generate_nanobanana_wavespeed(
+    prompt: str,
+    image_input: list,
+    aspect_ratio: str = "9:16",
+) -> str:
+    """Generate image via WaveSpeed's NanoBanana Pro endpoint (fallback).
+
+    WaveSpeed endpoint: /api/v3/google/nano-banana-pro/edit
+    Same model, different provider.
+    """
+    import os
+    import httpx
+    import asyncio
+
+    ws_key = os.getenv("WAVESPEED_API_KEY", "")
+    if not ws_key:
+        raise RuntimeError("WAVESPEED_API_KEY not set — cannot use WaveSpeed fallback")
+
+    ws_headers = {
+        "Authorization": f"Bearer {ws_key}",
+        "Content-Type": "application/json",
+    }
+
+    ws_payload = {
+        "prompt": prompt,
+        "seed": int(__import__("time").time()) % 999999,
+    }
+    # WaveSpeed takes a single "image" field (first reference image)
+    if image_input:
+        ws_payload["image"] = image_input[0]
+
+    print(f"[WaveSpeed NanoBanana] Prompt: {prompt[:80]}...")
+    print(f"[WaveSpeed NanoBanana] Image: {'yes' if image_input else 'no'}, Aspect: {aspect_ratio}")
+
+    endpoint = "https://api.wavespeed.ai/api/v3/google/nano-banana-pro/edit"
+
+    async with httpx.AsyncClient(timeout=60.0) as http_client:
+        resp = await http_client.post(endpoint, headers=ws_headers, json=ws_payload)
+
+        if resp.status_code != 200:
+            raise RuntimeError(f"WaveSpeed NanoBanana error ({resp.status_code}): {resp.text[:300]}")
+
+        api_result = resp.json()
+        result_data = api_result.get("data", api_result)
+        prediction_id = result_data.get("id")
+        if not prediction_id:
+            raise RuntimeError(f"WaveSpeed NanoBanana — no prediction ID: {str(api_result)[:300]}")
+
+        status_url = result_data.get("urls", {}).get("get", "")
+        if not status_url:
+            status_url = f"https://api.wavespeed.ai/api/v3/predictions/{prediction_id}/result"
+
+        print(f"[WaveSpeed NanoBanana] Task: {prediction_id}")
+
+    # Poll for completion (images typically <60s on WaveSpeed)
+    for i in range(60):  # 5 minutes max
+        await asyncio.sleep(5)
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as http_client:
+                resp = await http_client.get(status_url, headers=ws_headers)
+                poll_data = resp.json()
+                poll_inner = poll_data.get("data", poll_data)
+                status = poll_inner.get("status", "processing").lower()
+
+                if status == "completed":
+                    outputs = poll_inner.get("outputs", [])
+                    if outputs:
+                        print(f"[WaveSpeed NanoBanana] Image ready! ({i * 5}s)")
+                        return outputs[0]
+                elif status == "failed":
+                    raise RuntimeError(f"WaveSpeed NanoBanana failed: {poll_inner.get('error', 'unknown')}")
+
+                print(f"[WaveSpeed NanoBanana] Generating... ({i * 5}s)")
+        except RuntimeError:
+            raise
+        except Exception as e:
+            print(f"[WaveSpeed NanoBanana] Poll error: {e}")
+
+    raise RuntimeError("WaveSpeed NanoBanana timed out after 5 minutes")
+
+
+async def _generate_image_with_fallback(
+    prompt: str,
+    image_input: list,
+    has_influencer: bool = False,
+    aspect_ratio: str = "9:16",
+    quality: str = "4k",
+) -> str:
+    """Generate image via KIE NanoBanana Pro, falling back to WaveSpeed on unavailability."""
+    import os
+
+    try:
+        return await _generate_image_with_fallback(
+            prompt=prompt,
+            image_input=image_input,
+            has_influencer=has_influencer,
+            aspect_ratio=aspect_ratio,
+            quality=quality,
+        )
+    except RuntimeError as e:
+        error_lower = str(e).lower()
+        is_unavailable = any(p in error_lower for p in _KIE_UNAVAILABLE_PATTERNS)
+        if not is_unavailable:
+            raise
+
+        print(f"[NanoBanana] KIE unavailable: {e}")
+        print(f"[NanoBanana] Falling back to WaveSpeed...")
+
+        if not os.getenv("WAVESPEED_API_KEY", ""):
+            raise  # No fallback available
+
+        return await _generate_nanobanana_wavespeed(
+            prompt=prompt,
+            image_input=image_input,
+            aspect_ratio=aspect_ratio,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Generate AI Influencer — persona + profile photo in one shot
 # ---------------------------------------------------------------------------
@@ -706,7 +837,7 @@ async def generate_influencer(user: dict = Depends(get_current_user)):
     # ── Step 2: Generate profile photo via NanoBanana Pro ──
     print("[Generate Influencer] Step 2/2: Generating profile photo via NanoBanana Pro...")
     try:
-        image_url = await _generate_nanobanana_direct(
+        image_url = await _generate_image_with_fallback(
             prompt=nano_prompt,
             image_input=[],       # No reference images — pure text-to-image
             has_influencer=False,  # No face reference to preserve
@@ -1054,7 +1185,7 @@ async def generate_identity(
     for attempt in range(1, max_retries + 2):  # 1, 2, 3 = original + 2 retries
         print(f"[Generate Identity] Step 2/3: NanoBanana attempt {attempt}/{max_retries + 1}...")
         try:
-            sheet_url = await _generate_nanobanana_direct(
+            sheet_url = await _generate_image_with_fallback(
                 prompt=nano_prompt,
                 image_input=[data.image_url],  # Reference image for face identity
                 has_influencer=True,            # Preserve face from reference
@@ -1270,7 +1401,7 @@ async def generate_product_shots(
     for attempt in range(1, max_retries + 2):
         print(f"[Generate Product Shots] Step 2/3: NanoBanana attempt {attempt}/{max_retries + 1}...")
         try:
-            sheet_url = await _generate_nanobanana_direct(
+            sheet_url = await _generate_image_with_fallback(
                 prompt=nano_prompt,
                 image_input=[data.image_url],
                 has_influencer=False,
