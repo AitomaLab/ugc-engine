@@ -610,22 +610,26 @@ async def _split_prompt_into_shots(
 
         system = (
             "You are a cinematic shot planner for Kling 3.0 multi-shot video generation.\n"
-            "Given an enhanced cinematic prompt, split it into 2-4 distinct shots.\n\n"
+            "Given an enhanced cinematic prompt, split it into 2-5 distinct shots.\n\n"
             "Rules:\n"
             "- Each shot MUST have a different camera distance (wide/medium/close/detail)\n"
-            "- Each shot duration: 1-12 seconds\n"
-            "- Total duration should be close to the target\n"
-            "- Each shot prompt: max 500 characters\n"
+            "- Each shot duration: 1-12 seconds (integer only)\n"
+            "- The SUM of all shot durations must equal the target total duration exactly\n"
+            "- Each shot prompt: max 500 characters, written in English\n"
             "- Maintain visual continuity between shots\n"
-            "- If element tags exist (like @element_product), include them at the END of EACH shot prompt\n\n"
-            "Respond ONLY with a JSON array, no markdown, no explanation:\n"
-            '[{"prompt": "shot description...", "duration": 3}, ...]'
+            "- Do NOT include dialogue or speech in any language\n"
+            "- If element tags are provided, append them at the END of EACH shot prompt\n\n"
+            "Respond with a JSON object containing a \"shots\" array:\n"
+            '{"shots": [{"prompt": "shot description...", "duration": 3}, ...]}'
         )
 
         user_msg = f"Target total duration: {target_duration}s\n"
         if element_tags.strip():
-            user_msg += f"Element tags to append: {element_tags}\n"
-        user_msg += f"\nEnhanced prompt to split into shots:\n{enhanced_prompt}"
+            user_msg += f"Element tags to append to each shot: {element_tags.strip()}\n"
+        user_msg += f"\nEnhanced cinematic prompt to split into shots:\n{enhanced_prompt}"
+
+        print(f"[MultiShot] Calling GPT-4o to split into shots (target {target_duration}s)...")
+        print(f"[MultiShot] Input prompt ({len(enhanced_prompt)} chars): {enhanced_prompt[:200]}...")
 
         resp = await client.chat.completions.create(
             model="gpt-4o",
@@ -639,17 +643,29 @@ async def _split_prompt_into_shots(
         )
 
         raw = resp.choices[0].message.content.strip()
-        print(f"[MultiShot] GPT split response: {raw[:300]}...")
+        print(f"[MultiShot] GPT split response ({len(raw)} chars): {raw[:500]}")
 
         parsed = json.loads(raw)
 
-        # Handle both {"shots": [...]} and direct [...] formats
+        # Extract the shots array from the JSON object
+        shots = None
         if isinstance(parsed, dict):
-            shots = parsed.get("shots") or parsed.get("multi_prompt") or list(parsed.values())[0]
+            # Try common keys
+            for key in ("shots", "multi_prompt", "prompts", "sequence"):
+                if key in parsed and isinstance(parsed[key], list):
+                    shots = parsed[key]
+                    break
+            # Fallback: find any list value
+            if shots is None:
+                for v in parsed.values():
+                    if isinstance(v, list) and len(v) >= 2:
+                        shots = v
+                        break
         elif isinstance(parsed, list):
             shots = parsed
-        else:
-            print(f"[MultiShot] Unexpected format: {type(parsed)}")
+
+        if not shots:
+            print(f"[MultiShot] Could not find shots array in response: {list(parsed.keys()) if isinstance(parsed, dict) else type(parsed)}")
             return None
 
         # Validate and clamp
@@ -657,18 +673,25 @@ async def _split_prompt_into_shots(
         for s in shots:
             if isinstance(s, dict) and "prompt" in s and "duration" in s:
                 valid_shots.append({
-                    "prompt": s["prompt"][:500],
+                    "prompt": str(s["prompt"])[:500],
                     "duration": max(1, min(12, int(s["duration"]))),
                 })
 
         if len(valid_shots) < 2:
-            print(f"[MultiShot] Only {len(valid_shots)} valid shots — need at least 2")
+            print(f"[MultiShot] Only {len(valid_shots)} valid shots parsed — need at least 2")
             return None
 
-        return valid_shots[:5]  # Kling max 5 shots
+        valid_shots = valid_shots[:5]  # Kling max 5 shots
+        total = sum(s["duration"] for s in valid_shots)
+        print(f"[MultiShot] Success: {len(valid_shots)} shots, total {total}s")
+        for i, s in enumerate(valid_shots):
+            print(f"  Shot {i+1} ({s['duration']}s): {s['prompt'][:80]}...")
+        return valid_shots
 
     except Exception as e:
+        import traceback
         print(f"[MultiShot] Shot splitting failed: {e}")
+        traceback.print_exc()
         return None
 
 
@@ -779,19 +802,34 @@ async def _run_cinematic_clip_pipeline(
             element_tags += " @element_character"
             element_context.append({"name": "element_character", "description": inf_desc})
 
-        # Merge @mention-based element_refs from frontend (override generic elements)
+        # Merge @mention-based element_refs from frontend (skip duplicates for same image)
         if data.element_refs:
             existing_names = {e["name"] for e in kling_elements}
+            existing_urls = {e["element_input_urls"][0] for e in kling_elements if e.get("element_input_urls")}
             for ref in data.element_refs:
-                if ref.name not in existing_names and ref.image_url:
-                    kling_elements.append({
-                        "name": ref.name,
-                        "description": f"{ref.type}: {ref.name.replace('element_', '')}",
-                        "element_input_urls": [ref.image_url, ref.image_url],
-                    })
-                    element_tags += f" @{ref.name}"
-                    element_context.append({"name": ref.name, "description": ref.name.replace("element_", "")})
-                    print(f"[Cinematic] Added @mention element: {ref.name} ({ref.type})")
+                if ref.name in existing_names:
+                    continue  # Skip — already have this element
+                if ref.image_url in existing_urls:
+                    print(f"[Cinematic] Skipping @mention element {ref.name} — image already used by another element")
+                    continue  # Skip — same image already covered
+                if len(kling_elements) >= 3:
+                    print(f"[Cinematic] Skipping @mention element {ref.name} — Kling max 3 elements reached")
+                    break
+                kling_elements.append({
+                    "name": ref.name,
+                    "description": f"{ref.type}: {ref.name.replace('element_', '')}",
+                    "element_input_urls": [ref.image_url, ref.image_url],
+                })
+                element_tags += f" @{ref.name}"
+                element_context.append({"name": ref.name, "description": ref.name.replace("element_", "")})
+                print(f"[Cinematic] Added @mention element: {ref.name} ({ref.type})")
+
+        # Final cap at 3 elements (Kling max)
+        if len(kling_elements) > 3:
+            print(f"[Cinematic] Capping elements from {len(kling_elements)} to 3")
+            kling_elements = kling_elements[:3]
+            # Rebuild element_tags from the kept elements
+            element_tags = " ".join(f"@{e['name']}" for e in kling_elements)
 
         if kling_elements:
             print(f"[Cinematic] Built {len(kling_elements)} element(s): {[e['name'] for e in kling_elements]}")
@@ -825,11 +863,13 @@ async def _run_cinematic_clip_pipeline(
         user_prompt_for_enhance = data.prompt
         if is_multi:
             user_prompt_for_enhance += (
-                "\n\n[MULTI-SHOT MODE] Create a multi-shot cinematic sequence with 2-4 shots. "
+                f"\n\n[MULTI-SHOT MODE] Create a multi-shot cinematic sequence for a {data.clip_length}s total video. "
                 "Use the multi-shot format with Shot 1, Shot 2, etc. "
                 f"Target total duration: {data.clip_length}s. "
-                "Each shot should have a different camera angle, distance, and action."
+                "Each shot should have a different camera angle, distance, and action. "
+                "Write all prompts in English. Do NOT include any dialogue or speech."
             )
+            print(f"[Cinematic] Multi-shot mode active, target {data.clip_length}s")
 
         prompt = data.prompt
         raw_enhanced_text = ""
