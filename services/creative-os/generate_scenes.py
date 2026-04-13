@@ -65,6 +65,7 @@ def generate_video(
     duration=12,
     kling_elements=None,
     max_poll_seconds=None,
+    multi_prompt=None,
 ):
     """Submit a video generation job to KIE and poll until completion.
 
@@ -79,16 +80,19 @@ def generate_video(
     # Build payload per model family
     if family == "kling":
         kling_duration = str(max(3, min(15, duration)))
+        is_multi = bool(multi_prompt and len(multi_prompt) > 0)
         kling_input = {
-            "prompt": prompt,
+            "prompt": prompt if not is_multi else "",
             "image_urls": [reference_image_url] if reference_image_url else [],
             "sound": True,
             "duration": kling_duration,
             "aspect_ratio": "9:16",
             "mode": "pro",
-            "multi_shots": False,
-            "multi_prompt": [],
+            "multi_shots": is_multi,
+            "multi_prompt": multi_prompt if is_multi else [],
         }
+        if is_multi:
+            print(f"      [Kling] Multi-shot mode: {len(multi_prompt)} shot(s), total {sum(s.get('duration', 3) for s in multi_prompt)}s")
         if kling_elements:
             kling_input["kling_elements"] = kling_elements
             print(f"      [Kling] Payload includes {len(kling_elements)} element(s)")
@@ -225,6 +229,7 @@ def generate_video_with_retry(
     duration=12,
     max_retries=3,
     kling_elements=None,
+    multi_prompt=None,
 ):
     """Generate video with retry on transient errors."""
     RETRIABLE_PATTERNS = ("500", "internal error", "unknown generation error", "timed out", "timeout", "generation failed")
@@ -235,6 +240,7 @@ def generate_video_with_retry(
                 prompt, reference_image_url, model_api,
                 first_frame_url, return_last_frame, duration,
                 kling_elements=kling_elements,
+                multi_prompt=multi_prompt,
             )
         except RuntimeError as e:
             error_str = str(e).lower()
