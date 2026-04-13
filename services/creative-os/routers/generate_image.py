@@ -707,7 +707,7 @@ async def _generate_image_with_fallback(
     import os
 
     try:
-        return await _generate_image_with_fallback(
+        return await _generate_nanobanana_direct(
             prompt=prompt,
             image_input=image_input,
             has_influencer=has_influencer,
