@@ -95,7 +95,20 @@ class CoreAPIClient:
         return await self._request("DELETE", f"/api/shots/{shot_id}")
 
     async def update_shot(self, shot_id: str, data: dict) -> dict:
-        return await self._request("PUT", f"/api/shots/{shot_id}", json=data)
+        """Update a product_shot record directly via Supabase REST.
+
+        The core API has no PUT /api/shots/{id} endpoint, so we update
+        the product_shots table directly using the Supabase service key.
+        """
+        import os
+        from supabase import create_client
+
+        sb = create_client(
+            os.getenv("SUPABASE_URL"),
+            os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY"),
+        )
+        result = sb.table("product_shots").update(data).eq("id", shot_id).execute()
+        return result.data[0] if result.data else {}
 
     async def create_standalone_shot(self, data: dict) -> dict:
         """Create a product_shot record via Supabase REST (no product_id required).
