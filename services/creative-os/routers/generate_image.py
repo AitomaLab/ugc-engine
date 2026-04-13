@@ -228,6 +228,8 @@ async def execute_image_generation(data: ExecuteRequest, user: dict = Depends(ge
                 "prompt": composite_prompt,
                 "analysis_json": {
                     "mode": "ugc",
+                    "quality": data.quality,
+                    "aspect_ratio": data.aspect_ratio,
                     "scene_description": scene_description,
                 },
             }
@@ -325,7 +327,7 @@ async def execute_image_generation(data: ExecuteRequest, user: dict = Depends(ge
                 "status": "processing",
                 "prompt": data.prompt,
                 "project_id": data.project_id,
-                "analysis_json": {"quick_action": True},
+                "analysis_json": {"quick_action": True, "mode": data.mode, "quality": data.quality, "aspect_ratio": data.aspect_ratio},
             }
             if data.product_id:
                 shot_data["product_id"] = data.product_id
@@ -425,7 +427,7 @@ async def execute_image_generation(data: ExecuteRequest, user: dict = Depends(ge
             "status": "processing",
             "prompt": data.prompt,
             "project_id": data.project_id,
-            "analysis_json": {"mode": data.mode},
+            "analysis_json": {"mode": data.mode, "quality": data.quality, "aspect_ratio": data.aspect_ratio},
         }
         if data.influencer_id:
             shot_data["analysis_json"]["influencer_id"] = data.influencer_id

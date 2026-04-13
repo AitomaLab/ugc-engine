@@ -520,8 +520,8 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                                 const map: Record<string, string> = { iphone_look: 'iPhone Look', cinematic: 'Cinematic', luxury: 'Luxury', ugc: 'UGC' };
                                 return map[m] || m.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || 'Standard';
                             })()} highlight />
-                            <InfoRow label="Quality" value="4K" />
-                            <InfoRow label="Aspect" value="9:16" />
+                            <InfoRow label="Quality" value={(asset.analysis_json?.quality as string || '4k').toUpperCase()} />
+                            <InfoRow label="Aspect" value={(asset.analysis_json?.aspect_ratio as string) || '9:16'} />
                             <InfoRow label="Cost" value="12 credits" />
                             {createdAgo && <InfoRow label="Created" value={createdAgo} />}
                         </div>
