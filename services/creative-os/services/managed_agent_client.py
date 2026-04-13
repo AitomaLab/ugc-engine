@@ -1775,18 +1775,6 @@ def _get_ffmpeg_path() -> str:
     return "ffmpeg"  # last resort — will fail with a clear error
 
 
-def _get_ffprobe_path() -> str:
-    """Resolve ffprobe binary path."""
-    import shutil as _sh
-    system = _sh.which("ffprobe")
-    if system:
-        return system
-    # imageio-ffmpeg doesn't bundle ffprobe, so derive from ffmpeg path
-    ffmpeg = _get_ffmpeg_path()
-    probe = ffmpeg.replace("ffmpeg", "ffprobe")
-    if _sh.which(probe) or os.path.isfile(probe):
-        return probe
-    return "ffprobe"
 
 
 async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
@@ -1818,10 +1806,9 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
     try:
         import httpx
 
-        # Resolve ffmpeg binary paths
+        # Resolve ffmpeg binary path
         FFMPEG = _get_ffmpeg_path()
-        FFPROBE = _get_ffprobe_path()
-        print(f"[combine_videos] Using ffmpeg={FFMPEG}, ffprobe={FFPROBE}")
+        print(f"[combine_videos] Using ffmpeg={FFMPEG}")
 
         # 1. Download all videos
         print(f"[combine_videos] Downloading {len(video_urls)} videos...")
@@ -1870,18 +1857,21 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
                     return json.dumps({"error": f"Failed to normalize clip {i}: {result2.stderr[:300]}"})
             normalized.append(norm_path)
 
-        # 3. Get durations of each normalized clip
+        # 3. Get durations of each normalized clip (using ffmpeg -i, no ffprobe needed)
+        import re
         durations: list[float] = []
         for path in normalized:
             probe = await asyncio.to_thread(
                 subprocess.run,
-                [FFPROBE, "-v", "error", "-show_entries", "format=duration",
-                 "-of", "default=noprint_wrappers=1:nokey=1", path],
+                [FFMPEG, "-i", path, "-f", "null", "-"],
                 capture_output=True, text=True,
             )
-            try:
-                durations.append(float(probe.stdout.strip()))
-            except ValueError:
+            # ffmpeg prints "Duration: HH:MM:SS.xx" in stderr
+            dur_match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", probe.stderr)
+            if dur_match:
+                h, m, s = dur_match.groups()
+                durations.append(int(h) * 3600 + int(m) * 60 + float(s))
+            else:
                 durations.append(5.0)  # fallback
 
         # 4. Build ffmpeg xfade chain for N clips
