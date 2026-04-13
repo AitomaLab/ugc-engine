@@ -28,6 +28,11 @@ from services.managed_agent_client import get_managed_agent_client
 
 router = APIRouter(prefix="/agent", tags=["managed-agent"])
 
+# Per-project concurrency guard — prevents duplicate stream requests from
+# crashing the active Anthropic session (which rejects user.message while
+# tool calls are pending).
+_active_streams: dict[str, asyncio.Lock] = {}
+
 
 # ── Schemas ────────────────────────────────────────────────────────────
 class AgentRef(BaseModel):
@@ -112,6 +117,17 @@ async def agent_stream(
 ):
     if not data.brief.strip():
         raise HTTPException(status_code=400, detail="brief is required")
+
+    # Concurrency guard: one stream per project at a time.
+    if data.project_id not in _active_streams:
+        _active_streams[data.project_id] = asyncio.Lock()
+    lock = _active_streams[data.project_id]
+    if lock.locked():
+        raise HTTPException(
+            status_code=409,
+            detail="Agent is already running for this project. Wait for it to finish or stop it first.",
+        )
+
     try:
         client = get_managed_agent_client()
     except RuntimeError as e:
@@ -151,78 +167,79 @@ async def agent_stream(
         augmented_brief = "\n".join(lines)
 
     async def gen():
-        thread = await get_thread(user_token, user_id, project_id)
-        session_id: Optional[str] = thread.get("anthropic_session_id") if thread else None
-        turns: list[dict] = list((thread or {}).get("turns") or [])
+        async with lock:
+            thread = await get_thread(user_token, user_id, project_id)
+            session_id: Optional[str] = thread.get("anthropic_session_id") if thread else None
+            turns: list[dict] = list((thread or {}).get("turns") or [])
 
-        # Append user turn immediately so a refresh during the run shows it.
-        # We persist the *original* brief (what the user typed) — the augmented
-        # version with reference URLs is only sent to the model.
-        user_turn: dict = {"role": "user", "text": brief, "ts": _now_ms()}
-        if refs:
-            user_turn["refs"] = [r.model_dump(exclude_none=True) for r in refs]
-        turns.append(user_turn)
-        await upsert_thread(
-            user_token, user_id, project_id,
-            anthropic_session_id=session_id,
-            turns=turns,
-            title=(turns[0]["text"][:80] if turns and turns[0].get("role") == "user" else None),
-        )
+            # Append user turn immediately so a refresh during the run shows it.
+            # We persist the *original* brief (what the user typed) — the augmented
+            # version with reference URLs is only sent to the model.
+            user_turn: dict = {"role": "user", "text": brief, "ts": _now_ms()}
+            if refs:
+                user_turn["refs"] = [r.model_dump(exclude_none=True) for r in refs]
+            turns.append(user_turn)
+            await upsert_thread(
+                user_token, user_id, project_id,
+                anthropic_session_id=session_id,
+                turns=turns,
+                title=(turns[0]["text"][:80] if turns and turns[0].get("role") == "user" else None),
+            )
 
-        agent_text_parts: list[str] = []
-        agent_artifacts: list[dict] = []
-        agent_tool_calls: list[dict] = []
-        interrupted = False
+            agent_text_parts: list[str] = []
+            agent_artifacts: list[dict] = []
+            agent_tool_calls: list[dict] = []
+            interrupted = False
 
-        try:
-            async for ev in client.run_stream(
-                brief=augmented_brief,
-                user_token=user_token,
-                project_id=project_id,
-                session_id=session_id,
-            ):
-                t = ev.get("type")
-                if t == "session":
-                    session_id = ev["session_id"]
-                    # Persist new/refreshed session id immediately.
-                    await upsert_thread(
-                        user_token, user_id, project_id,
-                        anthropic_session_id=session_id,
-                    )
-                elif t == "agent_message":
-                    agent_text_parts.append(ev["text"])
-                elif t == "tool_call":
-                    agent_tool_calls.append({
-                        "name": ev["name"],
-                        "input_summary": ev.get("input_summary", ""),
+            try:
+                async for ev in client.run_stream(
+                    brief=augmented_brief,
+                    user_token=user_token,
+                    project_id=project_id,
+                    session_id=session_id,
+                ):
+                    t = ev.get("type")
+                    if t == "session":
+                        session_id = ev["session_id"]
+                        # Persist new/refreshed session id immediately.
+                        await upsert_thread(
+                            user_token, user_id, project_id,
+                            anthropic_session_id=session_id,
+                        )
+                    elif t == "agent_message":
+                        agent_text_parts.append(ev["text"])
+                    elif t == "tool_call":
+                        agent_tool_calls.append({
+                            "name": ev["name"],
+                            "input_summary": ev.get("input_summary", ""),
+                        })
+                    elif t == "artifact":
+                        agent_artifacts.append(ev["artifact"])
+                    yield f"data: {json.dumps(ev)}\n\n"
+
+            except asyncio.CancelledError:
+                interrupted = True
+                yield f"data: {json.dumps({'type': 'interrupted'})}\n\n"
+                raise
+            finally:
+                # Persist the agent turn (always — even on partial / errored runs).
+                if agent_text_parts or agent_artifacts or agent_tool_calls or interrupted:
+                    turns.append({
+                        "role": "agent",
+                        "text": "\n\n".join(agent_text_parts),
+                        "artifacts": agent_artifacts,
+                        "tool_calls": agent_tool_calls,
+                        "interrupted": interrupted,
+                        "ts": _now_ms(),
                     })
-                elif t == "artifact":
-                    agent_artifacts.append(ev["artifact"])
-                yield f"data: {json.dumps(ev)}\n\n"
-
-        except asyncio.CancelledError:
-            interrupted = True
-            yield f"data: {json.dumps({'type': 'interrupted'})}\n\n"
-            raise
-        finally:
-            # Persist the agent turn (always — even on partial / errored runs).
-            if agent_text_parts or agent_artifacts or agent_tool_calls or interrupted:
-                turns.append({
-                    "role": "agent",
-                    "text": "\n\n".join(agent_text_parts),
-                    "artifacts": agent_artifacts,
-                    "tool_calls": agent_tool_calls,
-                    "interrupted": interrupted,
-                    "ts": _now_ms(),
-                })
-                try:
-                    await upsert_thread(
-                        user_token, user_id, project_id,
-                        anthropic_session_id=session_id,
-                        turns=turns,
-                    )
-                except Exception as e:
-                    print(f"[agent_stream] final upsert failed: {e}")
+                    try:
+                        await upsert_thread(
+                            user_token, user_id, project_id,
+                            anthropic_session_id=session_id,
+                            turns=turns,
+                        )
+                    except Exception as e:
+                        print(f"[agent_stream] final upsert failed: {e}")
 
     return StreamingResponse(
         gen(),

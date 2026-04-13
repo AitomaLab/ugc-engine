@@ -107,6 +107,9 @@ When given a brief, plan briefly then act. Prefer chaining tools end-to-end rath
 - save_editor_state(job_id, editor_state) — Persist edits without re-rendering. Free.
 - render_edited_video(job_id, editor_state, codec?) — Re-render the edited timeline into a final MP4. GATED.
 
+### Video combination
+- combine_videos(video_urls, transition?, transition_duration?) — Combine 2+ videos into one MP4 with smooth transitions (dissolve, fade, wipe). GATED.
+
 ## CRITICAL — Cost confirmation rule (applies to ALL gated tools)
 Gated tools cost real credits. You MUST get explicit user confirmation before spending them. The flow is:
 
@@ -122,7 +125,7 @@ Do NOT bypass this gate. Do NOT call gated tools with `confirmed=true` on the fi
 
 For multi-step plans ("generate 3 images then animate two of them"), call `estimate_credits` first to preview the TOTAL cost as a single bundled number, present it once, then execute the steps with `confirmed=true` after the user agrees to the bundle.
 
-The gated tools are exactly: generate_image, generate_influencer, generate_identity, generate_product_shots, animate_image, generate_video, create_ugc_video, create_clone_video, create_bulk_campaign, render_edited_video. Everything else is free and can be called immediately.
+The gated tools are exactly: generate_image, generate_influencer, generate_identity, generate_product_shots, animate_image, generate_video, create_ugc_video, create_clone_video, create_bulk_campaign, render_edited_video, combine_videos. Everything else is free and can be called immediately.
 
 ## Model routing
 - **UGC videos** (all lengths): powered by **Veo 3.1**. Use `generate_video(mode="ugc")` for short clips (5-10s) or `create_ugc_video` for full 15/30s produced videos (script + scenes + captions + music).
@@ -156,6 +159,8 @@ The gated tools are exactly: generate_image, generate_influencer, generate_ident
 **Edit timeline** (reorder, trim, adjust properties): load_editor_state → mutate raw_state → save_editor_state. Only for structural timeline edits, NOT for captioning. The edits are instantly visible in the browser-based Remotion editor — no re-render is needed.
 
 **Export final MP4** (only when user explicitly asks to "render", "export", or "download"): render_edited_video (gated). This does a full server-side re-render and takes 1-10 minutes. Do NOT call this automatically after editing — only when the user explicitly requests a final rendered file.
+
+**Combine/merge videos**: When the user asks to combine, merge, stitch, or concatenate multiple videos → combine_videos(video_urls=[url1, url2, ...]) (gated). Uses @video refs to get the URLs. Default is a smooth dissolve transition.
 
 ## General rules
 1. Within a session, you may freely reference URLs, shot IDs, job IDs, or asset names from earlier tool results — they are still valid. Do not re-list assets unless the user explicitly asks for fresh data.
@@ -814,6 +819,38 @@ def _custom_tools_for_agent() -> list[dict]:
                 "required": ["job_id", "editor_state"],
             },
         },
+
+        # ── Video combination ─────────────────────────────────────────
+        {
+            "type": "custom",
+            "name": "combine_videos",
+            "description": (
+                "Combine (concatenate) two or more videos into a single MP4 with smooth dissolve "
+                "transitions between clips. Pass the video URLs in the desired playback order. "
+                "FIRST call returns a credit cost estimate. After user confirms, call again with confirmed=true."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "video_urls": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Ordered list of public video URLs to concatenate.",
+                    },
+                    "transition": {
+                        "type": "string",
+                        "enum": ["dissolve", "wipeleft", "wiperight", "fade", "none"],
+                        "description": "Transition effect between clips. Default: dissolve.",
+                    },
+                    "transition_duration": {
+                        "type": "number",
+                        "description": "Transition duration in seconds (0.3-1.5). Default: 0.6.",
+                    },
+                    "confirmed": {"type": "boolean", "description": confirmed_desc},
+                },
+                "required": ["video_urls"],
+            },
+        },
     ]
 
 
@@ -923,6 +960,9 @@ def _credits_for_op(operation: str, params: dict) -> int:
         return per_video * int(params.get("count", 1))
     if operation == "render_edited_video":
         return get_editor_render_credit_cost()
+    if operation == "combine_videos":
+        # Use animate_image cost as a proxy for server-side ffmpeg processing
+        return get_animate_image_credit_cost(duration=5)
     raise ValueError(f"unknown operation for credit estimate: {operation}")
 
 
@@ -1719,6 +1759,226 @@ async def _tool_render_edited_video(ctx: ToolContext, **kwargs: Any) -> str:
     })
 
 
+# ── Video combination ─────────────────────────────────────────────────
+async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
+    """Combine multiple videos with dissolve transitions. Gated tool."""
+    import subprocess
+    import tempfile
+    import shutil
+    from datetime import datetime as _dt
+
+    video_urls: list[str] = kwargs.get("video_urls") or []
+    if len(video_urls) < 2:
+        return json.dumps({"error": "At least 2 video_urls are required to combine."})
+
+    transition = kwargs.get("transition", "dissolve")
+    transition_dur = float(kwargs.get("transition_duration", 0.6))
+    transition_dur = max(0.3, min(1.5, transition_dur))  # clamp
+
+    if not kwargs.get("confirmed"):
+        # Use animate_image credit cost as proxy (lightweight server-side processing)
+        credits = _credits_for_op("animate_image", {"duration": 5})
+        return _confirmation_payload(
+            operation="combine_videos",
+            credits=credits,
+            summary=f"Combine {len(video_urls)} videos with {transition} transitions",
+            echo={k: v for k, v in kwargs.items() if k != "confirmed"},
+        )
+
+    work_dir = tempfile.mkdtemp(prefix="combine_")
+    try:
+        import httpx
+
+        # 1. Download all videos
+        print(f"[combine_videos] Downloading {len(video_urls)} videos...")
+        local_paths: list[str] = []
+        async with httpx.AsyncClient(timeout=60) as http:
+            for i, url in enumerate(video_urls):
+                local_path = os.path.join(work_dir, f"input_{i}.mp4")
+                resp = await http.get(url, follow_redirects=True)
+                resp.raise_for_status()
+                with open(local_path, "wb") as f:
+                    f.write(resp.content)
+                local_paths.append(local_path)
+                print(f"[combine_videos]   Downloaded clip {i+1}: {len(resp.content)/1024/1024:.1f}MB")
+
+        # 2. Normalize all clips to consistent resolution/codec using ffmpeg
+        normalized: list[str] = []
+        target_res = "1080:1920"  # 9:16 vertical — most UGC content
+        for i, path in enumerate(local_paths):
+            norm_path = os.path.join(work_dir, f"norm_{i}.mp4")
+            cmd = [
+                "ffmpeg", "-y", "-i", path,
+                "-vf", f"scale={target_res}:force_original_aspect_ratio=decrease,"
+                       f"pad={target_res}:(ow-iw)/2:(oh-ih)/2:color=black",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                "-c:a", "aac", "-ar", "44100", "-ac", "2",
+                "-shortest",
+                norm_path,
+            ]
+            result = await asyncio.to_thread(
+                subprocess.run, cmd, capture_output=True, text=True
+            )
+            if result.returncode != 0:
+                # Retry without audio (clip may have no audio track)
+                cmd_noaudio = [
+                    "ffmpeg", "-y", "-i", path,
+                    "-vf", f"scale={target_res}:force_original_aspect_ratio=decrease,"
+                           f"pad={target_res}:(ow-iw)/2:(oh-ih)/2:color=black",
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                    "-an",
+                    norm_path,
+                ]
+                result2 = await asyncio.to_thread(
+                    subprocess.run, cmd_noaudio, capture_output=True, text=True
+                )
+                if result2.returncode != 0:
+                    return json.dumps({"error": f"Failed to normalize clip {i}: {result2.stderr[:300]}"})
+            normalized.append(norm_path)
+
+        # 3. Get durations of each normalized clip
+        durations: list[float] = []
+        for path in normalized:
+            probe = await asyncio.to_thread(
+                subprocess.run,
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", path],
+                capture_output=True, text=True,
+            )
+            try:
+                durations.append(float(probe.stdout.strip()))
+            except ValueError:
+                durations.append(5.0)  # fallback
+
+        # 4. Build ffmpeg xfade chain for N clips
+        if transition == "none" or len(normalized) == 2 and any(d < transition_dur * 2 for d in durations):
+            # Simple concat (no transition) for very short clips or explicit none
+            concat_list = os.path.join(work_dir, "concat.txt")
+            with open(concat_list, "w") as f:
+                for path in normalized:
+                    f.write(f"file '{path}'\n")
+            output_path = os.path.join(work_dir, "combined.mp4")
+            cmd = [
+                "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                "-i", concat_list,
+                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                "-c:a", "aac",
+                output_path,
+            ]
+            result = await asyncio.to_thread(
+                subprocess.run, cmd, capture_output=True, text=True
+            )
+            if result.returncode != 0:
+                return json.dumps({"error": f"FFmpeg concat failed: {result.stderr[:400]}"})
+        else:
+            # Build chained xfade filter for smooth transitions
+            output_path = os.path.join(work_dir, "combined.mp4")
+            n = len(normalized)
+
+            # For 2 clips: [0:v][1:v]xfade=...[v]
+            # For 3 clips: [0:v][1:v]xfade=...[v01]; [v01][2:v]xfade=...[v]
+            # etc.
+            xfade_name = "dissolve" if transition == "dissolve" else (
+                "fade" if transition == "fade" else transition
+            )
+
+            filter_parts = []
+            cumulative_offset = 0.0
+
+            for i in range(n - 1):
+                in_a = f"[{i}:v]" if i == 0 else f"[v{i-1}{i}]"
+                in_b = f"[{i+1}:v]"
+                out_tag = "[v]" if i == n - 2 else f"[v{i}{i+1}]"
+
+                offset = cumulative_offset + durations[i] - transition_dur
+                if i > 0:
+                    # After first xfade, the accumulated stream is shorter by transition_dur
+                    offset = cumulative_offset + durations[i] - transition_dur * (i + 1)
+                    # Simpler: track running offset
+                offset = sum(durations[:i+1]) - transition_dur * (i + 1)
+                offset = max(0.1, offset)
+
+                filter_parts.append(
+                    f"{in_a}{in_b}xfade=transition={xfade_name}"
+                    f":duration={transition_dur}:offset={offset:.3f}{out_tag}"
+                )
+
+            filter_str = ";".join(filter_parts)
+
+            # Build input args
+            input_args = []
+            for path in normalized:
+                input_args.extend(["-i", path])
+
+            cmd = [
+                "ffmpeg", "-y",
+                *input_args,
+                "-filter_complex", filter_str,
+                "-map", "[v]",
+                "-an",  # Drop audio for xfade chain (simplifies filter graph)
+                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                output_path,
+            ]
+
+            print(f"[combine_videos] Running ffmpeg xfade: {' '.join(cmd)}")
+            result = await asyncio.to_thread(
+                subprocess.run, cmd, capture_output=True, text=True
+            )
+            if result.returncode != 0:
+                print(f"[combine_videos] xfade failed, falling back to simple concat: {result.stderr[:400]}")
+                # Fallback to simple concat
+                concat_list = os.path.join(work_dir, "concat.txt")
+                with open(concat_list, "w") as f:
+                    for path in normalized:
+                        f.write(f"file '{path}'\n")
+                cmd = [
+                    "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                    "-i", concat_list,
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                    "-c:a", "aac",
+                    output_path,
+                ]
+                result = await asyncio.to_thread(
+                    subprocess.run, cmd, capture_output=True, text=True
+                )
+                if result.returncode != 0:
+                    return json.dumps({"error": f"FFmpeg concat fallback also failed: {result.stderr[:400]}"})
+
+        # 5. Upload to Supabase Storage
+        output_size = os.path.getsize(output_path)
+        print(f"[combine_videos] Combined video: {output_size/1024/1024:.1f}MB")
+
+        timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
+        storage_filename = f"combined_{timestamp}.mp4"
+        try:
+            from ugc_db.db_manager import get_supabase
+            sb = get_supabase()
+            with open(output_path, "rb") as f:
+                sb.storage.from_("generated-videos").upload(
+                    storage_filename, f,
+                    file_options={"content-type": "video/mp4"},
+                )
+            final_url = sb.storage.from_("generated-videos").get_public_url(storage_filename)
+        except Exception as upload_err:
+            return json.dumps({"error": f"Upload failed: {upload_err}"})
+
+        _record_artifact(ctx, {"type": "video", "url": final_url})
+
+        total_duration = sum(durations) - transition_dur * (len(durations) - 1) if transition != "none" else sum(durations)
+        return json.dumps({
+            "status": "success",
+            "video_url": final_url,
+            "clips_combined": len(video_urls),
+            "total_duration_seconds": round(total_duration, 1),
+            "transition": transition,
+            "credits_spent": _credits_for_op("animate_image", {"duration": 5}),
+        })
+    except Exception as e:
+        return json.dumps({"error": f"combine_videos failed: {e}"})
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
 # ── Phase 6: Image generation & identity ──────────────────────────────
 async def _tool_generate_influencer(ctx: ToolContext, **kwargs: Any) -> str:
     from routers.generate_image import generate_influencer
@@ -1962,6 +2222,8 @@ TOOL_DISPATCH: dict[str, Callable[..., Awaitable[str]]] = {
     "load_editor_state": _tool_load_editor_state,
     "save_editor_state": _tool_save_editor_state,
     "render_edited_video": _tool_render_edited_video,
+    # video combination (gated)
+    "combine_videos": _tool_combine_videos,
 }
 
 

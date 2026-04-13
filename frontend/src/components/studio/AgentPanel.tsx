@@ -433,7 +433,13 @@ export function AgentPanel({ projectId, onArtifact }: AgentPanelProps) {
             if ((err as Error).name === 'AbortError') {
                 updatePlaceholder((t) => ({ ...t, interrupted: true }));
             } else {
-                setError(err instanceof Error ? err.message : String(err));
+                const msg = err instanceof Error ? err.message : String(err);
+                // If the stream never started (e.g. 409 concurrency guard),
+                // remove the optimistically-added user + placeholder turns.
+                if (msg.includes('already running')) {
+                    setTurns((prev) => prev.slice(0, -2));
+                }
+                setError(msg);
             }
         } finally {
             setRunning(false);
