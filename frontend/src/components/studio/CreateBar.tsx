@@ -53,7 +53,6 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
     const [bgMusic, setBgMusic] = useState(true);
     const [captions, setCaptions] = useState(true);
     const [multiShot, setMultiShot] = useState(false);
-    const [multiShotPrompts, setMultiShotPrompts] = useState<{prompt: string; duration: number}[]>([{prompt: '', duration: 3}, {prompt: '', duration: 3}]);
 
     // Asset references
     const [selectedProduct, setSelectedProduct] = useState<any>(null);
@@ -341,9 +340,6 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                     full_video_mode: fullVideo, video_length: videoLength,
                     background_music: bgMusic, captions,
                     multi_shot_mode: isCinematicMulti,
-                    multi_shot_prompts: isCinematicMulti
-                        ? multiShotPrompts.filter(s => s.prompt.trim()).map(s => ({ prompt: s.prompt, duration: s.duration }))
-                        : undefined,
                 };
                 if (elementRefs.length > 0) {
                     videoPayload.element_refs = elementRefs;
@@ -714,59 +710,6 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                         </div>
                     )}
 
-                    {/* ── ROW 3b: Multi-Shot Cards (Cinematic) ── */}
-                    {activeTab === 'videos' && multiShot && mode === 'cinematic_video' && (
-                        <div className="co-bar-row3">
-                            <div className="co-multishot">
-                                <div className="co-multishot-header">
-                                    <span className="co-row3-label">SHOTS</span>
-                                    <span className="co-multishot-total">
-                                        Total: {multiShotPrompts.reduce((s, p) => s + p.duration, 0)}s
-                                    </span>
-                                </div>
-                                <div className="co-multishot-list">
-                                    {multiShotPrompts.map((shot, i) => (
-                                        <div key={i} className="co-shot-card">
-                                            <div className="co-shot-header">
-                                                <span className="co-shot-label">Shot {i + 1}</span>
-                                                <Dropdown label={`${shot.duration}s`} id={`shot-dur-${i}`} activeDropdown={activeDropdown} onToggle={toggleDropdown}>
-                                                    {Array.from({length: 12}, (_, k) => k + 1).map(d => (
-                                                        <button key={d} className={`co-dd-item ${shot.duration === d ? 'active' : ''}`}
-                                                            onClick={() => {
-                                                                setMultiShotPrompts(prev => prev.map((s, j) => j === i ? {...s, duration: d} : s));
-                                                                setActiveDropdown(null);
-                                                            }}>
-                                                            {d}s
-                                                        </button>
-                                                    ))}
-                                                </Dropdown>
-                                                {multiShotPrompts.length > 2 && (
-                                                    <button className="co-shot-remove" onClick={() => setMultiShotPrompts(prev => prev.filter((_, j) => j !== i))}
-                                                        title="Remove shot">
-                                                        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2">
-                                                            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                                                        </svg>
-                                                    </button>
-                                                )}
-                                            </div>
-                                            <input
-                                                className="co-shot-input"
-                                                value={shot.prompt}
-                                                onChange={e => setMultiShotPrompts(prev => prev.map((s, j) => j === i ? {...s, prompt: e.target.value} : s))}
-                                                placeholder={`Describe shot ${i + 1}... (max 500 chars)`}
-                                                maxLength={500}
-                                            />
-                                        </div>
-                                    ))}
-                                </div>
-                                {multiShotPrompts.length < 5 && (
-                                    <button className="co-shot-add" onClick={() => setMultiShotPrompts(prev => [...prev, {prompt: '', duration: 3}])}>
-                                        + Add Shot
-                                    </button>
-                                )}
-                            </div>
-                        </div>
-                    )}
                 </div>
 
                 <style suppressHydrationWarning>{`
@@ -798,35 +741,6 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                     .co-row3-label { font-size: 11px; font-weight: 700; color: #337AFF; letter-spacing: 0.5px; text-transform: uppercase; margin-right: 2px; }
                     .co-cost-label { font-size: 12px; color: #4A5578; white-space: nowrap; flex-shrink: 0; }
                     .co-cost-label strong { color: #337AFF; font-weight: 700; }
-
-                    /* Multi-Shot */
-                    .co-multishot { width: 100%; }
-                    .co-multishot-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-                    .co-multishot-total { font-size: 12px; color: #337AFF; font-weight: 600; }
-                    .co-multishot-list { display: flex; flex-direction: column; gap: 6px; }
-                    .co-shot-card {
-                        background: rgba(51,122,255,0.03); border: 1px solid rgba(51,122,255,0.10);
-                        border-radius: 10px; padding: 8px 10px;
-                    }
-                    .co-shot-header { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
-                    .co-shot-label { font-size: 11px; font-weight: 700; color: #4A5578; }
-                    .co-shot-input {
-                        width: 100%; border: none; outline: none; background: transparent;
-                        font-size: 13px; color: #0D1B3E; font-family: inherit; padding: 2px 0;
-                    }
-                    .co-shot-input::placeholder { color: #A0A8C4; }
-                    .co-shot-remove {
-                        margin-left: auto; background: none; border: none; cursor: pointer;
-                        color: #A0A8C4; padding: 2px; border-radius: 4px; transition: all 0.15s;
-                        display: flex; align-items: center;
-                    }
-                    .co-shot-remove:hover { color: #E74C3C; background: rgba(231,76,60,0.08); }
-                    .co-shot-add {
-                        margin-top: 6px; padding: 5px 12px; border-radius: 8px; border: 1px dashed rgba(51,122,255,0.2);
-                        background: transparent; color: #337AFF; font-size: 12px; font-weight: 600;
-                        cursor: pointer; transition: all 0.15s; width: 100%; text-align: center;
-                    }
-                    .co-shot-add:hover { background: rgba(51,122,255,0.04); border-color: #337AFF; }
 
                     /* Generate Button */
                     .co-bar-generate {

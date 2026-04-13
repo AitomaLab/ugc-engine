@@ -62,10 +62,6 @@ class ElementRef(BaseModel):
     image_url: Optional[str] = None
 
 
-class MultiShotPrompt(BaseModel):
-    prompt: str
-    duration: int  # 1-12 seconds
-
 
 class VideoGenerateRequest(BaseModel):
     prompt: str
@@ -81,8 +77,7 @@ class VideoGenerateRequest(BaseModel):
     background_music: bool = True
     captions: bool = True
     element_refs: Optional[list[ElementRef]] = None  # @mention-based element refs from frontend
-    multi_shot_mode: bool = False  # Kling 3.0 multi-shot mode (cinematic only)
-    multi_shot_prompts: Optional[list[MultiShotPrompt]] = None  # Per-shot prompts + durations
+    multi_shot_mode: bool = False  # Kling 3.0 multi-shot (backend auto-splits prompt into shots)
 
 
 # ── Job record helpers (via core API — handles auth + RLS) ───────────
@@ -597,6 +592,86 @@ async def _generate_kling_video(
     }
 
 
+async def _split_prompt_into_shots(
+    enhanced_prompt: str,
+    target_duration: int = 10,
+    element_tags: str = "",
+) -> list[dict] | None:
+    """Use GPT-4o to split an enhanced cinematic prompt into Kling 3.0 multi-shot format.
+
+    Returns a list of dicts like [{"prompt": "...", "duration": 3}, ...] or None on failure.
+    """
+    import json
+    from openai import AsyncOpenAI
+    import os
+
+    try:
+        client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+        system = (
+            "You are a cinematic shot planner for Kling 3.0 multi-shot video generation.\n"
+            "Given an enhanced cinematic prompt, split it into 2-4 distinct shots.\n\n"
+            "Rules:\n"
+            "- Each shot MUST have a different camera distance (wide/medium/close/detail)\n"
+            "- Each shot duration: 1-12 seconds\n"
+            "- Total duration should be close to the target\n"
+            "- Each shot prompt: max 500 characters\n"
+            "- Maintain visual continuity between shots\n"
+            "- If element tags exist (like @element_product), include them at the END of EACH shot prompt\n\n"
+            "Respond ONLY with a JSON array, no markdown, no explanation:\n"
+            '[{"prompt": "shot description...", "duration": 3}, ...]'
+        )
+
+        user_msg = f"Target total duration: {target_duration}s\n"
+        if element_tags.strip():
+            user_msg += f"Element tags to append: {element_tags}\n"
+        user_msg += f"\nEnhanced prompt to split into shots:\n{enhanced_prompt}"
+
+        resp = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_msg},
+            ],
+            temperature=0.7,
+            max_tokens=2000,
+            response_format={"type": "json_object"},
+        )
+
+        raw = resp.choices[0].message.content.strip()
+        print(f"[MultiShot] GPT split response: {raw[:300]}...")
+
+        parsed = json.loads(raw)
+
+        # Handle both {"shots": [...]} and direct [...] formats
+        if isinstance(parsed, dict):
+            shots = parsed.get("shots") or parsed.get("multi_prompt") or list(parsed.values())[0]
+        elif isinstance(parsed, list):
+            shots = parsed
+        else:
+            print(f"[MultiShot] Unexpected format: {type(parsed)}")
+            return None
+
+        # Validate and clamp
+        valid_shots = []
+        for s in shots:
+            if isinstance(s, dict) and "prompt" in s and "duration" in s:
+                valid_shots.append({
+                    "prompt": s["prompt"][:500],
+                    "duration": max(1, min(12, int(s["duration"]))),
+                })
+
+        if len(valid_shots) < 2:
+            print(f"[MultiShot] Only {len(valid_shots)} valid shots — need at least 2")
+            return None
+
+        return valid_shots[:5]  # Kling max 5 shots
+
+    except Exception as e:
+        print(f"[MultiShot] Shot splitting failed: {e}")
+        return None
+
+
 async def _run_cinematic_clip_pipeline(
     job_id: str,
     data: VideoGenerateRequest,
@@ -740,12 +815,24 @@ async def _run_cinematic_clip_pipeline(
             print("[Cinematic] No reference images — text-to-video mode")
 
         # ── Step 2: Enhance prompt with kling_director ──
+        is_multi = data.multi_shot_mode
         await _update_video_job_via_api(token, project_id, job_id, {
-            "status_message": "Building cinematic prompt...",
+            "status_message": f"Building cinematic {'multi-shot ' if is_multi else ''}prompt...",
             "progress": 35,
         })
 
+        # If multi-shot, append an instruction so the director produces multi-shot format
+        user_prompt_for_enhance = data.prompt
+        if is_multi:
+            user_prompt_for_enhance += (
+                "\n\n[MULTI-SHOT MODE] Create a multi-shot cinematic sequence with 2-4 shots. "
+                "Use the multi-shot format with Shot 1, Shot 2, etc. "
+                f"Target total duration: {data.clip_length}s. "
+                "Each shot should have a different camera angle, distance, and action."
+            )
+
         prompt = data.prompt
+        raw_enhanced_text = ""
         try:
             enhance_context = {}
             if first_frame_url:
@@ -754,24 +841,27 @@ async def _run_cinematic_clip_pipeline(
                 enhance_context["elements"] = element_context
 
             if first_frame_url:
-                print(f"[Cinematic] Enhancing with VISION image + {len(element_context)} element(s)...")
+                print(f"[Cinematic] Enhancing with VISION image + {len(element_context)} element(s){' (multi-shot)' if is_multi else ''}...")
                 enhanced = await enhance_prompt(
-                    user_prompt=data.prompt,
+                    user_prompt=user_prompt_for_enhance,
                     mode="kling_director",
                     language=data.language,
                     context=enhance_context,
                 )
             else:
                 enhanced = await enhance_prompt(
-                    user_prompt=data.prompt,
+                    user_prompt=user_prompt_for_enhance,
                     mode="cinematic",
                     language=data.language,
                 )
             prompt = enhanced[0]["prompt"] if enhanced else data.prompt
+            # For multi-shot, we also need the raw GPT response text (before parsing)
+            raw_enhanced_text = prompt
             print(f"[Cinematic] Enhanced prompt ({len(prompt)} chars): {prompt[:100]}...")
         except Exception as e:
             print(f"[Cinematic] Prompt enhance failed (using raw): {e}")
             prompt = data.prompt
+            raw_enhanced_text = prompt
 
         # Append element tags to prompt if not already present
         if kling_elements:
@@ -784,15 +874,24 @@ async def _run_cinematic_clip_pipeline(
             prompt = re.sub(r'\s*@element_\w+', '', prompt).strip()
 
         # ── Step 3: Submit to Kling 3.0 with element refs ──
-        # In multi-shot mode, total duration = sum of shot durations
         multi_prompt_payload = None
-        if data.multi_shot_mode and data.multi_shot_prompts:
-            multi_prompt_payload = [
-                {"prompt": s.prompt, "duration": max(1, min(12, s.duration))}
-                for s in data.multi_shot_prompts
-            ]
-            duration = max(3, min(15, sum(s.duration for s in data.multi_shot_prompts)))
-            print(f"[Cinematic] Multi-shot: {len(multi_prompt_payload)} shots, total {duration}s")
+        if is_multi:
+            # Auto-split enhanced prompt into shots using GPT
+            await _update_video_job_via_api(token, project_id, job_id, {
+                "status_message": "Splitting into cinematic shots...",
+                "progress": 42,
+            })
+            multi_prompt_payload = await _split_prompt_into_shots(
+                raw_enhanced_text, data.clip_length, element_tags if kling_elements else ""
+            )
+            if multi_prompt_payload:
+                duration = max(3, min(15, sum(s["duration"] for s in multi_prompt_payload)))
+                print(f"[Cinematic] Auto-split into {len(multi_prompt_payload)} shots, total {duration}s")
+            else:
+                # Fallback: single-shot mode if splitting failed
+                print("[Cinematic] Shot splitting failed — falling back to single-shot")
+                is_multi = False
+                duration = max(3, min(15, data.clip_length))
         else:
             duration = max(3, min(15, data.clip_length))
 
