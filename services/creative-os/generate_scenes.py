@@ -106,7 +106,7 @@ def generate_video(
             "image_urls": [reference_image_url] if reference_image_url else [],
             "sound": True,
             "duration": kling_duration,
-            "aspect_ratio": "9:16",
+            "aspectRatio": "9:16",
             "mode": "pro",
             "multi_shots": is_multi,
             "multi_prompt": multi_prompt if is_multi else [],

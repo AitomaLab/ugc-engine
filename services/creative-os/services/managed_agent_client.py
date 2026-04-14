@@ -2640,10 +2640,26 @@ class ManagedAgentClient:
                         ctx.new_artifacts.clear()
 
                     # Send all results back to the session in a single batched call.
-                    await self._client.beta.sessions.events.send(
-                        session_id,
-                        events=tool_result_events,
+                    # Keepalive during the send — large payloads can take 30-60s and
+                    # intermediaries (Railway proxy, browser) kill idle SSE connections.
+                    send_task = asyncio.create_task(
+                        self._client.beta.sessions.events.send(
+                            session_id,
+                            events=tool_result_events,
+                        )
                     )
+                    send_elapsed = 0
+                    while not send_task.done():
+                        try:
+                            await asyncio.wait_for(asyncio.shield(send_task), timeout=15.0)
+                        except asyncio.TimeoutError:
+                            send_elapsed += 15
+                            yield {
+                                "type": "keepalive",
+                                "elapsed_seconds": send_elapsed,
+                                "phase": "sending_results",
+                            }
+                    await send_task
 
                     pending_tool_calls.clear()
                     # Loop back to re-open the stream for the agent's next response
@@ -2660,12 +2676,12 @@ class ManagedAgentClient:
             yield {"type": "done", "session_id": session_id}
 
         except asyncio.CancelledError:
-            # Client disconnected (Stop button or page nav). Tell Anthropic to abort.
-            print(f"[ManagedAgent] cancelled — interrupting session {session_id}")
-            try:
-                await self.interrupt_session(session_id)
-            finally:
-                raise
+            # Client disconnected (SSE reader closed — idle timeout, tab close, etc.).
+            # Do NOT interrupt the Anthropic session — the tools may still be running
+            # and the user can refresh to reconnect. Explicit Stop uses /agent/stop
+            # which calls interrupt_session separately.
+            print(f"[ManagedAgent] stream cancelled (client disconnect) — leaving session {session_id} alive")
+            raise
         except Exception as e:
             yield {"type": "error", "message": f"agent run failed: {e}"}
 

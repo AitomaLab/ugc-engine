@@ -213,7 +213,7 @@ async def _run_animation_pipeline(job_id: str, data: AnimateRequest, token: str)
                 "image_urls": [data.image_url],
                 "sound": True,
                 "duration": str(duration),
-                "aspect_ratio": "9:16",
+                "aspectRatio": "9:16",
                 "mode": data.mode,
                 "multi_shots": False,
                 "multi_prompt": [],

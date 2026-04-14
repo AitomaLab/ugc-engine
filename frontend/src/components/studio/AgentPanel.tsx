@@ -451,6 +451,15 @@ export function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse
                     setActivity('');
                     abortRef.current = null;
                     break;
+                case 'disconnected':
+                    updateLastAgentTurn((t) => ({
+                        ...t,
+                        text: (t.text ? t.text + '\n\n' : '') + 'Connection lost — work continues in the background. Refresh to reconnect.',
+                    }));
+                    setRunning(false);
+                    setActivity('');
+                    abortRef.current = null;
+                    break;
                 case 'error':
                     setError(e.message);
                     setRunning(false);

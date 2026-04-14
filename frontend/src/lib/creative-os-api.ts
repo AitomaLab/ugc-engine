@@ -221,7 +221,8 @@ export type AgentStreamEvent =
     | { type: 'artifact'; artifact: AgentArtifact }
     | { type: 'done'; session_id: string }
     | { type: 'interrupted' }
-    | { type: 'keepalive'; tool_use_id: string; elapsed_seconds: number }
+    | { type: 'keepalive'; tool_use_id?: string; elapsed_seconds: number; phase?: string }
+    | { type: 'disconnected' }
     | { type: 'error'; message: string };
 
 /** Load the persisted thread for the current project. */
@@ -305,10 +306,30 @@ export async function streamAgent(
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    let sawToolCall = false;
+    let sawDone = false;
 
     while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
+        let value: Uint8Array | undefined;
+        let done = false;
+        try {
+            const r = await reader.read();
+            value = r.value;
+            done = r.done;
+        } catch (err) {
+            // Connection dropped mid-stream. If tools were in flight, treat it as
+            // a soft disconnect — backend keeps running, user can refresh to
+            // reconnect. Otherwise surface the original error.
+            if (sawToolCall && !sawDone) {
+                onEvent({ type: 'disconnected' });
+                return;
+            }
+            throw err;
+        }
+        if (done) {
+            if (sawToolCall && !sawDone) onEvent({ type: 'disconnected' });
+            break;
+        }
         buffer += decoder.decode(value, { stream: true });
 
         // Parse complete SSE frames (separated by blank lines).
@@ -327,6 +348,8 @@ export async function streamAgent(
             const payload = dataLines.join('\n');
             try {
                 const parsed = JSON.parse(payload) as AgentStreamEvent;
+                if (parsed.type === 'tool_call') sawToolCall = true;
+                if (parsed.type === 'done') sawDone = true;
                 onEvent(parsed);
             } catch (err) {
                 console.warn('agent SSE parse error:', err, payload);
