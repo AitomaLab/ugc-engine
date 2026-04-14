@@ -8,6 +8,7 @@ import {
     stopAgent,
     streamAgent,
     uploadAgentFile,
+    transcribeAudio,
     type AgentTurn,
     type AgentArtifact,
     type AgentRef,
@@ -18,6 +19,10 @@ import { supabase } from '@/lib/supabaseClient';
 interface AgentPanelProps {
     projectId: string;
     onArtifact?: () => void;
+    /** When true, renders as a full-height embedded panel instead of a floating modal. */
+    embedded?: boolean;
+    /** When set in embedded mode, shows a collapse button in the header that calls this. */
+    onCollapse?: () => void;
 }
 
 interface MentionItem {
@@ -43,11 +48,11 @@ function slugify(s: string): string {
     return (s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 }
 
-export function AgentPanel({ projectId, onArtifact }: AgentPanelProps) {
+export function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse }: AgentPanelProps) {
     const [open, setOpen] = useState(false);
     const [brief, setBrief] = useState('');
     const [turns, setTurns] = useState<AgentTurn[]>([]);
-    const [, setSessionId] = useState<string | null>(null);
+    const [sessionId, setSessionId] = useState<string | null>(null);
     const [running, setRunning] = useState(false);
     const [activity, setActivity] = useState<string>('');
     const [error, setError] = useState<string | null>(null);
@@ -143,6 +148,15 @@ export function AgentPanel({ projectId, onArtifact }: AgentPanelProps) {
     const [mentionFilter, setMentionFilter] = useState('');
     const [mentionIndex, setMentionIndex] = useState(0);
     const [mentionCursorStart, setMentionCursorStart] = useState(0);
+    // Composer "+" menu state
+    const [menuOpen, setMenuOpen] = useState(false);
+    const [historyOpen, setHistoryOpen] = useState(false);
+    // Voice dictation state
+    const [recording, setRecording] = useState(false);
+    const [transcribing, setTranscribing] = useState(false);
+    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+    const audioChunksRef = useRef<Blob[]>([]);
+    const audioStreamRef = useRef<MediaStream | null>(null);
     // Refs the user has actually inserted into the current draft, keyed by tag.
     const [activeRefs, setActiveRefs] = useState<Map<string, AgentRef>>(new Map());
 
@@ -255,7 +269,10 @@ export function AgentPanel({ projectId, onArtifact }: AgentPanelProps) {
 
     // Hydrate when panel opens or project changes
     useEffect(() => {
-        if (!open || !projectId) return;
+        // In embedded mode, hydrate immediately on mount (no `open` gate).
+        // In floating mode, only hydrate when the panel is opened.
+        if (!embedded && !open) return;
+        if (!projectId) return;
         let cancelled = false;
         setHydrating(true);
         getAgentThread(projectId)
@@ -274,7 +291,7 @@ export function AgentPanel({ projectId, onArtifact }: AgentPanelProps) {
         return () => {
             cancelled = true;
         };
-    }, [open, projectId]);
+    }, [open, projectId, embedded]);
 
     // Auto-scroll on new content
     useEffect(() => {
@@ -489,6 +506,25 @@ export function AgentPanel({ projectId, onArtifact }: AgentPanelProps) {
         }, 0);
     }, [brief, mentionCursorStart]);
 
+    const openReferenceDropdown = useCallback(() => {
+        const el = textareaRef.current;
+        const cursor = el?.selectionStart ?? brief.length;
+        const before = brief.slice(0, cursor);
+        const after = brief.slice(cursor);
+        const newBrief = before + '@' + after;
+        setBrief(newBrief);
+        setMentionFilter('');
+        setMentionCursorStart(cursor);
+        setMentionIndex(0);
+        if (!mentionsLoaded) loadMentionData();
+        setMentionOpen(true);
+        setTimeout(() => {
+            const pos = cursor + 1;
+            textareaRef.current?.focus();
+            textareaRef.current?.setSelectionRange(pos, pos);
+        }, 0);
+    }, [brief, mentionsLoaded, loadMentionData]);
+
     const handleBriefKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
         if (mentionOpen && orderedMentions.length > 0) {
             if (e.key === 'ArrowDown') {
@@ -512,11 +548,66 @@ export function AgentPanel({ projectId, onArtifact }: AgentPanelProps) {
                 return;
             }
         }
-        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             handleRun();
         }
     };
+
+    const startRecording = useCallback(async () => {
+        if (recording || transcribing) return;
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            audioStreamRef.current = stream;
+            const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+                ? 'audio/webm;codecs=opus'
+                : MediaRecorder.isTypeSupported('audio/webm')
+                    ? 'audio/webm'
+                    : MediaRecorder.isTypeSupported('audio/mp4')
+                        ? 'audio/mp4'
+                        : '';
+            const recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+            audioChunksRef.current = [];
+            recorder.ondataavailable = (e) => {
+                if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data);
+            };
+            recorder.onstop = async () => {
+                const chunks = audioChunksRef.current;
+                audioChunksRef.current = [];
+                audioStreamRef.current?.getTracks().forEach((t) => t.stop());
+                audioStreamRef.current = null;
+                if (chunks.length === 0) return;
+                const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+                setTranscribing(true);
+                try {
+                    const { text } = await transcribeAudio(blob);
+                    if (text) {
+                        setBrief((prev) => {
+                            const sep = prev && !prev.endsWith(' ') ? ' ' : '';
+                            return prev + sep + text;
+                        });
+                        setTimeout(() => textareaRef.current?.focus(), 0);
+                    }
+                } catch (err) {
+                    setError(err instanceof Error ? err.message : String(err));
+                } finally {
+                    setTranscribing(false);
+                }
+            };
+            mediaRecorderRef.current = recorder;
+            recorder.start();
+            setRecording(true);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Microphone access denied');
+        }
+    }, [recording, transcribing]);
+
+    const stopRecording = useCallback(() => {
+        const r = mediaRecorderRef.current;
+        if (r && r.state !== 'inactive') r.stop();
+        mediaRecorderRef.current = null;
+        setRecording(false);
+    }, []);
 
     const handleStop = useCallback(() => {
         abortRef.current?.abort();
@@ -536,57 +627,17 @@ export function AgentPanel({ projectId, onArtifact }: AgentPanelProps) {
         }
     }, [projectId]);
 
-    return (
-        <>
-            {!open && (
-                <button
-                    onClick={() => setOpen(true)}
-                    title="Run AI agent"
-                    style={{
-                        position: 'fixed',
-                        right: '24px',
-                        bottom: '120px',
-                        zIndex: 950,
-                        padding: '12px 18px',
-                        borderRadius: '999px',
-                        border: 'none',
-                        cursor: 'pointer',
-                        background: 'linear-gradient(135deg, #337AFF 0%, #5B8FFF 100%)',
-                        color: 'white',
-                        fontSize: '13px',
-                        fontWeight: 600,
-                        boxShadow: '0 6px 24px rgba(51,122,255,0.35)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                    }}
-                >
-                    <svg viewBox="0 0 24 24" style={{ width: '16px', height: '16px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
-                        <path d="M12 2 L13.5 8.5 L20 10 L13.5 11.5 L12 18 L10.5 11.5 L4 10 L10.5 8.5 Z" />
-                    </svg>
-                    Agent
-                </button>
-            )}
-
-            {open && (
-                <div
-                    style={{
-                        position: 'fixed',
-                        right: '24px',
-                        bottom: '24px',
-                        zIndex: 950,
-                        width: '480px',
-                        height: 'calc(100vh - 80px)',
-                        maxHeight: '720px',
-                        background: 'white',
-                        borderRadius: '16px',
-                        boxShadow: '0 20px 60px rgba(13,27,62,0.18)',
-                        border: '1px solid rgba(51,122,255,0.12)',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        overflow: 'hidden',
-                    }}
-                >
+    // Shared inner content: used by both embedded (full-height) and floating (modal) modes.
+    const panelContent = (
+        <div
+            style={{
+                display: 'flex',
+                flexDirection: 'column',
+                height: '100%',
+                width: '100%',
+                overflow: 'hidden',
+            }}
+        >
                     {/* Header */}
                     <div
                         style={{
@@ -629,23 +680,47 @@ export function AgentPanel({ projectId, onArtifact }: AgentPanelProps) {
                                     <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
                                 </svg>
                             </button>
-                            <button
-                                onClick={() => setOpen(false)}
-                                title="Close"
-                                style={{
-                                    width: '28px',
-                                    height: '28px',
-                                    borderRadius: '6px',
-                                    border: 'none',
-                                    background: 'transparent',
-                                    cursor: 'pointer',
-                                    color: '#8A93B0',
-                                    fontSize: '20px',
-                                    lineHeight: 1,
-                                }}
-                            >
-                                ×
-                            </button>
+                            {embedded && onCollapse && (
+                                <button
+                                    onClick={onCollapse}
+                                    title="Collapse agent panel"
+                                    style={{
+                                        width: '28px',
+                                        height: '28px',
+                                        borderRadius: '6px',
+                                        border: 'none',
+                                        background: 'transparent',
+                                        cursor: 'pointer',
+                                        color: '#8A93B0',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                    }}
+                                >
+                                    <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
+                                        <polyline points="15 18 9 12 15 6" />
+                                    </svg>
+                                </button>
+                            )}
+                            {!embedded && (
+                                <button
+                                    onClick={() => setOpen(false)}
+                                    title="Close"
+                                    style={{
+                                        width: '28px',
+                                        height: '28px',
+                                        borderRadius: '6px',
+                                        border: 'none',
+                                        background: 'transparent',
+                                        cursor: 'pointer',
+                                        color: '#8A93B0',
+                                        fontSize: '20px',
+                                        lineHeight: 1,
+                                    }}
+                                >
+                                    ×
+                                </button>
+                            )}
                         </div>
                     </div>
 
@@ -786,38 +861,46 @@ export function AgentPanel({ projectId, onArtifact }: AgentPanelProps) {
                                 e.target.value = '';
                             }}
                         />
-                        <textarea
-                            ref={textareaRef}
-                            value={brief}
-                            onChange={handleBriefChange}
-                            onKeyDown={handleBriefKeyDown}
-                            placeholder="Ask the agent… use @ to reference products, models, images, or videos"
-                            disabled={running}
-                            rows={2}
-                            style={{
-                                width: '100%',
-                                padding: '8px 10px',
-                                border: '1px solid rgba(13,27,62,0.12)',
-                                borderRadius: '10px',
-                                fontSize: '13px',
-                                fontFamily: 'inherit',
-                                color: '#0D1B3E',
-                                resize: 'none',
-                                outline: 'none',
-                                background: running ? 'rgba(13,27,62,0.03)' : 'white',
-                                marginBottom: '8px',
-                            }}
-                        />
-                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                            <button
-                                onClick={() => fileInputRef.current?.click()}
+                        <div style={{ position: 'relative' }}>
+                            <textarea
+                                ref={textareaRef}
+                                value={brief}
+                                onChange={handleBriefChange}
+                                onKeyDown={handleBriefKeyDown}
+                                placeholder="Ask the agent… use @ to reference products, models, images, or videos"
                                 disabled={running}
-                                title="Attach image or video"
+                                rows={3}
                                 style={{
-                                    width: '38px',
-                                    height: '38px',
-                                    flexShrink: 0,
-                                    borderRadius: '10px',
+                                    width: '100%',
+                                    paddingTop: '10px',
+                                    paddingBottom: '44px',
+                                    paddingLeft: '12px',
+                                    paddingRight: '84px',
+                                    border: '1px solid rgba(13,27,62,0.12)',
+                                    borderRadius: '12px',
+                                    fontSize: '13px',
+                                    fontFamily: 'inherit',
+                                    color: '#0D1B3E',
+                                    resize: 'none',
+                                    outline: 'none',
+                                    background: running ? 'rgba(13,27,62,0.03)' : 'white',
+                                    display: 'block',
+                                }}
+                            />
+                            <button
+                                onClick={() => {
+                                    setHistoryOpen(false);
+                                    setMenuOpen((v) => !v);
+                                }}
+                                disabled={running}
+                                title="Add attachment, reference, or history"
+                                style={{
+                                    position: 'absolute',
+                                    left: '8px',
+                                    bottom: '8px',
+                                    width: '30px',
+                                    height: '30px',
+                                    borderRadius: '8px',
                                     border: '1px solid rgba(13,27,62,0.12)',
                                     background: running ? 'rgba(13,27,62,0.03)' : 'white',
                                     cursor: running ? 'not-allowed' : 'pointer',
@@ -825,24 +908,67 @@ export function AgentPanel({ projectId, onArtifact }: AgentPanelProps) {
                                     display: 'flex',
                                     alignItems: 'center',
                                     justifyContent: 'center',
+                                    padding: 0,
                                 }}
                             >
-                                <svg viewBox="0 0 24 24" style={{ width: '18px', height: '18px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
-                                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                                <svg viewBox="0 0 24 24" style={{ width: '16px', height: '16px', fill: 'none', stroke: 'currentColor', strokeWidth: '2.2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
+                                    <line x1="12" y1="5" x2="12" y2="19" />
+                                    <line x1="5" y1="12" x2="19" y2="12" />
                                 </svg>
                             </button>
+                            {!running && (
+                                <button
+                                    onClick={recording ? stopRecording : startRecording}
+                                    disabled={transcribing}
+                                    title={recording ? 'Stop recording' : transcribing ? 'Transcribing…' : 'Dictate'}
+                                    style={{
+                                        position: 'absolute',
+                                        right: '46px',
+                                        bottom: '8px',
+                                        width: '30px',
+                                        height: '30px',
+                                        borderRadius: '50%',
+                                        border: '1px solid rgba(13,27,62,0.12)',
+                                        cursor: transcribing ? 'wait' : 'pointer',
+                                        background: recording ? 'rgba(255,82,82,0.12)' : 'white',
+                                        color: recording ? '#C53030' : transcribing ? '#8A93B0' : '#0D1B3E',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        padding: 0,
+                                    }}
+                                >
+                                    {transcribing ? (
+                                        <span style={{ display: 'flex', gap: '2px' }}>
+                                            <span style={{ width: '4px', height: '4px', borderRadius: '50%', background: 'currentColor', animation: 'pulse 1s ease-in-out infinite' }} />
+                                            <span style={{ width: '4px', height: '4px', borderRadius: '50%', background: 'currentColor', animation: 'pulse 1s ease-in-out 0.15s infinite' }} />
+                                            <span style={{ width: '4px', height: '4px', borderRadius: '50%', background: 'currentColor', animation: 'pulse 1s ease-in-out 0.3s infinite' }} />
+                                        </span>
+                                    ) : (
+                                        <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
+                                            <rect x="9" y="3" width="6" height="12" rx="3" />
+                                            <path d="M5 11a7 7 0 0 0 14 0" />
+                                            <line x1="12" y1="18" x2="12" y2="22" />
+                                        </svg>
+                                    )}
+                                </button>
+                            )}
                             {running ? (
                                 <button
                                     onClick={handleStop}
+                                    title="Stop"
                                     style={{
-                                        flex: 1,
-                                        padding: '9px 14px',
-                                        borderRadius: '10px',
+                                        position: 'absolute',
+                                        right: '8px',
+                                        bottom: '8px',
+                                        height: '30px',
+                                        padding: '0 12px',
+                                        borderRadius: '8px',
                                         border: '1px solid rgba(255,82,82,0.3)',
                                         cursor: 'pointer',
                                         background: 'rgba(255,82,82,0.08)',
                                         color: '#C53030',
-                                        fontSize: '13px',
+                                        fontSize: '12px',
                                         fontWeight: 600,
                                     }}
                                 >
@@ -856,34 +982,142 @@ export function AgentPanel({ projectId, onArtifact }: AgentPanelProps) {
                                     <button
                                         onClick={handleRun}
                                         disabled={!canSend}
+                                        title={uploading ? 'Uploading…' : 'Send'}
                                         style={{
-                                            flex: 1,
-                                            padding: '9px 14px',
-                                            borderRadius: '10px',
+                                            position: 'absolute',
+                                            right: '8px',
+                                            bottom: '8px',
+                                            width: '30px',
+                                            height: '30px',
+                                            borderRadius: '50%',
                                             border: 'none',
-                                            cursor: !canSend ? 'not-allowed' : 'pointer',
-                                            background: !canSend
-                                                ? 'rgba(13,27,62,0.08)'
-                                                : 'linear-gradient(135deg, #337AFF 0%, #5B8FFF 100%)',
-                                            color: !canSend ? '#8A93B0' : 'white',
-                                            fontSize: '13px',
-                                            fontWeight: 600,
+                                            cursor: canSend ? 'pointer' : 'not-allowed',
+                                            background: canSend
+                                                ? 'linear-gradient(135deg, #337AFF 0%, #5B8FFF 100%)'
+                                                : 'rgba(13,27,62,0.18)',
+                                            color: 'white',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            padding: 0,
+                                            transition: 'background 0.15s ease',
                                         }}
                                     >
-                                        {uploading ? 'Uploading…' : 'Send'}
+                                        <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: '2.4', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
+                                            <line x1="12" y1="19" x2="12" y2="5" />
+                                            <polyline points="5 12 12 5 19 12" />
+                                        </svg>
                                     </button>
                                 );
                             })()}
+                            {menuOpen && (
+                                <ComposerMenu
+                                    onAttach={() => {
+                                        setMenuOpen(false);
+                                        fileInputRef.current?.click();
+                                    }}
+                                    onReference={() => {
+                                        setMenuOpen(false);
+                                        openReferenceDropdown();
+                                    }}
+                                    onHistory={() => {
+                                        setMenuOpen(false);
+                                        setHistoryOpen(true);
+                                    }}
+                                    onClose={() => setMenuOpen(false)}
+                                />
+                            )}
+                            {historyOpen && (
+                                <HistoryPopover
+                                    items={orderedMentions.filter((m) => m.type === 'image' || m.type === 'video')}
+                                    onPick={(m) => {
+                                        insertMention(m);
+                                        setHistoryOpen(false);
+                                    }}
+                                    onClose={() => setHistoryOpen(false)}
+                                />
+                            )}
                         </div>
                     </div>
+        </div>
+    );
+
+    // Keyframes shared across both render modes.
+    const keyframes = (
+        <style jsx>{`
+            @keyframes pulse {
+                0%, 100% { opacity: 0.4; transform: scale(0.85); }
+                50% { opacity: 1; transform: scale(1.15); }
+            }
+        `}</style>
+    );
+
+    // Embedded mode: render panel content directly (parent controls dimensions).
+    if (embedded) {
+        return (
+            <>
+                {panelContent}
+                {keyframes}
+            </>
+        );
+    }
+
+    // Floating mode: preserve the existing FAB + fixed-position modal overlay.
+    return (
+        <>
+            {!open && (
+                <button
+                    onClick={() => setOpen(true)}
+                    title="Run AI agent"
+                    style={{
+                        position: 'fixed',
+                        right: '24px',
+                        bottom: '120px',
+                        zIndex: 950,
+                        padding: '12px 18px',
+                        borderRadius: '999px',
+                        border: 'none',
+                        cursor: 'pointer',
+                        background: 'linear-gradient(135deg, #337AFF 0%, #5B8FFF 100%)',
+                        color: 'white',
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        boxShadow: '0 6px 24px rgba(51,122,255,0.35)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                    }}
+                >
+                    <svg viewBox="0 0 24 24" style={{ width: '16px', height: '16px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
+                        <path d="M12 2 L13.5 8.5 L20 10 L13.5 11.5 L12 18 L10.5 11.5 L4 10 L10.5 8.5 Z" />
+                    </svg>
+                    Agent
+                </button>
+            )}
+
+            {open && (
+                <div
+                    style={{
+                        position: 'fixed',
+                        right: '24px',
+                        bottom: '24px',
+                        zIndex: 950,
+                        width: '480px',
+                        height: 'calc(100vh - 80px)',
+                        maxHeight: '720px',
+                        background: 'white',
+                        borderRadius: '16px',
+                        boxShadow: '0 20px 60px rgba(13,27,62,0.18)',
+                        border: '1px solid rgba(51,122,255,0.12)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        overflow: 'hidden',
+                    }}
+                >
+                    {panelContent}
                 </div>
             )}
-            <style jsx>{`
-                @keyframes pulse {
-                    0%, 100% { opacity: 0.4; transform: scale(0.85); }
-                    50% { opacity: 1; transform: scale(1.15); }
-                }
-            `}</style>
+            {keyframes}
         </>
     );
 }
@@ -1007,6 +1241,215 @@ function renderMessageContent(
         parts.push(text.slice(lastIndex));
     }
     return parts;
+}
+
+function ComposerMenu({
+    onAttach,
+    onReference,
+    onHistory,
+    onClose,
+}: {
+    onAttach: () => void;
+    onReference: () => void;
+    onHistory: () => void;
+    onClose: () => void;
+}) {
+    const rootRef = useRef<HTMLDivElement | null>(null);
+    useEffect(() => {
+        const onDocMouseDown = (e: MouseEvent) => {
+            if (!rootRef.current) return;
+            if (!rootRef.current.contains(e.target as Node)) onClose();
+        };
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') onClose();
+        };
+        document.addEventListener('mousedown', onDocMouseDown);
+        document.addEventListener('keydown', onKey);
+        return () => {
+            document.removeEventListener('mousedown', onDocMouseDown);
+            document.removeEventListener('keydown', onKey);
+        };
+    }, [onClose]);
+
+    const item = (label: string, icon: React.ReactNode, onClick: () => void) => (
+        <button
+            onClick={onClick}
+            style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                width: '100%',
+                padding: '9px 12px',
+                border: 'none',
+                background: 'transparent',
+                cursor: 'pointer',
+                fontSize: '13px',
+                color: '#0D1B3E',
+                textAlign: 'left',
+                borderRadius: '8px',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(51,122,255,0.08)')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+        >
+            <span style={{ color: '#337AFF', display: 'flex' }}>{icon}</span>
+            {label}
+        </button>
+    );
+
+    return (
+        <div
+            ref={rootRef}
+            style={{
+                position: 'absolute',
+                left: '4px',
+                bottom: '46px',
+                width: '180px',
+                background: 'white',
+                border: '1px solid rgba(13,27,62,0.1)',
+                borderRadius: '10px',
+                boxShadow: '0 8px 24px rgba(13,27,62,0.12)',
+                padding: '4px',
+                zIndex: 20,
+            }}
+        >
+            {item(
+                'Attach',
+                <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
+                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                </svg>,
+                onAttach,
+            )}
+            {item(
+                'Reference',
+                <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
+                    <circle cx="12" cy="12" r="4" />
+                    <path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.92 7.94" />
+                </svg>,
+                onReference,
+            )}
+            {item(
+                'History',
+                <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
+                    <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+                    <polyline points="3 3 3 8 8 8" />
+                    <polyline points="12 7 12 12 15 14" />
+                </svg>,
+                onHistory,
+            )}
+        </div>
+    );
+}
+
+function HistoryPopover({
+    items,
+    onPick,
+    onClose,
+}: {
+    items: MentionItem[];
+    onPick: (m: MentionItem) => void;
+    onClose: () => void;
+}) {
+    const rootRef = useRef<HTMLDivElement | null>(null);
+    useEffect(() => {
+        const onDocMouseDown = (e: MouseEvent) => {
+            if (!rootRef.current) return;
+            if (!rootRef.current.contains(e.target as Node)) onClose();
+        };
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') onClose();
+        };
+        document.addEventListener('mousedown', onDocMouseDown);
+        document.addEventListener('keydown', onKey);
+        return () => {
+            document.removeEventListener('mousedown', onDocMouseDown);
+            document.removeEventListener('keydown', onKey);
+        };
+    }, [onClose]);
+
+    return (
+        <div
+            ref={rootRef}
+            style={{
+                position: 'absolute',
+                left: '4px',
+                bottom: '46px',
+                width: '280px',
+                maxHeight: '320px',
+                overflowY: 'auto',
+                background: 'white',
+                border: '1px solid rgba(13,27,62,0.1)',
+                borderRadius: '10px',
+                boxShadow: '0 8px 24px rgba(13,27,62,0.12)',
+                padding: '4px',
+                zIndex: 20,
+            }}
+        >
+            {items.length === 0 ? (
+                <div style={{ padding: '16px 12px', fontSize: '12px', color: '#8A93B0', textAlign: 'center' }}>
+                    No generations yet in this project.
+                </div>
+            ) : (
+                items.map((m) => (
+                    <button
+                        key={`${m.type}:${m.tag}`}
+                        onClick={() => onPick(m)}
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            width: '100%',
+                            padding: '6px 8px',
+                            border: 'none',
+                            background: 'transparent',
+                            cursor: 'pointer',
+                            textAlign: 'left',
+                            borderRadius: '8px',
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(51,122,255,0.08)')}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                    >
+                        <div
+                            style={{
+                                width: '32px',
+                                height: '32px',
+                                borderRadius: '6px',
+                                background: 'rgba(13,27,62,0.06)',
+                                overflow: 'hidden',
+                                flexShrink: 0,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                            }}
+                        >
+                            {m.image_url ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={m.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            ) : (
+                                <span style={{ fontSize: '10px', color: '#8A93B0' }}>{m.type}</span>
+                            )}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                            <div
+                                style={{
+                                    fontSize: '12px',
+                                    color: '#0D1B3E',
+                                    fontWeight: 500,
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                }}
+                            >
+                                {m.name}
+                            </div>
+                            <div style={{ fontSize: '10px', color: '#8A93B0', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                {m.type}
+                            </div>
+                        </div>
+                    </button>
+                ))
+            )}
+        </div>
+    );
 }
 
 function TurnBubble({ turn, refMap }: { turn: AgentTurn; refMap: Map<string, AgentRef> }) {

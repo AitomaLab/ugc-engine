@@ -25,6 +25,23 @@ function modeLabel(api?: string): string {
     return '';
 }
 
+/* ── Responsive hook: split layout only on >=1024px viewports ─── */
+function useIsWide(): boolean {
+    const [isWide, setIsWide] = useState<boolean>(() => {
+        if (typeof window === 'undefined') return true; // SSR: assume desktop
+        return window.matchMedia('(min-width: 1024px)').matches;
+    });
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const mq = window.matchMedia('(min-width: 1024px)');
+        const onChange = (e: MediaQueryListEvent) => setIsWide(e.matches);
+        // matchMedia listeners use addEventListener in modern browsers.
+        mq.addEventListener('change', onChange);
+        return () => mq.removeEventListener('change', onChange);
+    }, []);
+    return isWide;
+}
+
 
 /* ── Main Page Component ─────────────────────────────────────── */
 
@@ -48,6 +65,9 @@ export default function ProjectContainerPage() {
     const [filterProduct, setFilterProduct] = useState('');
     const [filterInfluencer, setFilterInfluencer] = useState('');
     const [filterMode, setFilterMode] = useState('');
+
+    // ── Agent panel visibility (split-panel layout only) ──
+    const [agentOpen, setAgentOpen] = useState(true);
 
     const fetchAssets = useCallback(async (silent = false) => {
         if (!session || !projectId) return;
@@ -177,12 +197,11 @@ export default function ProjectContainerPage() {
         setIsEditing(false);
     };
 
-    return (
-        <div style={{
-            padding: '32px 32px 140px',
-            maxWidth: '1200px',
-            margin: '0 auto',
-        }}>
+    const isWide = useIsWide();
+
+    /* ── Header + filters block (shared between layouts) ─────── */
+    const headerBlock = (
+        <>
             {/* Breadcrumb + Title */}
             <div style={{ marginBottom: '28px' }}>
                 <a
@@ -404,35 +423,148 @@ export default function ProjectContainerPage() {
                     </span>
                 )}
             </div>
+        </>
+    );
 
-            {/* Gallery */}
-            <AssetGallery
-                assets={filteredAssets}
-                type={activeTab}
-                loading={loading}
-                projectId={projectId}
-                onRefresh={() => fetchAssets(true)}
-                onAnimated={() => {
-                    setActiveTab('videos');
-                    fetchAssets(true);
-                }}
-                onCreateVideo={(asset) => {
-                    setCreateVideoImage(asset);
-                    setActiveTab('videos');
-                }}
-            />
+    const galleryBlock = (
+        <AssetGallery
+            assets={filteredAssets}
+            type={activeTab}
+            loading={loading}
+            projectId={projectId}
+            onRefresh={() => fetchAssets(true)}
+            onAnimated={() => {
+                setActiveTab('videos');
+                fetchAssets(true);
+            }}
+            onCreateVideo={(asset) => {
+                setCreateVideoImage(asset);
+                setActiveTab('videos');
+            }}
+        />
+    );
 
-            {/* Create Bar */}
-            <CreateBar
-                activeTab={activeTab}
-                projectId={projectId}
-                onGenerated={() => fetchAssets(true)}
-                preloadImage={createVideoImage}
-                onPreloadConsumed={() => setCreateVideoImage(null)}
-            />
+    const createBarBlock = (
+        <CreateBar
+            activeTab={activeTab}
+            projectId={projectId}
+            onGenerated={() => fetchAssets(true)}
+            preloadImage={createVideoImage}
+            onPreloadConsumed={() => setCreateVideoImage(null)}
+        />
+    );
 
-            {/* Managed Agent test panel */}
-            <AgentPanel projectId={projectId} onArtifact={() => fetchAssets(true)} />
+    // Narrow viewports (< 1024px): preserve the original single-column layout
+    // with the floating AgentPanel. Nothing changes for mobile/tablet users.
+    if (!isWide) {
+        return (
+            <div style={{
+                padding: '32px 32px 140px',
+                maxWidth: '1200px',
+                margin: '0 auto',
+            }}>
+                {headerBlock}
+                {galleryBlock}
+                {createBarBlock}
+                <AgentPanel projectId={projectId} onArtifact={() => fetchAssets(true)} />
+            </div>
+        );
+    }
+
+    // Desktop (>= 1024px): split-panel layout — agent on the left, gallery on the right.
+    // CreateBar uses position:fixed internally. By giving the right column a
+    // `transform` we make it the containing block for fixed descendants, so
+    // CreateBar's `left: 50%` centers within the right column instead of the viewport.
+    return (
+        <div style={{
+            display: 'flex',
+            // Pin below the fixed 60px header, fill the rest of the viewport.
+            // Using position:fixed (instead of height:100vh inside flow) bypasses
+            // .app-body's min-height + padding-bottom, which would otherwise make
+            // the document taller than the viewport and create a scrollable gap.
+            position: 'fixed',
+            top: 'var(--header-h, 60px)',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            overflow: 'hidden',
+            background: '#F8FAFC',
+        }}>
+            {/* Left column: Aitoma creative director (collapsible) */}
+            {agentOpen && (
+                <div style={{
+                    width: '38%',
+                    minWidth: '360px',
+                    maxWidth: '520px',
+                    borderRight: '1px solid rgba(13,27,62,0.07)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    background: '#FFFFFF',
+                    flexShrink: 0,
+                    overflow: 'hidden',
+                }}>
+                    <AgentPanel
+                        projectId={projectId}
+                        onArtifact={() => fetchAssets(true)}
+                        embedded={true}
+                        onCollapse={() => setAgentOpen(false)}
+                    />
+                </div>
+            )}
+
+            {/* Right column: gallery. `transform` creates a containing block so the
+                fixed-position CreateBar centers within this column, not the viewport. */}
+            <div style={{
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+                minWidth: 0,
+                position: 'relative',
+                transform: 'translateZ(0)',
+            }}>
+                {/* "Show agent" affordance when the left panel is collapsed */}
+                {!agentOpen && (
+                    <button
+                        onClick={() => setAgentOpen(true)}
+                        title="Show agent panel"
+                        style={{
+                            position: 'absolute',
+                            left: '12px',
+                            top: '50%',
+                            transform: 'translateY(-50%)',
+                            zIndex: 10,
+                            width: '32px',
+                            height: '56px',
+                            borderRadius: '0 10px 10px 0',
+                            border: '1px solid rgba(13,27,62,0.08)',
+                            borderLeft: 'none',
+                            background: 'white',
+                            cursor: 'pointer',
+                            color: '#337AFF',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            boxShadow: '2px 2px 12px rgba(13,27,62,0.08)',
+                        }}
+                    >
+                        <svg viewBox="0 0 24 24" style={{ width: '16px', height: '16px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
+                            <polyline points="9 18 15 12 9 6" />
+                        </svg>
+                    </button>
+                )}
+                <div style={{ padding: '28px 28px 0', flexShrink: 0 }}>
+                    {headerBlock}
+                </div>
+                <div style={{
+                    flex: 1,
+                    overflowY: 'auto',
+                    padding: '0 28px 160px', // bottom padding clears the fixed CreateBar
+                }}>
+                    {galleryBlock}
+                </div>
+                {createBarBlock}
+            </div>
         </div>
     );
 }

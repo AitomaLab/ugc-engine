@@ -150,6 +150,26 @@ export async function uploadAgentFile(file: File): Promise<UploadResult> {
     return res.json();
 }
 
+/** Transcribe a recorded audio blob via ElevenLabs Scribe. */
+export async function transcribeAudio(blob: Blob): Promise<{ text: string; language: string }> {
+    const token = await getAuthToken();
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const form = new FormData();
+    const ext = blob.type.includes('webm') ? 'webm' : blob.type.includes('mp4') ? 'mp4' : blob.type.includes('ogg') ? 'ogg' : 'wav';
+    form.append('file', blob, `dictation.${ext}`);
+    const res = await fetch(`${CREATIVE_OS_URL}/creative-os/transcribe`, {
+        method: 'POST',
+        headers,
+        body: form,
+    });
+    if (!res.ok) {
+        const error = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(error.detail || `Transcription failed: ${res.status}`);
+    }
+    return res.json();
+}
+
 // ── Managed Agent ──────────────────────────────────────────────────────
 export interface AgentArtifact {
     type: 'image' | 'video';

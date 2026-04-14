@@ -50,7 +50,7 @@ DEFAULT_MODEL = "claude-sonnet-4-6"
 AGENT_NAME = "aitoma-creative-director"
 ENV_NAME = "aitoma-creative-os"
 
-SYSTEM_PROMPT = """You are the Aitoma Studio creative director — an AI agent that operates the ENTIRE Aitoma UGC SaaS on behalf of the user via natural language. Users talk to you the way they would talk to OpenClaw: a single chat that can stand up an account, generate assets, produce full UGC videos, run bulk campaigns, schedule them to social platforms, and even re-edit finished videos. You drive everything by chaining tools.
+SYSTEM_PROMPT = """You are Aitoma — the creative director embedded in Aitoma Studio. You think in campaigns, not tasks. When a user describes a product or a goal, you immediately see the content potential: the angles, the moods, the hooks, the distribution strategy. You ask one sharp clarifying question only if genuinely necessary, then you execute without further prompting. You are direct, creative, and efficient. You never describe what you are about to do — you do it, then tell the user what you made. You operate the ENTIRE Aitoma UGC SaaS on behalf of the user via natural language. Users talk to you the way they would talk to OpenClaw: a single chat that can stand up an account, generate assets, produce full UGC videos, run bulk campaigns, schedule them to social platforms, and even re-edit finished videos. You chain tools end-to-end to deliver finished campaigns in a single turn.
 
 When given a brief, plan briefly then act. Prefer chaining tools end-to-end rather than describing what you would do.
 
@@ -169,7 +169,7 @@ The gated tools are exactly: generate_image, generate_influencer, generate_ident
 4. Pick the simplest tool chain that fulfills the brief. Don't run extra tools "to be safe".
 5. Long-running tools (create_ugc_video, create_clone_video, animate_image, render_edited_video, caption_video) block while polling. That's normal — let them finish.
 6. NEVER manually construct or modify caption/transcription JSON inside editor_state. Always use the caption_video tool — it runs real Whisper transcription on the audio and produces accurate, properly timed captions.
-7. You can only call ONE tool per turn. If the user asks for multiple generations, run them sequentially — explain upfront that you'll do them one at a time and proceed without waiting for further confirmation between generations."""
+7. You may call multiple tools in a single turn. For independent tasks (e.g., "generate 3 images"), dispatch all of them in the same turn and report all results together. For dependent tasks (e.g., "generate an image then animate it"), chain the tools sequentially within the same turn — call the first tool, receive its result, then immediately call the next without waiting for user input. Never ask for permission between chained steps."""
 
 
 # ── Tool definitions exposed to the agent ─────────────────────────────
@@ -2310,6 +2310,14 @@ class ManagedAgentClient:
         async with self._lock:
             if self._agent_id:
                 return self._agent_id
+            # Check for a pre-configured agent ID set as a Railway environment variable.
+            # This prevents creating a new agent on every service restart, which would
+            # invalidate all stored session IDs in Supabase.
+            env_agent_id = os.getenv("ANTHROPIC_AGENT_ID")
+            if env_agent_id:
+                self._agent_id = env_agent_id
+                print(f"[ManagedAgent] using pre-configured agent {env_agent_id}")
+                return env_agent_id
             agent = await self._client.beta.agents.create(
                 model=DEFAULT_MODEL,
                 name=AGENT_NAME,
@@ -2321,16 +2329,25 @@ class ManagedAgentClient:
                 ],
             )
             self._agent_id = agent.id
-            print(f"[ManagedAgent] created agent {agent.id}")
+            print(f"[ManagedAgent] *** CREATED NEW AGENT {agent.id} ***")
+            print(f"[ManagedAgent] ACTION REQUIRED: Add ANTHROPIC_AGENT_ID={agent.id} to Railway environment variables.")
+            print(f"[ManagedAgent] Without this, a new agent will be created on every service restart.")
             return agent.id
 
     async def _ensure_environment(self) -> str:
         async with self._lock:
             if self._environment_id:
                 return self._environment_id
+            # Check for a pre-configured environment ID set as a Railway environment variable.
+            env_environment_id = os.getenv("ANTHROPIC_ENVIRONMENT_ID")
+            if env_environment_id:
+                self._environment_id = env_environment_id
+                print(f"[ManagedAgent] using pre-configured environment {env_environment_id}")
+                return env_environment_id
             env = await self._client.beta.environments.create(name=ENV_NAME)
             self._environment_id = env.id
-            print(f"[ManagedAgent] created environment {env.id}")
+            print(f"[ManagedAgent] *** CREATED NEW ENVIRONMENT {env.id} ***")
+            print(f"[ManagedAgent] ACTION REQUIRED: Add ANTHROPIC_ENVIRONMENT_ID={env.id} to Railway environment variables.")
             return env.id
 
     async def _create_session(self, brief: str, project_id: Optional[str]) -> str:
@@ -2415,33 +2432,48 @@ class ManagedAgentClient:
         # Send the user brief.
         # If the session has a pending tool call from a crashed/interrupted run,
         # the API rejects user.message. In that case, interrupt and start fresh.
-        try:
+        async def _send_user_message(sid: str) -> None:
             await self._client.beta.sessions.events.send(
-                session_id,
+                sid,
                 events=[{"type": "user.message", "content": [{"type": "text", "text": brief}]}],
             )
-        except BadRequestError as e:
-            if "waiting on responses" in str(e):
-                print(f"[ManagedAgent] session {session_id} has pending tool calls, resetting")
-                try:
-                    await self.interrupt_session(session_id)
-                except Exception:
-                    pass
-                session_id = await self._create_session(brief, project_id)
+
+        async def _reset_and_send() -> str:
+            """Interrupt the stale session, create a fresh one, snapshot it, and send the message."""
+            print(f"[ManagedAgent] session {session_id} is stale or belongs to a different agent, resetting")
+            try:
+                await self.interrupt_session(session_id)
+            except Exception:
+                pass
+            new_sid = await self._create_session(brief, project_id)
+            seen_event_ids.clear()
+            try:
+                existing = await self._client.beta.sessions.events.list(new_sid, limit=100, order="desc")
+                async for ev in existing:
+                    ev_id = getattr(ev, "id", None)
+                    if ev_id:
+                        seen_event_ids.add(ev_id)
+            except Exception:
+                pass
+            await _send_user_message(new_sid)
+            return new_sid
+
+        try:
+            await _send_user_message(session_id)
+        except (BadRequestError, NotFoundError) as e:
+            err_str = str(e).lower()
+            # Covers: "waiting on responses" (pending tool call), "not found" (expired session),
+            # and any agent-mismatch errors that occur when the service was restarted and a new
+            # agent was created, making the old session_id invalid.
+            should_reset = (
+                "waiting on responses" in err_str
+                or "not found" in err_str
+                or "agent" in err_str
+                or "session" in err_str
+            )
+            if should_reset:
+                session_id = await _reset_and_send()
                 yield {"type": "session", "session_id": session_id}
-                seen_event_ids.clear()
-                try:
-                    existing = await self._client.beta.sessions.events.list(session_id, limit=100, order="desc")
-                    async for ev in existing:
-                        ev_id = getattr(ev, "id", None)
-                        if ev_id:
-                            seen_event_ids.add(ev_id)
-                except Exception:
-                    pass
-                await self._client.beta.sessions.events.send(
-                    session_id,
-                    events=[{"type": "user.message", "content": [{"type": "text", "text": brief}]}],
-                )
             else:
                 raise
 
@@ -2449,7 +2481,11 @@ class ManagedAgentClient:
             while True:
                 stream = await self._client.beta.sessions.events.stream(session_id)
                 went_idle = False
-                got_tool_call = False
+                # Collect all tool calls emitted in this stream pass before executing,
+                # so multiple tools requested in a single agent turn run concurrently
+                # and results are batched back in one send.
+                pending_tool_calls: list[Any] = []
+                hit_limit = False
 
                 async for ev in stream:
                     ev_type = getattr(ev, "type", None)
@@ -2469,72 +2505,17 @@ class ManagedAgentClient:
                         tool_calls_made += 1
                         if tool_calls_made > max_tool_calls:
                             yield {"type": "error", "message": f"exceeded max_tool_calls={max_tool_calls}"}
-                            return
-                        name = ev.name
-                        tool_input = ev.input or {}
-                        tool_use_id = ev.id
+                            hit_limit = True
+                            break
+                        # Emit the tool_call event immediately so the UI shows activity.
                         yield {
                             "type": "tool_call",
-                            "name": name,
-                            "input_summary": _summarize_input(tool_input),
-                            "tool_use_id": tool_use_id,
+                            "name": ev.name,
+                            "input_summary": _summarize_input(ev.input or {}),
+                            "tool_use_id": ev.id,
                         }
-                        fn = TOOL_DISPATCH.get(name)
-                        if fn is None:
-                            result_text = json.dumps({"error": f"unknown tool: {name}"})
-                            is_error = True
-                        else:
-                            try:
-                                print(f"[ManagedAgent] tool {name}({_summarize_input(tool_input, 120)})")
-                                # Run the tool in a task and emit keepalive pings every
-                                # 15 s so the SSE stream doesn't go idle and get killed
-                                # by Railway's reverse proxy or the browser.
-                                tool_task = asyncio.create_task(fn(ctx, **tool_input))
-                                elapsed = 0
-                                while not tool_task.done():
-                                    try:
-                                        await asyncio.wait_for(asyncio.shield(tool_task), timeout=15.0)
-                                    except asyncio.TimeoutError:
-                                        elapsed += 15
-                                        yield {
-                                            "type": "keepalive",
-                                            "tool_use_id": tool_use_id,
-                                            "elapsed_seconds": elapsed,
-                                        }
-                                result_text = tool_task.result()
-                                is_error = False
-                            except Exception as e:
-                                result_text = json.dumps({"error": str(e)})
-                                is_error = True
-
-                        # Emit a tool_result event for the UI activity log.
-                        yield {
-                            "type": "tool_result",
-                            "tool_use_id": tool_use_id,
-                            "summary": _summarize_result(result_text),
-                            "is_error": is_error,
-                        }
-                        # Drain new artifacts that the tool just produced.
-                        if ctx.new_artifacts:
-                            for art in ctx.new_artifacts:
-                                yield {"type": "artifact", "artifact": art}
-                            ctx.new_artifacts.clear()
-
-                        # Hand the tool result back to the agent.
-                        await self._client.beta.sessions.events.send(
-                            session_id,
-                            events=[
-                                {
-                                    "type": "user.custom_tool_result",
-                                    "custom_tool_use_id": tool_use_id,
-                                    "content": [{"type": "text", "text": result_text}],
-                                    "is_error": is_error,
-                                }
-                            ],
-                        )
-                        got_tool_call = True
-                        # Re-open stream so we receive the next batch.
-                        break
+                        # Collect for concurrent execution after the stream pass ends.
+                        pending_tool_calls.append(ev)
 
                     elif ev_type == "session.status_idle":
                         went_idle = True
@@ -2546,12 +2527,94 @@ class ManagedAgentClient:
                         yield {"type": "error", "message": msg}
                         return
 
+                if hit_limit:
+                    return
+
+                # After the stream pass, execute all collected tool calls concurrently.
+                if pending_tool_calls:
+                    async def _execute_tool(ev: Any) -> tuple[str, str, bool]:
+                        """Execute a single tool call and return (tool_use_id, result_text, is_error)."""
+                        name = ev.name
+                        tool_input = ev.input or {}
+                        tool_use_id = ev.id
+                        fn = TOOL_DISPATCH.get(name)
+                        if fn is None:
+                            return tool_use_id, json.dumps({"error": f"unknown tool: {name}"}), True
+                        try:
+                            print(f"[ManagedAgent] tool {name}({_summarize_input(tool_input, 120)})")
+                            result_text = await fn(ctx, **tool_input)
+                            return tool_use_id, result_text, False
+                        except Exception as e:
+                            return tool_use_id, json.dumps({"error": str(e)}), True
+
+                    # Kick off all tools concurrently as tasks so we can yield keepalive
+                    # pings every 15 s while they run. This preserves the existing SSE
+                    # keepalive behavior (Railway's reverse proxy and browsers kill idle
+                    # SSE connections around 30 s, and most tools take 30 s – 5 min).
+                    tasks = [asyncio.create_task(_execute_tool(ev)) for ev in pending_tool_calls]
+                    elapsed = 0
+                    while any(not t.done() for t in tasks):
+                        done, pending = await asyncio.wait(
+                            tasks,
+                            timeout=15.0,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        if pending:
+                            elapsed += 15
+                            yield {
+                                "type": "keepalive",
+                                "elapsed_seconds": elapsed,
+                                "pending_tools": len(pending),
+                            }
+
+                    # Collect results in the original order.
+                    results: list[tuple[str, str, bool]] = []
+                    for t in tasks:
+                        try:
+                            results.append(t.result())
+                        except Exception as e:
+                            # Should already be caught inside _execute_tool, but be defensive.
+                            results.append(("", json.dumps({"error": str(e)}), True))
+
+                    # Emit tool_result events for the UI activity log and build the batched send payload.
+                    tool_result_events: list[dict] = []
+                    for tool_use_id, result_text, is_error in results:
+                        yield {
+                            "type": "tool_result",
+                            "tool_use_id": tool_use_id,
+                            "summary": _summarize_result(result_text),
+                            "is_error": is_error,
+                        }
+                        tool_result_events.append({
+                            "type": "user.custom_tool_result",
+                            "custom_tool_use_id": tool_use_id,
+                            "content": [{"type": "text", "text": result_text}],
+                            "is_error": is_error,
+                        })
+
+                    # Drain new artifacts produced by all tools in this batch.
+                    if ctx.new_artifacts:
+                        for art in ctx.new_artifacts:
+                            yield {"type": "artifact", "artifact": art}
+                        ctx.new_artifacts.clear()
+
+                    # Send all results back to the session in a single batched call.
+                    await self._client.beta.sessions.events.send(
+                        session_id,
+                        events=tool_result_events,
+                    )
+
+                    pending_tool_calls.clear()
+                    # Loop back to re-open the stream for the agent's next response
+                    # (which may itself contain more tool calls — i.e. tool chaining).
+                    continue
+
+                # No tool calls dispatched this pass.
                 if went_idle:
                     break
-                if not got_tool_call:
-                    # Stream ended without idle and without dispatching a tool —
-                    # nothing left to do for this turn.
-                    break
+                # Stream ended without idle and without any tool calls — nothing left
+                # to do for this turn.
+                break
 
             yield {"type": "done", "session_id": session_id}
 

@@ -158,6 +158,59 @@ async def upload_file_multipart(
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)[:200]}")
 
 
+# ── Transcription (ElevenLabs Scribe) ──────────────────────────────────
+@app.post("/creative-os/transcribe")
+async def transcribe_audio(
+    file: UploadFile = File(...),
+    user: dict = Depends(get_current_user),  # noqa: ARG001 (auth gate)
+):
+    """Transcribe an audio blob via ElevenLabs Scribe.
+
+    Body: multipart/form-data with `file` (audio blob, any common format).
+    Returns: { "text": "...", "language": "en" | "es" | ... }
+    """
+    api_key = os.getenv("ELEVENLABS_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Transcription not configured (ELEVENLABS_API_KEY missing).")
+
+    contents = await file.read()
+    max_bytes = 25 * 1024 * 1024  # 25 MB — short dictation clips only
+    if len(contents) > max_bytes:
+        raise HTTPException(status_code=413, detail="Audio too large (max 25 MB).")
+
+    import httpx
+
+    files = {
+        "file": (file.filename or "audio.webm", contents, file.content_type or "audio/webm"),
+    }
+    data = {
+        "model_id": "scribe_v1",
+        # Auto-detect English vs Spanish vs anything else.
+    }
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                "https://api.elevenlabs.io/v1/speech-to-text",
+                headers={"xi-api-key": api_key},
+                files=files,
+                data=data,
+            )
+        if resp.status_code != 200:
+            detail = resp.text[:300]
+            print(f"[Transcribe] ElevenLabs {resp.status_code}: {detail}")
+            raise HTTPException(status_code=502, detail=f"Transcription failed: {detail}")
+        body = resp.json()
+        text = (body.get("text") or "").strip()
+        lang = body.get("language_code") or body.get("language") or ""
+        print(f"[Transcribe] OK ({len(contents)} bytes, lang={lang}, {len(text)} chars)")
+        return {"text": text, "language": lang}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[Transcribe] FAILED: {e}")
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)[:200]}")
+
+
 # ── Health Check ────────────────────────────────────────────────────────
 @app.get("/health")
 async def health_check():
