@@ -75,6 +75,9 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
     const [mentionFilter, setMentionFilter] = useState('');
     const [mentionIndex, setMentionIndex] = useState(0);
     const [mentionCursorStart, setMentionCursorStart] = useState(0);
+    // When set, the dropdown renders a shot picker for this asset instead of
+    // the mention list (products / models with multiple views).
+    const [mentionShotPicker, setMentionShotPicker] = useState<{ id: string; type: 'product' | 'influencer'; name: string; views: string[] } | null>(null);
 
     useEffect(() => {
         setMode(activeTab === 'images' ? 'cinematic' : 'ugc');
@@ -385,8 +388,28 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
 
     // ── @Mention helpers ──
     const mentionItems = [
-        ...products.map((p: any) => ({ id: p.id, name: p.name || p.product_name || 'Product', type: 'product' as const, image_url: p.image_url })),
-        ...influencers.map((inf: any) => ({ id: inf.id, name: inf.name || 'Model', type: 'influencer' as const, image_url: inf.image_url })),
+        ...products.map((p: any) => {
+            const extras = Array.isArray(p.product_views) ? p.product_views.filter(Boolean) : [];
+            const views = p.image_url ? [p.image_url, ...extras.filter((v: string) => v !== p.image_url)] : extras;
+            return {
+                id: p.id,
+                name: p.name || p.product_name || 'Product',
+                type: 'product' as const,
+                image_url: p.image_url,
+                views: views.length > 1 ? views : undefined,
+            };
+        }),
+        ...influencers.map((inf: any) => {
+            const extras = Array.isArray(inf.character_views) ? inf.character_views.filter(Boolean) : [];
+            const views = inf.image_url ? [inf.image_url, ...extras.filter((v: string) => v !== inf.image_url)] : extras;
+            return {
+                id: inf.id,
+                name: inf.name || 'Model',
+                type: 'influencer' as const,
+                image_url: inf.image_url,
+                views: views.length > 1 ? views : undefined,
+            };
+        }),
     ];
 
     const filteredMentions = mentionItems.filter(m =>
@@ -417,21 +440,24 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
         }
     };
 
-    const insertMention = (item: typeof mentionItems[0]) => {
+    const finalizeMentionInsert = (item: typeof mentionItems[0], chosenImageUrl?: string) => {
         const before = prompt.slice(0, mentionCursorStart);
         const after = prompt.slice(textareaRef.current?.selectionStart || mentionCursorStart);
         const tag = `@${item.name.toLowerCase().replace(/\s+/g, '_')}`;
         const newPrompt = before + tag + ' ' + after;
         setPrompt(newPrompt);
         setMentionOpen(false);
+        setMentionShotPicker(null);
 
-        // Auto-select this item as product/influencer if not already selected
+        // Auto-select this item as product/influencer if not already selected.
+        // If the user picked a specific shot, override the selected asset's
+        // image_url so downstream generators pick up the chosen view.
         if (item.type === 'product' && !selectedProduct) {
             const match = products.find((p: any) => p.id === item.id);
-            if (match) setSelectedProduct(match);
+            if (match) setSelectedProduct(chosenImageUrl ? { ...match, image_url: chosenImageUrl } : match);
         } else if (item.type === 'influencer' && !selectedInfluencer) {
             const match = influencers.find((inf: any) => inf.id === item.id);
-            if (match) setSelectedInfluencer(match);
+            if (match) setSelectedInfluencer(chosenImageUrl ? { ...match, image_url: chosenImageUrl } : match);
         }
 
         // Re-focus textarea
@@ -442,6 +468,14 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                 textareaRef.current.setSelectionRange(pos, pos);
             }
         }, 0);
+    };
+
+    const insertMention = (item: typeof mentionItems[0]) => {
+        if ((item.type === 'product' || item.type === 'influencer') && item.views && item.views.length > 1) {
+            setMentionShotPicker({ id: item.id, type: item.type, name: item.name, views: item.views });
+            return;
+        }
+        finalizeMentionInsert(item);
     };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -551,7 +585,41 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                                 rows={1}
                                 className="co-bar-input"
                             />
-                            {mentionOpen && filteredMentions.length > 0 && (() => {
+                            {mentionOpen && mentionShotPicker && (
+                                <div className="co-mention-dropdown" ref={mentionListRef}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 6px 8px' }}>
+                                        <button
+                                            type="button"
+                                            onMouseDown={(e) => { e.preventDefault(); setMentionShotPicker(null); }}
+                                            style={{ border: '1px solid rgba(13,27,62,0.15)', background: 'white', borderRadius: 6, padding: '2px 8px', cursor: 'pointer', fontSize: 11 }}
+                                        >
+                                            ← Back
+                                        </button>
+                                        <span style={{ fontSize: 11, fontWeight: 600 }}>
+                                            Pick a shot for {mentionShotPicker.name}
+                                        </span>
+                                    </div>
+                                    <div className="co-mention-grid">
+                                        {mentionShotPicker.views.map((url, i) => (
+                                            <div
+                                                key={`${url}-${i}`}
+                                                className="co-mention-card"
+                                                onMouseDown={(e) => {
+                                                    e.preventDefault();
+                                                    const match = mentionItems.find(m => m.id === mentionShotPicker.id && m.type === mentionShotPicker.type);
+                                                    if (match) finalizeMentionInsert(match, url);
+                                                }}
+                                                title={i === 0 ? 'Profile image' : `Shot ${i + 1}`}
+                                            >
+                                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                <img src={url} alt="" className="co-mention-card-img" />
+                                                <span className="co-mention-card-name">{i === 0 ? 'Profile' : `Shot ${i + 1}`}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {mentionOpen && !mentionShotPicker && filteredMentions.length > 0 && (() => {
                                 const mentionModels = filteredMentions.filter(m => m.type === 'influencer');
                                 const mentionProducts = filteredMentions.filter(m => m.type === 'product');
                                 const ordered = [...mentionModels, ...mentionProducts];

@@ -30,6 +30,7 @@ interface MentionItem {
     tag: string;          // unique @-token
     name: string;         // display label
     image_url?: string;   // thumbnail
+    views?: string[];     // additional shots/views (product_views / character_views) — profile first, then extras
     ref: AgentRef;        // payload sent to backend
 }
 
@@ -148,6 +149,10 @@ export function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse
     const [mentionFilter, setMentionFilter] = useState('');
     const [mentionIndex, setMentionIndex] = useState(0);
     const [mentionCursorStart, setMentionCursorStart] = useState(0);
+    // When set, the dropdown shows a shot picker for the given asset instead
+    // of the normal mention list. Populated when the user clicks a product or
+    // model that has multiple views/shots available.
+    const [shotPickerItem, setShotPickerItem] = useState<MentionItem | null>(null);
     // Composer "+" menu state
     const [menuOpen, setMenuOpen] = useState(false);
     const [historyOpen, setHistoryOpen] = useState(false);
@@ -195,21 +200,27 @@ export function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse
         const items: MentionItem[] = [];
         for (const p of products) {
             const name = p.name || p.product_name || 'product';
+            const extraViews = Array.isArray(p.product_views) ? p.product_views.filter(Boolean) : [];
+            const views = p.image_url ? [p.image_url, ...extraViews.filter((v: string) => v !== p.image_url)] : extraViews;
             items.push({
                 type: 'product',
                 tag: slugify(name),
                 name,
                 image_url: p.image_url,
+                views: views.length > 1 ? views : undefined,
                 ref: { type: 'product', tag: slugify(name), name, id: p.id, image_url: p.image_url },
             });
         }
         for (const inf of influencers) {
             const name = inf.name || 'model';
+            const extraViews = Array.isArray(inf.character_views) ? inf.character_views.filter(Boolean) : [];
+            const views = inf.image_url ? [inf.image_url, ...extraViews.filter((v: string) => v !== inf.image_url)] : extraViews;
             items.push({
                 type: 'influencer',
                 tag: slugify(name),
                 name,
                 image_url: inf.image_url,
+                views: views.length > 1 ? views : undefined,
                 ref: { type: 'influencer', tag: slugify(name), name, id: inf.id, image_url: inf.image_url },
             });
         }
@@ -510,19 +521,23 @@ export function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse
         }
     };
 
-    const insertMention = useCallback((item: MentionItem) => {
+    const finalizeMention = useCallback((item: MentionItem, chosenImageUrl?: string) => {
         const cursor = textareaRef.current?.selectionStart ?? brief.length;
         const before = brief.slice(0, mentionCursorStart);
         const after = brief.slice(cursor);
         const tagText = `@${item.tag}`;
         const newBrief = before + tagText + ' ' + after;
         setBrief(newBrief);
+        const finalRef: AgentRef = chosenImageUrl
+            ? { ...item.ref, image_url: chosenImageUrl }
+            : item.ref;
         setActiveRefs((prev) => {
             const next = new Map(prev);
-            next.set(item.tag, item.ref);
+            next.set(item.tag, finalRef);
             return next;
         });
         setMentionOpen(false);
+        setShotPickerItem(null);
         // restore focus + place caret after the inserted tag
         setTimeout(() => {
             const pos = before.length + tagText.length + 1;
@@ -530,6 +545,17 @@ export function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse
             textareaRef.current?.setSelectionRange(pos, pos);
         }, 0);
     }, [brief, mentionCursorStart]);
+
+    const insertMention = useCallback((item: MentionItem) => {
+        // Products and models with multiple shots open a sub-picker so the
+        // user can choose which image to reference. Everything else inserts
+        // immediately with its primary image.
+        if ((item.type === 'product' || item.type === 'influencer') && item.views && item.views.length > 1) {
+            setShotPickerItem(item);
+            return;
+        }
+        finalizeMention(item);
+    }, [finalizeMention]);
 
     const openReferenceDropdown = useCallback(() => {
         const el = textareaRef.current;
@@ -847,13 +873,16 @@ export function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse
                             position: 'relative',
                         }}
                     >
-                        {mentionOpen && filteredMentions.length > 0 && (
+                        {mentionOpen && (filteredMentions.length > 0 || shotPickerItem) && (
                             <MentionDropdown
                                 groups={groupedMentions}
                                 ordered={orderedMentions}
                                 activeIndex={mentionIndex}
                                 onPick={insertMention}
                                 onHover={setMentionIndex}
+                                shotPickerItem={shotPickerItem}
+                                onPickShot={(imageUrl) => shotPickerItem && finalizeMention(shotPickerItem, imageUrl)}
+                                onBackFromShotPicker={() => setShotPickerItem(null)}
                             />
                         )}
                         {attachments.length > 0 && (
@@ -1691,6 +1720,9 @@ interface MentionDropdownProps {
     activeIndex: number;
     onPick: (item: MentionItem) => void;
     onHover: (idx: number) => void;
+    shotPickerItem?: MentionItem | null;
+    onPickShot?: (imageUrl: string) => void;
+    onBackFromShotPicker?: () => void;
 }
 
 const GROUP_LABELS: Record<MentionItem['type'], string> = {
@@ -1700,25 +1732,88 @@ const GROUP_LABELS: Record<MentionItem['type'], string> = {
     video: 'Videos',
 };
 
-function MentionDropdown({ groups, ordered, activeIndex, onPick, onHover }: MentionDropdownProps) {
+function MentionDropdown({ groups, ordered, activeIndex, onPick, onHover, shotPickerItem, onPickShot, onBackFromShotPicker }: MentionDropdownProps) {
     const groupOrder: MentionItem['type'][] = ['product', 'influencer', 'image', 'video'];
+    const containerStyle: React.CSSProperties = {
+        position: 'absolute',
+        left: '14px',
+        right: '14px',
+        bottom: 'calc(100% - 6px)',
+        background: 'white',
+        border: '1px solid rgba(13,27,62,0.12)',
+        borderRadius: '12px',
+        boxShadow: '0 12px 32px rgba(13,27,62,0.16)',
+        maxHeight: '320px',
+        overflowY: 'auto',
+        padding: '8px',
+        zIndex: 10,
+    };
+    if (shotPickerItem && shotPickerItem.views && onPickShot) {
+        return (
+            <div style={containerStyle}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 6px 8px' }}>
+                    <button
+                        type="button"
+                        onMouseDown={(e) => { e.preventDefault(); onBackFromShotPicker?.(); }}
+                        style={{
+                            border: '1px solid rgba(13,27,62,0.15)',
+                            background: 'white',
+                            borderRadius: '6px',
+                            padding: '2px 8px',
+                            cursor: 'pointer',
+                            fontSize: '11px',
+                            color: '#0D1B3E',
+                        }}
+                    >
+                        ← Back
+                    </button>
+                    <span style={{ fontSize: '11px', fontWeight: 600, color: '#0D1B3E' }}>
+                        Pick a shot for {shotPickerItem.name}
+                    </span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
+                    {shotPickerItem.views.map((url, i) => (
+                        <button
+                            key={`${url}-${i}`}
+                            type="button"
+                            onMouseDown={(e) => { e.preventDefault(); onPickShot(url); }}
+                            title={i === 0 ? 'Profile image' : `Shot ${i + 1}`}
+                            style={{
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                gap: '4px',
+                                padding: '6px 4px',
+                                border: '1px solid transparent',
+                                background: 'transparent',
+                                borderRadius: '8px',
+                                cursor: 'pointer',
+                                minWidth: 0,
+                            }}
+                            onMouseEnter={(e) => {
+                                (e.currentTarget as HTMLButtonElement).style.background = 'rgba(51,122,255,0.08)';
+                                (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(51,122,255,0.5)';
+                            }}
+                            onMouseLeave={(e) => {
+                                (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+                                (e.currentTarget as HTMLButtonElement).style.borderColor = 'transparent';
+                            }}
+                        >
+                            <div style={{ width: '100%', aspectRatio: '1 / 1', borderRadius: '6px', background: '#F4F6FA', overflow: 'hidden' }}>
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            </div>
+                            <span style={{ fontSize: '10px', color: '#0D1B3E', fontWeight: 500, textAlign: 'center' }}>
+                                {i === 0 ? 'Profile' : `Shot ${i + 1}`}
+                            </span>
+                        </button>
+                    ))}
+                </div>
+            </div>
+        );
+    }
     return (
-        <div
-            style={{
-                position: 'absolute',
-                left: '14px',
-                right: '14px',
-                bottom: 'calc(100% - 6px)',
-                background: 'white',
-                border: '1px solid rgba(13,27,62,0.12)',
-                borderRadius: '12px',
-                boxShadow: '0 12px 32px rgba(13,27,62,0.16)',
-                maxHeight: '320px',
-                overflowY: 'auto',
-                padding: '8px',
-                zIndex: 10,
-            }}
-        >
+        <div style={containerStyle}>
             {groupOrder.map((g) => {
                 const items = groups[g];
                 if (!items || items.length === 0) return null;
