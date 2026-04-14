@@ -37,6 +37,23 @@ def _get_model_family(model_api: str) -> str:
     return "veo"
 
 
+# Internal model name → KIE API model identifier.
+# Mirrors MODEL_REGISTRY in repo-root config.py (not importable on Railway).
+KIE_MODEL_NAMES = {
+    "veo-3.1-fast": "veo3_fast",
+    "veo-3.1": "veo3",
+    "seedance-1.5-pro": "bytedance/seedance-1.5-pro",
+    "seedance-2.0": "bytedance/seedance-2",
+    "kling-2.6": "kling-2.6/image-to-video",
+}
+
+
+def _to_kie_model_name(model_api: str) -> str:
+    """Translate internal model name to KIE's accepted identifier.
+    Pass-through for already-translated names (e.g. 'kling-3.0/video')."""
+    return KIE_MODEL_NAMES.get(model_api, model_api)
+
+
 MODEL_ENDPOINTS = {
     "seedance": {
         "generate": f"{KIE_API_URL}/api/v1/jobs/createTask",
@@ -76,6 +93,9 @@ def generate_video(
 
     family = _get_model_family(model_api)
     endpoints = MODEL_ENDPOINTS[family]
+    # Translate internal name (e.g. "veo-3.1-fast") to KIE's identifier ("veo3_fast").
+    # Family detection above relies on the readable name, so do this AFTER family.
+    model_api_kie = _to_kie_model_name(model_api)
 
     # Build payload per model family
     if family == "kling":
@@ -96,11 +116,11 @@ def generate_video(
         if kling_elements:
             kling_input["kling_elements"] = kling_elements
             print(f"      [Kling] Payload includes {len(kling_elements)} element(s)")
-        payload = {"model": model_api, "input": kling_input}
+        payload = {"model": model_api_kie, "input": kling_input}
     elif family == "veo":
         payload = {
             "prompt": prompt,
-            "model": model_api,
+            "model": model_api_kie,
             "aspect_ratio": "9:16",
             "enableFallback": False,
             "enableTranslation": False,
@@ -112,7 +132,7 @@ def generate_video(
     else:
         # Seedance
         payload = {
-            "model": model_api,
+            "model": model_api_kie,
             "input": {
                 "prompt": prompt,
                 "aspect_ratio": "9:16",
