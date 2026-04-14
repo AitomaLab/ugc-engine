@@ -186,10 +186,24 @@ async def agent_stream(
                 title=(turns[0]["text"][:80] if turns and turns[0].get("role") == "user" else None),
             )
 
-            agent_text_parts: list[str] = []
-            agent_artifacts: list[dict] = []
-            agent_tool_calls: list[dict] = []
             interrupted = False
+            # `prior_turns` is everything persisted before this run (excluding
+            # the user turn we just appended). The client replays this as a
+            # context primer if the session has to be reset mid-run, so the
+            # agent keeps memory across Anthropic session resets.
+            prior_turns = turns[:-1]
+
+            def _ensure_agent_turn() -> dict:
+                """Return the current agent turn, appending a new one if needed."""
+                if not turns or turns[-1].get("role") != "agent":
+                    turns.append({
+                        "role": "agent",
+                        "text": "",
+                        "artifacts": [],
+                        "tool_calls": [],
+                        "ts": _now_ms(),
+                    })
+                return turns[-1]
 
             try:
                 async for ev in client.run_stream(
@@ -197,6 +211,7 @@ async def agent_stream(
                     user_token=user_token,
                     project_id=project_id,
                     session_id=session_id,
+                    prior_turns=prior_turns,
                 ):
                     t = ev.get("type")
                     if t == "session":
@@ -207,14 +222,27 @@ async def agent_stream(
                             anthropic_session_id=session_id,
                         )
                     elif t == "agent_message":
-                        agent_text_parts.append(ev["text"])
+                        # First agent_message fills an empty placeholder agent
+                        # turn (if any). Subsequent messages start their own
+                        # turn — one bubble per model utterance.
+                        current = _ensure_agent_turn()
+                        if not current["text"] and not current["artifacts"] and not current["tool_calls"]:
+                            current["text"] = ev["text"]
+                        else:
+                            turns.append({
+                                "role": "agent",
+                                "text": ev["text"],
+                                "artifacts": [],
+                                "tool_calls": [],
+                                "ts": _now_ms(),
+                            })
                     elif t == "tool_call":
-                        agent_tool_calls.append({
+                        _ensure_agent_turn()["tool_calls"].append({
                             "name": ev["name"],
                             "input_summary": ev.get("input_summary", ""),
                         })
                     elif t == "artifact":
-                        agent_artifacts.append(ev["artifact"])
+                        _ensure_agent_turn()["artifacts"].append(ev["artifact"])
                     yield f"data: {json.dumps(ev)}\n\n"
 
             except asyncio.CancelledError:
@@ -222,16 +250,10 @@ async def agent_stream(
                 yield f"data: {json.dumps({'type': 'interrupted'})}\n\n"
                 raise
             finally:
-                # Persist the agent turn (always — even on partial / errored runs).
-                if agent_text_parts or agent_artifacts or agent_tool_calls or interrupted:
-                    turns.append({
-                        "role": "agent",
-                        "text": "\n\n".join(agent_text_parts),
-                        "artifacts": agent_artifacts,
-                        "tool_calls": agent_tool_calls,
-                        "interrupted": interrupted,
-                        "ts": _now_ms(),
-                    })
+                # Mark interruption on the active agent turn, then persist.
+                if interrupted and turns and turns[-1].get("role") == "agent":
+                    turns[-1]["interrupted"] = True
+                if len(turns) > (len(prior_turns) + 1) or interrupted:
                     try:
                         await upsert_thread(
                             user_token, user_id, project_id,

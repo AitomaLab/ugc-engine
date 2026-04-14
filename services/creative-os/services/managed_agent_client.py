@@ -2378,6 +2378,7 @@ class ManagedAgentClient:
         project_id: Optional[str],
         session_id: Optional[str] = None,
         max_tool_calls: int = 24,
+        prior_turns: Optional[list[dict]] = None,
     ) -> AsyncIterator[dict]:
         """Drive the agent through one user turn, yielding normalized events.
 
@@ -2420,13 +2421,51 @@ class ManagedAgentClient:
         except Exception as e:
             print(f"[ManagedAgent] could not snapshot prior events: {e}")
 
+        # Build a compact context primer from prior turns. Sent only on
+        # fresh/reset sessions so the agent retains conversation memory even
+        # after an Anthropic session reset. Skipped for continuing sessions
+        # (the live session already has the history in its event log).
+        def _build_context_primer() -> str:
+            if not prior_turns:
+                return ""
+            lines = ["[Prior conversation in this project — for context only, do not re-execute]"]
+            # Cap at last 12 turns to keep tokens bounded.
+            for turn in prior_turns[-12:]:
+                role = turn.get("role", "agent")
+                text = (turn.get("text") or "").strip()
+                tool_calls = turn.get("tool_calls") or []
+                artifacts = turn.get("artifacts") or []
+                if role == "user":
+                    if text:
+                        lines.append(f"User: {text}")
+                else:
+                    if text:
+                        lines.append(f"Agent: {text}")
+                    for tc in tool_calls:
+                        name = tc.get("name", "?")
+                        summary = tc.get("input_summary", "")
+                        lines.append(f"  [called {name}: {summary}]")
+                    for art in artifacts:
+                        kind = art.get("type", "artifact")
+                        url = art.get("url", "")
+                        jid = art.get("job_id", "")
+                        sid_ = art.get("shot_id", "")
+                        tag = f"job_id={jid}" if jid else (f"shot_id={sid_}" if sid_ else "")
+                        lines.append(f"  [produced {kind}: {url} {tag}]".strip())
+            lines.append("")
+            lines.append("Current user message: " + brief)
+            return "\n".join(lines)
+
         # Send the user brief.
         # If the session has a pending tool call from a crashed/interrupted run,
         # the API rejects user.message. In that case, interrupt and start fresh.
-        async def _send_user_message(sid: str) -> None:
+        async def _send_user_message(sid: str, *, with_primer: bool = False) -> None:
+            text = _build_context_primer() if with_primer else brief
+            if not text:
+                text = brief
             await self._client.beta.sessions.events.send(
                 sid,
-                events=[{"type": "user.message", "content": [{"type": "text", "text": brief}]}],
+                events=[{"type": "user.message", "content": [{"type": "text", "text": text}]}],
             )
 
         async def _reset_and_send() -> str:
@@ -2446,11 +2485,17 @@ class ManagedAgentClient:
                         seen_event_ids.add(ev_id)
             except Exception:
                 pass
-            await _send_user_message(new_sid)
+            # Fresh session after reset — replay prior conversation as a primer
+            # so the agent keeps memory across the reset.
+            await _send_user_message(new_sid, with_primer=True)
             return new_sid
 
+        # If we just created a brand-new session but have prior turns persisted
+        # (e.g. first message after a Railway restart wiped the session cache),
+        # include the context primer so the agent doesn't start from scratch.
+        initial_primer = bool(prior_turns) and not seen_event_ids
         try:
-            await _send_user_message(session_id)
+            await _send_user_message(session_id, with_primer=initial_primer)
         except (BadRequestError, NotFoundError) as e:
             err_str = str(e).lower()
             # Covers: "waiting on responses" (pending tool call), "not found" (expired session),

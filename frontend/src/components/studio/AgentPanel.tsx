@@ -363,7 +363,7 @@ export function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse
         const controller = new AbortController();
         abortRef.current = controller;
 
-        const updatePlaceholder = (mut: (t: AgentTurn) => AgentTurn) => {
+        const updateLastAgentTurn = (mut: (t: AgentTurn) => AgentTurn) => {
             setTurns((prev) => {
                 const copy = prev.slice();
                 const idx = copy.length - 1;
@@ -380,10 +380,26 @@ export function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse
                     setSessionId(e.session_id);
                     break;
                 case 'agent_message':
-                    updatePlaceholder((t) => ({
-                        ...t,
-                        text: (t.text ? t.text + '\n\n' : '') + e.text,
-                    }));
+                    setTurns((prev) => {
+                        const copy = prev.slice();
+                        const idx = copy.length - 1;
+                        const last = idx >= 0 ? copy[idx] : null;
+                        // First agent_message of this run fills the placeholder bubble.
+                        // Subsequent agent_messages start their own bubble so each
+                        // distinct model utterance renders as a separate pill.
+                        if (last && last.role === 'agent' && !last.text && !(last.artifacts || []).length && !(last.tool_calls || []).length) {
+                            copy[idx] = { ...last, text: e.text };
+                        } else {
+                            copy.push({
+                                role: 'agent',
+                                text: e.text,
+                                artifacts: [],
+                                tool_calls: [],
+                                ts: Date.now(),
+                            });
+                        }
+                        return copy;
+                    });
                     break;
                 case 'tool_call':
                     setActivity(
@@ -401,7 +417,7 @@ export function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse
                                             ? 'Rendering edited video (~1-10 min)…'
                                             : `Calling ${e.name}…`
                     );
-                    updatePlaceholder((t) => ({
+                    updateLastAgentTurn((t) => ({
                         ...t,
                         tool_calls: [
                             ...(t.tool_calls || []),
@@ -417,7 +433,7 @@ export function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse
                     break;
                 case 'artifact': {
                     const art = e.artifact as AgentArtifact;
-                    updatePlaceholder((t) => ({
+                    updateLastAgentTurn((t) => ({
                         ...t,
                         artifacts: [...(t.artifacts || []), art],
                     }));
@@ -430,7 +446,7 @@ export function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse
                     abortRef.current = null;
                     break;
                 case 'interrupted':
-                    updatePlaceholder((t) => ({ ...t, interrupted: true }));
+                    updateLastAgentTurn((t) => ({ ...t, interrupted: true }));
                     setRunning(false);
                     setActivity('');
                     abortRef.current = null;
@@ -448,7 +464,7 @@ export function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse
             await streamAgent(text, projectId, onEvent, controller.signal, refsForRequest);
         } catch (err) {
             if ((err as Error).name === 'AbortError') {
-                updatePlaceholder((t) => ({ ...t, interrupted: true }));
+                updateLastAgentTurn((t) => ({ ...t, interrupted: true }));
             } else {
                 const msg = err instanceof Error ? err.message : String(err);
                 // If the stream never started (e.g. 409 concurrency guard),
