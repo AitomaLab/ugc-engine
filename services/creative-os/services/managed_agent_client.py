@@ -108,7 +108,7 @@ When given a brief, plan briefly then act. Prefer chaining tools end-to-end rath
 - render_edited_video(job_id, editor_state, codec?) — Re-render the edited timeline into a final MP4. GATED.
 
 ### Video combination
-- combine_videos(video_urls, transition?, transition_duration?) — Combine 2+ videos into one MP4 with smooth transitions (dissolve, fade, wipe). GATED.
+- combine_videos(video_urls, transition?, transition_duration?) — Combine 2+ videos into one MP4 with smooth transitions (dissolve, fade, wipe). NOT gated — runs automatically.
 
 ## CRITICAL — Cost confirmation rule (applies to ALL gated tools)
 Gated tools cost real credits. You MUST get explicit user confirmation before spending them. The flow is:
@@ -125,7 +125,7 @@ Do NOT bypass this gate. Do NOT call gated tools with `confirmed=true` on the fi
 
 For multi-step plans ("generate 3 images then animate two of them"), call `estimate_credits` first to preview the TOTAL cost as a single bundled number, present it once, then execute the steps with `confirmed=true` after the user agrees to the bundle.
 
-The gated tools are exactly: generate_image, generate_influencer, generate_identity, generate_product_shots, animate_image, generate_video, create_ugc_video, create_clone_video, create_bulk_campaign, render_edited_video, combine_videos. Everything else is free and can be called immediately.
+The gated tools are exactly: generate_image, generate_influencer, generate_identity, generate_product_shots, animate_image, generate_video, create_ugc_video, create_clone_video, create_bulk_campaign, render_edited_video. Everything else (including combine_videos) is free of the confirmation gate and can be called immediately.
 
 ## Model routing
 - **UGC videos** (all lengths): powered by **Veo 3.1**. Use `generate_video(mode="ugc")` for short clips (5-10s) or `create_ugc_video` for full 15/30s produced videos (script + scenes + captions + music).
@@ -160,7 +160,7 @@ The gated tools are exactly: generate_image, generate_influencer, generate_ident
 
 **Export final MP4** (only when user explicitly asks to "render", "export", or "download"): render_edited_video (gated). This does a full server-side re-render and takes 1-10 minutes. Do NOT call this automatically after editing — only when the user explicitly requests a final rendered file.
 
-**Combine/merge videos**: When the user asks to combine, merge, stitch, or concatenate multiple videos → combine_videos(video_urls=[url1, url2, ...]) (gated). Uses @video refs to get the URLs. Default is a smooth dissolve transition.
+**Combine/merge videos**: When the user asks to combine, merge, stitch, or concatenate multiple videos → combine_videos(video_urls=[url1, url2, ...]). Uses @video refs to get the URLs. Default is a smooth dissolve transition. Runs immediately — do not ask for confirmation.
 
 ## General rules
 1. Within a session, you may freely reference URLs, shot IDs, job IDs, or asset names from earlier tool results — they are still valid. Do not re-list assets unless the user explicitly asks for fresh data.
@@ -827,7 +827,7 @@ def _custom_tools_for_agent() -> list[dict]:
             "description": (
                 "Combine (concatenate) two or more videos into a single MP4 with smooth dissolve "
                 "transitions between clips. Pass the video URLs in the desired playback order. "
-                "FIRST call returns a credit cost estimate. After user confirms, call again with confirmed=true."
+                "Runs automatically — no confirmation needed."
             ),
             "input_schema": {
                 "type": "object",
@@ -846,7 +846,6 @@ def _custom_tools_for_agent() -> list[dict]:
                         "type": "number",
                         "description": "Transition duration in seconds (0.3-1.5). Default: 0.6.",
                     },
-                    "confirmed": {"type": "boolean", "description": confirmed_desc},
                 },
                 "required": ["video_urls"],
             },
@@ -1792,16 +1791,8 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
     transition_dur = float(kwargs.get("transition_duration", 0.6))
     transition_dur = max(0.3, min(1.5, transition_dur))  # clamp
 
-    if not kwargs.get("confirmed"):
-        # Use animate_image credit cost as proxy (lightweight server-side processing)
-        credits = _credits_for_op("animate_image", {"duration": 5})
-        return _confirmation_payload(
-            operation="combine_videos",
-            credits=credits,
-            summary=f"Combine {len(video_urls)} videos with {transition} transitions",
-            echo={k: v for k, v in kwargs.items() if k != "confirmed"},
-        )
-
+    # combine_videos runs automatically (no confirmation gate). Credits are
+    # deducted by the upstream core API when the merged MP4 is processed.
     work_dir = tempfile.mkdtemp(prefix="combine_")
     try:
         import httpx
