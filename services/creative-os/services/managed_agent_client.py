@@ -1824,6 +1824,8 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
                 print(f"[combine_videos]   Downloaded clip {i+1}: {len(resp.content)/1024/1024:.1f}MB")
 
         # 2. Normalize all clips to consistent resolution/codec using ffmpeg
+        #    IMPORTANT: Every clip MUST have an audio track for xfade+acrossfade.
+        #    If a source clip has no audio, we generate a silent audio track.
         normalized: list[str] = []
         target_res = "1080:1920"  # 9:16 vertical — most UGC content
         for i, path in enumerate(local_paths):
@@ -1842,21 +1844,25 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
                 subprocess.run, cmd, capture_output=True, text=True
             )
             if result.returncode != 0:
-                # Retry without audio (clip may have no audio track)
-                cmd_noaudio = [
-                    FFMPEG, "-y", "-i", path,
+                # Source has no audio → add a silent audio track so all clips are uniform
+                print(f"[combine_videos] Clip {i} has no audio, adding silent track")
+                cmd_silent = [
+                    FFMPEG, "-y",
+                    "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+                    "-i", path,
                     "-vf", f"scale={target_res}:force_original_aspect_ratio=decrease,"
                            f"pad={target_res}:(ow-iw)/2:(oh-ih)/2:color=black",
                     "-r", "30", "-pix_fmt", "yuv420p",
                     "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-an",
+                    "-c:a", "aac", "-ar", "44100", "-ac", "2",
+                    "-shortest",
                     norm_path,
                 ]
                 result2 = await asyncio.to_thread(
-                    subprocess.run, cmd_noaudio, capture_output=True, text=True
+                    subprocess.run, cmd_silent, capture_output=True, text=True
                 )
                 if result2.returncode != 0:
-                    return json.dumps({"error": f"Failed to normalize clip {i}: {result2.stderr[:300]}"})
+                    return json.dumps({"error": f"Failed to normalize clip {i}: {result2.stderr[-300:]}"})
             normalized.append(norm_path)
 
         # 3. Get durations of each normalized clip (using ffmpeg -i, no ffprobe needed)
@@ -1875,6 +1881,8 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
                 durations.append(int(h) * 3600 + int(m) * 60 + float(s))
             else:
                 durations.append(5.0)  # fallback
+
+        print(f"[combine_videos] Clip durations: {durations}")
 
         # 4. Build ffmpeg xfade chain for N clips
         if transition == "none" or len(normalized) == 2 and any(d < transition_dur * 2 for d in durations):
@@ -1895,41 +1903,44 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
                 subprocess.run, cmd, capture_output=True, text=True
             )
             if result.returncode != 0:
-                return json.dumps({"error": f"FFmpeg concat failed: {result.stderr[:400]}"})
+                return json.dumps({"error": f"FFmpeg concat failed: {result.stderr[-400:]}"})
         else:
-            # Build chained xfade filter for smooth transitions
+            # Build chained xfade (video) + acrossfade (audio) filter
             output_path = os.path.join(work_dir, "combined.mp4")
             n = len(normalized)
 
-            # For 2 clips: [0:v][1:v]xfade=...[v]
-            # For 3 clips: [0:v][1:v]xfade=...[v01]; [v01][2:v]xfade=...[v]
-            # etc.
             xfade_name = "dissolve" if transition == "dissolve" else (
                 "fade" if transition == "fade" else transition
             )
 
-            filter_parts = []
-            cumulative_offset = 0.0
+            video_filters = []
+            audio_filters = []
 
             for i in range(n - 1):
-                in_a = f"[{i}:v]" if i == 0 else f"[v{i-1}{i}]"
-                in_b = f"[{i+1}:v]"
-                out_tag = "[v]" if i == n - 2 else f"[v{i}{i+1}]"
+                # ── Video xfade chain ──
+                v_in_a = f"[{i}:v]" if i == 0 else f"[v{i-1}{i}]"
+                v_in_b = f"[{i+1}:v]"
+                v_out = "[v]" if i == n - 2 else f"[v{i}{i+1}]"
 
-                offset = cumulative_offset + durations[i] - transition_dur
-                if i > 0:
-                    # After first xfade, the accumulated stream is shorter by transition_dur
-                    offset = cumulative_offset + durations[i] - transition_dur * (i + 1)
-                    # Simpler: track running offset
                 offset = sum(durations[:i+1]) - transition_dur * (i + 1)
                 offset = max(0.1, offset)
 
-                filter_parts.append(
-                    f"{in_a}{in_b}xfade=transition={xfade_name}"
-                    f":duration={transition_dur}:offset={offset:.3f}{out_tag}"
+                video_filters.append(
+                    f"{v_in_a}{v_in_b}xfade=transition={xfade_name}"
+                    f":duration={transition_dur}:offset={offset:.3f}{v_out}"
                 )
 
-            filter_str = ";".join(filter_parts)
+                # ── Audio acrossfade chain ──
+                a_in_a = f"[{i}:a]" if i == 0 else f"[a{i-1}{i}]"
+                a_in_b = f"[{i+1}:a]"
+                a_out = "[a]" if i == n - 2 else f"[a{i}{i+1}]"
+
+                audio_filters.append(
+                    f"{a_in_a}{a_in_b}acrossfade=d={transition_dur}"
+                    f":c1=tri:c2=tri{a_out}"
+                )
+
+            filter_str = ";".join(video_filters + audio_filters)
 
             # Build input args
             input_args = []
@@ -1940,9 +1951,9 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
                 FFMPEG, "-y",
                 *input_args,
                 "-filter_complex", filter_str,
-                "-map", "[v]",
-                "-an",  # Drop audio for xfade chain (simplifies filter graph)
+                "-map", "[v]", "-map", "[a]",
                 "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                "-c:a", "aac", "-ar", "44100",
                 output_path,
             ]
 
