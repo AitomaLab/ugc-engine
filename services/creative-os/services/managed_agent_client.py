@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Optional
@@ -2372,6 +2373,70 @@ class ManagedAgentClient:
 
     # ── streaming entry point ────────────────────────────────────────
     async def run_stream(
+        self,
+        brief: str,
+        user_token: str,
+        project_id: Optional[str],
+        session_id: Optional[str] = None,
+        max_tool_calls: int = 24,
+        prior_turns: Optional[list[dict]] = None,
+    ) -> AsyncIterator[dict]:
+        """Wrap the inner implementation with a persistent heartbeat task.
+
+        The Anthropic stream, Anthropic events.send, and various polling
+        loops all have quiet windows where no event is yielded for 30-60s.
+        Intermediaries (Railway proxy, browsers) kill idle SSE connections,
+        which was surfacing as a "network error" even though backend tools
+        kept running. This wrapper spawns a background heartbeat task that
+        pumps a keepalive into the output queue every 10s regardless of
+        what the inner generator is doing.
+        """
+        queue: asyncio.Queue = asyncio.Queue()
+        DONE = object()
+
+        async def producer():
+            try:
+                async for ev in self._run_stream_impl(
+                    brief=brief,
+                    user_token=user_token,
+                    project_id=project_id,
+                    session_id=session_id,
+                    max_tool_calls=max_tool_calls,
+                    prior_turns=prior_turns,
+                ):
+                    await queue.put(ev)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                await queue.put({"type": "error", "message": f"agent run failed: {e}"})
+            finally:
+                await queue.put(DONE)
+
+        async def heartbeat():
+            try:
+                while True:
+                    await asyncio.sleep(10)
+                    await queue.put({"type": "keepalive", "elapsed_seconds": 0, "phase": "idle"})
+            except asyncio.CancelledError:
+                pass
+
+        prod_task = asyncio.create_task(producer())
+        hb_task = asyncio.create_task(heartbeat())
+        try:
+            while True:
+                ev = await queue.get()
+                if ev is DONE:
+                    break
+                yield ev
+        finally:
+            hb_task.cancel()
+            prod_task.cancel()
+            with suppress(BaseException):
+                await hb_task
+            with suppress(BaseException):
+                await prod_task
+
+    async def _run_stream_impl(
         self,
         brief: str,
         user_token: str,
