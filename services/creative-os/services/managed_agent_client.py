@@ -2534,8 +2534,13 @@ class ManagedAgentClient:
                     if ev_type == "agent.message":
                         for block in getattr(ev, "content", []) or []:
                             text = getattr(block, "text", None)
-                            if text:
-                                yield {"type": "agent_message", "text": text}
+                            if not text:
+                                continue
+                            # Split on paragraph breaks so each paragraph
+                            # renders as its own bubble in the UI.
+                            paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+                            for p in paragraphs:
+                                yield {"type": "agent_message", "text": p}
 
                     elif ev_type == "agent.custom_tool_use":
                         tool_calls_made += 1
