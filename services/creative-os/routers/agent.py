@@ -206,6 +206,29 @@ async def agent_stream(
                 return turns[-1]
 
             try:
+                dirty = False  # set when turns changed since last persist
+                last_persist = 0
+
+                async def _maybe_persist(force: bool = False):
+                    """Upsert turns to Supabase. Throttled to at most once per 3s
+                    unless forced, so the SSE hot path isn't dominated by I/O."""
+                    nonlocal dirty, last_persist
+                    if not dirty:
+                        return
+                    now = _now_ms()
+                    if not force and (now - last_persist) < 3000:
+                        return
+                    try:
+                        await upsert_thread(
+                            user_token, user_id, project_id,
+                            anthropic_session_id=session_id,
+                            turns=turns,
+                        )
+                        dirty = False
+                        last_persist = now
+                    except Exception as e:
+                        print(f"[agent_stream] mid-run upsert failed: {e}")
+
                 async for ev in client.run_stream(
                     brief=augmented_brief,
                     user_token=user_token,
@@ -222,9 +245,6 @@ async def agent_stream(
                             anthropic_session_id=session_id,
                         )
                     elif t == "agent_message":
-                        # First agent_message fills an empty placeholder agent
-                        # turn (if any). Subsequent messages start their own
-                        # turn — one bubble per model utterance.
                         current = _ensure_agent_turn()
                         if not current["text"] and not current["artifacts"] and not current["tool_calls"]:
                             current["text"] = ev["text"]
@@ -236,13 +256,19 @@ async def agent_stream(
                                 "tool_calls": [],
                                 "ts": _now_ms(),
                             })
+                        dirty = True
                     elif t == "tool_call":
                         _ensure_agent_turn()["tool_calls"].append({
                             "name": ev["name"],
                             "input_summary": ev.get("input_summary", ""),
                         })
+                        dirty = True
                     elif t == "artifact":
                         _ensure_agent_turn()["artifacts"].append(ev["artifact"])
+                        dirty = True
+                    # Persist incrementally so clients that lost the SSE can
+                    # recover full state via GET /agent/thread.
+                    await _maybe_persist()
                     yield f"data: {json.dumps(ev)}\n\n"
 
             except asyncio.CancelledError:

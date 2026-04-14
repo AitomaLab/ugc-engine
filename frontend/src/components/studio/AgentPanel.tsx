@@ -59,6 +59,7 @@ export function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse
     const [error, setError] = useState<string | null>(null);
     const [hydrating, setHydrating] = useState(false);
     const abortRef = useRef<AbortController | null>(null);
+    const reconnectRef = useRef<{ timer: ReturnType<typeof setTimeout> | null; stableSince: number; lastHash: string }>({ timer: null, stableSince: 0, lastHash: '' });
     const scrollerRef = useRef<HTMLDivElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -310,6 +311,17 @@ export function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse
         if (el) el.scrollTop = el.scrollHeight;
     }, [turns, activity, hydrating]);
 
+    // Cancel reconnect polling on unmount so we don't leak timers.
+    useEffect(() => {
+        const ref = reconnectRef.current;
+        return () => {
+            if (ref.timer) {
+                clearTimeout(ref.timer);
+                ref.timer = null;
+            }
+        };
+    }, []);
+
     const handleRun = useCallback(async () => {
         const text = brief.trim();
         const readyAttachments = attachments.filter((a) => a.status === 'ready' && a.url);
@@ -370,9 +382,60 @@ export function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse
         setError(null);
         setRunning(true);
         setActivity('Thinking…');
+        // Cancel any prior reconnect polling — this run takes over.
+        if (reconnectRef.current.timer) {
+            clearTimeout(reconnectRef.current.timer);
+            reconnectRef.current.timer = null;
+        }
 
         const controller = new AbortController();
         abortRef.current = controller;
+
+        // When the SSE drops mid-run (Railway proxy timeout, mobile nets, etc.)
+        // we silently fall back to polling the persisted thread. The agent
+        // never shows a red error pill — recovery is invisible to the user.
+        const stopThreadPolling = () => {
+            if (reconnectRef.current.timer) {
+                clearTimeout(reconnectRef.current.timer);
+                reconnectRef.current.timer = null;
+            }
+        };
+        const startThreadPolling = () => {
+            stopThreadPolling();
+            reconnectRef.current.stableSince = 0;
+            reconnectRef.current.lastHash = '';
+            const tick = async () => {
+                try {
+                    const thread = await getAgentThread(projectId);
+                    const nextTurns = thread.turns || [];
+                    const hash = JSON.stringify(nextTurns.map((t: AgentTurn) => [
+                        t.role, t.text, (t.artifacts || []).length, (t.tool_calls || []).length,
+                    ]));
+                    if (hash !== reconnectRef.current.lastHash) {
+                        reconnectRef.current.lastHash = hash;
+                        reconnectRef.current.stableSince = Date.now();
+                        setTurns(nextTurns);
+                        if (thread.session_id) setSessionId(thread.session_id);
+                        onArtifact?.();
+                    }
+                    // Stop polling once state has been stable for 45s —
+                    // the run has almost certainly finished by then.
+                    const stableFor = Date.now() - reconnectRef.current.stableSince;
+                    if (reconnectRef.current.stableSince && stableFor > 45000) {
+                        stopThreadPolling();
+                        setRunning(false);
+                        setActivity('');
+                        abortRef.current = null;
+                        return;
+                    }
+                } catch (err) {
+                    console.warn('thread poll failed:', err);
+                }
+                reconnectRef.current.timer = setTimeout(tick, 3000);
+            };
+            reconnectRef.current.stableSince = Date.now();
+            reconnectRef.current.timer = setTimeout(tick, 1500);
+        };
 
         const updateLastAgentTurn = (mut: (t: AgentTurn) => AgentTurn) => {
             setTurns((prev) => {
@@ -463,13 +526,11 @@ export function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse
                     abortRef.current = null;
                     break;
                 case 'disconnected':
-                    updateLastAgentTurn((t) => ({
-                        ...t,
-                        text: (t.text ? t.text + '\n\n' : '') + 'Connection lost — work continues in the background. Refresh to reconnect.',
-                    }));
-                    setRunning(false);
-                    setActivity('');
-                    abortRef.current = null;
+                    // Silently fall back to polling the persisted thread so
+                    // the user sees new turns/artifacts as the backend finishes.
+                    // No red error pill — this is invisible recovery.
+                    setActivity('Reconnecting...');
+                    startThreadPolling();
                     break;
                 case 'error':
                     setError(e.message);
@@ -487,12 +548,22 @@ export function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse
                 updateLastAgentTurn((t) => ({ ...t, interrupted: true }));
             } else {
                 const msg = err instanceof Error ? err.message : String(err);
-                // If the stream never started (e.g. 409 concurrency guard),
-                // remove the optimistically-added user + placeholder turns.
+                // 409 concurrency guard — stream never started. Rewind the
+                // optimistic user + placeholder turns and surface the error.
                 if (msg.includes('already running')) {
                     setTurns((prev) => prev.slice(0, -2));
+                    setError(msg);
+                } else if (msg.includes('Agent stream error:') || msg.includes('401') || msg.includes('403') || msg.includes('400')) {
+                    // Hard server errors deserve a visible message.
+                    setError(msg);
+                } else {
+                    // Transient connection failure — silently fall back to
+                    // polling the persisted thread. No red error pill.
+                    console.warn('stream failed, polling thread:', msg);
+                    setActivity('Reconnecting...');
+                    startThreadPolling();
+                    return;
                 }
-                setError(msg);
             }
         } finally {
             setRunning(false);
