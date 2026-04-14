@@ -231,59 +231,135 @@ async def _run_animation_pipeline(job_id: str, data: AnimateRequest, token: str)
 
         # Keep httpx client open for BOTH creating and polling
         async with httpx.AsyncClient(timeout=30.0) as http:
-            resp = await http.post(
-                f"{kie_url}/api/v1/jobs/createTask",
-                headers=kie_headers,
-                json=kling_payload,
-            )
-            resp.raise_for_status()
-            result = resp.json()
-            if result.get("code") != 200:
-                raise RuntimeError(f"Kling API error: {result.get('msg')}")
-            task_id = result["data"]["taskId"]
-            print(f"[Animate] Kling task created: {task_id}")
+            async def _kie_animate() -> str:
+                resp = await http.post(
+                    f"{kie_url}/api/v1/jobs/createTask",
+                    headers=kie_headers,
+                    json=kling_payload,
+                )
+                resp.raise_for_status()
+                result = resp.json()
+                if result.get("code") != 200:
+                    raise RuntimeError(f"Kling API error: {result.get('msg')}")
+                task_id = result["data"]["taskId"]
+                print(f"[Animate] Kling task created: {task_id}")
 
-            # Step 3: Poll Kling for completion
-            await update_job({"status_message": "Processing video...", "progress": 50})
-            for i in range(90):  # ~15 minutes max (10s * 90)
-                await asyncio.sleep(10)
-                try:
-                    poll_resp = await http.get(
-                        f"{kie_url}/api/v1/jobs/recordInfo",
-                        headers=kie_headers,
-                        params={"taskId": task_id},
-                    )
-                    poll_resp.raise_for_status()
-                    poll_data = poll_resp.json()
-                except Exception as poll_err:
-                    print(f"[Animate] Poll error (continuing): {poll_err}")
-                    continue
+                await update_job({"status_message": "Processing video...", "progress": 50})
+                for _ in range(90):  # ~15 minutes max (10s * 90)
+                    await asyncio.sleep(10)
+                    try:
+                        poll_resp = await http.get(
+                            f"{kie_url}/api/v1/jobs/recordInfo",
+                            headers=kie_headers,
+                            params={"taskId": task_id},
+                        )
+                        poll_resp.raise_for_status()
+                        poll_data = poll_resp.json()
+                    except Exception as poll_err:
+                        print(f"[Animate] Poll error (continuing): {poll_err}")
+                        continue
 
-                if poll_data.get("code") != 200:
-                    continue
+                    if poll_data.get("code") != 200:
+                        continue
+                    state = poll_data.get("data", {}).get("state", "processing")
+                    if state == "success":
+                        res_json = poll_data["data"].get("resultJson")
+                        if isinstance(res_json, str):
+                            res_json = json_mod.loads(res_json)
+                        else:
+                            res_json = res_json or {}
+                        urls = res_json.get("resultUrls") or res_json.get("videos") or []
+                        if urls:
+                            return urls[0]
+                    elif state == "fail":
+                        fail_msg = poll_data.get("data", {}).get("failMsg", "Unknown")
+                        raise RuntimeError(f"Kling generation failed: {fail_msg}")
+                raise RuntimeError("Kling generation timed out after 15 minutes")
 
-                state = poll_data.get("data", {}).get("state", "processing")
-                if state == "success":
-                    res_json = poll_data["data"].get("resultJson")
-                    if isinstance(res_json, str):
-                        res_json = json_mod.loads(res_json)
-                    else:
-                        res_json = res_json or {}
-                    urls = res_json.get("resultUrls") or res_json.get("videos") or []
-                    if urls:
-                        print(f"[Animate] Complete! Video URL: {urls[0][:80]}...")
-                        await update_job({
-                            "status": "success",
-                            "final_video_url": urls[0],
-                            "progress": 100,
-                            "status_message": "Complete!",
-                        })
-                        return
-                elif state == "fail":
-                    fail_msg = poll_data.get("data", {}).get("failMsg", "Unknown")
-                    raise RuntimeError(f"Kling generation failed: {fail_msg}")
+            async def _wavespeed_animate() -> str:
+                ws_endpoint = os.getenv(
+                    "WAVESPEED_KLING_I2V_ENDPOINT",
+                    "https://api.wavespeed.ai/api/v3/kwaivgi/kling-v3.0-std/image-to-video",
+                )
+                ws_key = os.getenv("WAVESPEED_API_KEY", "")
+                if not ws_key or not ws_endpoint:
+                    raise RuntimeError("WaveSpeed Kling not configured")
+                ws_headers = {
+                    "Authorization": f"Bearer {ws_key}",
+                    "Content-Type": "application/json",
+                }
+                ws_payload = {
+                    "image": data.image_url,
+                    "prompt": prompt,
+                    "duration": max(3, min(15, duration)),
+                    "sound": True,
+                    "negative_prompt": "no extra limbs, no mutated hands, no extra fingers, no blurry, no distortion",
+                }
+                print(f"[Animate] [WaveSpeed] Submitting to {ws_endpoint}")
+                sub_resp = await http.post(ws_endpoint, headers=ws_headers, json=ws_payload)
+                if sub_resp.status_code != 200:
+                    raise RuntimeError(f"WaveSpeed Kling submit error ({sub_resp.status_code}): {sub_resp.text[:300]}")
+                api_result = sub_resp.json()
+                inner = api_result.get("data", api_result)
+                prediction_id = inner.get("id")
+                if not prediction_id:
+                    raise RuntimeError(f"WaveSpeed Kling: no prediction id: {str(api_result)[:200]}")
+                status_url = (inner.get("urls") or {}).get("get") or (
+                    f"https://api.wavespeed.ai/api/v3/predictions/{prediction_id}/result"
+                )
+                print(f"[Animate] [WaveSpeed] Task: {prediction_id}")
 
-            raise RuntimeError("Kling generation timed out after 15 minutes")
+                for _ in range(120):  # 20 min max
+                    await asyncio.sleep(10)
+                    try:
+                        r = await http.get(status_url, headers=ws_headers)
+                        poll = r.json()
+                    except Exception as e:
+                        print(f"[Animate] [WaveSpeed] Poll warn: {e}")
+                        continue
+                    pinner = poll.get("data", poll)
+                    status = (pinner.get("status") or "processing").lower()
+                    if status == "completed":
+                        outputs = pinner.get("outputs") or []
+                        if outputs:
+                            first = outputs[0]
+                            url = first if isinstance(first, str) else (first.get("url") or first.get("output"))
+                            if url:
+                                return url
+                    elif status == "failed":
+                        raise RuntimeError(f"WaveSpeed Kling failed: {pinner.get('error', 'unknown')}")
+                raise RuntimeError("WaveSpeed Kling timed out after 20 minutes")
+
+            SKIP_PATTERNS = ("internal error", "high demand", "429", "503", "rate limit", "service is currently unavailable", "e003")
+            RETRY_PATTERNS = ("500", "unknown generation error", "timed out", "timeout", "generation failed")
+
+            video_url: Optional[str] = None
+            try:
+                video_url = await _kie_animate()
+            except Exception as kie_err:
+                err = str(kie_err).lower()
+                should_fallback = (
+                    any(p in err for p in SKIP_PATTERNS)
+                    or any(p in err for p in RETRY_PATTERNS)
+                )
+                if should_fallback and os.getenv("WAVESPEED_API_KEY"):
+                    print(f"[Animate] KIE failed ({kie_err}) — falling back to WaveSpeed Kling")
+                    await update_job({"status_message": "KIE failed — retrying on WaveSpeed...", "progress": 55})
+                    video_url = await _wavespeed_animate()
+                else:
+                    raise
+
+            if not video_url:
+                raise RuntimeError("Animation produced no video URL")
+
+            print(f"[Animate] Complete! Video URL: {video_url[:80]}...")
+            await update_job({
+                "status": "success",
+                "final_video_url": video_url,
+                "progress": 100,
+                "status_message": "Complete!",
+            })
+            return
 
     except Exception as e:
         print(f"[Animate] Pipeline failed for job {job_id}: {e}")

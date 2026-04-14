@@ -240,6 +240,165 @@ def generate_video(
     raise RuntimeError(f"Video generation timed out after {timeout_mins} minutes")
 
 
+# ---------------------------------------------------------------------------
+# WaveSpeed fallback providers
+# ---------------------------------------------------------------------------
+WAVESPEED_API_URL = "https://api.wavespeed.ai/api/v3"
+WAVESPEED_VEO_I2V_ENDPOINT = os.getenv(
+    "WAVESPEED_VEO_I2V_ENDPOINT", f"{WAVESPEED_API_URL}/google/veo3.1/reference-to-video"
+)
+WAVESPEED_VEO_T2V_ENDPOINT = os.getenv(
+    "WAVESPEED_VEO_T2V_ENDPOINT", f"{WAVESPEED_API_URL}/google/veo3.1-fast/text-to-video"
+)
+WAVESPEED_KLING_I2V_ENDPOINT = os.getenv(
+    "WAVESPEED_KLING_I2V_ENDPOINT", f"{WAVESPEED_API_URL}/kwaivgi/kling-v3.0-std/image-to-video"
+)
+WAVESPEED_SEEDANCE_ENDPOINT = os.getenv(
+    "WAVESPEED_SEEDANCE_ENDPOINT", f"{WAVESPEED_API_URL}/bytedance/seedance-2.0/image-to-video"
+)
+WAVESPEED_NANOBANANA_ENDPOINT = os.getenv(
+    "WAVESPEED_NANOBANANA_ENDPOINT", f"{WAVESPEED_API_URL}/google/nano-banana-pro/edit"
+)
+
+# KIE overloaded — skip remaining retries and go straight to WaveSpeed.
+SKIP_KIE_RETRY_PATTERNS = (
+    "internal error", "high demand", "too many requests", "rate limit",
+    "429", "503", "service is currently unavailable", "e003",
+)
+# Transient KIE errors — retry KIE a few times, then fall back to WaveSpeed.
+RETRIABLE_PATTERNS = (
+    "500", "unknown generation error", "timed out", "timeout", "generation failed",
+)
+
+
+def _wavespeed_headers() -> dict:
+    return {
+        "Authorization": f"Bearer {os.getenv('WAVESPEED_API_KEY', '')}",
+        "Content-Type": "application/json",
+    }
+
+
+def _wavespeed_submit_and_poll(endpoint: str, payload: dict, label: str, max_poll_seconds: int = 1200) -> dict:
+    """Submit job to a WaveSpeed endpoint and poll for completion.
+
+    Returns {"taskId": prediction_id, "videoUrl": first_output_url}.
+    """
+    headers = _wavespeed_headers()
+    print(f"      [WaveSpeed {label}] Submitting to {endpoint}")
+    try:
+        resp = requests.post(endpoint, headers=headers, json=payload, timeout=60)
+    except Exception as e:
+        raise RuntimeError(f"WaveSpeed {label} network error: {e}")
+    if resp.status_code != 200:
+        raise RuntimeError(f"WaveSpeed {label} API error ({resp.status_code}): {resp.text[:300]}")
+
+    api_result = resp.json()
+    result_data = api_result.get("data", api_result)
+    prediction_id = result_data.get("id")
+    if not prediction_id:
+        raise RuntimeError(f"WaveSpeed {label} — no prediction ID: {str(api_result)[:300]}")
+    status_url = (result_data.get("urls") or {}).get("get") or f"{WAVESPEED_API_URL}/predictions/{prediction_id}/result"
+    print(f"      [WaveSpeed {label}] Task: {prediction_id}")
+
+    poll_interval = 10
+    for i in range(max_poll_seconds // poll_interval):
+        time.sleep(poll_interval)
+        try:
+            poll_resp = requests.get(status_url, headers=headers, timeout=30)
+            poll_data = poll_resp.json()
+        except Exception as poll_err:
+            print(f"      [WaveSpeed {label}] Poll warning: {poll_err}")
+            continue
+        inner = poll_data.get("data", poll_data)
+        status = (inner.get("status") or "processing").lower()
+        if status == "completed":
+            outputs = inner.get("outputs") or []
+            if outputs:
+                first = outputs[0]
+                url = first if isinstance(first, str) else (first.get("url") or first.get("output"))
+                if url:
+                    print(f"      [WaveSpeed {label}] Complete ({(i + 1) * poll_interval}s)")
+                    return {"taskId": prediction_id, "videoUrl": url}
+        elif status == "failed":
+            raise RuntimeError(f"WaveSpeed {label} failed: {inner.get('error', 'unknown')}")
+
+    raise RuntimeError(f"WaveSpeed {label} timed out after {max_poll_seconds}s")
+
+
+def generate_video_wavespeed(prompt, reference_image_url=None, duration=8, family="veo"):
+    """Generate a video via WaveSpeed for Veo / Kling / Seedance families.
+
+    Returns {"taskId": ..., "videoUrl": ...} on success.
+    Raises RuntimeError on failure or missing config.
+    """
+    if not os.getenv("WAVESPEED_API_KEY"):
+        raise RuntimeError("WAVESPEED_API_KEY not set")
+
+    if family == "kling":
+        if not reference_image_url:
+            raise RuntimeError("Kling WaveSpeed requires reference_image_url")
+        if not WAVESPEED_KLING_I2V_ENDPOINT:
+            raise RuntimeError("WAVESPEED_KLING_I2V_ENDPOINT not configured")
+        kling_dur = max(3, min(15, int(duration)))
+        payload = {
+            "image": reference_image_url,
+            "prompt": prompt or "",
+            "duration": kling_dur,
+            "sound": True,
+            "negative_prompt": "no extra limbs, no mutated hands, no extra fingers, no blurry, no distortion",
+        }
+        return _wavespeed_submit_and_poll(WAVESPEED_KLING_I2V_ENDPOINT, payload, "Kling")
+
+    if family == "seedance":
+        if not reference_image_url:
+            raise RuntimeError("Seedance WaveSpeed requires reference_image_url")
+        if not WAVESPEED_SEEDANCE_ENDPOINT:
+            raise RuntimeError("WAVESPEED_SEEDANCE_ENDPOINT not configured")
+        # Seedance supports only 5, 10, or 15 seconds — snap to nearest.
+        sd_dur = min([5, 10, 15], key=lambda d: abs(d - int(duration)))
+        payload = {
+            "image": reference_image_url,
+            "prompt": prompt or "",
+            "duration": sd_dur,
+            "aspect_ratio": "9:16",
+            "resolution": "720p",
+        }
+        return _wavespeed_submit_and_poll(WAVESPEED_SEEDANCE_ENDPOINT, payload, "Seedance")
+
+    # Default: Veo (supports text-to-video and image-to-video)
+    negative = (
+        "no auditory hallucinations, no filler words, no stuttering, "
+        "no extra limbs, no mutated hands, no extra fingers"
+    )
+    if reference_image_url:
+        if not WAVESPEED_VEO_I2V_ENDPOINT:
+            raise RuntimeError("WAVESPEED_VEO_I2V_ENDPOINT not configured")
+        payload = {
+            "images": [reference_image_url],
+            "prompt": prompt,
+            "aspect_ratio": "9:16",
+            "resolution": "720p",
+            "generate_audio": True,
+            "negative_prompt": negative,
+        }
+        return _wavespeed_submit_and_poll(WAVESPEED_VEO_I2V_ENDPOINT, payload, "Veo i2v")
+
+    if not WAVESPEED_VEO_T2V_ENDPOINT:
+        raise RuntimeError("WAVESPEED_VEO_T2V_ENDPOINT not configured")
+    ws_duration = min(8, max(4, int(duration)))
+    if ws_duration not in (4, 6, 8):
+        ws_duration = 8
+    payload = {
+        "prompt": prompt,
+        "aspect_ratio": "9:16",
+        "duration": ws_duration,
+        "resolution": "720p",
+        "generate_audio": True,
+        "negative_prompt": negative,
+    }
+    return _wavespeed_submit_and_poll(WAVESPEED_VEO_T2V_ENDPOINT, payload, "Veo t2v")
+
+
 def generate_video_with_retry(
     prompt,
     reference_image_url=None,
@@ -251,8 +410,11 @@ def generate_video_with_retry(
     kling_elements=None,
     multi_prompt=None,
 ):
-    """Generate video with retry on transient errors."""
-    RETRIABLE_PATTERNS = ("500", "internal error", "unknown generation error", "timed out", "timeout", "generation failed")
+    """Try KIE (with short retries) then fall back to WaveSpeed for the same family."""
+    family = _get_model_family(model_api or "")
+    # Veo: 5-min fast-fail. Kling/Seedance: 10 min (they're inherently slower).
+    kie_max_poll = 300 if family == "veo" else 600
+    last_error: Exception | None = None
 
     for attempt in range(max_retries):
         try:
@@ -261,16 +423,32 @@ def generate_video_with_retry(
                 first_frame_url, return_last_frame, duration,
                 kling_elements=kling_elements,
                 multi_prompt=multi_prompt,
+                max_poll_seconds=kie_max_poll,
             )
         except RuntimeError as e:
-            error_str = str(e).lower()
-            is_retriable = any(p in error_str for p in RETRIABLE_PATTERNS)
-            if is_retriable and attempt < max_retries - 1:
-                wait_time = (2 ** attempt) * 5
-                print(f"      [RETRY] '{e}' - retrying in {wait_time}s (attempt {attempt + 2}/{max_retries})")
-                time.sleep(wait_time)
-                continue
-            raise
+            last_error = e
+            err = str(e).lower()
+            if any(p in err for p in SKIP_KIE_RETRY_PATTERNS):
+                print(f"      [Router] KIE overloaded ({e}) — skipping retries, going to WaveSpeed")
+                break
+            if not any(p in err for p in RETRIABLE_PATTERNS):
+                raise
+            if attempt == max_retries - 1:
+                break
+            wait = (2 ** attempt) * 5
+            print(f"      [RETRY] '{e}' - retrying KIE in {wait}s (attempt {attempt + 2}/{max_retries})")
+            time.sleep(wait)
+
+    # KIE exhausted — try WaveSpeed once if we have an API key.
+    if os.getenv("WAVESPEED_API_KEY"):
+        try:
+            print(f"      [Router] Falling back to WaveSpeed for family={family}")
+            return generate_video_wavespeed(prompt, reference_image_url, duration, family)
+        except RuntimeError as ws_err:
+            print(f"      [Router] WaveSpeed also failed: {ws_err}")
+    if last_error:
+        raise last_error
+    raise RuntimeError("Video generation failed and no WaveSpeed fallback available")
 
 
 # ---------------------------------------------------------------------------
@@ -370,17 +548,94 @@ def generate_composite_image(scene: dict, influencer: dict, product: dict, seed:
     raise RuntimeError("NanoBanana generation timed out")
 
 
+def generate_composite_image_wavespeed(scene: dict) -> str:
+    """Generate composite image via WaveSpeed NanoBanana Pro."""
+    if not os.getenv("WAVESPEED_API_KEY"):
+        raise RuntimeError("WAVESPEED_API_KEY not set")
+    if not WAVESPEED_NANOBANANA_ENDPOINT:
+        raise RuntimeError("WAVESPEED_NANOBANANA_ENDPOINT not configured")
+
+    headers = _wavespeed_headers()
+    payload = {
+        "prompt": scene.get("nano_banana_prompt") or scene.get("prompt") or "",
+        "seed": int(time.time()) % 999999,
+    }
+    # WaveSpeed NanoBanana edit takes a single "image" field — prefer the reference portrait.
+    img = scene.get("reference_image_url") or scene.get("product_image_url")
+    if img:
+        payload["image"] = img
+
+    print("      [WaveSpeed NanoBanana] Submitting")
+    try:
+        resp = requests.post(WAVESPEED_NANOBANANA_ENDPOINT, headers=headers, json=payload, timeout=60)
+    except Exception as e:
+        raise RuntimeError(f"WaveSpeed NanoBanana network error: {e}")
+    if resp.status_code != 200:
+        raise RuntimeError(f"WaveSpeed NanoBanana API error ({resp.status_code}): {resp.text[:300]}")
+
+    data = (resp.json() or {}).get("data", {})
+    prediction_id = data.get("id")
+    if not prediction_id:
+        raise RuntimeError("WaveSpeed NanoBanana: no prediction ID returned")
+    status_url = (data.get("urls") or {}).get("get") or f"{WAVESPEED_API_URL}/predictions/{prediction_id}/result"
+
+    for i in range(60):  # 10 min max
+        time.sleep(10)
+        try:
+            r = requests.get(status_url, headers=headers, timeout=30)
+            raw = r.json() or {}
+        except Exception as e:
+            print(f"      [WaveSpeed NanoBanana] poll err: {e}")
+            continue
+        inner = raw.get("data", raw)
+        status = (inner.get("status") or "processing").lower()
+        if status == "completed":
+            outputs = inner.get("outputs") or []
+            if outputs:
+                first = outputs[0]
+                url = first if isinstance(first, str) else first.get("url")
+                if url:
+                    print(f"      [WaveSpeed NanoBanana] Complete ({(i + 1) * 10}s)")
+                    return url
+        elif status == "failed":
+            raise RuntimeError(f"WaveSpeed NanoBanana failed: {inner.get('error', 'unknown')}")
+    raise RuntimeError("WaveSpeed NanoBanana timed out")
+
+
 def generate_composite_image_with_retry(
     scene: dict, influencer: dict, product: dict, seed: int = None, max_retries: int = 5
 ) -> str:
-    """Generate composite image with retry on rate limit errors."""
+    """Try KIE NanoBanana with retry; fall back to WaveSpeed on exhaustion / overload."""
+    last_error: Exception | None = None
     for attempt in range(max_retries):
         try:
             return generate_composite_image(scene, influencer, product, seed)
         except RuntimeError as e:
-            if ("concurrent requests limit" in str(e).lower() or "429" in str(e)) and attempt < max_retries - 1:
-                wait_time = (2 ** attempt) * 5
-                print(f"      NanoBanana rate limited. Retrying in {wait_time}s...")
-                time.sleep(wait_time)
-                continue
-            raise
+            last_error = e
+            err = str(e).lower()
+            if any(p in err for p in SKIP_KIE_RETRY_PATTERNS):
+                print(f"      [Router] NanoBanana KIE overloaded ({e}) — going to WaveSpeed")
+                break
+            if "concurrent requests limit" in err or "429" in err:
+                if attempt < max_retries - 1:
+                    wait = (2 ** attempt) * 5
+                    print(f"      NanoBanana rate limited. Retrying in {wait}s...")
+                    time.sleep(wait)
+                    continue
+                break
+            if not any(p in err for p in RETRIABLE_PATTERNS):
+                raise
+            if attempt == max_retries - 1:
+                break
+            wait = (2 ** attempt) * 5
+            time.sleep(wait)
+
+    if os.getenv("WAVESPEED_API_KEY"):
+        try:
+            print("      [Router] Falling back to WaveSpeed NanoBanana")
+            return generate_composite_image_wavespeed(scene)
+        except RuntimeError as ws_err:
+            print(f"      [Router] WaveSpeed NanoBanana also failed: {ws_err}")
+    if last_error:
+        raise last_error
+    raise RuntimeError("Composite image generation failed")
