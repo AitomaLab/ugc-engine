@@ -1832,6 +1832,7 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
                 FFMPEG, "-y", "-i", path,
                 "-vf", f"scale={target_res}:force_original_aspect_ratio=decrease,"
                        f"pad={target_res}:(ow-iw)/2:(oh-ih)/2:color=black",
+                "-r", "30", "-pix_fmt", "yuv420p",
                 "-c:v", "libx264", "-preset", "fast", "-crf", "23",
                 "-c:a", "aac", "-ar", "44100", "-ac", "2",
                 "-shortest",
@@ -1846,6 +1847,7 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
                     FFMPEG, "-y", "-i", path,
                     "-vf", f"scale={target_res}:force_original_aspect_ratio=decrease,"
                            f"pad={target_res}:(ow-iw)/2:(oh-ih)/2:color=black",
+                    "-r", "30", "-pix_fmt", "yuv420p",
                     "-c:v", "libx264", "-preset", "fast", "-crf", "23",
                     "-an",
                     norm_path,
@@ -1949,7 +1951,9 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
                 subprocess.run, cmd, capture_output=True, text=True
             )
             if result.returncode != 0:
-                print(f"[combine_videos] xfade failed, falling back to simple concat: {result.stderr[:400]}")
+                # Log last 600 chars of stderr (skip version banner)
+                err_tail = result.stderr[-600:] if len(result.stderr) > 600 else result.stderr
+                print(f"[combine_videos] xfade failed: {err_tail}")
                 # Fallback to simple concat
                 concat_list = os.path.join(work_dir, "concat.txt")
                 with open(concat_list, "w") as f:
@@ -1975,8 +1979,11 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
         timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
         storage_filename = f"combined_{timestamp}.mp4"
         try:
-            from ugc_db.db_manager import get_supabase
-            sb = get_supabase()
+            from supabase import create_client
+            sb = create_client(
+                os.getenv("SUPABASE_URL"),
+                os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY"),
+            )
             with open(output_path, "rb") as f:
                 sb.storage.from_("generated-videos").upload(
                     storage_filename, f,
@@ -1984,6 +1991,7 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
                 )
             final_url = sb.storage.from_("generated-videos").get_public_url(storage_filename)
         except Exception as upload_err:
+            print(f"[combine_videos] Upload error: {upload_err}")
             return json.dumps({"error": f"Upload failed: {upload_err}"})
 
         _record_artifact(ctx, {"type": "video", "url": final_url})
