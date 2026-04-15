@@ -141,7 +141,12 @@ async def _create_video_job_record(
 
 
 async def _update_video_job_via_api(token: str, project_id: str, job_id: str, updates: dict):
-    """Update a video_jobs record via Supabase REST API."""
+    """Update a video_jobs record via Supabase REST API.
+
+    Uses the service key for auth when available so that background
+    pipeline tasks (which can run for several minutes) are immune to
+    the user JWT expiring mid-generation.
+    """
     import httpx
     from pathlib import Path
     from dotenv import load_dotenv
@@ -155,9 +160,14 @@ async def _update_video_job_via_api(token: str, project_id: str, job_id: str, up
         print(f"[Creative OS] Cannot update job — missing config or job_id")
         return
 
+    # Prefer the service key (never expires) over the user JWT which
+    # can expire during long-running background pipelines (3-15 min).
+    service_key = os.getenv("SUPABASE_SERVICE_KEY")
+    auth_token = service_key if service_key else token
+
     headers = {
         "apikey": anon_key,
-        "Authorization": f"Bearer {token}",
+        "Authorization": f"Bearer {auth_token}",
         "Content-Type": "application/json",
         "Prefer": "return=minimal",
     }
