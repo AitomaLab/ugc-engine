@@ -160,10 +160,12 @@ async def _update_video_job_via_api(token: str, project_id: str, job_id: str, up
         print(f"[Creative OS] Cannot update job — missing config or job_id")
         return
 
-    # Prefer the service key (never expires) over the user JWT which
-    # can expire during long-running background pipelines (3-15 min).
-    service_key = os.getenv("SUPABASE_SERVICE_KEY")
-    auth_token = service_key if service_key else token
+    # Prefer the service_role JWT (never expires, bypasses RLS) over the
+    # user JWT which can expire during long-running background pipelines.
+    # SUPABASE_SERVICE_ROLE_KEY = the service_role JWT from Supabase dashboard.
+    # SUPABASE_SERVICE_KEY = legacy name (may be JWT secret, not a JWT).
+    service_role_jwt = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    auth_token = service_role_jwt if service_role_jwt else token
 
     headers = {
         "apikey": anon_key,
