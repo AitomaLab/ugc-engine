@@ -66,6 +66,7 @@ export function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse
 
     // ── File attachments ────────────────────────────────────────────────
     const [attachments, setAttachments] = useState<AttachedFile[]>([]);
+    const [useSeedance, setUseSeedance] = useState(false);
 
     const handleFilesPicked = useCallback(async (files: FileList | null) => {
         if (!files || files.length === 0) return;
@@ -480,9 +481,11 @@ export function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse
                         e.name === 'animate_image'
                             ? 'Animating image (Kling 3.0, ~1-3 min)…'
                             : e.name === 'generate_video'
-                                ? (e.input_summary?.includes('cinematic')
-                                    ? 'Generating cinematic clip (Kling 3.0, ~1-3 min)…'
-                                    : 'Generating UGC clip (Veo 3.1, ~1-3 min)…')
+                                ? (e.input_summary?.includes('seedance_2')
+                                    ? 'Generating clip (Seedance 2.0 Fast, ~2-4 min)…'
+                                    : e.input_summary?.includes('cinematic')
+                                        ? 'Generating cinematic clip (Kling 3.0, ~1-3 min)…'
+                                        : 'Generating UGC clip (Veo 3.1, ~1-3 min)…')
                                 : e.name === 'create_ugc_video' || e.name === 'create_clone_video'
                                     ? `Producing full video (${e.name}, ~5-12 min)…`
                                     : e.name === 'create_bulk_campaign'
@@ -542,7 +545,7 @@ export function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse
         };
 
         try {
-            await streamAgent(text, projectId, onEvent, controller.signal, refsForRequest);
+            await streamAgent(text, projectId, onEvent, controller.signal, refsForRequest, useSeedance);
         } catch (err) {
             if ((err as Error).name === 'AbortError') {
                 updateLastAgentTurn((t) => ({ ...t, interrupted: true }));
@@ -780,6 +783,54 @@ export function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse
                             <span style={{ fontSize: '10px', fontWeight: 600, color: '#337AFF', background: 'rgba(51,122,255,0.12)', padding: '2px 6px', borderRadius: '4px' }}>BETA</span>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <div
+                                onClick={() => { if (!running) setUseSeedance((v) => !v); }}
+                                title={useSeedance ? 'Seedance 2.0 engine — ON' : 'Seedance 2.0 engine — OFF'}
+                                style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    marginRight: '6px',
+                                    padding: '0 6px',
+                                    cursor: running ? 'not-allowed' : 'pointer',
+                                    opacity: running ? 0.5 : 1,
+                                    userSelect: 'none',
+                                }}
+                            >
+                                <span style={{
+                                    fontSize: '11px',
+                                    fontWeight: 600,
+                                    color: useSeedance ? '#337AFF' : '#5B6585',
+                                    letterSpacing: '0.2px',
+                                }}>
+                                    Seedance 2.0
+                                </span>
+                                <div
+                                    style={{
+                                        width: '32px',
+                                        height: '18px',
+                                        borderRadius: '9px',
+                                        position: 'relative',
+                                        background: useSeedance
+                                            ? 'linear-gradient(135deg, #5B7BFF, #337AFF)'
+                                            : 'rgba(138,147,176,0.25)',
+                                        transition: 'background 0.2s',
+                                        flexShrink: 0,
+                                    }}
+                                >
+                                    <div style={{
+                                        width: '14px',
+                                        height: '14px',
+                                        borderRadius: '50%',
+                                        background: 'white',
+                                        position: 'absolute',
+                                        top: '2px',
+                                        left: useSeedance ? '16px' : '2px',
+                                        transition: 'left 0.2s',
+                                        boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+                                    }} />
+                                </div>
+                            </div>
                             <button
                                 onClick={handleReset}
                                 title="Clear chat"

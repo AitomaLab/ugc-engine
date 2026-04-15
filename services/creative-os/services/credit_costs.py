@@ -19,6 +19,8 @@ CREDIT_COSTS = {
     "video_clip_ugc_per_s": 6,
     "video_clip_cinematic_per_s": 5,
     "video_clip_clone_per_s": 8,
+    "video_clip_seedance_with_ref_per_s": 16,
+    "video_clip_seedance_no_ref_per_s": 27,
     ("clone", 15): 90,
     ("clone", 30): 180,
     "editor_render": 10,
@@ -45,7 +47,13 @@ def get_editor_render_credit_cost() -> int:
     return CREDIT_COSTS["editor_render"]
 
 
-def get_video_clip_credit_cost(mode: str, clip_length: int) -> int:
+def get_video_clip_credit_cost(mode: str, clip_length: int, has_reference: bool = False) -> int:
+    if mode in ("seedance_2_ugc", "seedance_2_cinematic", "seedance_2_product"):
+        per_s_key = (
+            "video_clip_seedance_with_ref_per_s" if has_reference
+            else "video_clip_seedance_no_ref_per_s"
+        )
+        return int(CREDIT_COSTS[per_s_key] * max(1, int(clip_length)))
     per_s_key = {
         "ugc": "video_clip_ugc_per_s",
         "cinematic_video": "video_clip_cinematic_per_s",

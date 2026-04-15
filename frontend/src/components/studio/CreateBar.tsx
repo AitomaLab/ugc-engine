@@ -25,6 +25,9 @@ const VIDEO_MODES = [
     { id: 'ugc', label: 'UGC', clipLengths: [8] },
     { id: 'cinematic_video', label: 'Cinematic', clipLengths: [5, 10] },
     { id: 'ai_clone', label: 'AI Clone', clipLengths: [15, 30] },
+    { id: 'seedance_2_ugc', label: 'UGC (Seedance 2.0)', clipLengths: [5, 8, 10, 15] },
+    { id: 'seedance_2_cinematic', label: 'Cinematic (Seedance 2.0)', clipLengths: [5, 7, 10, 15] },
+    { id: 'seedance_2_product', label: 'Product Scene (Seedance 2.0)', clipLengths: [5, 7, 10] },
 ];
 const ASPECT_RATIOS = ['9:16', '16:9', '1:1'];
 const QUALITIES = ['2K', '4K'];
@@ -923,7 +926,8 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                     }
                     .co-dd-trigger:hover { border-color: rgba(51,122,255,0.3); }
                     .co-dd-menu {
-                        position: absolute; bottom: calc(100% + 4px); left: 0; min-width: 100%;
+                        position: absolute; bottom: calc(100% + 4px); left: 0;
+                        min-width: max-content;
                         border-radius: 10px; background: white; border: 1px solid rgba(51,122,255,0.10);
                         box-shadow: 0 8px 24px rgba(0,0,0,0.12); overflow: hidden; z-index: 1001;
                         animation: coFadeIn 0.12s ease;
@@ -932,6 +936,7 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                         display: block; width: 100%; padding: 8px 14px; border: none;
                         background: transparent; cursor: pointer; text-align: left;
                         font-size: 12px; color: #4A5578; transition: background 0.1s;
+                        white-space: nowrap;
                     }
                     .co-dd-item:hover { background: rgba(51,122,255,0.06); }
                     .co-dd-item.active { color: #337AFF; font-weight: 600; background: rgba(51,122,255,0.06); }

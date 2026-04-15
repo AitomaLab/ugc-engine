@@ -26,6 +26,8 @@ CREDIT_COSTS = {
     "video_clip_ugc_per_s": 6,           # Veo 3.1 Fast (UGC mode)
     "video_clip_cinematic_per_s": 5,     # Kling 3.0 (cinematic_video mode)
     "video_clip_clone_per_s": 8,         # InfiniTalk (ai_clone mode, lip-sync)
+    "video_clip_seedance_with_ref_per_s": 16,  # Seedance 2.0 Fast 720p i2v (with ref image/video)
+    "video_clip_seedance_no_ref_per_s": 27,    # Seedance 2.0 Fast 720p t2v (no reference)
     # AI Clone full videos (lip-synced talking head, separate pipeline)
     ("clone", 15): 90,
     ("clone", 30): 180,
@@ -59,12 +61,21 @@ def get_editor_render_credit_cost() -> int:
     return CREDIT_COSTS["editor_render"]
 
 
-def get_video_clip_credit_cost(mode: str, clip_length: int) -> int:
+def get_video_clip_credit_cost(mode: str, clip_length: int, has_reference: bool = False) -> int:
     """Credits for a Creative OS text-to-video clip generation.
 
-    mode: 'ugc' | 'cinematic_video' | 'ai_clone'
+    mode: 'ugc' | 'cinematic_video' | 'ai_clone' | 'seedance_2_ugc'
+          | 'seedance_2_cinematic' | 'seedance_2_product'
     clip_length: seconds (5/8/10 typically)
+    has_reference: for Seedance modes, True when an image or video reference
+        is attached (i2v pricing) vs pure text-to-video (t2v pricing).
     """
+    if mode in ("seedance_2_ugc", "seedance_2_cinematic", "seedance_2_product"):
+        per_s_key = (
+            "video_clip_seedance_with_ref_per_s" if has_reference
+            else "video_clip_seedance_no_ref_per_s"
+        )
+        return int(CREDIT_COSTS[per_s_key] * max(1, int(clip_length)))
     per_s_key = {
         "ugc": "video_clip_ugc_per_s",
         "cinematic_video": "video_clip_cinematic_per_s",

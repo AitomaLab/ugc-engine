@@ -49,6 +49,24 @@ VIDEO_MODES = {
         "clip_lengths": [],  # Duration controlled by script length
         "description": "AI Clone — lip-synced talking head",
     },
+    "seedance_2_ugc": {
+        "model": "seedance-2.0-fast",
+        "system_prompt": "seedance_director",
+        "clip_lengths": [5, 8, 10, 15],
+        "description": "UGC — Seedance 2.0 Fast, bilingual EN/ES",
+    },
+    "seedance_2_cinematic": {
+        "model": "seedance-2.0-fast",
+        "system_prompt": "seedance_director",
+        "clip_lengths": [5, 7, 10, 15],
+        "description": "Cinematic — Seedance 2.0 Fast",
+    },
+    "seedance_2_product": {
+        "model": "seedance-2.0-fast",
+        "system_prompt": "seedance_director",
+        "clip_lengths": [5, 7, 10],
+        "description": "Product Scene — Seedance 2.0 Fast",
+    },
 }
 
 # ── Animation (Image → Video) ──────────────────────────────────────────

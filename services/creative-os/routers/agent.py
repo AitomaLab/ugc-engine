@@ -50,6 +50,7 @@ class AgentRunRequest(BaseModel):
     brief: str
     project_id: str
     refs: Optional[list[AgentRef]] = None
+    use_seedance: bool = False
 
 
 class AgentResetRequest(BaseModel):
@@ -143,8 +144,18 @@ async def agent_stream(
     # explicit IDs / URLs for everything the user @-mentioned. This is what
     # the agent reads when deciding which tool to call.
     augmented_brief = brief
+    seedance_marker = (
+        "[ENGINE=seedance — use seedance_2_ugc / seedance_2_cinematic / seedance_2_product "
+        "video modes for this turn. Do NOT use ugc or cinematic_video modes.]"
+    )
+    if data.use_seedance and not refs:
+        augmented_brief = seedance_marker + "\n\n" + augmented_brief
     if refs:
-        lines = ["[Referenced assets — these are the EXACT items the user is talking about]"]
+        lines = []
+        if data.use_seedance:
+            lines.append(seedance_marker)
+            lines.append("")
+        lines.append("[Referenced assets — these are the EXACT items the user is talking about]")
         for r in refs:
             parts = [f"@{r.tag} ({r.type})"]
             if r.name:

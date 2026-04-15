@@ -44,6 +44,7 @@ KIE_MODEL_NAMES = {
     "veo-3.1": "veo3",
     "seedance-1.5-pro": "bytedance/seedance-1.5-pro",
     "seedance-2.0": "bytedance/seedance-2",
+    "seedance-2.0-fast": "bytedance/seedance-2-fast",
     "kling-2.6": "kling-2.6/image-to-video",
 }
 
@@ -83,6 +84,8 @@ def generate_video(
     kling_elements=None,
     max_poll_seconds=None,
     multi_prompt=None,
+    reference_image_urls=None,
+    reference_video_urls=None,
 ):
     """Submit a video generation job to KIE and poll until completion.
 
@@ -142,8 +145,15 @@ def generate_video(
                 "web_search": False,
             },
         }
-        if reference_image_url:
-            payload["input"]["reference_image_urls"] = [reference_image_url]
+        ref_list: list[str] = []
+        if reference_image_urls:
+            ref_list.extend([u for u in reference_image_urls if u])
+        elif reference_image_url:
+            ref_list.append(reference_image_url)
+        if ref_list:
+            payload["input"]["reference_image_urls"] = ref_list
+        if reference_video_urls:
+            payload["input"]["reference_video_urls"] = [u for u in reference_video_urls if u]
         if first_frame_url:
             payload["input"]["first_frame_url"] = first_frame_url
         if return_last_frame:

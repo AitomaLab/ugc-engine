@@ -17,6 +17,18 @@ from core_api_client import CoreAPIClient
 from services.model_router import get_video_mode, get_clip_lengths
 
 
+def _refund_on_failure(user_id: Optional[str], credit_cost: Optional[int], job_id: str, reason: str) -> None:
+    """Best-effort refund for a failed generation. Swallows all errors."""
+    if not user_id or not credit_cost or credit_cost <= 0:
+        return
+    try:
+        from ugc_db.db_manager import refund_credits
+        refund_credits(user_id, credit_cost, {"reason": reason, "job_id": job_id})
+        print(f"[Refund] {credit_cost} credits refunded to {user_id} for job {job_id} ({reason})")
+    except Exception as e:
+        print(f"[Refund] FAILED to refund {credit_cost} credits for job {job_id}: {e}")
+
+
 def _sanitize_influencer_description(description: str, actual_name: str) -> str:
     """Replace any wrong name embedded in the AI-generated identity description.
 
@@ -78,6 +90,8 @@ class VideoGenerateRequest(BaseModel):
     captions: bool = True
     element_refs: Optional[list[ElementRef]] = None  # @mention-based element refs from frontend
     multi_shot_mode: bool = False  # Kling 3.0 multi-shot (backend auto-splits prompt into shots)
+    reference_image_urls: Optional[list[str]] = None  # Seedance 2.0 — multi-image reference
+    reference_video_urls: Optional[list[str]] = None  # Seedance 2.0 — video reference
 
 
 # ── Job record helpers (via core API — handles auth + RLS) ───────────
@@ -486,6 +500,8 @@ async def generate_video(
         return await _generate_clone_video(data, client)
     elif data.mode == "cinematic_video":
         return await _generate_kling_video(data, client, user, background_tasks)
+    elif data.mode in ("seedance_2_ugc", "seedance_2_cinematic", "seedance_2_product"):
+        return await _generate_seedance_video(data, client, user, background_tasks)
     else:
         return await _generate_veo_video(data, client, user, background_tasks)
 
@@ -501,6 +517,212 @@ async def _generate_clone_video(data: VideoGenerateRequest, client: CoreAPIClien
         "clip_length": data.clip_length,
     }
     return await client._request("POST", "/clone-jobs", json=payload)
+
+
+# ── Seedance 2.0 Fast ─────────────────────────────────────────────────
+
+async def _generate_seedance_video(
+    data: VideoGenerateRequest,
+    client: CoreAPIClient,
+    user: dict,
+    background_tasks: BackgroundTasks,
+) -> dict:
+    """Generate video via Seedance 2.0 Fast (KIE bytedance/seedance-2-fast).
+
+    The `prompt` field is passed verbatim — it is expected to be the full
+    4-section structured Seedance output (Style & Mood / Dynamic /
+    Static / Audio). No NanoBanana composite is built: Seedance accepts
+    multiple image + video reference URLs directly.
+    """
+    influencer_id = data.influencer_id
+    if not influencer_id:
+        try:
+            influencers = await client.list_influencers()
+            influencer_id = influencers[0]["id"] if influencers else None
+        except Exception:
+            pass
+    if not influencer_id:
+        influencer_id = "00000000-0000-0000-0000-000000000000"
+
+    product_type = "physical" if data.product_id else "digital"
+
+    try:
+        job = await client.create_job({
+            "influencer_id": influencer_id,
+            "product_id": data.product_id,
+            "product_type": product_type,
+            "model_api": "seedance-2.0-fast",
+            "length": data.clip_length,
+            "campaign_name": "Creative OS",
+            "video_language": data.language,
+            "subtitles_enabled": False,
+            "music_enabled": False,
+            "hook": (data.prompt or "")[:500],
+        })
+        job_id = job.get("id") or job.get("job", {}).get("id")
+        credit_cost = int(job.get("credits_deducted") or 0)
+        print(f"[Seedance] Job created: {job_id} (cost={credit_cost})")
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to create job: {str(e)[:200]}")
+
+    if not job_id:
+        raise HTTPException(status_code=500, detail="Failed to create job record")
+
+    # Resolve reference images: explicit list > product+influencer > single ref
+    ref_images: list[str] = []
+    if data.reference_image_urls:
+        ref_images.extend([u for u in data.reference_image_urls if u])
+    else:
+        if data.product_id:
+            try:
+                product = await client.get_product(data.product_id)
+                if product and product.get("image_url"):
+                    ref_images.append(product["image_url"])
+            except Exception as e:
+                print(f"[Seedance] WARNING: product fetch failed: {e}")
+        if data.influencer_id:
+            try:
+                influencers_list = await client.list_influencers()
+                inf = next((i for i in influencers_list if i["id"] == data.influencer_id), None)
+                if inf and inf.get("image_url"):
+                    ref_images.append(inf["image_url"])
+            except Exception as e:
+                print(f"[Seedance] WARNING: influencer fetch failed: {e}")
+        if not ref_images and data.reference_image_url:
+            ref_images.append(data.reference_image_url)
+
+    ref_videos = [u for u in (data.reference_video_urls or []) if u]
+
+    background_tasks.add_task(
+        _run_seedance_clip_pipeline,
+        job_id=job_id,
+        data=data,
+        token=user["token"],
+        project_id=data.project_id,
+        reference_image_urls=ref_images,
+        reference_video_urls=ref_videos,
+        user_id=user.get("id"),
+        credit_cost=credit_cost,
+    )
+
+    return {
+        "status": "generating",
+        "job_id": job_id,
+        "mode": data.mode,
+        "clip_length": data.clip_length,
+    }
+
+
+async def _run_seedance_clip_pipeline(
+    job_id: str,
+    data: VideoGenerateRequest,
+    token: str,
+    project_id: str,
+    reference_image_urls: list[str],
+    reference_video_urls: list[str],
+    user_id: Optional[str] = None,
+    credit_cost: int = 0,
+):
+    """Background: call KIE Seedance 2.0 Fast and finalize the job."""
+    import asyncio
+    import tempfile
+    from datetime import datetime as _dt
+    import generate_scenes
+
+    try:
+        await _update_video_job_via_api(token, project_id, job_id, {
+            "status_message": "Enhancing prompt...",
+            "progress": 5,
+        })
+
+        # Expand the freeform brief into the 4-section Seedance Director
+        # structure (Style & Mood / Dynamic / Static / Audio). Mirror the
+        # Kling pattern — fall back to the raw prompt if enhancement fails.
+        structured_prompt = data.prompt
+        try:
+            from services.prompt_enhancer import enhance_prompt
+            enhance_context = {"duration": data.clip_length, "has_reference": bool(reference_image_urls or reference_video_urls)}
+            if reference_image_urls:
+                enhance_context["image_url"] = reference_image_urls[0]
+            enhanced = await enhance_prompt(
+                user_prompt=data.prompt,
+                mode=data.mode,
+                language=data.language,
+                context=enhance_context,
+            )
+            if enhanced:
+                structured_prompt = enhanced[0].get("prompt") or data.prompt
+            print(f"[Seedance] Enhanced prompt ({len(structured_prompt)} chars)")
+        except Exception as e:
+            print(f"[Seedance] Prompt enhance failed (using raw): {e}")
+
+        await _update_video_job_via_api(token, project_id, job_id, {
+            "status_message": "Generating Seedance video...",
+            "progress": 10,
+        })
+
+        def _submit():
+            return generate_scenes.generate_video(
+                prompt=structured_prompt,
+                model_api="seedance-2.0-fast",
+                duration=data.clip_length,
+                reference_image_urls=reference_image_urls or None,
+                reference_video_urls=reference_video_urls or None,
+            )
+
+        result = await asyncio.to_thread(_submit)
+        video_url = result.get("videoUrl")
+        if not video_url:
+            raise RuntimeError(f"Seedance returned no videoUrl: {result}")
+
+        await _update_video_job_via_api(token, project_id, job_id, {
+            "status_message": "Uploading video...",
+            "progress": 90,
+        })
+
+        final_url = video_url
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+                tmp_path = tmp.name
+            await asyncio.to_thread(generate_scenes.download_video, video_url, tmp_path)
+            timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
+            storage_filename = f"seedance_clip_{job_id[:8]}_{timestamp}.mp4"
+            try:
+                from ugc_db.db_manager import get_supabase
+                sb = get_supabase()
+                with open(tmp_path, "rb") as f:
+                    sb.storage.from_("generated-videos").upload(
+                        storage_filename, f,
+                        file_options={"content-type": "video/mp4"},
+                    )
+                final_url = sb.storage.from_("generated-videos").get_public_url(storage_filename)
+            except Exception as upload_err:
+                print(f"[Seedance] Supabase upload failed: {upload_err}, using raw URL")
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"[Seedance] Upload failed, using raw URL: {e}")
+
+        await _update_video_job_via_api(token, project_id, job_id, {
+            "status": "success",
+            "progress": 100,
+            "final_video_url": final_url,
+            "preview_url": None,
+            "preview_type": None,
+            "status_message": None,
+            "metadata": {"mode": data.mode, "engine": "seedance-2.0-fast"},
+        })
+        print(f"[Seedance] Job {job_id} complete: {final_url[:80]}...")
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        await _update_video_job_via_api(token, project_id, job_id, {
+            "status": "failed",
+            "error_message": f"Seedance generation failed: {str(e)[:400]}",
+        })
+        _refund_on_failure(user_id, credit_cost, job_id, "seedance_generation_failed")
 
 
 # ── Kling 3.0 ────────────────────────────────────────────────────────
@@ -545,7 +767,8 @@ async def _generate_kling_video(
             "hook": data.prompt[:500] if data.prompt else "",
         })
         job_id = job.get("id") or job.get("job", {}).get("id")
-        print(f"[Creative OS] Cinematic job created: {job_id}")
+        credit_cost = int(job.get("credits_deducted") or 0)
+        print(f"[Creative OS] Cinematic job created: {job_id} (cost={credit_cost})")
     except Exception as e:
         print(f"[Creative OS] Job creation failed: {e}")
         import traceback; traceback.print_exc()
@@ -581,6 +804,8 @@ async def _generate_kling_video(
         influencer_id=influencer_id,
         product_image_url=product_image_url,
         influencer_image_url=influencer_image_url,
+        user_id=user.get("id"),
+        credit_cost=credit_cost,
     )
 
     duration = max(3, min(15, data.clip_length))
@@ -722,6 +947,8 @@ async def _run_cinematic_clip_pipeline(
     influencer_id: str,
     product_image_url: str | None,
     influencer_image_url: str | None,
+    user_id: Optional[str] = None,
+    credit_cost: int = 0,
 ):
     """Background task: Cinematic clip pipeline with Kling 3.0 element references.
 
@@ -1005,6 +1232,7 @@ async def _run_cinematic_clip_pipeline(
                 "status": "failed",
                 "error_message": f"Cinematic video generation failed: {str(e)[:400]}",
             })
+            _refund_on_failure(user_id, credit_cost, job_id, "cinematic_generation_failed")
             return
 
         # ── Step 4: Upload to Supabase Storage & finalize ──
@@ -1068,6 +1296,7 @@ async def _run_cinematic_clip_pipeline(
             "status": "failed",
             "error_message": f"Cinematic clip generation failed: {str(e)[:400]}",
         })
+        _refund_on_failure(user_id, credit_cost, job_id, "cinematic_generation_failed")
 
 
 # ── Veo 3.1 / UGC Pipeline ───────────────────────────────────────────
@@ -1270,7 +1499,8 @@ async def _generate_ugc_clip(
             "hook": data.prompt[:500] if data.prompt else "",
         })
         job_id = job.get("id") or job.get("job", {}).get("id")
-        print(f"[Creative OS] UGC clip job created: {job_id}")
+        credit_cost = int(job.get("credits_deducted") or 0)
+        print(f"[Creative OS] UGC clip job created: {job_id} (cost={credit_cost})")
     except Exception as e:
         print(f"[Creative OS] Job creation failed: {e}")
         import traceback; traceback.print_exc()
@@ -1288,6 +1518,8 @@ async def _generate_ugc_clip(
         project_id=data.project_id,
         influencer_id=influencer_id,
         user_selected_influencer=user_selected_influencer,
+        user_id=user.get("id"),
+        credit_cost=credit_cost,
     )
 
     return {
@@ -1305,6 +1537,8 @@ async def _run_ugc_clip_pipeline(
     project_id: str,
     influencer_id: str,
     user_selected_influencer: bool = True,
+    user_id: Optional[str] = None,
+    credit_cost: int = 0,
 ):
     """Background task: runs the UGC clip pipeline end-to-end.
 
@@ -1664,6 +1898,7 @@ async def _run_ugc_clip_pipeline(
                 "status": "failed",
                 "error_message": f"Video animation failed: {str(e)[:400]}",
             })
+            _refund_on_failure(user_id, credit_cost, job_id, "ugc_generation_failed")
             return
 
         # ── Step 7: Upload to Supabase Storage & finalize ──
@@ -1729,4 +1964,5 @@ async def _run_ugc_clip_pipeline(
             "status": "failed",
             "error_message": f"UGC clip generation failed: {str(e)[:400]}",
         })
+        _refund_on_failure(user_id, credit_cost, job_id, "ugc_generation_failed")
 

@@ -37,6 +37,10 @@ def _load_system_prompt(mode: str) -> str:
         "ugc": "veo_ugc_director.txt",
         "luxury": "luxury_editorial.txt",
         "ugc_composite": "ugc_scene_enhancer.txt",
+        "seedance_director": "seedance_director.txt",
+        "seedance_2_ugc": "seedance_director.txt",
+        "seedance_2_cinematic": "seedance_director.txt",
+        "seedance_2_product": "seedance_director.txt",
     }
     filename = prompt_files.get(mode)
     if not filename:
@@ -52,7 +56,11 @@ def _load_system_prompt(mode: str) -> str:
 def _build_user_message(user_prompt: str, language: str = "en", context: dict | None = None) -> str:
     """Build the user message with context from the Create Bar."""
     lang_name = "English" if language == "en" else "Spanish"
-    parts = [f"Language for introductions and non-prompt text: {lang_name}"]
+    parts = []
+    if context and context.get("mode") in ("seedance_2_ugc", "seedance_2_cinematic", "seedance_2_product"):
+        seedance_lang = "Spanish (Latin American accent)" if language == "es" else "English"
+        parts.append(f"[Language: {seedance_lang}]")
+    parts.append(f"Language for introductions and non-prompt text: {lang_name}")
 
     if context:
         if context.get("product_name"):
@@ -148,7 +156,8 @@ async def enhance_prompt(
         List of dicts with {title, prompt} for each option
     """
     system_prompt = _load_system_prompt(mode)
-    user_text = _build_user_message(user_prompt, language, context)
+    ctx_with_mode = {**(context or {}), "mode": mode}
+    user_text = _build_user_message(user_prompt, language, ctx_with_mode)
 
     client = _get_openai()
 

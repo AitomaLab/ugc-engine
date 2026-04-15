@@ -49,7 +49,7 @@ def _get_model_family(model_name=None):
     return "veo"
 
 
-def generate_video(prompt, reference_image_url=None, model_api=None, first_frame_url=None, return_last_frame=False, duration=12, kling_elements=None, max_poll_seconds=None, multi_prompt=None):
+def generate_video(prompt, reference_image_url=None, model_api=None, first_frame_url=None, return_last_frame=False, duration=12, kling_elements=None, max_poll_seconds=None, multi_prompt=None, reference_image_urls=None, reference_video_urls=None):
     """
     Generate video using specified AI model API (Seedance/Kie.ai).
 
@@ -87,9 +87,16 @@ def generate_video(prompt, reference_image_url=None, model_api=None, first_frame
             "callBackUrl": "https://example.com/callback",
         }
 
-        # Handle reference images (up to 9 supported, we use 1 for influencer/product)
-        if reference_image_url:
-            payload["input"]["reference_image_urls"] = [reference_image_url]
+        # Handle reference images (Seedance 2.0 supports up to 9)
+        ref_list = []
+        if reference_image_urls:
+            ref_list.extend([u for u in reference_image_urls if u])
+        elif reference_image_url:
+            ref_list.append(reference_image_url)
+        if ref_list:
+            payload["input"]["reference_image_urls"] = ref_list
+        if reference_video_urls:
+            payload["input"]["reference_video_urls"] = [u for u in reference_video_urls if u]
 
         # Handle scene chaining parameters (Seedance 2.0 chain pipeline)
         if first_frame_url:

@@ -284,6 +284,7 @@ export async function streamAgent(
     onEvent: (e: AgentStreamEvent) => void,
     signal: AbortSignal,
     refs?: AgentRef[],
+    useSeedance?: boolean,
 ): Promise<void> {
     const token = await getAuthToken();
     const headers: Record<string, string> = {
@@ -295,7 +296,7 @@ export async function streamAgent(
     const res = await fetch(`${CREATIVE_OS_URL}/creative-os/agent/stream`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ brief, project_id: projectId, refs: refs ?? undefined }),
+        body: JSON.stringify({ brief, project_id: projectId, refs: refs ?? undefined, use_seedance: useSeedance ?? false }),
         signal,
     });
     if (!res.ok || !res.body) {

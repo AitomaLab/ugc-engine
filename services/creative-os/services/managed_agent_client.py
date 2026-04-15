@@ -86,7 +86,7 @@ When given a brief, plan briefly then act. Prefer chaining tools end-to-end rath
 
 ### Animation & video clips (gated by confirmed=true)
 - animate_image(image_url, style, duration?) — Image → 5s or 10s Kling 3.0 clip with chosen camera move.
-- generate_video(prompt, mode, clip_length?, reference_image_url?) — Text-to-video clip. mode: ugc | cinematic_video | ai_clone.
+- generate_video(prompt, mode, clip_length?, reference_image_url?) — Text-to-video clip. mode: ugc | cinematic_video | ai_clone | seedance_2_ugc | seedance_2_cinematic | seedance_2_product.
 
 ### Full UGC pipelines (gated by confirmed=true)
 - create_ugc_video(influencer_id, duration, product_id?, script_id?, ...) — Full 15s/30s UGC video. Takes 5-12 min; the tool blocks until done.
@@ -99,7 +99,7 @@ When given a brief, plan briefly then act. Prefer chaining tools end-to-end rath
 - delete_assets(image_ids?, video_ids?) — Delete one or more images (shots) and/or videos (jobs) from the current project.
 
 ### Distribution (free)
-- generate_caption(video_job_id, platform?) — Platform-tuned caption.
+- generate_caption(video_job_id, platform?) — Social-post caption text (+ hashtags). This is the POST description users write alongside their video on TikTok / IG / etc. NOT on-screen subtitles.
 - schedule_posts(posts) — Schedule to TikTok / Instagram / YouTube / Facebook / X / LinkedIn via Ayrshare. Each post = {video_job_id, platforms[], scheduled_at (ISO 8601 UTC), caption?}.
 - cancel_scheduled_post(post_id).
 
@@ -129,9 +129,18 @@ For multi-step plans ("generate 3 images then animate two of them"), call `estim
 The gated tools are exactly: generate_image, generate_influencer, generate_identity, generate_product_shots, animate_image, generate_video, create_ugc_video, create_clone_video, create_bulk_campaign, render_edited_video. Everything else (including combine_videos) is free of the confirmation gate and can be called immediately.
 
 ## Model routing
+
+**Default engines (use these unless the brief carries `[ENGINE=seedance]`):**
 - **UGC videos** (all lengths): powered by **Veo 3.1**. Use `generate_video(mode="ugc")` for short clips (5-10s) or `create_ugc_video` for full 15/30s produced videos (script + scenes + captions + music).
 - **Cinematic videos**: powered by **Kling 3.0**. Use `generate_video(mode="cinematic_video")` for cinematic clips (5-10s).
 - **AI Clone** (lip-synced): use `create_clone_video`.
+
+**Seedance engines (ONLY when the brief preface contains `[ENGINE=seedance]`):**
+The user has toggled the Seedance 2.0 engine ON. Do NOT use `ugc` or `cinematic_video` modes for new clips in this turn — use the Seedance equivalents below. These are single-shot 5-15s clips with Seedance 2.0 Fast (bilingual EN/ES, supports multi-image + video references directly, no composite step needed).
+- **UGC**: `generate_video(mode="seedance_2_ugc")` — authentic handheld UGC with optional Spanish (Latin) dialogue.
+- **Cinematic**: `generate_video(mode="seedance_2_cinematic")` — high-end commercial single-shot cinematic.
+- **Product scene**: `generate_video(mode="seedance_2_product")` — standalone product showcase, no person.
+If the user's brief requires a full 15/30s produced video (create_ugc_video) or a lip-synced clone, the Seedance toggle does NOT apply — fall back to the default Veo / clone pipelines.
 
 ## Common workflows
 
@@ -155,13 +164,28 @@ The gated tools are exactly: generate_image, generate_influencer, generate_ident
 
 **Cleanup assets**: list_project_assets → delete_assets(image_ids=[...], video_ids=[...]). Bulk deletes images and/or videos.
 
-**Add/redo captions**: caption_video(job_id, style?, placement?) — triggers the same Whisper transcription pipeline as the editor's "Caption video" button. Produces accurate, word-timed captions from the actual audio. Do NOT manually construct caption JSON or edit editor_state for captioning — ALWAYS use this tool.
+**Add/redo captions (on-screen subtitles)**: caption_video(job_id, style?, placement?) — triggers the same Whisper transcription pipeline as the editor's "Caption video" button. Produces accurate, word-timed subtitles burned onto the video. Do NOT manually construct caption JSON or edit editor_state for captioning — ALWAYS use this tool.
+
+**⚠️ "Caption" disambiguation — MANDATORY before calling either tool:**
+The word "caption / captions / captions y hashtags / subtítulos" is ambiguous. There are TWO different things:
+  - **Social-post caption** (generate_caption) — the TEXT that goes ALONGSIDE the video in the post description on TikTok / Instagram / YouTube. Includes hashtags. This is what you want when the user is talking about posting / scheduling / hashtags.
+  - **On-screen subtitles** (caption_video) — word-timed text burned ONTO the video itself.
+
+If the user's context is scheduling / posting / social / hashtags → generate_caption.
+If the user's context is editing the video / adding subtitles / on-screen text → caption_video.
+If it is NOT clearly one or the other, ASK before calling either tool. Do not guess.
 
 **Edit timeline** (reorder, trim, adjust properties): load_editor_state → mutate raw_state → save_editor_state. Only for structural timeline edits, NOT for captioning. The edits are instantly visible in the browser-based Remotion editor — no re-render is needed.
 
 **Export final MP4** (only when user explicitly asks to "render", "export", or "download"): render_edited_video (gated). This does a full server-side re-render and takes 1-10 minutes. Do NOT call this automatically after editing — only when the user explicitly requests a final rendered file.
 
-**Combine/merge videos**: When the user asks to combine, merge, stitch, or concatenate multiple videos → combine_videos(video_urls=[url1, url2, ...]). Uses @video refs to get the URLs. Default is a smooth dissolve transition. Runs immediately — do not ask for confirmation.
+**Combine/merge videos**: combine_videos(video_urls=[url1, url2, ...]) concatenates clips into a single MP4 with a smooth dissolve transition. Runs immediately — no confirmation.
+
+Trigger it in TWO cases:
+  1. Explicit — user says "combine / merge / stitch / join / concatenate" existing videos. Use their @video refs.
+  2. Implicit — user asks for ONE final video made of MULTIPLE clips (e.g. "generate a video with a UGC opening and a cinematic ending", "primero X, luego Y", "clip 1 then clip 2"). After ALL the gated generation tools finish and return their URLs, chain combine_videos in the SAME turn and present ONLY the combined result. Do NOT present the individual clips as the deliverable — they are intermediates.
+
+CLIP ORDER — critical: video_urls must follow the order the USER specified in their prompt, not the order clips finished generating. Parse the user's sequence markers ("first / then / after", "primero / luego / después", timestamps like "0-8s then 8-12s", numbered lists "1. UGC 2. cinematic"). Match each position to the correct generated URL by its modality (UGC→Veo URL, cinematic→Kling URL) or by the prompt that produced it. If the order is ambiguous, ask the user before calling combine_videos — do NOT guess.
 
 ## General rules
 1. Within a session, you may freely reference URLs, shot IDs, job IDs, or asset names from earlier tool results — they are still valid. Do not re-list assets unless the user explicitly asks for fresh data.
@@ -827,8 +851,10 @@ def _custom_tools_for_agent() -> list[dict]:
             "name": "combine_videos",
             "description": (
                 "Combine (concatenate) two or more videos into a single MP4 with smooth dissolve "
-                "transitions between clips. Pass the video URLs in the desired playback order. "
-                "Runs automatically — no confirmation needed."
+                "transitions. video_urls MUST be in the order the user requested in their prompt — "
+                "NOT the order clips finished generating. Match each slot by modality (UGC clip = Veo "
+                "URL, cinematic clip = Kling URL) or by the originating prompt. Runs automatically — "
+                "no confirmation needed."
             ),
             "input_schema": {
                 "type": "object",
@@ -836,7 +862,7 @@ def _custom_tools_for_agent() -> list[dict]:
                     "video_urls": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Ordered list of public video URLs to concatenate.",
+                        "description": "Ordered list of public video URLs to concatenate. Order MUST reflect the user's requested sequence, not generation completion order.",
                     },
                     "transition": {
                         "type": "string",
@@ -941,10 +967,25 @@ def _credits_for_op(operation: str, params: dict) -> int:
     if operation == "animate_image":
         return get_animate_image_credit_cost(duration=int(params.get("duration", 5)))
     if operation == "generate_video":
-        return get_video_clip_credit_cost(
-            mode=params.get("mode", "ugc"),
-            clip_length=int(params.get("clip_length", 5)),
+        has_reference = bool(
+            params.get("reference_image_url")
+            or params.get("reference_image_urls")
+            or params.get("reference_video_urls")
+            or params.get("product_id")
+            or params.get("influencer_id")
         )
+        try:
+            return get_video_clip_credit_cost(
+                mode=params.get("mode", "ugc"),
+                clip_length=int(params.get("clip_length", 5)),
+                has_reference=has_reference,
+            )
+        except TypeError:
+            # Older signature (bundled copy not yet updated)
+            return get_video_clip_credit_cost(
+                mode=params.get("mode", "ugc"),
+                clip_length=int(params.get("clip_length", 5)),
+            )
     if operation == "create_ugc_video":
         return get_video_credit_cost(
             product_type=params.get("product_type", "physical"),
@@ -1997,11 +2038,62 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
             print(f"[combine_videos] Upload error: {upload_err}")
             return json.dumps({"error": f"Upload failed: {upload_err}"})
 
-        _record_artifact(ctx, {"type": "video", "url": final_url})
-
         total_duration = sum(durations) - transition_dur * (len(durations) - 1) if transition != "none" else sum(durations)
+
+        # Persist as a video_jobs row so the combined clip is a first-class job
+        # with its own job_id — required for schedule_posts, generate_caption,
+        # and any other downstream tool that keys off video_job_id.
+        job_id: Optional[str] = None
+        try:
+            job = await ctx.core().create_job({
+                "influencer_id": "00000000-0000-0000-0000-000000000000",
+                "product_id": None,
+                "product_type": "physical",
+                "model_api": "combined-videos",
+                "length": int(round(total_duration)),
+                "campaign_name": "Creative OS — Combined",
+                "video_language": "en",
+                "subtitles_enabled": False,
+                "music_enabled": False,
+                "hook": f"Combined {len(video_urls)} clips ({transition})",
+            })
+            job_id = job.get("id") or (job.get("job") or {}).get("id")
+            if job_id:
+                try:
+                    supabase_url = os.getenv("SUPABASE_URL")
+                    anon_key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+                    if supabase_url and anon_key:
+                        import httpx
+                        async with httpx.AsyncClient(timeout=10.0) as http:
+                            await http.patch(
+                                f"{supabase_url}/rest/v1/video_jobs?id=eq.{job_id}",
+                                headers={
+                                    "apikey": anon_key,
+                                    "Authorization": f"Bearer {ctx.user_token}",
+                                    "Content-Type": "application/json",
+                                    "Prefer": "return=minimal",
+                                },
+                                json={
+                                    "status": "success",
+                                    "progress": 100,
+                                    "final_video_url": final_url,
+                                    "metadata": {
+                                        "mode": "combined_videos",
+                                        "source_urls": video_urls,
+                                        "transition": transition,
+                                    },
+                                },
+                            )
+                except Exception as patch_err:
+                    print(f"[combine_videos] job patch failed: {patch_err}")
+        except Exception as job_err:
+            print(f"[combine_videos] job creation failed: {job_err}")
+
+        _record_artifact(ctx, {"type": "video", "url": final_url, **({"job_id": job_id} if job_id else {})})
+
         return json.dumps({
             "status": "success",
+            "job_id": job_id,
             "video_url": final_url,
             "clips_combined": len(video_urls),
             "total_duration_seconds": round(total_duration, 1),
