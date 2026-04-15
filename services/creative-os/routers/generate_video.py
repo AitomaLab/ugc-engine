@@ -669,6 +669,17 @@ async def _run_seedance_clip_pipeline(
         except Exception as e:
             print(f"[Seedance] Prompt enhance failed (using raw): {e}")
 
+        # Safety net: ensure @Image1 binding is present when reference images
+        # are provided. Without it, Seedance treats the image as a loose style
+        # guide and hallucinates product label text.
+        if reference_image_urls and "@Image1" not in structured_prompt:
+            structured_prompt += (
+                "\n\nIMPORTANT: The product shown in @Image1 must be rendered with exact visual "
+                "fidelity — preserve all text, logos, typography, and spelling from @Image1. "
+                "Do not hallucinate or alter any text on the product."
+            )
+            print("[Seedance] Injected @Image1 binding (not found in enhanced prompt)")
+
         await _update_video_job_via_api(token, project_id, job_id, {
             "status_message": "Generating Seedance video...",
             "progress": 10,

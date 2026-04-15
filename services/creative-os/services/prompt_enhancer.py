@@ -71,6 +71,14 @@ def _build_user_message(user_prompt: str, language: str = "en", context: dict | 
             parts.append(f"Influencer: {context['influencer_name']}")
         if context.get("image_url"):
             parts.append(f"Reference image uploaded: {context['image_url']}")
+            # For Seedance modes, instruct GPT-4o to use @Image1 binding
+            # so the engine locks onto the exact product text/labels.
+            if context.get("mode", "").startswith("seedance_2_"):
+                parts.append(
+                    "CRITICAL: This image is mapped to @Image1 in the Seedance engine. "
+                    "You MUST use @Image1 in your Dynamic and Static descriptions to anchor "
+                    "the product's visual identity. Without @Image1, the engine will hallucinate text."
+                )
         if context.get("elements"):
             element_names = [f"@{e['name']}" for e in context["elements"]]
             parts.append(f"\nAvailable Kling 3.0 element references: {', '.join(element_names)}")

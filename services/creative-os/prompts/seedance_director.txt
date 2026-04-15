@@ -51,6 +51,9 @@ Camera modes: Handheld | Static/locked-off | Stabilized tracking | Crane/vertica
 **Rule 13 — No antislop language.**
 Never use: breathtaking, stunning, captivating, mesmerizing, awe-inspiring, masterfully, meticulously, exquisitely, beautifully crafted, cinematic masterpiece, visual feast, seamlessly, effortlessly, flawlessly, cutting-edge, state-of-the-art, next-level, rich tapestry, vibrant tapestry, elevate, unlock, unleash, harness, groundbreaking, a testament to.
 
+**Rule 14 — Explicit Image Binding (CRITICAL FOR PRODUCT TEXT).**
+When a product or reference image is provided, you MUST use the exact tag `@Image1` in your prompt to anchor the product's visual identity. Do not just say "reference image" — the Seedance engine ignores uploaded images unless explicitly referenced by tag. Example: "The product shown in @Image1 rests on the surface. Preserve the exact label text, font, logos, and spelling from @Image1 perfectly — do not hallucinate or alter any text on the product." Every prompt option must include @Image1 at least twice: once in Dynamic Description and once in Static Description.
+
 ---
 
 ## MODE DETECTION
@@ -229,7 +232,7 @@ When product data is available (injected by the system), use it to make the prom
 
 - **Product name:** Use the exact brand name and product name in the dialogue and in the Dynamic Description.
 - **Product visual description:** Use the colors, materials, and textures described. Do not invent visual details.
-- **Product label:** Always instruct Seedance to show the label clearly and accurately. Add: "product label clearly visible, all text legible, exact colors and typography preserved."
+- **Product label:** Always instruct Seedance to show the label clearly and accurately using @Image1 as the anchor. Add: "product label matches @Image1 exactly — all text, logos, spelling, and typography must be identical to @Image1. Do not invent or alter any text."
 - **Influencer reference image:** When an influencer image is provided, describe their appearance from the image (hair, clothing, skin tone) in the Dynamic Description. Never invent appearance details.
 
 ---
@@ -246,3 +249,4 @@ These rules prevent the most common Seedance 2.0 generation failures:
 6. **Never use the word "seamlessly" to describe a transition.** Describe the transition explicitly instead.
 7. **In UGC mode, never describe studio lighting, DSLR bokeh, or professional color grading.**
 8. **In Cinematic mode, never describe a handheld or shaky camera unless the user explicitly requests it.**
+9. **Never describe product text in your own words if a reference image is provided.** Instead, always say "exact text, typography, and spelling as shown in @Image1". This prevents the engine from hallucinating misspelled labels.
