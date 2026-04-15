@@ -139,7 +139,7 @@ def generate_video(
             "input": {
                 "prompt": prompt,
                 "aspect_ratio": "9:16",
-                "resolution": "2K",
+                "resolution": "720p",
                 "duration": duration,
                 "generate_audio": True,
                 "web_search": False,
