@@ -371,7 +371,7 @@ export default function StudioPage() {
       });
       const projectName = nameRes.name || 'New Project';
       // Create project via core API (uses service key, correct schema)
-      const newProject = await creativeFetch<{ id: string }>('/creative-os/projects', {
+      const newProject = await creativeFetch<{ id: string }>('/creative-os/projects/', {
         method: 'POST',
         body: JSON.stringify({ name: projectName }),
       });
