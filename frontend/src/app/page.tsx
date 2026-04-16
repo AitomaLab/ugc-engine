@@ -370,7 +370,11 @@ export default function StudioPage() {
         body: JSON.stringify({ prompt: finalPrompt }),
       });
       const projectName = nameRes.name || 'New Project';
-      const newProject = await createProject({ name: projectName, description: finalPrompt });
+      // Create project via core API (uses service key, correct schema)
+      const newProject = await creativeFetch<{ id: string }>('/creative-os/projects', {
+        method: 'POST',
+        body: JSON.stringify({ name: projectName }),
+      });
       router.push(`/projects/${newProject.id}?brief=${encodeURIComponent(finalPrompt)}`);
     } catch (err) {
       console.error("Failed to create project from home prompt:", err);
