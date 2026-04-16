@@ -24,6 +24,12 @@ export interface AgentPanelHandle {
     reset: () => void;
 }
 
+export interface AgentPanelState {
+    useSeedance: boolean;
+    running: boolean;
+    turnsCount: number;
+}
+
 interface AgentPanelProps {
     projectId: string;
     onArtifact?: () => void;
@@ -33,6 +39,8 @@ interface AgentPanelProps {
     onCollapse?: () => void;
     /** When true, hides the internal header (parent renders its own). */
     hideHeader?: boolean;
+    /** Notifies parent of internal state changes (running, turns, seedance toggle) */
+    onStateChange?: (state: AgentPanelState) => void;
 }
 
 interface MentionItem {
@@ -59,7 +67,7 @@ function slugify(s: string): string {
     return (s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 }
 
-export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse, hideHeader = false }: AgentPanelProps, ref: React.Ref<AgentPanelHandle>) {
+export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse, hideHeader = false, onStateChange }: AgentPanelProps, ref: React.Ref<AgentPanelHandle>) {
     const [open, setOpen] = useState(false);
     const [brief, setBrief] = useState('');
     const [turns, setTurns] = useState<AgentTurn[]>([]);
@@ -77,6 +85,13 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
     // ── File attachments ────────────────────────────────────────────────
     const [attachments, setAttachments] = useState<AttachedFile[]>([]);
     const [useSeedance, setUseSeedance] = useState(false);
+
+    // Sync state locally to parent for reactive header elements
+    useEffect(() => {
+        if (onStateChange) {
+            onStateChange({ useSeedance, running, turnsCount: turns.length });
+        }
+    }, [useSeedance, running, turns.length, onStateChange]);
 
     const handleFilesPicked = useCallback(async (files: FileList | null) => {
         if (!files || files.length === 0) return;

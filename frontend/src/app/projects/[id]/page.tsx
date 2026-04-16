@@ -7,7 +7,7 @@ import { creativeFetch } from '@/lib/creative-os-api';
 import { AssetGallery } from '@/components/studio/AssetGallery';
 import { CreateBar } from '@/components/studio/CreateBar';
 import { AgentPanel } from '@/components/studio/AgentPanel';
-import type { AgentPanelHandle } from '@/components/studio/AgentPanel';
+import type { AgentPanelHandle, AgentPanelState } from '@/components/studio/AgentPanel';
 import Select from '@/components/ui/Select';
 
 type TabId = 'images' | 'videos';
@@ -70,9 +70,8 @@ export default function ProjectContainerPage() {
     // ── Agent panel visibility (split-panel layout only) ──
     const [agentOpen, setAgentOpen] = useState(true);
     const agentRef = useRef<AgentPanelHandle>(null);
-    // Force re-render when agent state changes (seedance, running, turns)
-    const [, forceUpdate] = useState(0);
-    const tickAgent = useCallback(() => forceUpdate(n => n + 1), []);
+    // Sync agent panel state to power reactive header elements
+    const [agentState, setAgentState] = useState<AgentPanelState>({ useSeedance: false, running: false, turnsCount: 0 });
 
     const fetchAssets = useCallback(async (silent = false) => {
         if (!session || !projectId) return;
@@ -290,22 +289,22 @@ export default function ProjectContainerPage() {
             {isWide && (
                 <div
                     onClick={() => agentRef.current?.toggleSeedance()}
-                    title={agentRef.current?.useSeedance ? 'Seedance 2.0 — ON' : 'Seedance 2.0 — OFF'}
+                    title={agentState.useSeedance ? 'Seedance 2.0 — ON' : 'Seedance 2.0 — OFF'}
                     style={{
                         display: 'flex', alignItems: 'center', gap: '6px',
-                        cursor: agentRef.current?.running ? 'not-allowed' : 'pointer',
-                        opacity: agentRef.current?.running ? 0.5 : 1,
+                        cursor: agentState.running ? 'not-allowed' : 'pointer',
+                        opacity: agentState.running ? 0.5 : 1,
                         userSelect: 'none', flexShrink: 0,
                     }}
                 >
                     <span style={{
                         fontSize: '11px', fontWeight: 600,
-                        color: agentRef.current?.useSeedance ? '#337AFF' : '#5B6585',
+                        color: agentState.useSeedance ? '#337AFF' : '#5B6585',
                         letterSpacing: '0.2px',
                     }}>Seedance 2.0</span>
                     <div style={{
                         width: '32px', height: '18px', borderRadius: '9px', position: 'relative',
-                        background: agentRef.current?.useSeedance
+                        background: agentState.useSeedance
                             ? 'linear-gradient(135deg, #5B7BFF, #337AFF)'
                             : 'rgba(138,147,176,0.25)',
                         transition: 'background 0.2s', flexShrink: 0,
@@ -313,7 +312,7 @@ export default function ProjectContainerPage() {
                         <div style={{
                             width: '14px', height: '14px', borderRadius: '50%', background: 'white',
                             position: 'absolute', top: '2px',
-                            left: agentRef.current?.useSeedance ? '16px' : '2px',
+                            left: agentState.useSeedance ? '16px' : '2px',
                             transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
                         }} />
                     </div>
@@ -325,13 +324,13 @@ export default function ProjectContainerPage() {
                 <button
                     onClick={() => agentRef.current?.reset()}
                     title="Clear chat"
-                    disabled={agentRef.current?.running || (agentRef.current?.turnsCount ?? 0) === 0}
+                    disabled={agentState.running || agentState.turnsCount === 0}
                     style={{
                         width: '26px', height: '26px', borderRadius: '6px', border: 'none',
                         background: 'transparent',
-                        cursor: (agentRef.current?.running || (agentRef.current?.turnsCount ?? 0) === 0) ? 'not-allowed' : 'pointer',
+                        cursor: (agentState.running || agentState.turnsCount === 0) ? 'not-allowed' : 'pointer',
                         color: '#8A93B0', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        opacity: (agentRef.current?.running || (agentRef.current?.turnsCount ?? 0) === 0) ? 0.4 : 1,
+                        opacity: (agentState.running || agentState.turnsCount === 0) ? 0.4 : 1,
                         transition: 'all 0.15s', flexShrink: 0,
                     }}
                 >
@@ -477,7 +476,7 @@ export default function ProjectContainerPage() {
                 {projectHeaderBar}
                 {galleryBlock}
                 {createBarBlock}
-                <AgentPanel projectId={projectId} onArtifact={() => fetchAssets(true)} />
+                <AgentPanel ref={agentRef} projectId={projectId} onArtifact={() => fetchAssets(true)} onStateChange={setAgentState} />
             </div>
         );
     }
@@ -510,9 +509,10 @@ export default function ProjectContainerPage() {
                         <AgentPanel
                             ref={agentRef}
                             projectId={projectId}
-                            onArtifact={() => { fetchAssets(true); tickAgent(); }}
+                            onArtifact={() => fetchAssets(true)}
                             embedded={true}
                             hideHeader={true}
+                            onStateChange={setAgentState}
                         />
                     </div>
                 )}
