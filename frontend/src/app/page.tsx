@@ -126,6 +126,7 @@ export default function StudioPage() {
   // Composer state
   const [prompt, setPrompt] = useState('');
   const [seedanceOn, setSeedanceOn] = useState(false);
+  const [plusMenuOpen, setPlusMenuOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -426,27 +427,80 @@ export default function StudioPage() {
                 padding: '8px 16px 16px',
                 gap: '8px',
               }}>
-                {/* + Button */}
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  title="Attach file"
-                  style={{
-                    width: '34px', height: '34px',
-                    borderRadius: '10px',
-                    border: '1px solid rgba(13,27,62,0.10)',
-                    background: 'rgba(255,255,255,0.8)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    cursor: 'pointer', color: '#5B6585',
-                    transition: 'all 0.15s',
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#337AFF'; e.currentTarget.style.color = '#337AFF'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'rgba(13,27,62,0.10)'; e.currentTarget.style.color = '#5B6585'; }}
-                >
-                  <svg viewBox="0 0 24 24" style={{ width: '16px', height: '16px', fill: 'none', stroke: 'currentColor', strokeWidth: '2.2', strokeLinecap: 'round' }}>
-                    <line x1="12" y1="5" x2="12" y2="19" />
-                    <line x1="5" y1="12" x2="19" y2="12" />
-                  </svg>
-                </button>
+                {/* + Button Container */}
+                <div style={{ position: 'relative' }}>
+                  <button
+                    onClick={() => setPlusMenuOpen(!plusMenuOpen)}
+                    onBlur={() => setTimeout(() => setPlusMenuOpen(false), 150)}
+                    title="Menu"
+                    style={{
+                      width: '34px', height: '34px',
+                      borderRadius: '10px',
+                      border: '1px solid rgba(13,27,62,0.10)',
+                      background: 'rgba(255,255,255,0.8)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      cursor: 'pointer', color: '#5B6585',
+                      transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#337AFF'; e.currentTarget.style.color = '#337AFF'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'rgba(13,27,62,0.10)'; e.currentTarget.style.color = '#5B6585'; }}
+                  >
+                    <svg viewBox="0 0 24 24" style={{ width: '16px', height: '16px', fill: 'none', stroke: 'currentColor', strokeWidth: '2.2', strokeLinecap: 'round' }}>
+                      <line x1="12" y1="5" x2="12" y2="19" />
+                      <line x1="5" y1="12" x2="19" y2="12" />
+                    </svg>
+                  </button>
+
+                  {/* Dropdown Menu */}
+                  {plusMenuOpen && (
+                    <div style={{
+                      position: 'absolute',
+                      bottom: 'calc(100% + 8px)',
+                      left: '0',
+                      background: 'white',
+                      borderRadius: '12px',
+                      boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
+                      border: '1px solid rgba(13,27,62,0.08)',
+                      padding: '6px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '4px',
+                      zIndex: 10,
+                      minWidth: '140px'
+                    }}>
+                      <button
+                        onClick={() => { setPlusMenuOpen(false); fileInputRef.current?.click(); }}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '8px',
+                          padding: '8px 10px', borderRadius: '8px',
+                          border: 'none', background: 'transparent',
+                          cursor: 'pointer', color: '#0D1B3E', fontSize: '14px', fontWeight: 500,
+                          textAlign: 'left'
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(51,122,255,0.06)'}
+                        onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                      >
+                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#337AFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                         Attach
+                      </button>
+                      <button
+                        onClick={() => setPlusMenuOpen(false)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '8px',
+                          padding: '8px 10px', borderRadius: '8px',
+                          border: 'none', background: 'transparent',
+                          cursor: 'pointer', color: '#0D1B3E', fontSize: '14px', fontWeight: 500,
+                          textAlign: 'left'
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(51,122,255,0.06)'}
+                        onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                      >
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#337AFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M16 16v-3a2 2 0 0 0-4 0"/><path d="M12 12A2 2 0 1 0 12 8a2 2 0 0 0 0 4z"/></svg>
+                         Reference
+                      </button>
+                    </div>
+                  )}
+                </div>
 
                 {/* Seedance 2.0 Toggle */}
                 <div
@@ -726,15 +780,6 @@ export default function StudioPage() {
 
                       {/* Info row */}
                       <div style={{ padding: '16px 18px', display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
-                        {/* Project icon */}
-                        <div style={{
-                          width: '28px', height: '28px', borderRadius: '50%', flexShrink: 0,
-                          background: `linear-gradient(135deg, hsl(${(p.name?.charCodeAt(0) || 0) * 7 % 360}, 60%, 60%), hsl(${((p.name?.charCodeAt(0) || 0) * 7 + 60) % 360}, 60%, 50%))`,
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          color: 'white', fontSize: '12px', fontWeight: 700,
-                        }}>
-                          {(p.name || 'P').charAt(0).toUpperCase()}
-                        </div>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{
                             fontSize: '14px', fontWeight: 700, color: '#0D1B3E',
