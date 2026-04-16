@@ -504,7 +504,6 @@ export default function StudioPage() {
               borderRadius: '20px',
               border: '1px solid rgba(51,122,255,0.10)',
               boxShadow: '0 4px 32px rgba(51,122,255,0.08)',
-              overflow: 'hidden',
             }}>
               {/* Attached file chips */}
               {attachedFiles.length > 0 && (
