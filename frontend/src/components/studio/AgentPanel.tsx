@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
 import {
     creativeFetch,
     getAgentThread,
@@ -16,6 +16,14 @@ import {
 } from '@/lib/creative-os-api';
 import { supabase } from '@/lib/supabaseClient';
 
+export interface AgentPanelHandle {
+    useSeedance: boolean;
+    toggleSeedance: () => void;
+    running: boolean;
+    turnsCount: number;
+    reset: () => void;
+}
+
 interface AgentPanelProps {
     projectId: string;
     onArtifact?: () => void;
@@ -23,6 +31,8 @@ interface AgentPanelProps {
     embedded?: boolean;
     /** When set in embedded mode, shows a collapse button in the header that calls this. */
     onCollapse?: () => void;
+    /** When true, hides the internal header (parent renders its own). */
+    hideHeader?: boolean;
 }
 
 interface MentionItem {
@@ -49,7 +59,7 @@ function slugify(s: string): string {
     return (s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 }
 
-export function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse }: AgentPanelProps) {
+export const AgentPanel = forwardRef<AgentPanelHandle, AgentPanelProps>(function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse, hideHeader = false }, ref) {
     const [open, setOpen] = useState(false);
     const [brief, setBrief] = useState('');
     const [turns, setTurns] = useState<AgentTurn[]>([]);
@@ -752,6 +762,15 @@ export function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse
         }
     }, [projectId]);
 
+    // Expose imperative handle for parent-driven header controls
+    useImperativeHandle(ref, () => ({
+        useSeedance,
+        toggleSeedance: () => { if (!running) setUseSeedance(v => !v); },
+        running,
+        turnsCount: turns.length,
+        reset: handleReset,
+    }), [useSeedance, running, turns.length, handleReset]);
+
     // Shared inner content: used by both embedded (full-height) and floating (modal) modes.
     const panelContent = (
         <div
@@ -764,6 +783,7 @@ export function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse
             }}
         >
                     {/* Header */}
+                    {!hideHeader && (
                     <div
                         style={{
                             padding: '14px 18px',
@@ -896,6 +916,7 @@ export function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse
                             )}
                         </div>
                     </div>
+                    )}
 
                     {/* Messages */}
                     <div
@@ -2038,4 +2059,4 @@ function MentionDropdown({ groups, ordered, activeIndex, onPick, onHover, shotPi
             })}
         </div>
     );
-}
+});
