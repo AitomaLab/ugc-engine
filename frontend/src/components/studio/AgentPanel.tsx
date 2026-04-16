@@ -1317,7 +1317,7 @@ export const AgentPanel = forwardRef<AgentPanelHandle, AgentPanelProps>(function
             {keyframes}
         </>
     );
-}
+});
 
 /**
  * Render message text with inline markdown (**bold**) and @asset preview chips.
@@ -2059,4 +2059,4 @@ function MentionDropdown({ groups, ordered, activeIndex, onPick, onHover, shotPi
             })}
         </div>
     );
-});
+}
