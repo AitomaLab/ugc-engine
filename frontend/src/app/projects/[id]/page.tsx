@@ -291,6 +291,34 @@ export default function ProjectContainerPage() {
                                 <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
                             </svg>
                         </button>
+
+                        {isWide && (
+                            <button
+                                onClick={() => setAgentOpen(!agentOpen)}
+                                title={agentOpen ? "Hide agent panel" : "Show agent panel"}
+                                style={{
+                                    width: '28px',
+                                    height: '28px',
+                                    borderRadius: '6px',
+                                    border: 'none',
+                                    background: agentOpen ? 'rgba(51,122,255,0.08)' : 'transparent',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    transition: 'all 0.15s',
+                                    marginLeft: '4px',
+                                    color: agentOpen ? '#337AFF' : '#8A93B0',
+                                }}
+                                onMouseEnter={e => { if (!agentOpen) e.currentTarget.style.background = 'rgba(51,122,255,0.08)'; }}
+                                onMouseLeave={e => { if (!agentOpen) e.currentTarget.style.background = 'transparent'; }}
+                            >
+                                <svg viewBox="0 0 24 24" style={{ width: '18px', height: '18px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
+                                    <rect x="3" y="4" width="18" height="16" rx="2" />
+                                    <line x1="9" y1="4" x2="9" y2="20" />
+                                </svg>
+                            </button>
+                        )}
                     </div>
                 )}
             </div>
@@ -507,7 +535,6 @@ export default function ProjectContainerPage() {
                         projectId={projectId}
                         onArtifact={() => fetchAssets(true)}
                         embedded={true}
-                        onCollapse={() => setAgentOpen(false)}
                     />
                 </div>
             )}
@@ -523,36 +550,7 @@ export default function ProjectContainerPage() {
                 position: 'relative',
                 transform: 'translateZ(0)',
             }}>
-                {/* "Show agent" affordance when the left panel is collapsed */}
-                {!agentOpen && (
-                    <button
-                        onClick={() => setAgentOpen(true)}
-                        title="Show agent panel"
-                        style={{
-                            position: 'absolute',
-                            left: '12px',
-                            top: '50%',
-                            transform: 'translateY(-50%)',
-                            zIndex: 10,
-                            width: '32px',
-                            height: '56px',
-                            borderRadius: '0 10px 10px 0',
-                            border: '1px solid rgba(13,27,62,0.08)',
-                            borderLeft: 'none',
-                            background: 'white',
-                            cursor: 'pointer',
-                            color: '#337AFF',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            boxShadow: '2px 2px 12px rgba(13,27,62,0.08)',
-                        }}
-                    >
-                        <svg viewBox="0 0 24 24" style={{ width: '16px', height: '16px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
-                            <polyline points="9 18 15 12 9 6" />
-                        </svg>
-                    </button>
-                )}
+                {/* "Show agent" affordance removed — now handled by title layout icon */}
                 <div style={{ padding: '28px 28px 0', flexShrink: 0 }}>
                     {headerBlock}
                 </div>
