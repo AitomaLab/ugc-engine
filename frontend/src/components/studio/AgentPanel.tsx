@@ -59,7 +59,7 @@ function slugify(s: string): string {
     return (s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 }
 
-export const AgentPanel = forwardRef<AgentPanelHandle, AgentPanelProps>(function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse, hideHeader = false }, ref) {
+export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse, hideHeader = false }: AgentPanelProps, ref: React.Ref<AgentPanelHandle>) {
     const [open, setOpen] = useState(false);
     const [brief, setBrief] = useState('');
     const [turns, setTurns] = useState<AgentTurn[]>([]);
