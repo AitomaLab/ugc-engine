@@ -69,6 +69,7 @@ export default function ProjectContainerPage() {
 
     // ── Agent panel visibility (split-panel layout only) ──
     const [agentOpen, setAgentOpen] = useState(true);
+    const [createBarOpen, setCreateBarOpen] = useState(true);
     const agentRef = useRef<AgentPanelHandle>(null);
     // Sync agent panel state to power reactive header elements
     const [agentState, setAgentState] = useState<AgentPanelState>({ useSeedance: false, running: false, turnsCount: 0 });
@@ -282,6 +283,9 @@ export default function ProjectContainerPage() {
                 </div>
             )}
 
+            {/* Spacer to right-align controls when agent panel is open */}
+            {isWide && agentOpen && <div style={{ flex: 1 }} />}
+
             {/* Divider */}
             <div style={{ width: '1px', height: '24px', background: 'rgba(0,0,0,0.08)', flexShrink: 0 }} />
 
@@ -359,6 +363,27 @@ export default function ProjectContainerPage() {
                     <svg viewBox="0 0 24 24" style={{ width: '16px', height: '16px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
                         <rect x="3" y="4" width="18" height="16" rx="2" />
                         <line x1="9" y1="4" x2="9" y2="20" />
+                    </svg>
+                </button>
+            )}
+
+            {/* Create Bar Toggle */}
+            {isWide && (
+                <button
+                    onClick={() => setCreateBarOpen(!createBarOpen)}
+                    title={createBarOpen ? 'Hide bottom panel' : 'Show bottom panel'}
+                    style={{
+                        width: '26px', height: '26px', borderRadius: '6px', border: 'none',
+                        background: createBarOpen ? 'rgba(51,122,255,0.08)' : 'transparent',
+                        cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        transition: 'all 0.15s', color: createBarOpen ? '#337AFF' : '#8A93B0', flexShrink: 0,
+                    }}
+                    onMouseEnter={e => { if (!createBarOpen) e.currentTarget.style.background = 'rgba(51,122,255,0.08)'; }}
+                    onMouseLeave={e => { if (!createBarOpen) e.currentTarget.style.background = 'transparent'; }}
+                >
+                    <svg viewBox="0 0 24 24" style={{ width: '16px', height: '16px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
+                        <rect x="3" y="4" width="18" height="16" rx="2" />
+                        <line x1="3" y1="15" x2="21" y2="15" />
                     </svg>
                 </button>
             )}
@@ -469,13 +494,13 @@ export default function ProjectContainerPage() {
     if (!isWide) {
         return (
             <div style={{
-                padding: '32px 32px 140px',
+                padding: `32px 32px ${createBarOpen ? '140px' : '32px'}`,
                 maxWidth: '1200px',
                 margin: '0 auto',
             }}>
                 {projectHeaderBar}
                 {galleryBlock}
-                {createBarBlock}
+                {createBarOpen && createBarBlock}
                 <AgentPanel ref={agentRef} projectId={projectId} onArtifact={() => fetchAssets(true)} onStateChange={setAgentState} />
             </div>
         );
@@ -525,11 +550,15 @@ export default function ProjectContainerPage() {
                 }}>
                     <div style={{
                         flex: 1, overflowY: 'auto',
-                        padding: '24px 28px 160px',
+                        padding: `24px 28px ${createBarOpen ? '160px' : '32px'}`,
                     }}>
                         {galleryBlock}
                     </div>
-                    {createBarBlock}
+                    {createBarOpen && (
+                        <div style={{ flexShrink: 0, zIndex: 10 }}>
+                            {createBarBlock}
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
