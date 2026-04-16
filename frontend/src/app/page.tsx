@@ -651,9 +651,15 @@ export default function StudioPage() {
 
       {/* ── BOTTOM SECTION ───────────────────────────────────────────── */}
       <div style={{
-        background: '#ffffff',
-        borderTop: '1px solid rgba(51,122,255,0.08)',
+        background: 'rgba(255,255,255,0.92)',
+        backdropFilter: 'blur(24px)',
+        border: '1px solid rgba(51,122,255,0.10)',
+        borderBottom: 'none',
+        borderTopLeftRadius: '32px',
+        borderTopRightRadius: '32px',
+        margin: '0 32px',
         padding: '0 40px 48px',
+        boxShadow: '0 -8px 40px rgba(51,122,255,0.06)',
       }}>
         {/* Tab Bar */}
         <div style={{
@@ -799,39 +805,6 @@ export default function StudioPage() {
                   </Link>
                 );
               })}
-
-              {/* New project card */}
-              <div
-                onClick={() => { window.scrollTo({ top: 0, behavior: 'smooth' }); setTimeout(() => textareaRef.current?.focus(), 300); }}
-                style={{
-                  borderRadius: '16px',
-                  border: '2px dashed rgba(51,122,255,0.18)',
-                  background: 'rgba(51,122,255,0.02)',
-                  display: 'flex', flexDirection: 'column',
-                  alignItems: 'center', justifyContent: 'center',
-                  minHeight: '270px',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease',
-                  gap: '10px',
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgba(51,122,255,0.35)'; e.currentTarget.style.background = 'rgba(51,122,255,0.04)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'rgba(51,122,255,0.18)'; e.currentTarget.style.background = 'rgba(51,122,255,0.02)'; }}
-              >
-                <div style={{
-                  width: '44px', height: '44px', borderRadius: '14px',
-                  background: 'rgba(51,122,255,0.06)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: '#337AFF',
-                }}>
-                  <svg viewBox="0 0 24 24" style={{ width: '20px', height: '20px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round' }}>
-                    <line x1="12" y1="5" x2="12" y2="19" />
-                    <line x1="5" y1="12" x2="19" y2="12" />
-                  </svg>
-                </div>
-                <span style={{ fontSize: '13px', fontWeight: 600, color: '#8A93B0' }}>
-                  New project via prompt
-                </span>
-              </div>
 
               {/* Empty state when no projects */}
               {projects.length === 0 && (
