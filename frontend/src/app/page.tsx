@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/utils";
 import { useApp } from "@/providers/AppProvider";
@@ -106,6 +106,17 @@ function relativeTime(d: string): string {
   return date.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
 }
 
+interface MentionItem {
+  type: 'product' | 'influencer';
+  tag: string;
+  name: string;
+  image_url?: string;
+  ref?: any;
+}
+function slugify(s: string): string {
+  return (s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+}
+
 // ---------------------------------------------------------------------------
 // Studio Page
 // ---------------------------------------------------------------------------
@@ -129,6 +140,122 @@ export default function StudioPage() {
   const [plusMenuOpen, setPlusMenuOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Mention State
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionFilter, setMentionFilter] = useState('');
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [mentionCursorStart, setMentionCursorStart] = useState(-1);
+  const [mentionsLoaded, setMentionsLoaded] = useState(false);
+  const [mentionItems, setMentionItems] = useState<MentionItem[]>([]);
+
+  const loadMentionData = async () => {
+    if (mentionsLoaded) return;
+    try {
+      const { supabase } = await import('@/lib/supabaseClient');
+      const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const token = (await supabase.auth.getSession()).data.session?.access_token;
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      const [prodRes, infRes] = await Promise.all([
+         fetch(`${apiBase}/api/products`, { headers }).then(r => r.ok ? r.json() : []),
+         fetch(`${apiBase}/influencers`, { headers }).then(r => r.ok ? r.json() : [])
+      ]);
+      const items: MentionItem[] = [];
+      for (const p of (prodRes || [])) {
+        const name = p.name || p.product_name || 'product';
+        items.push({ type: 'product', tag: slugify(name), name, image_url: p.image_url, ref: p });
+      }
+      for (const inf of (infRes || [])) {
+        const name = inf.name || 'model';
+        items.push({ type: 'influencer', tag: slugify(name), name, image_url: inf.image_url, ref: inf });
+      }
+      setMentionItems(items);
+      setMentionsLoaded(true);
+    } catch (e) {
+      console.warn(e);
+    }
+  };
+
+  const filteredMentions = useMemo(() => {
+    if (!mentionFilter) return mentionItems;
+    return mentionItems.filter(m => m.tag.includes(mentionFilter) || m.name.toLowerCase().includes(mentionFilter));
+  }, [mentionItems, mentionFilter]);
+
+  const handlePromptChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    const cursor = e.target.selectionStart;
+    setPrompt(val);
+
+    const before = val.slice(0, cursor);
+    const atMatch = before.match(/@([\w_]*)$/);
+    if (atMatch) {
+      const filter = atMatch[1].toLowerCase();
+      setMentionFilter(filter);
+      setMentionCursorStart(cursor - filter.length - 1);
+      setMentionIndex(0);
+      if (!mentionsLoaded) loadMentionData();
+      setMentionOpen(true);
+    } else {
+      setMentionOpen(false);
+    }
+  };
+
+  const finalizeMention = (item: MentionItem) => {
+    const cursor = textareaRef.current?.selectionStart ?? prompt.length;
+    const before = prompt.slice(0, mentionCursorStart);
+    const after = prompt.slice(cursor);
+    const tagText = `@${item.tag}`;
+    const newPrompt = before + tagText + ' ' + after;
+    setPrompt(newPrompt);
+    setMentionOpen(false);
+    setTimeout(() => {
+      const pos = before.length + tagText.length + 1;
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(pos, pos);
+    }, 0);
+  };
+
+  const handleMentionKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mentionOpen) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setMentionIndex(i => (i + 1) % filteredMentions.length);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setMentionIndex(i => (i - 1 + filteredMentions.length) % filteredMentions.length);
+      } else if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        if (filteredMentions[mentionIndex]) finalizeMention(filteredMentions[mentionIndex]);
+      } else if (e.key === 'Escape') {
+        setMentionOpen(false);
+      }
+      return;
+    }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit();
+    }
+  };
+
+  const openReferenceDropdown = () => {
+    const el = textareaRef.current;
+    const cursor = el?.selectionStart ?? prompt.length;
+    const before = prompt.slice(0, cursor);
+    const after = prompt.slice(cursor);
+    const newPrompt = before + '@' + after;
+    setPrompt(newPrompt);
+    setMentionFilter('');
+    setMentionCursorStart(cursor);
+    setMentionIndex(0);
+    if (!mentionsLoaded) loadMentionData();
+    setMentionOpen(true);
+    setPlusMenuOpen(false);
+    setTimeout(() => {
+      const pos = cursor + 1;
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(pos, pos);
+    }, 0);
+  };
 
   // Attached files
   const [attachedFiles, setAttachedFiles] = useState<{ name: string; type: string }[]>([]);
@@ -400,16 +527,58 @@ export default function StudioPage() {
               )}
 
               {/* Textarea */}
+              {mentionOpen && (
+                <div style={{
+                  position: 'absolute',
+                  bottom: 'calc(100% - 20px)',
+                  left: '24px',
+                  background: 'white',
+                  border: '1px solid rgba(13,27,62,0.12)',
+                  borderRadius: '12px',
+                  boxShadow: '0 12px 32px rgba(13,27,62,0.16)',
+                  maxHeight: '240px',
+                  width: '320px',
+                  overflowY: 'auto',
+                  padding: '8px',
+                  zIndex: 100,
+                }}>
+                  {filteredMentions.length === 0 ? (
+                    <div style={{ padding: '8px', fontSize: '12px', color: '#8A93B0', textAlign: 'center' }}>No matches</div>
+                  ) : filteredMentions.map((item, idx) => {
+                    const active = idx === mentionIndex;
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        onMouseDown={(e) => { e.preventDefault(); finalizeMention(item); }}
+                        onMouseEnter={() => setMentionIndex(idx)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '10px', width: '100%',
+                          padding: '6px 8px', borderRadius: '8px',
+                          background: active ? 'rgba(51,122,255,0.06)' : 'transparent',
+                          cursor: 'pointer', border: 'none', textAlign: 'left',
+                        }}
+                      >
+                        <div style={{ width: '24px', height: '24px', borderRadius: '4px', background: '#F4F6FA', flexShrink: 0, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          {item.image_url ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={item.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          ) : <span style={{ fontSize: '12px' }}>{item.type === 'product' ? '📦' : '👤'}</span>}
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: '13px', fontWeight: 600, color: '#0D1B3E' }}>{item.name}</span>
+                          <span style={{ fontSize: '11px', color: '#8A93B0' }}>@{item.tag}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
               <textarea
                 ref={textareaRef}
                 value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSubmit();
-                  }
-                }}
+                onChange={handlePromptChange}
+                onKeyDown={handleMentionKeyDown}
                 placeholder="Tell the Creative Director what to make next..."
                 rows={2}
                 style={{
@@ -490,7 +659,7 @@ export default function StudioPage() {
                          Attach
                       </button>
                       <button
-                        onClick={() => setPlusMenuOpen(false)}
+                        onClick={openReferenceDropdown}
                         style={{
                           display: 'flex', alignItems: 'center', gap: '8px',
                           padding: '8px 10px', borderRadius: '8px',
@@ -501,7 +670,7 @@ export default function StudioPage() {
                         onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(51,122,255,0.06)'}
                         onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                       >
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#337AFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M16 16v-3a2 2 0 0 0-4 0"/><path d="M12 12A2 2 0 1 0 12 8a2 2 0 0 0 0 4z"/></svg>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#337AFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.92 7.94"/></svg>
                          Reference
                       </button>
                     </div>
