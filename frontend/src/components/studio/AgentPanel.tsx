@@ -556,6 +556,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     break;
                 case 'tool_result':
                     setActivity('');
+                    onArtifact?.(); // refresh gallery — tool may have created assets
                     break;
                 case 'keepalive':
                     // SSE keepalive ping — prevents connection timeout, no UI action needed
@@ -573,6 +574,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     setRunning(false);
                     setActivity('');
                     abortRef.current = null;
+                    onArtifact?.(); // final refresh — pick up anything generated
                     break;
                 case 'interrupted':
                     updateLastAgentTurn((t) => ({ ...t, interrupted: true }));
