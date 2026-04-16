@@ -439,7 +439,14 @@ export default function ProjectContainerPage() {
     const createBarBlock = (
         <CreateBar
             activeTab={activeTab}
-            projectId={projectId}    // Narrow viewports (<1024px): single-column layout with floating AgentPanel.
+            projectId={projectId}
+            onGenerated={() => fetchAssets(true)}
+            preloadImage={createVideoImage}
+            onPreloadConsumed={() => setCreateVideoImage(null)}
+        />
+    );
+
+    // Narrow viewports (<1024px): single-column layout with floating AgentPanel.
     if (!isWide) {
         return (
             <div style={{
