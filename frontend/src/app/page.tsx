@@ -264,7 +264,12 @@ export default function StudioPage() {
   }
 
   return (
-    <div style={{ minHeight: 'calc(100vh - var(--header-h))', display: 'flex', flexDirection: 'column' }}>
+    <div style={{
+      minHeight: 'calc(100vh - var(--header-h))',
+      display: 'flex',
+      flexDirection: 'column',
+      background: 'linear-gradient(180deg, #e8eeff 0%, #dfe6ff 30%, #ede5ff 60%, #f5f0ff 85%, #ffffff 100%)'
+    }}>
 
       {/* ── HERO SECTION ─────────────────────────────────────────────── */}
       <div style={{
@@ -275,7 +280,6 @@ export default function StudioPage() {
         alignItems: 'center',
         justifyContent: 'center',
         padding: '50px 24px 48px',
-        background: 'linear-gradient(180deg, #e8eeff 0%, #dfe6ff 30%, #ede5ff 60%, #f5f0ff 85%, #ffffff 100%)',
         position: 'relative',
         overflow: 'hidden',
       }}>
@@ -651,15 +655,10 @@ export default function StudioPage() {
 
       {/* ── BOTTOM SECTION ───────────────────────────────────────────── */}
       <div style={{
-        background: 'rgba(255,255,255,0.92)',
-        backdropFilter: 'blur(24px)',
-        border: '1px solid rgba(51,122,255,0.10)',
-        borderBottom: 'none',
-        borderTopLeftRadius: '32px',
-        borderTopRightRadius: '32px',
-        margin: '0 32px',
-        padding: '0 40px 48px',
-        boxShadow: '0 -8px 40px rgba(51,122,255,0.06)',
+        maxWidth: '1248px', /* 1200px + 24px padding on each side */
+        width: '100%',
+        margin: '0 auto',
+        padding: '0 24px 48px',
       }}>
         {/* Tab Bar */}
         <div style={{
