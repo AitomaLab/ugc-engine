@@ -339,15 +339,15 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
     const hasAutoSubmitted = useRef(false);
     const pendingBriefRef = useRef<string | null>(null);
 
+    // Phase 1: store the brief and pre-fill textarea (runs early)
     useEffect(() => {
         if (!initialBrief || hasAutoSubmitted.current) return;
-        if (hydrating) return; // wait for hydration to finish
         hasAutoSubmitted.current = true;
         setBrief(initialBrief);
-        // Store in ref so handleRun can pick it up regardless of closure
         pendingBriefRef.current = initialBrief;
+        console.log('[AgentPanel] Auto-submit: stored pending brief', initialBrief.slice(0, 50));
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [initialBrief, hydrating]);
+    }, [initialBrief]);
 
     // Auto-scroll on new content
     useEffect(() => {
@@ -627,15 +627,17 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         }
     }, [brief, running, projectId, onArtifact, activeRefs, attachments, onSubmitOverride, useSeedance]);
 
-    // Auto-submit: fire handleRun once it's ready with the pending brief
+    // Phase 2: fire handleRun AFTER hydration completes (hydrating: true → false)
+    // This ensures the panel is fully initialized before auto-submitting.
     useEffect(() => {
+        if (hydrating) return; // still hydrating, wait
         if (pendingBriefRef.current) {
             const text = pendingBriefRef.current;
             pendingBriefRef.current = null;
-            // Directly call with override text — immune to stale closures
+            console.log('[AgentPanel] Auto-submit: firing handleRun with', text.slice(0, 50));
             handleRun(text);
         }
-    }, [handleRun]);
+    }, [hydrating, handleRun]);
 
     // ── @ mention input handlers ────────────────────────────────────────
     const handleBriefChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
