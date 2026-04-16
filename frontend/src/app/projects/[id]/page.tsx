@@ -202,8 +202,8 @@ export default function ProjectContainerPage() {
     /* ── Header + filters block (shared between layouts) ─────── */
     const headerBlock = (
         <>
-            {/* Breadcrumb + Title */}
-            <div style={{ marginBottom: '28px' }}>
+            {/* Breadcrumb */}
+            <div style={{ marginBottom: '12px' }}>
                 <a
                     href="/projects"
                     style={{
@@ -221,7 +221,10 @@ export default function ProjectContainerPage() {
                     </svg>
                     Creative OS
                 </a>
+            </div>
 
+            {/* Main Row: Title + Controls + Filters */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '24px', marginBottom: '24px', flexWrap: 'wrap' }}>
                 {isEditing ? (
                     <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <input
@@ -321,16 +324,14 @@ export default function ProjectContainerPage() {
                         )}
                     </div>
                 )}
-            </div>
 
-            {/* Tab Switcher + Filters */}
-            <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '12px',
-                marginBottom: '24px',
-                flexWrap: 'wrap',
-            }}>
+                {/* Tab Switcher + Filters */}
+                <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    flexWrap: 'wrap',
+                }}>
                 {/* Tabs */}
                 <div style={{
                     display: 'flex',
@@ -450,6 +451,7 @@ export default function ProjectContainerPage() {
                         {filteredAssets.length} of {currentAssets.length}
                     </span>
                 )}
+                </div>
             </div>
         </>
     );
