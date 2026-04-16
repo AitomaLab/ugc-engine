@@ -337,17 +337,25 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
 
     // Auto-start: if initialBrief is provided, pre-fill textarea and auto-submit once
     const hasAutoSubmitted = useRef(false);
+    const [autoSubmitPending, setAutoSubmitPending] = useState(false);
+
     useEffect(() => {
         if (!initialBrief || hasAutoSubmitted.current) return;
         if (hydrating) return; // wait for hydration to finish
         hasAutoSubmitted.current = true;
         setBrief(initialBrief);
-        // Small delay to ensure the textarea is rendered with the value
-        setTimeout(() => {
-            handleRun();
-        }, 300);
+        setAutoSubmitPending(true);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [initialBrief, hydrating]);
+
+    // Phase 2: once brief state is committed and handleRun is fresh, fire it
+    useEffect(() => {
+        if (autoSubmitPending && brief) {
+            setAutoSubmitPending(false);
+            handleRun();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [autoSubmitPending, brief]);
 
     // Auto-scroll on new content
     useEffect(() => {

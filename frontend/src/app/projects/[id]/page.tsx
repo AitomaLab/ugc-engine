@@ -227,7 +227,8 @@ export default function ProjectContainerPage() {
                     maxWidth: '520px',
                     borderRight: '1px solid rgba(13,27,62,0.07)',
                 } : {}),
-                flexShrink: 0,
+                minWidth: 0,
+                overflow: 'hidden',
             }}>
             {/* Project Title */}
             {isEditing ? (
@@ -257,13 +258,16 @@ export default function ProjectContainerPage() {
                     />
                 </div>
             ) : (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0, flexShrink: 1 }}>
                     <h1 style={{
                         fontSize: '20px',
                         fontWeight: 700,
                         color: '#0D1B3E',
                         margin: 0,
                         letterSpacing: '-0.3px',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
                     }}>
                         {projectName}
                     </h1>
@@ -274,6 +278,7 @@ export default function ProjectContainerPage() {
                             width: '26px', height: '26px', borderRadius: '6px', border: 'none',
                             background: 'transparent', cursor: 'pointer', display: 'flex',
                             alignItems: 'center', justifyContent: 'center', transition: 'background 0.15s',
+                            flexShrink: 0,
                         }}
                         onMouseEnter={e => (e.currentTarget.style.background = 'rgba(51,122,255,0.08)')}
                         onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
