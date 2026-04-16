@@ -337,25 +337,17 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
 
     // Auto-start: if initialBrief is provided, pre-fill textarea and auto-submit once
     const hasAutoSubmitted = useRef(false);
-    const [autoSubmitPending, setAutoSubmitPending] = useState(false);
+    const pendingBriefRef = useRef<string | null>(null);
 
     useEffect(() => {
         if (!initialBrief || hasAutoSubmitted.current) return;
         if (hydrating) return; // wait for hydration to finish
         hasAutoSubmitted.current = true;
         setBrief(initialBrief);
-        setAutoSubmitPending(true);
+        // Store in ref so handleRun can pick it up regardless of closure
+        pendingBriefRef.current = initialBrief;
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [initialBrief, hydrating]);
-
-    // Phase 2: once brief state is committed and handleRun is fresh, fire it
-    useEffect(() => {
-        if (autoSubmitPending && brief) {
-            setAutoSubmitPending(false);
-            handleRun();
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [autoSubmitPending, brief]);
 
     // Auto-scroll on new content
     useEffect(() => {
@@ -374,8 +366,8 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         };
     }, []);
 
-    const handleRun = useCallback(async () => {
-        const text = brief.trim();
+    const handleRun = useCallback(async (overrideText?: string) => {
+        const text = (overrideText || brief).trim();
         const readyAttachments = attachments.filter((a) => a.status === 'ready' && a.url);
         const stillUploading = attachments.some((a) => a.status === 'uploading');
         if (stillUploading) {
@@ -633,7 +625,17 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             setActivity('');
             abortRef.current = null;
         }
-    }, [brief, running, projectId, onArtifact, activeRefs, attachments, onSubmitOverride]);
+    }, [brief, running, projectId, onArtifact, activeRefs, attachments, onSubmitOverride, useSeedance]);
+
+    // Auto-submit: fire handleRun once it's ready with the pending brief
+    useEffect(() => {
+        if (pendingBriefRef.current) {
+            const text = pendingBriefRef.current;
+            pendingBriefRef.current = null;
+            // Directly call with override text — immune to stale closures
+            handleRun(text);
+        }
+    }, [handleRun]);
 
     // ── @ mention input handlers ────────────────────────────────────────
     const handleBriefChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -1227,7 +1229,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                 const canSend = (brief.trim() !== '' || hasReadyAttachments) && !uploading;
                                 return (
                                     <button
-                                        onClick={handleRun}
+                                        onClick={() => handleRun()}
                                         disabled={!canSend}
                                         title={uploading ? 'Uploading…' : 'Send'}
                                         style={{

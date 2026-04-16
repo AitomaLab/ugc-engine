@@ -214,6 +214,7 @@ export default function ProjectContainerPage() {
             background: '#FFFFFF',
             flexShrink: 0,
             flexWrap: isWide ? 'nowrap' : 'wrap',
+            overflow: 'hidden',
         }}>
             {/* Left Header Box (Agent Panel) */}
             <div style={{
