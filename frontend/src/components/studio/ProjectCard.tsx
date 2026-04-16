@@ -180,7 +180,7 @@ export function ProjectCard({ project }: ProjectCardProps) {
 
     return (
         <Link
-            href={`/studio/projects/${project.id}`}
+            href={`/projects/${project.id}`}
             id={`project-card-${project.id}`}
             style={{
                 display: 'flex',

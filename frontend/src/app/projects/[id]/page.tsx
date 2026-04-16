@@ -205,7 +205,7 @@ export default function ProjectContainerPage() {
             {/* Breadcrumb + Title */}
             <div style={{ marginBottom: '28px' }}>
                 <a
-                    href="/studio"
+                    href="/projects"
                     style={{
                         fontSize: '13px',
                         color: '#337AFF',

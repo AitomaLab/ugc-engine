@@ -32,7 +32,7 @@ const IconEdit = () => <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" hei
 const NAV_ITEMS = [
     { href: '/', labelKey: 'nav.dashboard', label: 'Home', Icon: IconHome },
     { divider: true },
-    { href: '/studio', labelKey: 'nav.studio', label: 'Projects', Icon: IconGrid },
+    { href: '/projects', labelKey: 'nav.studio', label: 'Projects', Icon: IconGrid },
     { href: '/influencers', labelKey: 'nav.influencers', label: 'Influencers', Icon: IconUser },
     { href: '/scripts', labelKey: 'nav.scripts', label: 'Scripts', Icon: IconFile },
     { href: '/products', labelKey: 'nav.products', label: 'Products', Icon: IconBox },
