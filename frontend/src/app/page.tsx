@@ -535,42 +535,62 @@ export default function StudioPage() {
                   border: '1px solid rgba(13,27,62,0.12)',
                   borderRadius: '12px',
                   boxShadow: '0 12px 32px rgba(13,27,62,0.16)',
-                  maxHeight: '240px',
-                  width: '320px',
+                  maxHeight: '320px',
+                  width: '360px',
                   overflowY: 'auto',
                   padding: '8px',
                   zIndex: 100,
                 }}>
                   {filteredMentions.length === 0 ? (
                     <div style={{ padding: '8px', fontSize: '12px', color: '#8A93B0', textAlign: 'center' }}>No matches</div>
-                  ) : filteredMentions.map((item, idx) => {
-                    const active = idx === mentionIndex;
-                    return (
-                      <button
-                        key={idx}
-                        type="button"
-                        onMouseDown={(e) => { e.preventDefault(); finalizeMention(item); }}
-                        onMouseEnter={() => setMentionIndex(idx)}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: '10px', width: '100%',
-                          padding: '6px 8px', borderRadius: '8px',
-                          background: active ? 'rgba(51,122,255,0.06)' : 'transparent',
-                          cursor: 'pointer', border: 'none', textAlign: 'left',
-                        }}
-                      >
-                        <div style={{ width: '24px', height: '24px', borderRadius: '4px', background: '#F4F6FA', flexShrink: 0, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          {item.image_url ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={item.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                          ) : <span style={{ fontSize: '12px' }}>{item.type === 'product' ? '📦' : '👤'}</span>}
+                  ) : (
+                    (['product', 'influencer'] as const).map(groupType => {
+                      const groupItems = filteredMentions.filter(m => m.type === groupType);
+                      if (groupItems.length === 0) return null;
+                      return (
+                        <div key={groupType} style={{ marginBottom: '6px' }}>
+                          <div style={{
+                            fontSize: '10px', fontWeight: 700, color: '#8A93B0',
+                            textTransform: 'uppercase', letterSpacing: '0.5px', padding: '4px 6px'
+                          }}>
+                            {groupType === 'product' ? 'Products' : 'Models'}
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
+                            {groupItems.map(item => {
+                              const globalIdx = filteredMentions.indexOf(item);
+                              const active = globalIdx === mentionIndex;
+                              return (
+                                <button
+                                  key={item.tag}
+                                  type="button"
+                                  onMouseDown={(e) => { e.preventDefault(); finalizeMention(item); }}
+                                  onMouseEnter={() => setMentionIndex(globalIdx)}
+                                  title={item.name}
+                                  style={{
+                                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px',
+                                    padding: '6px 4px',
+                                    border: active ? '1px solid rgba(51,122,255,0.5)' : '1px solid transparent',
+                                    background: active ? 'rgba(51,122,255,0.08)' : 'transparent',
+                                    borderRadius: '8px', cursor: 'pointer', minWidth: 0
+                                  }}
+                                >
+                                  <div style={{ width: '100%', aspectRatio: '1 / 1', borderRadius: '6px', background: '#F4F6FA', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    {item.image_url ? (
+                                      // eslint-disable-next-line @next/next/no-img-element
+                                      <img src={item.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                    ) : <span style={{ fontSize: '14px', color: '#8A93B0' }}>{item.type === 'product' ? '📦' : '👤'}</span>}
+                                  </div>
+                                  <span style={{ fontSize: '10px', color: '#0D1B3E', fontWeight: 500, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', width: '100%', textAlign: 'center' }}>
+                                    {item.name}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
-                        <div style={{ display: 'flex', flexDirection: 'column' }}>
-                          <span style={{ fontSize: '13px', fontWeight: 600, color: '#0D1B3E' }}>{item.name}</span>
-                          <span style={{ fontSize: '11px', color: '#8A93B0' }}>@{item.tag}</span>
-                        </div>
-                      </button>
-                    );
-                  })}
+                      );
+                    })
+                  )}
                 </div>
               )}
               <textarea
