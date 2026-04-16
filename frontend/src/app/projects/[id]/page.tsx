@@ -202,26 +202,7 @@ export default function ProjectContainerPage() {
     /* ── Header + filters block (shared between layouts) ─────── */
     const headerBlock = (
         <>
-            {/* Breadcrumb */}
-            <div style={{ marginBottom: '12px' }}>
-                <a
-                    href="/projects"
-                    style={{
-                        fontSize: '13px',
-                        color: '#337AFF',
-                        textDecoration: 'none',
-                        fontWeight: 500,
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                    }}
-                >
-                    <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: '2' }}>
-                        <polyline points="15 18 9 12 15 6" />
-                    </svg>
-                    Creative OS
-                </a>
-            </div>
+
 
             {/* Main Row: Title + Controls + Filters */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '24px', marginBottom: '24px', flexWrap: 'wrap' }}>
