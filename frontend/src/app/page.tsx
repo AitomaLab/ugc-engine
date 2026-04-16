@@ -7,7 +7,7 @@ import { useApp } from "@/providers/AppProvider";
 import { useTranslation } from "@/lib/i18n";
 import Link from "next/link";
 import { createProject } from "@/lib/supabaseData";
-import { creativeFetch } from "@/lib/creative-os-api";
+import { creativeFetch, transcribeAudio } from "@/lib/creative-os-api";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -19,6 +19,7 @@ interface Job {
   progress: number;
   created_at: string;
   final_video_url?: string;
+  preview_url?: string;
   influencer_id?: string;
   campaign_name?: string;
   model_api?: string;
@@ -31,6 +32,15 @@ interface Influencer {
   id: string;
   name: string;
   image_url?: string;
+}
+
+interface RecentImage {
+  id: string;
+  image_url?: string;
+  result_url?: string;
+  product_name?: string;
+  created_at?: string;
+  mode?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -78,6 +88,25 @@ const SUGGESTION_CHIPS = [
 ];
 
 // ---------------------------------------------------------------------------
+// Relative Time Helper
+// ---------------------------------------------------------------------------
+
+function relativeTime(d: string): string {
+  const now = new Date();
+  const date = new Date(d);
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 7) return `${diffDays}d ago`;
+  if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
+  return date.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+}
+
+// ---------------------------------------------------------------------------
 // Studio Page
 // ---------------------------------------------------------------------------
 
@@ -87,6 +116,7 @@ export default function StudioPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [influencers, setInfluencers] = useState<Influencer[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
+  const [recentImages, setRecentImages] = useState<RecentImage[]>([]);
   const [loading, setLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [activeBottomTab, setActiveBottomTab] = useState<'projects' | 'videos' | 'images' | 'campaigns'>('projects');
@@ -97,6 +127,16 @@ export default function StudioPage() {
   const [prompt, setPrompt] = useState('');
   const [seedanceOn, setSeedanceOn] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Attached files
+  const [attachedFiles, setAttachedFiles] = useState<{ name: string; type: string }[]>([]);
+
+  // Voice recording state
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<BlobPart[]>([]);
 
   const fetchData = useCallback(async () => {
     try {
@@ -108,6 +148,20 @@ export default function StudioPage() {
       setJobs(jobsData);
       setInfluencers(infData);
       setProjects(projectsData || []);
+
+      // Fetch recent images from first 8 projects (in parallel)
+      if (projectsData && projectsData.length > 0) {
+        const imagePromises = projectsData.slice(0, 8).map((p: any) =>
+          creativeFetch<RecentImage[]>(`/creative-os/projects/${p.id}/assets/images`).catch(() => [])
+        );
+        const imageResults = await Promise.all(imagePromises);
+        const allImages = imageResults
+          .flat()
+          .filter(img => img.image_url || img.result_url)
+          .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+          .slice(0, 20);
+        setRecentImages(allImages);
+      }
     } catch (err) {
       console.error("Dashboard fetch error:", err);
     } finally {
@@ -117,7 +171,7 @@ export default function StudioPage() {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 8000);
+    const interval = setInterval(fetchData, 15000);
     return () => clearInterval(interval);
   }, [fetchData]);
 
@@ -125,19 +179,56 @@ export default function StudioPage() {
   const campaigns = groupByCampaign(jobs);
   const recentVideos = jobs
     .filter((j) => j.status === "success" && j.final_video_url)
-    .slice(0, 10);
+    .slice(0, 20);
 
-  const formatDate = (d: string) => {
-    const now = new Date();
-    const date = new Date(d);
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    if (diffMins < 60) return `${diffMins}m ago`;
-    const diffHours = Math.floor(diffMins / 60);
-    if (diffHours < 24) return `${diffHours}h ago`;
-    const diffDays = Math.floor(diffHours / 24);
-    if (diffDays < 7) return `${diffDays}d ago`;
-    return date.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: diffDays > 365 ? 'numeric' : undefined });
+  // ── File attachment handling ──
+  const handleFilePicked = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    const newFiles = Array.from(files).map(f => ({ name: f.name, type: f.type.startsWith('video') ? 'video' : 'image' }));
+    setAttachedFiles(prev => [...prev, ...newFiles]);
+    e.target.value = '';
+  };
+
+  // ── Voice recording ──
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        setRecording(false);
+        setTranscribing(true);
+        try {
+          const { text } = await transcribeAudio(blob);
+          if (text) {
+            setPrompt(prev => prev ? `${prev} ${text}` : text);
+            textareaRef.current?.focus();
+          }
+        } catch (err) {
+          console.error('Transcription failed:', err);
+        } finally {
+          setTranscribing(false);
+        }
+      };
+
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setRecording(true);
+    } catch (err) {
+      console.error('Microphone access denied:', err);
+    }
+  };
+
+  const stopRecording = () => {
+    mediaRecorderRef.current?.stop();
   };
 
   // ── Home Submit: create project + redirect ──
@@ -176,12 +267,12 @@ export default function StudioPage() {
 
       {/* ── HERO SECTION ─────────────────────────────────────────────── */}
       <div style={{
-        minHeight: 'min(65vh, 520px)',
+        minHeight: 'min(60vh, 500px)',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: '60px 24px 48px',
+        padding: '50px 24px 48px',
         background: 'linear-gradient(180deg, #e8eeff 0%, #dfe6ff 30%, #ede5ff 60%, #f5f0ff 85%, #ffffff 100%)',
         position: 'relative',
         overflow: 'hidden',
@@ -236,6 +327,16 @@ export default function StudioPage() {
           position: 'relative',
           zIndex: 1,
         }}>
+          {/* Hidden file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*,video/*"
+            multiple
+            style={{ display: 'none' }}
+            onChange={handleFilePicked}
+          />
+
           {isCreating ? (
             /* Creating State */
             <div style={{
@@ -271,6 +372,26 @@ export default function StudioPage() {
               boxShadow: '0 4px 32px rgba(51,122,255,0.08)',
               overflow: 'hidden',
             }}>
+              {/* Attached file chips */}
+              {attachedFiles.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', padding: '16px 24px 0' }}>
+                  {attachedFiles.map((f, i) => (
+                    <span key={i} style={{
+                      display: 'inline-flex', alignItems: 'center', gap: '6px',
+                      padding: '4px 10px', borderRadius: '8px',
+                      background: 'rgba(51,122,255,0.08)', color: '#337AFF',
+                      fontSize: '12px', fontWeight: 600,
+                    }}>
+                      {f.type === 'video' ? '🎬' : '🖼'} {f.name}
+                      <button
+                        onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== i))}
+                        style={{ background: 'none', border: 'none', color: '#8A93B0', cursor: 'pointer', fontSize: '14px', lineHeight: 1, padding: 0 }}
+                      >×</button>
+                    </span>
+                  ))}
+                </div>
+              )}
+
               {/* Textarea */}
               <textarea
                 ref={textareaRef}
@@ -307,7 +428,8 @@ export default function StudioPage() {
               }}>
                 {/* + Button */}
                 <button
-                  title="Add attachment"
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Attach file"
                   style={{
                     width: '34px', height: '34px',
                     borderRadius: '10px',
@@ -367,23 +489,34 @@ export default function StudioPage() {
 
                 {/* Mic Button */}
                 <button
-                  title="Voice input"
+                  onClick={recording ? stopRecording : startRecording}
+                  disabled={transcribing}
+                  title={recording ? 'Stop recording' : transcribing ? 'Transcribing…' : 'Dictate'}
                   style={{
                     width: '34px', height: '34px',
                     borderRadius: '50%', border: 'none',
-                    background: 'transparent',
+                    background: recording ? 'rgba(255,82,82,0.12)' : 'transparent',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    cursor: 'pointer', color: '#8A93B0',
+                    cursor: transcribing ? 'wait' : 'pointer',
+                    color: recording ? '#C53030' : transcribing ? '#8A93B0' : '#8A93B0',
                     transition: 'all 0.15s',
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = '#337AFF'; e.currentTarget.style.background = 'rgba(51,122,255,0.06)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = '#8A93B0'; e.currentTarget.style.background = 'transparent'; }}
+                  onMouseEnter={(e) => { if (!recording && !transcribing) { e.currentTarget.style.color = '#337AFF'; e.currentTarget.style.background = 'rgba(51,122,255,0.06)'; } }}
+                  onMouseLeave={(e) => { if (!recording && !transcribing) { e.currentTarget.style.color = '#8A93B0'; e.currentTarget.style.background = 'transparent'; } }}
                 >
-                  <svg viewBox="0 0 24 24" style={{ width: '16px', height: '16px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
-                    <rect x="9" y="3" width="6" height="12" rx="3" />
-                    <path d="M5 11a7 7 0 0 0 14 0" />
-                    <line x1="12" y1="18" x2="12" y2="22" />
-                  </svg>
+                  {transcribing ? (
+                    <span style={{ display: 'flex', gap: '2px' }}>
+                      <span style={{ width: '4px', height: '4px', borderRadius: '50%', background: 'currentColor', animation: 'pulse 1s ease-in-out infinite' }} />
+                      <span style={{ width: '4px', height: '4px', borderRadius: '50%', background: 'currentColor', animation: 'pulse 1s ease-in-out 0.15s infinite' }} />
+                      <span style={{ width: '4px', height: '4px', borderRadius: '50%', background: 'currentColor', animation: 'pulse 1s ease-in-out 0.3s infinite' }} />
+                    </span>
+                  ) : (
+                    <svg viewBox="0 0 24 24" style={{ width: '16px', height: '16px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
+                      <rect x="9" y="3" width="6" height="12" rx="3" />
+                      <path d="M5 11a7 7 0 0 0 14 0" />
+                      <line x1="12" y1="18" x2="12" y2="22" />
+                    </svg>
+                  )}
                 </button>
 
                 {/* Send Button */}
@@ -461,7 +594,7 @@ export default function StudioPage() {
         )}
       </div>
 
-      {/* ── BOTTOM SECTION (in-flow, not fixed) ──────────────────────── */}
+      {/* ── BOTTOM SECTION ───────────────────────────────────────────── */}
       <div style={{
         background: '#ffffff',
         borderTop: '1px solid rgba(51,122,255,0.08)',
@@ -472,7 +605,6 @@ export default function StudioPage() {
           display: 'flex',
           alignItems: 'center',
           gap: '0',
-          padding: '0',
           borderBottom: '1px solid rgba(0,0,0,0.06)',
           maxWidth: '1200px',
           margin: '0 auto',
@@ -487,7 +619,7 @@ export default function StudioPage() {
             const counts: Record<string, number> = {
               projects: projects.length,
               videos: recentVideos.length,
-              images: 0,
+              images: recentImages.length,
               campaigns: campaigns.length,
             };
             const isActive = activeBottomTab === tab;
@@ -514,13 +646,10 @@ export default function StudioPage() {
                 {labels[tab]}
                 {counts[tab] > 0 && (
                   <span style={{
-                    fontSize: '11px',
-                    fontWeight: 700,
+                    fontSize: '11px', fontWeight: 700,
                     background: isActive ? 'rgba(51,122,255,0.10)' : 'rgba(0,0,0,0.05)',
                     color: isActive ? '#337AFF' : '#8A93B0',
-                    padding: '2px 7px',
-                    borderRadius: '10px',
-                    lineHeight: 1.3,
+                    padding: '2px 7px', borderRadius: '10px', lineHeight: 1.3,
                   }}>
                     {counts[tab]}
                   </span>
@@ -533,12 +662,8 @@ export default function StudioPage() {
           <Link
             href={activeBottomTab === 'projects' ? '/projects-library' : '/library'}
             style={{
-              fontSize: '13px',
-              fontWeight: 600,
-              color: '#337AFF',
-              textDecoration: 'none',
-              display: 'flex', alignItems: 'center', gap: '4px',
-              padding: '16px 0',
+              fontSize: '13px', fontWeight: 600, color: '#337AFF',
+              textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px', padding: '16px 0',
             }}
           >
             Browse all
@@ -556,8 +681,8 @@ export default function StudioPage() {
           {activeBottomTab === 'projects' && (
             <div style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-              gap: '16px',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
+              gap: '20px',
             }}>
               {projects.map((p) => {
                 const videoCount = p.asset_counts?.videos || 0;
@@ -567,9 +692,9 @@ export default function StudioPage() {
                 return (
                   <Link key={p.id} href={`/projects/${p.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
                     <div style={{
-                      borderRadius: '14px',
+                      borderRadius: '16px',
                       overflow: 'hidden',
-                      border: '1px solid rgba(51,122,255,0.10)',
+                      border: '1px solid rgba(51,122,255,0.08)',
                       background: 'white',
                       transition: 'transform 0.18s ease, box-shadow 0.18s ease',
                       cursor: 'pointer',
@@ -577,41 +702,51 @@ export default function StudioPage() {
                       onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.boxShadow = '0 12px 32px rgba(51,122,255,0.12)'; }}
                       onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none'; }}
                     >
-                      {/* Thumbnail */}
+                      {/* Large thumbnail — like Lovable */}
                       <div style={{
-                        height: '140px',
+                        height: '200px',
                         background: previewUrl
                           ? `url(${previewUrl}) center/cover no-repeat`
-                          : `linear-gradient(135deg, hsl(${(p.name?.charCodeAt(0) || 0) * 7 % 360}, 55%, 88%), hsl(${((p.name?.charCodeAt(0) || 0) * 7 + 40) % 360}, 55%, 82%))`,
+                          : `linear-gradient(135deg, hsl(${(p.name?.charCodeAt(0) || 0) * 7 % 360}, 45%, 90%), hsl(${((p.name?.charCodeAt(0) || 0) * 7 + 40) % 360}, 45%, 84%))`,
                         position: 'relative',
                       }}>
                         {/* Status badge */}
                         {hasAssets && (
                           <span style={{
-                            position: 'absolute', top: '10px', right: '10px',
-                            padding: '3px 10px', borderRadius: '999px',
-                            fontSize: '10px', fontWeight: 700, letterSpacing: '0.3px',
-                            background: videoCount > 0 ? 'rgba(34,197,94,0.9)' : 'rgba(51,122,255,0.9)',
+                            position: 'absolute', top: '12px', right: '12px',
+                            padding: '4px 12px', borderRadius: '999px',
+                            fontSize: '11px', fontWeight: 700,
+                            background: 'rgba(34,197,94,0.9)',
                             color: 'white',
                           }}>
-                            {videoCount > 0 ? (imageCount > 0 ? 'Active' : 'Done') : 'Active'}
+                            {videoCount > 0 && imageCount > 0 ? 'Active' : 'Done'}
                           </span>
                         )}
                       </div>
 
-                      {/* Info */}
-                      <div style={{ padding: '14px 16px' }}>
+                      {/* Info row */}
+                      <div style={{ padding: '16px 18px', display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                        {/* Project icon */}
                         <div style={{
-                          fontSize: '13.5px', fontWeight: 700, color: '#0D1B3E',
-                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                          marginBottom: '4px',
+                          width: '28px', height: '28px', borderRadius: '50%', flexShrink: 0,
+                          background: `linear-gradient(135deg, hsl(${(p.name?.charCodeAt(0) || 0) * 7 % 360}, 60%, 60%), hsl(${((p.name?.charCodeAt(0) || 0) * 7 + 60) % 360}, 60%, 50%))`,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          color: 'white', fontSize: '12px', fontWeight: 700,
                         }}>
-                          {p.name}
+                          {(p.name || 'P').charAt(0).toUpperCase()}
                         </div>
-                        <div style={{ fontSize: '11.5px', color: '#8A93B0' }}>
-                          {p.updated_at ? `Edited ${formatDate(p.updated_at)}` : p.created_at ? `Created ${formatDate(p.created_at)}` : ''}
-                          {videoCount > 0 && ` · ${videoCount} video${videoCount !== 1 ? 's' : ''}`}
-                          {imageCount > 0 && ` · ${imageCount} image${imageCount !== 1 ? 's' : ''}`}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{
+                            fontSize: '14px', fontWeight: 700, color: '#0D1B3E',
+                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          }}>
+                            {p.name}
+                          </div>
+                          <div style={{ fontSize: '12px', color: '#8A93B0', marginTop: '2px' }}>
+                            {p.updated_at ? `Edited ${relativeTime(p.updated_at)}` : p.created_at ? `Created ${relativeTime(p.created_at)}` : ''}
+                            {videoCount > 0 && ` · ${videoCount} video${videoCount !== 1 ? 's' : ''}`}
+                            {imageCount > 0 && ` · ${imageCount} image${imageCount !== 1 ? 's' : ''}`}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -621,23 +756,23 @@ export default function StudioPage() {
 
               {/* New project card */}
               <div
-                onClick={() => textareaRef.current?.focus()}
+                onClick={() => { window.scrollTo({ top: 0, behavior: 'smooth' }); setTimeout(() => textareaRef.current?.focus(), 300); }}
                 style={{
-                  borderRadius: '14px',
+                  borderRadius: '16px',
                   border: '2px dashed rgba(51,122,255,0.18)',
                   background: 'rgba(51,122,255,0.02)',
                   display: 'flex', flexDirection: 'column',
                   alignItems: 'center', justifyContent: 'center',
-                  minHeight: '200px',
+                  minHeight: '270px',
                   cursor: 'pointer',
                   transition: 'all 0.15s ease',
-                  gap: '8px',
+                  gap: '10px',
                 }}
                 onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgba(51,122,255,0.35)'; e.currentTarget.style.background = 'rgba(51,122,255,0.04)'; }}
                 onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'rgba(51,122,255,0.18)'; e.currentTarget.style.background = 'rgba(51,122,255,0.02)'; }}
               >
                 <div style={{
-                  width: '40px', height: '40px', borderRadius: '12px',
+                  width: '44px', height: '44px', borderRadius: '14px',
                   background: 'rgba(51,122,255,0.06)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   color: '#337AFF',
@@ -658,8 +793,7 @@ export default function StudioPage() {
                   gridColumn: '1 / -1',
                   display: 'flex', flexDirection: 'column',
                   alignItems: 'center', justifyContent: 'center',
-                  padding: '48px 20px',
-                  color: '#8A93B0',
+                  padding: '48px 20px', color: '#8A93B0',
                 }}>
                   <div style={{
                     width: '56px', height: '56px', borderRadius: '16px',
@@ -679,17 +813,17 @@ export default function StudioPage() {
             </div>
           )}
 
-          {/* ── Recent Videos ───────────────────────────────────── */}
+          {/* ── Recent Videos — 9:16 portrait cards ─────────────── */}
           {activeBottomTab === 'videos' && (
             recentVideos.length === 0 ? (
               <EmptyState icon="video" label="No videos yet" desc="Ask the agent to generate one" />
             ) : (
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
                 gap: '16px',
               }}>
-                {recentVideos.map((job, i) => (
+                {recentVideos.map((job) => (
                   <div
                     key={job.id}
                     onClick={() => job.final_video_url && window.open(job.final_video_url)}
@@ -704,11 +838,8 @@ export default function StudioPage() {
                     onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.boxShadow = '0 12px 32px rgba(0,0,0,0.08)'; }}
                     onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none'; }}
                   >
-                    <div style={{
-                      height: '140px',
-                      background: `linear-gradient(135deg, hsl(${(i * 47) % 360}, 55%, 88%), hsl(${(i * 47 + 40) % 360}, 55%, 80%))`,
-                      position: 'relative',
-                    }}>
+                    {/* 9:16 portrait thumbnail */}
+                    <div style={{ aspectRatio: '9/16', position: 'relative', background: '#f0f2f5', overflow: 'hidden' }}>
                       {job.final_video_url && (
                         <video
                           src={job.final_video_url}
@@ -719,12 +850,12 @@ export default function StudioPage() {
                         />
                       )}
                     </div>
-                    <div style={{ padding: '12px 14px' }}>
+                    <div style={{ padding: '10px 12px' }}>
                       <div style={{ fontSize: '12.5px', fontWeight: 600, color: '#0D1B3E', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {job.campaign_name || 'Video'}
+                        {job.campaign_name || 'Creative OS'}
                       </div>
                       <div style={{ fontSize: '11px', color: '#8A93B0', marginTop: '2px' }}>
-                        {formatDate(job.created_at)}
+                        {relativeTime(job.created_at)}
                       </div>
                     </div>
                   </div>
@@ -733,9 +864,57 @@ export default function StudioPage() {
             )
           )}
 
-          {/* ── Recent Images ───────────────────────────────────── */}
+          {/* ── Recent Images — 9:16 portrait cards ─────────────── */}
           {activeBottomTab === 'images' && (
-            <EmptyState icon="image" label="No images yet" desc="Recent images will appear here after generation" />
+            recentImages.length === 0 ? (
+              <EmptyState icon="image" label="No images yet" desc="Recent images will appear here after generation" />
+            ) : (
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+                gap: '16px',
+              }}>
+                {recentImages.map((img) => {
+                  const url = img.image_url || img.result_url;
+                  return (
+                    <div
+                      key={img.id}
+                      onClick={() => url && window.open(url)}
+                      style={{
+                        borderRadius: '14px',
+                        overflow: 'hidden',
+                        border: '1px solid rgba(0,0,0,0.06)',
+                        background: 'white',
+                        cursor: 'pointer',
+                        transition: 'transform 0.18s ease, box-shadow 0.18s ease',
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.boxShadow = '0 12px 32px rgba(0,0,0,0.08)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none'; }}
+                    >
+                      {/* 9:16 portrait thumbnail */}
+                      <div style={{ aspectRatio: '9/16', position: 'relative', background: '#f0f2f5', overflow: 'hidden' }}>
+                        {url && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={url}
+                            alt={img.product_name || 'Image'}
+                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                          />
+                        )}
+                      </div>
+                      <div style={{ padding: '10px 12px' }}>
+                        <div style={{ fontSize: '12.5px', fontWeight: 600, color: '#0D1B3E', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {img.product_name || 'Creative OS'}
+                        </div>
+                        <div style={{ fontSize: '11px', color: '#8A93B0', marginTop: '2px' }}>
+                          {img.created_at ? relativeTime(img.created_at) : ''}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )
           )}
 
           {/* ── My Campaigns ────────────────────────────────────── */}
@@ -784,6 +963,10 @@ export default function StudioPage() {
         @keyframes spin {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
+        }
+        @keyframes pulse {
+          0%, 100% { opacity: 0.4; transform: scale(0.85); }
+          50% { opacity: 1; transform: scale(1.15); }
         }
       `}</style>
     </div>
