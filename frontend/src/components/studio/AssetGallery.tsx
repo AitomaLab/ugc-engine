@@ -540,7 +540,7 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
             )}
 
             {/* Delete icon — top left */}
-            {(hovered || isConfirmingDelete) && !isProcessing && !isSelecting && !isConfirmingDelete && (
+            {hovered && !isSelecting && !isConfirmingDelete && (
                 <button
                     onClick={onDeleteClick}
                     style={{
