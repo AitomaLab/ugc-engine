@@ -8,7 +8,7 @@ NIXPACKS_PYTHON_VERSION = "3.11"
 
 # ffmpeg is needed by the combine_videos agent tool
 [phases.setup]
-aptPkgs = ["ffmpeg"]
+nixPkgs = ["ffmpeg"]
 
 [start]
 cmd = "PYTHONPATH=. python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8001}"

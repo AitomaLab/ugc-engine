@@ -6,9 +6,9 @@ providers = ["python"]
 [variables]
 NIXPACKS_PYTHON_VERSION = "3.11"
 
-# Add ffmpeg as apt package (doesn't override Python provider's setup phase)
+# Add ffmpeg as nix package to avoid apt mirror failures
 [phases.setup]
-aptPkgs = ["ffmpeg"]
+nixPkgs = ["ffmpeg"]
 
 [start]
 cmd = "PYTHONPATH=. python -m uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000}"
