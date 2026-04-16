@@ -207,15 +207,26 @@ export default function ProjectContainerPage() {
     /* ── Unified Project Header Bar (always visible) ─────── */
     const projectHeaderBar = (
         <div style={{
-            padding: '16px 28px',
-            borderBottom: '1px solid rgba(13,27,62,0.06)',
             display: 'flex',
-            alignItems: 'center',
-            gap: '16px',
+            borderBottom: '1px solid rgba(13,27,62,0.06)',
             background: '#FFFFFF',
             flexShrink: 0,
-            flexWrap: 'wrap',
+            flexWrap: isWide ? 'nowrap' : 'wrap',
         }}>
+            {/* Left Header Box (Agent Panel) */}
+            <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '16px',
+                padding: '16px 28px',
+                ...(isWide && agentOpen ? {
+                    width: '38%',
+                    minWidth: '360px',
+                    maxWidth: '520px',
+                    borderRight: '1px solid rgba(13,27,62,0.07)',
+                } : {}),
+                flexShrink: 0,
+            }}>
             {/* Project Title */}
             {isEditing ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -352,10 +363,18 @@ export default function ProjectContainerPage() {
                     </svg>
                 </button>
             )}
+            </div>
 
-            {/* Spacer to push tabs/filters right */}
-            <div style={{ flex: 1 }} />
-
+            {/* Right section: Tabs and filters (Gallery column header) */}
+            <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                padding: '16px 28px',
+                flex: 1,
+                flexWrap: 'wrap',
+                minWidth: 0,
+            }}>
             {/* Tab Switcher */}
             <div style={{
                 display: 'flex', gap: '4px', padding: '3px',
@@ -415,6 +434,7 @@ export default function ProjectContainerPage() {
                     {filteredAssets.length} of {currentAssets.length}
                 </span>
             )}
+            </div>
         </div>
     );
 
