@@ -32,7 +32,7 @@ const IconEdit = () => <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" hei
 const NAV_ITEMS = [
     { href: '/', labelKey: 'nav.dashboard', label: 'Home', Icon: IconHome },
     { divider: true },
-    { href: '/studio', labelKey: 'nav.studio', label: 'Creative OS', Icon: IconGrid },
+    { href: '/studio', labelKey: 'nav.studio', label: 'Projects', Icon: IconGrid },
     { href: '/influencers', labelKey: 'nav.influencers', label: 'Influencers', Icon: IconUser },
     { href: '/scripts', labelKey: 'nav.scripts', label: 'Scripts', Icon: IconFile },
     { href: '/products', labelKey: 'nav.products', label: 'Products', Icon: IconBox },
@@ -375,7 +375,6 @@ function ProfileDropdown() {
                     <button className="pd-topup" onClick={() => { window.location.href = '/manage?topup=1'; }}>{t('header.topUp')}</button>
                 </div>
                 <Link href="/profile" className="pd-menu-item"><IconUser />{t('nav.profile')}</Link>
-                <Link href="/projects" className="pd-menu-item"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /></svg>{t('nav.projects')}</Link>
                 <Link href="/activity" className="pd-menu-item"><IconActivity />{t('nav.activity')}</Link>
                 <Link href="/manage" className="pd-menu-item"><IconSettings />{t('nav.settings')}</Link>
                 <Link href="/upgrade" className="pd-menu-item"><IconStar />{t('header.upgradePlan')}</Link>
