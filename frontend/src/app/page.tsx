@@ -264,11 +264,12 @@ export default function StudioPage() {
   }
 
   return (
-    <div style={{ minHeight: 'calc(100vh - var(--header-h))' }}>
+    <div style={{ minHeight: 'calc(100vh - var(--header-h))', display: 'flex', flexDirection: 'column' }}>
 
       {/* ── HERO SECTION ─────────────────────────────────────────────── */}
       <div style={{
-        minHeight: 'min(60vh, 500px)',
+        flex: 1,
+        minHeight: 'calc(100vh - var(--header-h) - 80px)', // Pushes bottom menu down so only the tab bar peeps up
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
