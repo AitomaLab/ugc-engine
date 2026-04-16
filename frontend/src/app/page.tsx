@@ -268,7 +268,8 @@ export default function StudioPage() {
       minHeight: 'calc(100vh - var(--header-h))',
       display: 'flex',
       flexDirection: 'column',
-      background: 'linear-gradient(180deg, #e8eeff 0%, #dfe6ff 30%, #ede5ff 60%, #f5f0ff 85%, #ffffff 100%)'
+      background: 'linear-gradient(180deg, #e8eeff 0%, #dfe6ff 30%, #ede5ff 60%, #f5f0ff 85%, #ffffff 100%)',
+      backgroundAttachment: 'fixed'
     }}>
 
       {/* ── HERO SECTION ─────────────────────────────────────────────── */}
@@ -658,7 +659,15 @@ export default function StudioPage() {
         maxWidth: '1248px', /* 1200px + 24px padding on each side */
         width: '100%',
         margin: '0 auto',
-        padding: '0 24px 48px',
+        background: 'rgba(255,255,255,0.92)',
+        backdropFilter: 'blur(24px)',
+        border: '1px solid rgba(51,122,255,0.10)',
+        borderBottom: 'none',
+        borderTopLeftRadius: '32px',
+        borderTopRightRadius: '32px',
+        padding: '0 24px 24px', /* Reduced bottom padding to avoid too much empty space */
+        minHeight: '400px', /* Ensure it covers bottom if few projects */
+        boxShadow: '0 -8px 40px rgba(51,122,255,0.06)',
       }}>
         {/* Tab Bar */}
         <div style={{
