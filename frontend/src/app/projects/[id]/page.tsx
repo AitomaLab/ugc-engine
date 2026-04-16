@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useSearchParams } from 'next/navigation';
 import { useApp } from '@/providers/AppProvider';
 import { creativeFetch } from '@/lib/creative-os-api';
 import { AssetGallery } from '@/components/studio/AssetGallery';
@@ -48,7 +48,9 @@ function useIsWide(): boolean {
 
 export default function ProjectContainerPage() {
     const params = useParams();
+    const searchParams = useSearchParams();
     const projectId = params.id as string;
+    const initialBrief = searchParams.get('brief');
     const { session } = useApp();
 
     const [activeTab, setActiveTab] = useState<TabId>('images');
@@ -501,7 +503,7 @@ export default function ProjectContainerPage() {
                 {projectHeaderBar}
                 {galleryBlock}
                 {createBarOpen && createBarBlock}
-                <AgentPanel ref={agentRef} projectId={projectId} onArtifact={() => fetchAssets(true)} onStateChange={setAgentState} />
+                <AgentPanel ref={agentRef} projectId={projectId} onArtifact={() => fetchAssets(true)} onStateChange={setAgentState} initialBrief={initialBrief || undefined} />
             </div>
         );
     }
@@ -538,6 +540,7 @@ export default function ProjectContainerPage() {
                             embedded={true}
                             hideHeader={true}
                             onStateChange={setAgentState}
+                            initialBrief={initialBrief || undefined}
                         />
                     </div>
                 )}

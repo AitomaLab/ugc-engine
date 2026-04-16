@@ -1,26 +1,18 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/utils";
 import { useApp } from "@/providers/AppProvider";
 import { useTranslation } from "@/lib/i18n";
 import Link from "next/link";
+import { createProject } from "@/lib/supabaseData";
+import { creativeFetch } from "@/lib/creative-os-api";
+import { AgentPanel } from "@/components/studio/AgentPanel";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-interface Stats {
-  total_jobs: number;
-  pending: number;
-  processing: number;
-  success: number;
-  failed: number;
-  influencers: number;
-  scripts: number;
-  app_clips: number;
-  projects?: number;
-}
 
 interface Job {
   id: string;
@@ -75,32 +67,60 @@ function groupByCampaign(jobs: Job[]): CampaignGroup[] {
 }
 
 // ---------------------------------------------------------------------------
+// Empty Panel State
+// ---------------------------------------------------------------------------
+
+function EmptyPanelState({ label }: { label: string }) {
+  return (
+    <div style={{ padding: '0 8px', color: '#8A93B0', fontSize: '12px', fontStyle: 'italic' }}>
+      {label}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Suggestion Chips
+// ---------------------------------------------------------------------------
+
+const SUGGESTION_CHIPS = [
+  "Create a UGC ad for my product",
+  "Generate product shots",
+  "Build a 5-video campaign",
+  "Make a Spanish-language ad",
+  "Create an AI clone video",
+];
+
+// ---------------------------------------------------------------------------
 // Studio Page
 // ---------------------------------------------------------------------------
 
 export default function StudioPage() {
   const { t } = useTranslation();
-  const [stats, setStats] = useState<Stats | null>(null);
+  const router = useRouter();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [influencers, setInfluencers] = useState<Influencer[]>([]);
+  const [projects, setProjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [expandedCampaign, setExpandedCampaign] = useState<string | null>(null);
-  const carouselRef = useRef<HTMLDivElement>(null);
+  const [isCreating, setIsCreating] = useState(false);
+  const [activeBottomTab, setActiveBottomTab] = useState<'projects' | 'videos' | 'images' | 'campaigns'>('projects');
   const { profile } = useApp();
   const userName = profile?.name || profile?.email?.split('@')[0] || 'Creator';
 
+  // Ref for the embedded AgentPanel to trigger suggestion chip text
+  const agentBriefRef = useRef<string>('');
+
   const fetchData = useCallback(async () => {
     try {
-      const [statsData, jobsData, infData] = await Promise.all([
-        apiFetch<Stats>("/stats"),
+      const [jobsData, infData, projectsData] = await Promise.all([
         apiFetch<Job[]>("/jobs?limit=100&include_clones=true"),
         apiFetch<Influencer[]>("/influencers"),
+        creativeFetch<any[]>('/creative-os/projects/').catch(() => []),
       ]);
-      setStats(statsData);
       setJobs(jobsData);
       setInfluencers(infData);
+      setProjects(projectsData || []);
     } catch (err) {
-      console.error("Studio fetch error:", err);
+      console.error("Dashboard fetch error:", err);
     } finally {
       setLoading(false);
     }
@@ -116,49 +136,30 @@ export default function StudioPage() {
   const campaigns = groupByCampaign(jobs);
   const recentVideos = jobs
     .filter((j) => j.status === "success" && j.final_video_url)
-    .slice(0, 5);
-
-  const activeCampaigns = campaigns.filter(
-    (c) => c.processing > 0 || c.pending > 0
-  );
-  const hasInfluencers = (stats?.influencers ?? 0) > 0;
-  const hasScripts = (stats?.scripts ?? 0) > 0;
-  const hasClips = (stats?.app_clips ?? 0) > 0;
+    .slice(0, 10);
 
   // Influencer name lookup
   const influencerMap = new Map(influencers.map((i) => [i.id, i]));
 
-  // ---------------------------------------------------------------------------
-  // Welcome Message
-  // ---------------------------------------------------------------------------
-
-  function getWelcome(): { title: string; subtitle: string } {
-    if (activeCampaigns.length > 0) {
-      const c = activeCampaigns[0];
-      const pct = c.total > 0 ? Math.round((c.success / c.total) * 100) : 0;
-      return {
-        title: `Welcome back, Creator`,
-        subtitle: `Your "${c.name}" campaign is ${pct}% complete — ${c.processing + c.pending} videos still in the pipeline.`,
-      };
-    }
-    if (recentVideos.length > 0) {
-      return {
-        title: "Welcome back, Creator",
-        subtitle: `You have ${recentVideos.length} freshly baked videos. Your pipeline is ready for more.`,
-      };
-    }
-    return {
-      title: "Welcome, Creator",
-      subtitle: "Your production pipeline is ready. What will you create today?",
-    };
-  }
-
-  const welcome = getWelcome();
-  const successRate = stats && stats.total_jobs > 0
-    ? Math.round((stats.success / stats.total_jobs) * 100)
-    : 0;
-
   const formatDate = (d: string) => new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+  // ── Home Submit: create project + redirect ──
+  const handleHomeSubmit = async (prompt: string) => {
+    if (!prompt.trim() || isCreating) return;
+    setIsCreating(true);
+    try {
+      const nameRes = await creativeFetch<{ name: string }>('/creative-os/projects/generate-name', {
+        method: 'POST',
+        body: JSON.stringify({ prompt }),
+      });
+      const projectName = nameRes.name || 'New Project';
+      const newProject = await createProject({ name: projectName, description: prompt });
+      router.push(`/projects/${newProject.id}?brief=${encodeURIComponent(prompt)}`);
+    } catch (err) {
+      console.error("Failed to create project from home prompt:", err);
+      setIsCreating(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -171,155 +172,361 @@ export default function StudioPage() {
   }
 
   return (
-    <div className="content-area">
-      <div className="page-header">
-        <h1 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          {t('dashboard.welcome')}, <span style={{ color: 'var(--blue)' }}>{userName}</span>
-        </h1>
-        <p>{t('dashboard.subtitle')}</p>
-      </div>
+    <div style={{ position: 'relative', minHeight: 'calc(100vh - var(--header-h))' }}>
 
-      {/* Stats Row */}
-      <div className="stats-row">
-        <div className="stat-card">
-          <div className="stat-label">{t('dashboard.totalVideos')}</div>
-          <div className="stat-value">{stats?.total_jobs ?? 0}</div>
-          <div className="stat-sub">{t('common.allTime')}</div>
-          {(stats?.total_jobs ?? 0) > 0 && <div className="stat-badge up">+{stats!.total_jobs} {t('common.generated')}</div>}
-        </div>
-        <div className="stat-card">
-          <div className="stat-label">{t('dashboard.activeJobs')}</div>
-          <div className="stat-value">{stats?.processing ?? 0}</div>
-          <div className="stat-sub">{t('common.currentlyGenerating')}</div>
-          {(stats?.pending ?? 0) > 0 && <div className="stat-badge blue">{stats!.pending} {t('common.inQueue')}</div>}
-        </div>
-        <div className="stat-card">
-          <div className="stat-label">{t('dashboard.successRate')}</div>
-          <div className="stat-value">{successRate}%</div>
-          <div className="stat-sub">{t('dashboard.last30Days')}</div>
-          <div className="stat-badge up">{stats?.success ?? 0} {t('dashboard.completed')}</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-label">{t('influencers.title')}</div>
-          <div className="stat-value">{stats?.influencers ?? 0}</div>
-          <div className="stat-sub">{t('dashboard.activeProfiles')}</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-label">{t('nav.scripts')}</div>
-          <div className="stat-value">{stats?.scripts ?? 0}</div>
-          <div className="stat-sub">{t('dashboard.inLibrary')}</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-label">{t('nav.projects')}</div>
-          <div className="stat-value">{stats?.projects ?? 0}</div>
-          <div className="stat-sub">{t('dashboard.active')}</div>
-        </div>
-      </div>
+      {/* ── HERO SECTION ─────────────────────────────────────────────── */}
+      <div style={{
+        minHeight: 'calc(100vh - var(--header-h) - 120px)',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '60px 20px 160px',
+        background: 'linear-gradient(160deg, #f0f4ff 0%, #e8eeff 40%, #f5f8ff 70%, #eef2ff 100%)',
+        position: 'relative',
+        overflow: 'hidden',
+      }}>
+        {/* Decorative gradient orbs */}
+        <div style={{
+          position: 'absolute', top: '10%', left: '5%',
+          width: '400px', height: '400px', borderRadius: '50%',
+          background: 'radial-gradient(circle, rgba(51,122,255,0.08) 0%, transparent 70%)',
+          pointerEvents: 'none',
+        }} />
+        <div style={{
+          position: 'absolute', bottom: '15%', right: '8%',
+          width: '300px', height: '300px', borderRadius: '50%',
+          background: 'radial-gradient(circle, rgba(107,78,255,0.07) 0%, transparent 70%)',
+          pointerEvents: 'none',
+        }} />
 
-      {/* Campaign Tracker */}
-      {campaigns.length > 0 ? (
-        <div className="tracker-card">
-          <div className="section-title">
-            {t('dashboard.campaignTracker')}
-            <Link href="/activity">{t('common.viewAll')}</Link>
-          </div>
-          <div className="tracker-scroll">
-            {campaigns.slice(0, 8).map(campaign => {
-              const pct = campaign.total > 0 ? Math.round((campaign.success / campaign.total) * 100) : 0;
-              const statusClass = campaign.processing > 0 ? 'active' : campaign.pending > 0 ? 'pending' : campaign.failed > 0 ? 'failed' : 'done';
-              const statusLabel = campaign.processing > 0 ? t('common.processing') : campaign.pending > 0 ? t('common.queued') : campaign.failed > 0 ? t('common.failed') : t('common.completed');
-              return (
-                <div key={campaign.name} className="campaign-row">
-                  <div className="campaign-thumb" style={{ background: 'var(--blue-light)' }}>
-                    <svg viewBox="0 0 24 24"><polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" /></svg>
-                  </div>
-                  <div className="campaign-info">
-                    <div className="campaign-name">{campaign.name}</div>
-                    <div className="campaign-meta">{campaign.total} {t('dashboard.videosLabel')} · {campaign.success} {t('dashboard.completed')}</div>
-                  </div>
-                  <div className="campaign-progress">
-                    <div className="prog-bar">
-                      <div className="prog-fill" style={{ width: `${pct}%` }} />
-                    </div>
-                    <div className="prog-label">{campaign.success}/{campaign.total} {t('dashboard.done')}</div>
-                  </div>
-                  <div className={`status-pill ${statusClass}`}>{statusLabel}</div>
-                </div>
-              );
-            })}
-          </div>
+        {/* Greeting */}
+        <div style={{ textAlign: 'center', marginBottom: '40px', position: 'relative', zIndex: 1 }}>
+          <h1 style={{
+            fontSize: '42px',
+            fontWeight: 800,
+            color: '#0D1B3E',
+            letterSpacing: '-1px',
+            lineHeight: 1.15,
+            marginBottom: '12px',
+          }}>
+            Got an idea,{' '}
+            <span style={{
+              background: 'linear-gradient(135deg, #337AFF, #6B4EFF)',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+            }}>
+              {userName}
+            </span>
+            ?
+          </h1>
+          <p style={{ fontSize: '17px', color: '#4A5578', fontWeight: 400 }}>
+            Tell the Creative Director what to make next
+          </p>
         </div>
-      ) : (
-        <div className="tracker-card">
-          <div className="section-title">{t('dashboard.campaignTracker')}</div>
-          <div className="empty-state" style={{ padding: '32px 20px' }}>
-            <div className="empty-icon">
-              <svg viewBox="0 0 24 24"><polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" /></svg>
+
+        {/* Embedded Creative Agent */}
+        <div style={{
+          width: '100%',
+          maxWidth: '760px',
+          position: 'relative',
+          zIndex: 1,
+        }}>
+          {isCreating ? (
+            <div style={{
+              padding: '40px',
+              textAlign: 'center',
+              background: 'rgba(255,255,255,0.85)',
+              backdropFilter: 'blur(20px)',
+              borderRadius: '20px',
+              border: '1px solid rgba(51,122,255,0.14)',
+              boxShadow: '0 8px 40px rgba(51,122,255,0.12)',
+            }}>
+              <div style={{
+                width: '40px', height: '40px', borderRadius: '50%',
+                border: '3px solid rgba(51,122,255,0.2)',
+                borderTopColor: '#337AFF',
+                animation: 'spin 0.8s linear infinite',
+                margin: '0 auto 16px',
+              }} />
+              <p style={{ fontSize: '15px', fontWeight: 600, color: '#0D1B3E', margin: 0 }}>
+                Creating your project…
+              </p>
+              <p style={{ fontSize: '13px', color: '#8A93B0', marginTop: '6px' }}>
+                Generating name and setting up workspace
+              </p>
             </div>
-            <div className="empty-title">{t('dashboard.noCampaigns')}</div>
-            <div className="empty-sub">{t('dashboard.firstCampaign')}</div>
-            <Link href="/create" style={{ display: 'inline-block', marginTop: '12px', padding: '8px 20px', background: 'var(--blue)', color: 'white', borderRadius: '8px', fontSize: '13px', fontWeight: 600, textDecoration: 'none' }}>
-              {t('dashboard.createFirst')}
-            </Link>
-          </div>
+          ) : (
+            <AgentPanel
+              projectId="home-dashboard"
+              embedded={true}
+              onSubmitOverride={handleHomeSubmit}
+            />
+          )}
         </div>
-      )}
 
-      {/* Recent Videos */}
-      {recentVideos.length > 0 ? (
-        <>
-          <div className="section-title">
-            {t('dashboard.recentVideos')}
-            <Link href="/library">{t('common.viewAll')}</Link>
+        {/* Suggestion Chips */}
+        {!isCreating && (
+          <div style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: '8px',
+            justifyContent: 'center',
+            marginTop: '24px',
+            maxWidth: '760px',
+            position: 'relative',
+            zIndex: 1,
+          }}>
+            {SUGGESTION_CHIPS.map((chip) => (
+              <button
+                key={chip}
+                onClick={() => handleHomeSubmit(chip)}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: '999px',
+                  border: '1px solid rgba(51,122,255,0.18)',
+                  background: 'rgba(255,255,255,0.8)',
+                  backdropFilter: 'blur(8px)',
+                  color: '#4A5578',
+                  fontSize: '13px',
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                  whiteSpace: 'nowrap',
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLElement).style.background = 'rgba(51,122,255,0.08)';
+                  (e.currentTarget as HTMLElement).style.borderColor = '#337AFF';
+                  (e.currentTarget as HTMLElement).style.color = '#337AFF';
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.8)';
+                  (e.currentTarget as HTMLElement).style.borderColor = 'rgba(51,122,255,0.18)';
+                  (e.currentTarget as HTMLElement).style.color = '#4A5578';
+                }}
+              >
+                {chip}
+              </button>
+            ))}
           </div>
-          <div className="video-grid">
-            {recentVideos.map((job, i) => (
-              <div key={job.id} className="video-card" onClick={() => job.final_video_url && window.open(job.final_video_url)}>
-                <div className={`video-thumb grad-${(i % 5) + 1}`}>
+        )}
+      </div>
+
+      {/* ── STICKY BOTTOM PANEL ──────────────────────────────────────── */}
+      <div style={{
+        position: 'fixed',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        background: 'rgba(255, 255, 255, 0.92)',
+        backdropFilter: 'blur(24px)',
+        WebkitBackdropFilter: 'blur(24px)',
+        borderTop: '1px solid rgba(51,122,255,0.1)',
+        zIndex: 500,
+        boxShadow: '0 -4px 24px rgba(13,27,62,0.06)',
+      }}>
+        {/* Tab Bar */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '4px',
+          padding: '10px 24px 0',
+          borderBottom: '1px solid rgba(0,0,0,0.05)',
+        }}>
+          {(['projects', 'videos', 'images', 'campaigns'] as const).map((tab) => {
+            const labels = {
+              projects: 'My Projects',
+              videos: 'Recent Videos',
+              images: 'Recent Images',
+              campaigns: 'My Campaigns',
+            };
+            const counts: Record<string, number> = {
+              projects: projects.length,
+              videos: recentVideos.length,
+              images: 0,
+              campaigns: campaigns.length,
+            };
+            return (
+              <button
+                key={tab}
+                onClick={() => setActiveBottomTab(tab)}
+                style={{
+                  padding: '7px 14px',
+                  borderRadius: '8px 8px 0 0',
+                  border: 'none',
+                  background: activeBottomTab === tab ? 'white' : 'transparent',
+                  color: activeBottomTab === tab ? '#337AFF' : '#8A93B0',
+                  fontSize: '12px',
+                  fontWeight: activeBottomTab === tab ? 700 : 500,
+                  cursor: 'pointer',
+                  borderBottom: activeBottomTab === tab ? '2px solid #337AFF' : '2px solid transparent',
+                  transition: 'all 0.15s ease',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                {labels[tab]}
+                {counts[tab] > 0 && (
+                  <span style={{
+                    fontSize: '10px',
+                    fontWeight: 700,
+                    background: activeBottomTab === tab ? 'rgba(51,122,255,0.12)' : 'rgba(0,0,0,0.06)',
+                    color: activeBottomTab === tab ? '#337AFF' : '#8A93B0',
+                    padding: '1px 6px',
+                    borderRadius: '10px',
+                  }}>
+                    {counts[tab]}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+
+          {/* Browse all link */}
+          <div style={{ flex: 1 }} />
+          <Link
+            href={activeBottomTab === 'projects' ? '/projects-library' : activeBottomTab === 'videos' ? '/library' : '/library'}
+            style={{
+              fontSize: '12px',
+              fontWeight: 600,
+              color: '#337AFF',
+              textDecoration: 'none',
+              padding: '7px 0',
+            }}
+          >
+            Browse all →
+          </Link>
+        </div>
+
+        {/* Panel Content */}
+        <div style={{
+          padding: '12px 24px',
+          display: 'flex',
+          gap: '12px',
+          overflowX: 'auto',
+          height: '110px',
+          alignItems: 'center',
+        }}>
+          {/* My Projects Tab */}
+          {activeBottomTab === 'projects' && (
+            projects.length === 0 ? (
+              <EmptyPanelState label="No projects yet. Start by typing a prompt above." />
+            ) : (
+              projects.slice(0, 10).map((p) => (
+                <Link key={p.id} href={`/projects/${p.id}`} style={{
+                  flexShrink: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'flex-end',
+                  width: '140px',
+                  height: '80px',
+                  borderRadius: '10px',
+                  background: 'linear-gradient(135deg, #EBF1FF 0%, #E0EAFF 100%)',
+                  border: '1px solid rgba(51,122,255,0.12)',
+                  padding: '10px',
+                  textDecoration: 'none',
+                  overflow: 'hidden',
+                  position: 'relative',
+                  transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+                }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.transform = 'translateY(-2px)'; (e.currentTarget as HTMLElement).style.boxShadow = '0 8px 20px rgba(51,122,255,0.15)'; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = 'translateY(0)'; (e.currentTarget as HTMLElement).style.boxShadow = 'none'; }}
+                >
+                  {p.recent_previews?.[0]?.url && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={p.recent_previews[0].url} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: 0.5 }} />
+                  )}
+                  <span style={{ position: 'relative', fontSize: '11px', fontWeight: 700, color: '#0D1B3E', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {p.name}
+                  </span>
+                </Link>
+              ))
+            )
+          )}
+
+          {/* Recent Videos Tab */}
+          {activeBottomTab === 'videos' && (
+            recentVideos.length === 0 ? (
+              <EmptyPanelState label="No videos yet. Ask the agent to generate one." />
+            ) : (
+              recentVideos.slice(0, 10).map((job, i) => (
+                <div
+                  key={job.id}
+                  onClick={() => job.final_video_url && window.open(job.final_video_url)}
+                  style={{
+                    flexShrink: 0,
+                    width: '140px',
+                    height: '80px',
+                    borderRadius: '10px',
+                    background: `linear-gradient(135deg, hsl(${(i * 47) % 360}, 60%, 85%), hsl(${(i * 47 + 40) % 360}, 60%, 75%))`,
+                    overflow: 'hidden',
+                    cursor: 'pointer',
+                    position: 'relative',
+                    border: '1px solid rgba(0,0,0,0.06)',
+                  }}
+                >
                   {job.final_video_url && (
                     <video
                       src={job.final_video_url}
-                      style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', top: 0, left: 0 }}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                       muted loop playsInline
-                      onMouseEnter={(e) => (e.target as HTMLVideoElement).play().catch(() => { })}
+                      onMouseEnter={(e) => (e.target as HTMLVideoElement).play().catch(() => {})}
                       onMouseLeave={(e) => { const v = e.target as HTMLVideoElement; v.pause(); v.currentTime = 0; }}
                     />
                   )}
-                  <div className="play-overlay">
-                    <div className="play-btn">
-                      <svg viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21" /></svg>
+                </div>
+              ))
+            )
+          )}
+
+          {/* Recent Images Tab */}
+          {activeBottomTab === 'images' && (
+            <EmptyPanelState label="Recent images will appear here after generation." />
+          )}
+
+          {/* My Campaigns Tab */}
+          {activeBottomTab === 'campaigns' && (
+            campaigns.length === 0 ? (
+              <EmptyPanelState label="No campaigns yet." />
+            ) : (
+              campaigns.slice(0, 10).map((c) => {
+                const pct = c.total > 0 ? Math.round((c.success / c.total) * 100) : 0;
+                return (
+                  <div key={c.name} style={{
+                    flexShrink: 0,
+                    width: '180px',
+                    height: '80px',
+                    borderRadius: '10px',
+                    background: 'white',
+                    border: '1px solid rgba(51,122,255,0.1)',
+                    padding: '10px 12px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                  }}>
+                    <span style={{ fontSize: '11px', fontWeight: 700, color: '#0D1B3E', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
+                    <div>
+                      <div style={{ height: '4px', background: 'rgba(51,122,255,0.12)', borderRadius: '2px', overflow: 'hidden', marginBottom: '4px' }}>
+                        <div style={{ height: '100%', width: `${pct}%`, background: '#337AFF', borderRadius: '2px' }} />
+                      </div>
+                      <span style={{ fontSize: '10px', color: '#8A93B0' }}>{c.success}/{c.total} done</span>
                     </div>
                   </div>
-                </div>
-                <div className="video-info">
-                  <div className="video-name">
-                  {job._source === 'clone'
-                    ? `🤖 ${job.clone_name || 'AI Clone'}`
-                    : (influencerMap.get(job.influencer_id ?? '')?.name ?? 'Unknown')}
-                  {' — '}{job.campaign_name ?? 'Single'}
-                </div>
-                  <div className="video-date">{formatDate(job.created_at ?? '')}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </>
-      ) : (
-        <>
-          <div className="section-title">{t('dashboard.recentVideos')}</div>
-          <div className="empty-state" style={{ padding: '32px 20px', background: 'white', borderRadius: '12px', border: '1px solid var(--border)' }}>
-            <div className="empty-icon">
-              <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18" /><line x1="7" y1="2" x2="7" y2="22" /><line x1="17" y1="2" x2="17" y2="22" /><line x1="2" y1="12" x2="22" y2="12" /><line x1="2" y1="7" x2="7" y2="7" /><line x1="2" y1="17" x2="7" y2="17" /><line x1="17" y1="7" x2="22" y2="7" /><line x1="17" y1="17" x2="22" y2="17" /></svg>
-            </div>
-            <div className="empty-title">{t('dashboard.noVideosYet')}</div>
-            <div className="empty-sub">{t('dashboard.noVideosSub')}</div>
-            <Link href="/create" style={{ display: 'inline-block', marginTop: '12px', padding: '8px 20px', background: 'var(--blue)', color: 'white', borderRadius: '8px', fontSize: '13px', fontWeight: 600, textDecoration: 'none' }}>
-              {t('dashboard.createFirst')}
-            </Link>
-          </div>
-        </>
-      )}
+                );
+              })
+            )
+          )}
+        </div>
+      </div>
+
+      {/* Keyframe animations */}
+      <style>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
     </div>
   );
 }
-

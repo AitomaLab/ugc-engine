@@ -5,9 +5,16 @@ Proxies project data from the core API.
 Enriches project list with recent asset previews.
 """
 import asyncio
+import os
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
+from openai import AsyncOpenAI
 from auth import get_current_user
 from core_api_client import CoreAPIClient
+
+
+class GenerateNameRequest(BaseModel):
+    prompt: str
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -288,6 +295,53 @@ async def create_project(data: dict, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=400, detail="Project name is required")
     client = CoreAPIClient(token=user["token"])
     return await client.create_project(name)
+
+
+@router.post("/generate-name")
+async def generate_project_name(
+    request: GenerateNameRequest,
+    user: dict = Depends(get_current_user),
+):
+    """
+    Generate a concise 2-4 word project name from a user's prompt.
+    Uses GPT-4o-mini for speed and cost efficiency.
+    Falls back to 'New Project' on any error.
+    """
+    prompt = request.prompt.strip()
+    if not prompt:
+        return {"name": "New Project"}
+
+    try:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            print("[Projects] OPENAI_API_KEY not set, using fallback name")
+            return {"name": "New Project"}
+
+        client = AsyncOpenAI(api_key=api_key)
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a naming assistant. The user will describe a creative video or content project. "
+                        "Extract a concise, memorable 2-4 word project name. "
+                        "Rules: no quotes, no punctuation, no articles (a/an/the), title case. "
+                        "Examples: 'Summer Campaign', 'Product Launch Reel', 'Luxury Skincare Spot'."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=20,
+            temperature=0.7,
+        )
+        raw = response.choices[0].message.content or ""
+        name = raw.strip().strip('"').strip("'").strip()
+        return {"name": name or "New Project"}
+
+    except Exception as e:
+        print(f"[Projects] Name generation failed: {e}")
+        return {"name": "New Project"}
 
 
 @router.put("/{project_id}")

@@ -41,6 +41,10 @@ interface AgentPanelProps {
     hideHeader?: boolean;
     /** Notifies parent of internal state changes (running, turns, seedance toggle) */
     onStateChange?: (state: AgentPanelState) => void;
+    /** When set, intercepts submit — parent handles the prompt (e.g. home dashboard creates a project). */
+    onSubmitOverride?: (prompt: string) => void;
+    /** Pre-populate textarea and auto-submit once on mount. */
+    initialBrief?: string;
 }
 
 interface MentionItem {
@@ -67,7 +71,7 @@ function slugify(s: string): string {
     return (s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 }
 
-export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse, hideHeader = false, onStateChange }: AgentPanelProps, ref: React.Ref<AgentPanelHandle>) {
+export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse, hideHeader = false, onStateChange, onSubmitOverride, initialBrief }: AgentPanelProps, ref: React.Ref<AgentPanelHandle>) {
     const [open, setOpen] = useState(false);
     const [brief, setBrief] = useState('');
     const [turns, setTurns] = useState<AgentTurn[]>([]);
@@ -331,6 +335,20 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         };
     }, [open, projectId, embedded]);
 
+    // Auto-start: if initialBrief is provided, pre-fill textarea and auto-submit once
+    const hasAutoSubmitted = useRef(false);
+    useEffect(() => {
+        if (!initialBrief || hasAutoSubmitted.current) return;
+        if (hydrating) return; // wait for hydration to finish
+        hasAutoSubmitted.current = true;
+        setBrief(initialBrief);
+        // Small delay to ensure the textarea is rendered with the value
+        setTimeout(() => {
+            handleRun();
+        }, 300);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [initialBrief, hydrating]);
+
     // Auto-scroll on new content
     useEffect(() => {
         const el = scrollerRef.current;
@@ -408,6 +426,15 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         setError(null);
         setRunning(true);
         setActivity('Thinking…');
+
+        // Submit intercept: parent handles the prompt (e.g. home page creates a project)
+        if (onSubmitOverride) {
+            onSubmitOverride(finalText);
+            setRunning(false);
+            setActivity('');
+            return;
+        }
+
         // Cancel any prior reconnect polling — this run takes over.
         if (reconnectRef.current.timer) {
             clearTimeout(reconnectRef.current.timer);
@@ -598,7 +625,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             setActivity('');
             abortRef.current = null;
         }
-    }, [brief, running, projectId, onArtifact, activeRefs, attachments]);
+    }, [brief, running, projectId, onArtifact, activeRefs, attachments, onSubmitOverride]);
 
     // ── @ mention input handlers ────────────────────────────────────────
     const handleBriefChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
