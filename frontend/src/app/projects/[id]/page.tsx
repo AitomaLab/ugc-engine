@@ -430,11 +430,11 @@ export default function ProjectContainerPage() {
             <div style={{ width: '1px', height: '24px', background: 'rgba(0,0,0,0.08)', flexShrink: 0 }} />
 
             {/* Filters */}
-            <Select className="filter-select" value={filterProduct} onChange={setFilterProduct} placeholder="Product" style={{ width: '130px', flexShrink: 0 }}
+            <Select className="filter-select" value={filterProduct} onChange={setFilterProduct} placeholder="Product" style={{ width: '150px', flexShrink: 0 }}
                 options={[{ value: '', label: 'All Products' }, ...productOptions.map(p => ({ value: p, label: p }))]} />
-            <Select className="filter-select" value={filterInfluencer} onChange={setFilterInfluencer} placeholder="Influencer" style={{ width: '130px', flexShrink: 0 }}
+            <Select className="filter-select" value={filterInfluencer} onChange={setFilterInfluencer} placeholder="Influencer" style={{ width: '160px', flexShrink: 0 }}
                 options={[{ value: '', label: 'All Influencers' }, ...influencerOptions.map(i => ({ value: i, label: i }))]} />
-            <Select className="filter-select" value={filterMode} onChange={setFilterMode} placeholder="Mode" style={{ width: '110px', flexShrink: 0 }}
+            <Select className="filter-select" value={filterMode} onChange={setFilterMode} placeholder="Mode" style={{ width: '130px', flexShrink: 0 }}
                 options={[{ value: '', label: 'All Modes' }, ...modeOptions.map(m => ({ value: m, label: m }))]} />
 
             {hasActiveFilters && (
