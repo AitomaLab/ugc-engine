@@ -4,7 +4,6 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState, useRef, useEffect } from 'react';
 import { useApp } from '@/providers/AppProvider';
-import { ProjectSwitcher } from '@/components/layout/ProjectSwitcher';
 import { supabase } from '@/lib/supabaseClient';
 import { apiFetch } from '@/lib/utils';
 import { useTranslation } from '@/lib/i18n';
@@ -33,16 +32,12 @@ const IconEdit = () => <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" hei
 const NAV_ITEMS = [
     { href: '/', labelKey: 'nav.dashboard', label: 'Home', Icon: IconHome },
     { divider: true },
-    { href: '/videos', labelKey: 'nav.videos', label: 'Videos', Icon: IconVideo },
+    { href: '/studio', labelKey: 'nav.studio', label: 'Creative OS', Icon: IconGrid },
     { href: '/influencers', labelKey: 'nav.influencers', label: 'Influencers', Icon: IconUser },
     { href: '/scripts', labelKey: 'nav.scripts', label: 'Scripts', Icon: IconFile },
     { href: '/products', labelKey: 'nav.products', label: 'Products', Icon: IconBox },
-    { href: '/schedule', labelKey: 'nav.schedule', label: 'Schedule', Icon: IconCalendar },
+    { href: '/schedule', labelKey: 'nav.schedule', label: 'Publish', Icon: IconCalendar },
     { href: '/editor', labelKey: 'nav.editor', label: 'Editor', Icon: IconEdit },
-    { divider: true },
-    { href: '/activity', labelKey: 'nav.activity', label: 'Activity', Icon: IconActivity },
-    { divider: true },
-    { href: '/studio', labelKey: 'nav.studio', label: 'Creative OS', Icon: IconGrid },
 ];
 
 // ── Language Toggle ────────────────────────────────────────────────────
@@ -381,6 +376,7 @@ function ProfileDropdown() {
                 </div>
                 <Link href="/profile" className="pd-menu-item"><IconUser />{t('nav.profile')}</Link>
                 <Link href="/projects" className="pd-menu-item"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /></svg>{t('nav.projects')}</Link>
+                <Link href="/activity" className="pd-menu-item"><IconActivity />{t('nav.activity')}</Link>
                 <Link href="/manage" className="pd-menu-item"><IconSettings />{t('nav.settings')}</Link>
                 <Link href="/upgrade" className="pd-menu-item"><IconStar />{t('header.upgradePlan')}</Link>
                 <div className="pd-divider" />
@@ -435,7 +431,6 @@ export function Header() {
             </nav>
 
             <div className="header-actions">
-                <ProjectSwitcher />
                 <CreateDropdown />
                 <div className="nav-divider hide-mobile" />
                 <LangToggle />
