@@ -71,20 +71,28 @@ class CoreAPIClient:
     async def rename_project(self, project_id: str, name: str) -> dict:
         return await self._request("PUT", f"/api/projects/{project_id}", json={"name": name})
 
+    async def delete_project(self, project_id: str) -> dict:
+        return await self._request("DELETE", f"/api/projects/{project_id}")
+
     # ── Influencers ───────────────────────────────────────────────────
     async def list_influencers(self) -> list:
         return await self._request("GET", "/influencers")
+
+    async def get_influencer(self, influencer_id: str) -> dict:
+        try:
+            return await self._request("GET", f"/influencers/{influencer_id}")
+        except Exception:
+            return {}
 
     # ── Products ──────────────────────────────────────────────────────
     async def list_products(self) -> list:
         return await self._request("GET", "/api/products")
 
     async def get_product(self, product_id: str) -> dict:
-        products = await self.list_products()
-        for p in products:
-            if p["id"] == product_id:
-                return p
-        return {}
+        try:
+            return await self._request("GET", f"/api/products/{product_id}")
+        except Exception:
+            return {}
 
     # ── Product Shots (images) ────────────────────────────────────────
     async def list_product_shots(self, product_id: str) -> list:
@@ -280,14 +288,6 @@ class CoreAPIClient:
             )
             resp.raise_for_status()
             return resp.json()
-
-    # ── Get Single Influencer ─────────────────────────────────────────
-    async def get_influencer(self, influencer_id: str) -> dict:
-        influencers = await self.list_influencers()
-        for inf in influencers:
-            if inf["id"] == influencer_id:
-                return inf
-        return {}
 
     # ── Cost Estimation ───────────────────────────────────────────────
     async def estimate_cost(self, script_text: str, duration: int, model: str, music_enabled: bool = True) -> dict:

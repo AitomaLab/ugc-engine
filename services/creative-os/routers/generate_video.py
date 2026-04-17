@@ -489,8 +489,7 @@ async def generate_video(
 
     if data.influencer_id:
         try:
-            influencers = await client.list_influencers()
-            inf = next((i for i in influencers if i["id"] == data.influencer_id), None)
+            inf = await client.get_influencer(data.influencer_id)
             influencer_image_url = inf.get("image_url") if inf else None
         except Exception as e:
             print(f"[Video Gen] WARNING: Failed to fetch influencer {data.influencer_id}: {e}")
@@ -595,8 +594,7 @@ async def _generate_seedance_video(
                 print(f"[Seedance] WARNING: product fetch failed: {e}")
         if data.influencer_id:
             try:
-                influencers_list = await client.list_influencers()
-                inf = next((i for i in influencers_list if i["id"] == data.influencer_id), None)
+                inf = await client.get_influencer(data.influencer_id)
                 if inf and inf.get("image_url"):
                     ref_images.append(inf["image_url"])
             except Exception as e:
@@ -684,6 +682,8 @@ async def _run_seedance_clip_pipeline(
             "status_message": "Generating Seedance video...",
             "progress": 10,
         })
+
+        print(f"[Seedance] ref_images={reference_image_urls or []} ref_videos={reference_video_urls or []}")
 
         def _submit():
             return generate_scenes.generate_video(
@@ -811,8 +811,7 @@ async def _generate_kling_video(
             print(f"[Cinematic] WARNING: Failed to fetch product image: {e}")
     if data.influencer_id:
         try:
-            influencers_list = await client.list_influencers()
-            inf = next((i for i in influencers_list if i["id"] == data.influencer_id), None)
+            inf = await client.get_influencer(data.influencer_id)
             influencer_image_url = inf.get("image_url") if inf else None
         except Exception as e:
             print(f"[Cinematic] WARNING: Failed to fetch influencer image: {e}")

@@ -759,6 +759,16 @@ def api_create_product(data: ProductCreate, request: Request, user: dict = Depen
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/products/{product_id}")
+def api_get_product(product_id: str, user: dict = Depends(get_optional_user)):
+    from ugc_db.db_manager import get_product
+    p = get_product(product_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if user and p.get("user_id") and p["user_id"] != user["id"]:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return p
+
 @app.put("/api/products/{product_id}")
 def api_update_product(product_id: str, data: dict):
     try:

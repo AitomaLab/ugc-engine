@@ -7,7 +7,7 @@ import { useApp } from "@/providers/AppProvider";
 import { useTranslation } from "@/lib/i18n";
 import Link from "next/link";
 import { createProject } from "@/lib/supabaseData";
-import { creativeFetch, transcribeAudio } from "@/lib/creative-os-api";
+import { creativeFetch, transcribeAudio, uploadAgentFile } from "@/lib/creative-os-api";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -148,6 +148,7 @@ export default function StudioPage() {
   const [mentionCursorStart, setMentionCursorStart] = useState(-1);
   const [mentionsLoaded, setMentionsLoaded] = useState(false);
   const [mentionItems, setMentionItems] = useState<MentionItem[]>([]);
+  const [activeRefs, setActiveRefs] = useState<Map<string, { type: string; tag: string; name: string; id?: string; image_url?: string }>>(new Map());
 
   const loadMentionData = async () => {
     if (mentionsLoaded) return;
@@ -207,6 +208,18 @@ export default function StudioPage() {
     const tagText = `@${item.tag}`;
     const newPrompt = before + tagText + ' ' + after;
     setPrompt(newPrompt);
+    // Track the ref for this mention so we can pass it to the project page
+    setActiveRefs(prev => {
+      const next = new Map(prev);
+      next.set(item.tag, {
+        type: item.type,
+        tag: item.tag,
+        name: item.name,
+        id: item.ref?.id,
+        image_url: item.image_url,
+      });
+      return next;
+    });
     setMentionOpen(false);
     setTimeout(() => {
       const pos = before.length + tagText.length + 1;
@@ -257,8 +270,27 @@ export default function StudioPage() {
     }, 0);
   };
 
-  // Attached files
-  const [attachedFiles, setAttachedFiles] = useState<{ name: string; type: string }[]>([]);
+  // Attached files (upload-aware, mirrors AgentPanel's AttachedFile shape)
+  interface DashboardAttachment {
+    id: string;
+    type: 'image' | 'video';
+    name: string;
+    status: 'uploading' | 'ready' | 'error';
+    url?: string;
+    tag?: string;
+    previewUrl?: string;
+    error?: string;
+  }
+  const [attachments, setAttachments] = useState<DashboardAttachment[]>([]);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  const removeAttachment = (id: string) => {
+    setAttachments(prev => {
+      const target = prev.find(a => a.id === id);
+      if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter(a => a.id !== id);
+    });
+  };
 
   // Voice recording state
   const [recording, setRecording] = useState(false);
@@ -309,14 +341,68 @@ export default function StudioPage() {
     .filter((j) => j.status === "success" && j.final_video_url)
     .slice(0, 20);
 
-  // ── File attachment handling ──
-  const handleFilePicked = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // ── File attachment handling (uploads to creative-os, mirrors AgentPanel) ──
+  const handleFilePicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (!files) return;
-    const newFiles = Array.from(files).map(f => ({ name: f.name, type: f.type.startsWith('video') ? 'video' : 'image' }));
-    setAttachedFiles(prev => [...prev, ...newFiles]);
+    if (!files || files.length === 0) return;
+    setUploadError(null);
+
+    const accepted: { att: DashboardAttachment; file: File }[] = [];
+    for (const file of Array.from(files)) {
+      const ct = file.type || '';
+      const kind: 'image' | 'video' | null = ct.startsWith('image/')
+        ? 'image'
+        : ct.startsWith('video/')
+          ? 'video'
+          : null;
+      if (!kind) {
+        setUploadError(`Unsupported file type: ${ct || 'unknown'}`);
+        continue;
+      }
+      const id = (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      accepted.push({
+        att: {
+          id,
+          type: kind,
+          name: file.name,
+          status: 'uploading',
+          previewUrl: URL.createObjectURL(file),
+        },
+        file,
+      });
+    }
     e.target.value = '';
+    if (accepted.length === 0) return;
+    setAttachments(prev => [...prev, ...accepted.map(a => a.att)]);
+
+    await Promise.all(accepted.map(async ({ att, file }) => {
+      try {
+        const result = await uploadAgentFile(file);
+        const tag = `upload_${att.id.slice(0, 8).replace(/-/g, '')}`;
+        setAttachments(prev => prev.map(a =>
+          a.id === att.id ? { ...a, status: 'ready', url: result.url, tag } : a
+        ));
+      } catch (err) {
+        setAttachments(prev => prev.map(a =>
+          a.id === att.id
+            ? { ...a, status: 'error', error: err instanceof Error ? err.message : String(err) }
+            : a
+        ));
+      }
+    }));
   };
+
+  // Revoke object URLs on unmount
+  useEffect(() => {
+    return () => {
+      for (const a of attachments) {
+        if (a.previewUrl) URL.revokeObjectURL(a.previewUrl);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Voice recording ──
   const startRecording = async () => {
@@ -363,6 +449,10 @@ export default function StudioPage() {
   const handleSubmit = async (text?: string) => {
     const finalPrompt = text || prompt;
     if (!finalPrompt.trim() || isCreating) return;
+    if (attachments.some(a => a.status === 'uploading')) {
+      setUploadError('Wait for uploads to finish before sending.');
+      return;
+    }
     setIsCreating(true);
     try {
       const nameRes = await creativeFetch<{ name: string }>('/creative-os/projects/generate-name', {
@@ -375,7 +465,21 @@ export default function StudioPage() {
         method: 'POST',
         body: JSON.stringify({ name: projectName }),
       });
-      router.push(`/projects/${newProject.id}?brief=${encodeURIComponent(finalPrompt)}`);
+      // Serialize active refs so the project page can reconstruct @mentions
+      const mentionRefs = Array.from(activeRefs.values()).filter(r => finalPrompt.includes(`@${r.tag}`));
+      // Uploaded file refs (always sent — user explicitly attached them)
+      const uploadRefs = attachments
+        .filter(a => a.status === 'ready' && a.url)
+        .map(a => ({
+          type: a.type,
+          tag: a.tag || `upload_${a.id.slice(0, 8)}`,
+          name: a.name,
+          ...(a.type === 'image' ? { image_url: a.url } : { video_url: a.url }),
+        }));
+      const refsArray = [...mentionRefs, ...uploadRefs];
+      const refsParam = refsArray.length > 0 ? `&refs=${encodeURIComponent(JSON.stringify(refsArray))}` : '';
+      const seedanceParam = seedanceOn ? '&seedance=1' : '';
+      router.push(`/projects/${newProject.id}?brief=${encodeURIComponent(finalPrompt)}${refsParam}${seedanceParam}`);
     } catch (err) {
       console.error("Failed to create project from home prompt:", err);
       setIsCreating(false);
@@ -510,23 +614,47 @@ export default function StudioPage() {
               boxShadow: '0 4px 32px rgba(51,122,255,0.08)',
             }}>
               {/* Attached file chips */}
-              {attachedFiles.length > 0 && (
+              {attachments.length > 0 && (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', padding: '16px 24px 0' }}>
-                  {attachedFiles.map((f, i) => (
-                    <span key={i} style={{
-                      display: 'inline-flex', alignItems: 'center', gap: '6px',
-                      padding: '4px 10px', borderRadius: '8px',
-                      background: 'rgba(51,122,255,0.08)', color: '#337AFF',
-                      fontSize: '12px', fontWeight: 600,
-                    }}>
-                      {f.type === 'video' ? '🎬' : '🖼'} {f.name}
-                      <button
-                        onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== i))}
-                        style={{ background: 'none', border: 'none', color: '#8A93B0', cursor: 'pointer', fontSize: '14px', lineHeight: 1, padding: 0 }}
-                      >×</button>
-                    </span>
-                  ))}
+                  {attachments.map((a) => {
+                    const isError = a.status === 'error';
+                    const isUploading = a.status === 'uploading';
+                    return (
+                      <span key={a.id} style={{
+                        display: 'inline-flex', alignItems: 'center', gap: '6px',
+                        padding: '4px 10px', borderRadius: '8px',
+                        background: isError ? 'rgba(229,62,62,0.08)' : 'rgba(51,122,255,0.08)',
+                        border: isError ? '1px solid rgba(229,62,62,0.25)' : '1px solid transparent',
+                        color: isError ? '#C53030' : '#337AFF',
+                        fontSize: '12px', fontWeight: 600,
+                      }}>
+                        {isUploading && (
+                          <span style={{
+                            width: '10px', height: '10px', borderRadius: '50%',
+                            border: '2px solid rgba(51,122,255,0.25)',
+                            borderTopColor: '#337AFF',
+                            animation: 'spin 0.8s linear infinite',
+                            display: 'inline-block',
+                          }} />
+                        )}
+                        <span style={{ textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.4px', opacity: 0.7 }}>
+                          {a.type}
+                        </span>
+                        <span>{a.name}</span>
+                        {isError && <span title={a.error} style={{ opacity: 0.8 }}>failed</span>}
+                        <button
+                          onClick={() => removeAttachment(a.id)}
+                          style={{ background: 'none', border: 'none', color: '#8A93B0', cursor: 'pointer', fontSize: '14px', lineHeight: 1, padding: 0 }}
+                        >×</button>
+                      </span>
+                    );
+                  })}
                 </div>
+              )}
+              {uploadError && (
+                <div style={{
+                  padding: '8px 24px 0', fontSize: '12px', color: '#C53030',
+                }}>{uploadError}</div>
               )}
 
               {/* Textarea */}

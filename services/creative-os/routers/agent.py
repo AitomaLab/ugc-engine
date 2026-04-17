@@ -272,6 +272,7 @@ async def agent_stream(
                         _ensure_agent_turn()["tool_calls"].append({
                             "name": ev["name"],
                             "input_summary": ev.get("input_summary", ""),
+                            "mode": ev.get("mode"),
                         })
                         dirty = True
                     elif t == "artifact":

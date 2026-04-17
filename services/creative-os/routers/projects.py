@@ -381,6 +381,12 @@ async def get_project(project_id: str, user: dict = Depends(get_current_user)):
     return project
 
 
+@router.delete("/{project_id}")
+async def delete_project(project_id: str, user: dict = Depends(get_current_user)):
+    """Delete a project by ID."""
+    client = CoreAPIClient(token=user["token"], project_id=project_id)
+    return await client.delete_project(project_id)
+
 @router.get("/{project_id}/assets/images")
 async def list_project_images(project_id: str, user: dict = Depends(get_current_user)):
     """List all image assets (product shots) for a project."""

@@ -45,6 +45,10 @@ interface AgentPanelProps {
     onSubmitOverride?: (prompt: string) => void;
     /** Pre-populate textarea and auto-submit once on mount. */
     initialBrief?: string;
+    /** Pre-populate refs for auto-submit (e.g. @mentions from dashboard). */
+    initialRefs?: AgentRef[];
+    /** Pre-set the Seedance toggle (e.g. from dashboard composer). */
+    initialUseSeedance?: boolean;
 }
 
 interface MentionItem {
@@ -71,7 +75,7 @@ function slugify(s: string): string {
     return (s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 }
 
-export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse, hideHeader = false, onStateChange, onSubmitOverride, initialBrief }: AgentPanelProps, ref: React.Ref<AgentPanelHandle>) {
+export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse, hideHeader = false, onStateChange, onSubmitOverride, initialBrief, initialRefs, initialUseSeedance }: AgentPanelProps, ref: React.Ref<AgentPanelHandle>) {
     const [open, setOpen] = useState(false);
     const [brief, setBrief] = useState('');
     const [turns, setTurns] = useState<AgentTurn[]>([]);
@@ -79,7 +83,10 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
     const [running, setRunning] = useState(false);
     const [activity, setActivity] = useState<string>('');
     const [error, setError] = useState<string | null>(null);
-    const [hydrating, setHydrating] = useState(false);
+    // Start `true` when initialBrief is provided so the auto-submit Phase 2
+    // effect waits for hydration to complete (otherwise setTurns on hydrate
+    // wipes the user turn appended by the auto-fired handleRun).
+    const [hydrating, setHydrating] = useState(Boolean(initialBrief));
     const abortRef = useRef<AbortController | null>(null);
     const reconnectRef = useRef<{ timer: ReturnType<typeof setTimeout> | null; stableSince: number; lastHash: string }>({ timer: null, stableSince: 0, lastHash: '' });
     const scrollerRef = useRef<HTMLDivElement>(null);
@@ -88,7 +95,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
 
     // ── File attachments ────────────────────────────────────────────────
     const [attachments, setAttachments] = useState<AttachedFile[]>([]);
-    const [useSeedance, setUseSeedance] = useState(false);
+    const [useSeedance, setUseSeedance] = useState(initialUseSeedance ?? false);
 
     // Sync state locally to parent for reactive header elements
     useEffect(() => {
@@ -345,7 +352,18 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         hasAutoSubmitted.current = true;
         setBrief(initialBrief);
         pendingBriefRef.current = initialBrief;
-        console.log('[AgentPanel] Auto-submit: stored pending brief', initialBrief.slice(0, 50));
+        // Force-open in floating mode so the hydration effect runs and Phase 2
+        // eventually fires. In embedded mode this is a no-op.
+        setOpen(true);
+        // Pre-populate activeRefs from initialRefs so handleRun includes them
+        if (initialRefs && initialRefs.length > 0) {
+            const refMap = new Map<string, AgentRef>();
+            for (const r of initialRefs) {
+                refMap.set(r.tag, r);
+            }
+            setActiveRefs(refMap);
+        }
+        console.log('[AgentPanel] Auto-submit: stored pending brief', initialBrief.slice(0, 50), 'refs:', initialRefs?.length ?? 0);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [initialBrief]);
 
@@ -528,14 +546,18 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                         return copy;
                     });
                     break;
-                case 'tool_call':
+                case 'tool_call': {
+                    const mode = (e.mode || '').toLowerCase();
+                    const summary = (e.input_summary || '').toLowerCase();
+                    const isSeedance = mode.startsWith('seedance_2') || summary.includes('seedance_2');
+                    const isCinematic = mode === 'cinematic_video' || summary.includes('"mode":"cinematic');
                     setActivity(
                         e.name === 'animate_image'
                             ? 'Animating image (Kling 3.0, ~1-3 min)…'
                             : e.name === 'generate_video'
-                                ? (e.input_summary?.includes('seedance_2')
+                                ? (isSeedance
                                     ? 'Generating clip (Seedance 2.0 Fast, ~2-4 min)…'
-                                    : e.input_summary?.includes('cinematic')
+                                    : isCinematic
                                         ? 'Generating cinematic clip (Kling 3.0, ~1-3 min)…'
                                         : 'Generating UGC clip (Veo 3.1, ~1-3 min)…')
                                 : e.name === 'create_ugc_video' || e.name === 'create_clone_video'
@@ -550,10 +572,24 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                         ...t,
                         tool_calls: [
                             ...(t.tool_calls || []),
-                            { name: e.name, input_summary: e.input_summary },
+                            { name: e.name, input_summary: e.input_summary, mode: e.mode ?? null },
                         ],
                     }));
+                    // Video-producing tools create a "pending" DB row before the
+                    // pipeline finishes. Nudge the gallery to refetch so the
+                    // in-progress card appears immediately instead of waiting
+                    // for tool_result (which can be 2–4 min away).
+                    const videoTools = new Set([
+                        'generate_video', 'animate_image',
+                        'create_ugc_video', 'create_clone_video',
+                        'render_edited_video',
+                    ]);
+                    if (videoTools.has(e.name)) {
+                        setTimeout(() => onArtifact?.(), 2500);
+                        setTimeout(() => onArtifact?.(), 7000);
+                    }
                     break;
+                }
                 case 'tool_result':
                     setActivity('');
                     onArtifact?.(); // refresh gallery — tool may have created assets

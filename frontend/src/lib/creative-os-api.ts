@@ -183,6 +183,7 @@ export type AgentTurnRole = 'user' | 'agent';
 export interface AgentToolCallSummary {
     name: string;
     input_summary: string;
+    mode?: string | null;
 }
 
 export type AgentRefType = 'product' | 'influencer' | 'image' | 'video';
@@ -216,7 +217,7 @@ export interface AgentThread {
 export type AgentStreamEvent =
     | { type: 'session'; session_id: string }
     | { type: 'agent_message'; text: string }
-    | { type: 'tool_call'; name: string; input_summary: string; tool_use_id: string }
+    | { type: 'tool_call'; name: string; input_summary: string; mode?: string | null; tool_use_id: string }
     | { type: 'tool_result'; tool_use_id: string; summary: string; is_error: boolean }
     | { type: 'artifact'; artifact: AgentArtifact }
     | { type: 'done'; session_id: string }

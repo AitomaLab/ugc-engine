@@ -51,6 +51,13 @@ export default function ProjectContainerPage() {
     const searchParams = useSearchParams();
     const projectId = params.id as string;
     const initialBrief = searchParams.get('brief');
+    const refsParam = searchParams.get('refs');
+    const seedanceParam = searchParams.get('seedance');
+    const initialUseSeedance = seedanceParam === '1';
+    const initialRefs = useMemo(() => {
+        if (!refsParam) return undefined;
+        try { return JSON.parse(refsParam); } catch { return undefined; }
+    }, [refsParam]);
     const { session } = useApp();
 
     const [activeTab, setActiveTab] = useState<TabId>('images');
@@ -509,7 +516,7 @@ export default function ProjectContainerPage() {
                 {projectHeaderBar}
                 {galleryBlock}
                 {createBarOpen && createBarBlock}
-                <AgentPanel ref={agentRef} projectId={projectId} onArtifact={() => fetchAssets(true)} onStateChange={setAgentState} initialBrief={initialBrief || undefined} />
+                <AgentPanel ref={agentRef} projectId={projectId} onArtifact={() => fetchAssets(true)} onStateChange={setAgentState} initialBrief={initialBrief || undefined} initialRefs={initialRefs} initialUseSeedance={initialUseSeedance} />
             </div>
         );
     }
@@ -547,6 +554,8 @@ export default function ProjectContainerPage() {
                             hideHeader={true}
                             onStateChange={setAgentState}
                             initialBrief={initialBrief || undefined}
+                            initialRefs={initialRefs}
+                            initialUseSeedance={initialUseSeedance}
                         />
                     </div>
                 )}

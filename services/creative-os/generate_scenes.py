@@ -110,6 +110,7 @@ def generate_video(
             "sound": True,
             "duration": kling_duration,
             "aspectRatio": "9:16",
+            "aspect_ratio": "9:16",
             "mode": "pro",
             "multi_shots": is_multi,
             "multi_prompt": multi_prompt if is_multi else [],

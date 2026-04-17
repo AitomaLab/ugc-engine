@@ -2706,10 +2706,12 @@ class ManagedAgentClient:
                             hit_limit = True
                             break
                         # Emit the tool_call event immediately so the UI shows activity.
+                        _tc_input = ev.input or {}
                         yield {
                             "type": "tool_call",
                             "name": ev.name,
-                            "input_summary": _summarize_input(ev.input or {}),
+                            "input_summary": _summarize_input(_tc_input),
+                            "mode": _tc_input.get("mode") if isinstance(_tc_input, dict) else None,
                             "tool_use_id": ev.id,
                         }
                         # Collect for concurrent execution after the stream pass ends.

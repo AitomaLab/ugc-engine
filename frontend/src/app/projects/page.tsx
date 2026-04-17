@@ -29,6 +29,10 @@ export default function StudioDashboard() {
     const [creating, setCreating] = useState(false);
     const [search, setSearch] = useState('');
 
+    // ── Selection state ──────────────────────────────────────────────
+    const [selected, setSelected] = useState<Set<string>>(new Set());
+    const [deleting, setDeleting] = useState(false);
+
     const fetchProjects = useCallback(async () => {
         if (!session) return;
         setLoading(true);
@@ -65,6 +69,55 @@ export default function StudioDashboard() {
             setCreating(false);
         }
     };
+
+    // ── Selection helpers ─────────────────────────────────────────────
+    const toggleSelect = (id: string) => {
+        setSelected(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
+
+    const selectAll = () => {
+        const filtered = getFiltered();
+        if (selected.size === filtered.length) {
+            setSelected(new Set());
+        } else {
+            setSelected(new Set(filtered.map(p => p.id)));
+        }
+    };
+
+    const clearSelection = () => setSelected(new Set());
+
+    const handleDelete = async () => {
+        if (selected.size === 0 || deleting) return;
+        const count = selected.size;
+        if (!confirm(`Delete ${count} project${count !== 1 ? 's' : ''}? This action cannot be undone.`)) return;
+        setDeleting(true);
+        try {
+            await Promise.all(
+                Array.from(selected).map(id =>
+                    creativeFetch(`/creative-os/projects/${id}`, { method: 'DELETE' })
+                )
+            );
+            setSelected(new Set());
+            await fetchProjects();
+        } catch (err) {
+            console.error('Failed to delete projects:', err);
+            alert(`Failed to delete: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        } finally {
+            setDeleting(false);
+        }
+    };
+
+    const getFiltered = () => {
+        if (!search.trim()) return projects;
+        return projects.filter(p => p.name.toLowerCase().includes(search.trim().toLowerCase()));
+    };
+
+    const selectionMode = selected.size > 0;
 
     if (isLoading || loading) {
         return (
@@ -108,40 +161,112 @@ export default function StudioDashboard() {
         );
     }
 
+    const filtered = getFiltered();
+
     return (
         <div style={{
             padding: '40px 32px 120px',
             maxWidth: '1200px',
             margin: '0 auto',
         }}>
-            {/* Header */}
+            {/* Header row — title, search, actions — all same line */}
             <div style={{
                 display: 'flex',
-                alignItems: 'flex-start',
+                alignItems: 'center',
                 justifyContent: 'space-between',
-                marginBottom: '36px',
+                marginBottom: '28px',
+                gap: '16px',
+                flexWrap: 'wrap',
             }}>
-                <div>
-                    <h1 style={{
-                        fontSize: '28px',
-                        fontWeight: 700,
-                        color: '#0D1B3E',
-                        margin: 0,
-                        letterSpacing: '-0.5px',
-                    }}>
-                        Creative OS
-                    </h1>
+                {/* Left side: title or selection info */}
+                {selectionMode ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        {/* Select all / deselect checkbox */}
+                        <button
+                            onClick={selectAll}
+                            style={{
+                                width: '20px', height: '20px', borderRadius: '5px',
+                                border: selected.size === filtered.length
+                                    ? '2px solid #337AFF'
+                                    : '2px solid rgba(0,0,0,0.15)',
+                                background: selected.size === filtered.length ? '#337AFF' : 'white',
+                                cursor: 'pointer', display: 'flex', alignItems: 'center',
+                                justifyContent: 'center', padding: 0, flexShrink: 0,
+                                transition: 'all 0.15s',
+                            }}
+                        >
+                            {selected.size === filtered.length && (
+                                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <polyline points="2,6 5,9 10,3" />
+                                </svg>
+                            )}
+                        </button>
+                        <span style={{ fontSize: '14px', fontWeight: 600, color: '#0D1B3E' }}>
+                            {selected.size} selected
+                        </span>
+                        <button
+                            onClick={clearSelection}
+                            style={{
+                                padding: '4px 10px', borderRadius: '6px',
+                                border: '1px solid rgba(0,0,0,0.08)',
+                                background: 'white', color: '#4A5578',
+                                fontSize: '12px', fontWeight: 500,
+                                cursor: 'pointer', transition: 'background 0.15s',
+                            }}
+                            onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,0,0,0.03)')}
+                            onMouseLeave={e => (e.currentTarget.style.background = 'white')}
+                        >Cancel</button>
+                    </div>
+                ) : (
                     <p style={{
                         fontSize: '15px',
                         color: '#8A93B0',
-                        margin: '6px 0 0',
+                        margin: 0,
+                        flexShrink: 0,
                     }}>
                         Select a project to start creating
                     </p>
-                </div>
+                )}
 
+                {/* Right side: search, count, actions */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    {/* Search Bar — inline */}
+                    {/* Delete button — visible when projects selected */}
+                    {selectionMode && (
+                        <button
+                            onClick={handleDelete}
+                            disabled={deleting}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: '6px',
+                                padding: '8px 16px', borderRadius: '10px',
+                                border: 'none',
+                                background: deleting ? 'rgba(239,68,68,0.4)' : '#EF4444',
+                                color: 'white', fontSize: '13px', fontWeight: 600,
+                                cursor: deleting ? 'default' : 'pointer',
+                                transition: 'all 0.2s',
+                                boxShadow: '0 2px 8px rgba(239,68,68,0.25)',
+                            }}
+                            onMouseEnter={e => {
+                                if (!deleting) {
+                                    e.currentTarget.style.background = '#DC2626';
+                                    e.currentTarget.style.boxShadow = '0 4px 14px rgba(239,68,68,0.3)';
+                                }
+                            }}
+                            onMouseLeave={e => {
+                                if (!deleting) {
+                                    e.currentTarget.style.background = '#EF4444';
+                                    e.currentTarget.style.boxShadow = '0 2px 8px rgba(239,68,68,0.25)';
+                                }
+                            }}
+                        >
+                            <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
+                                <polyline points="3 6 5 6 21 6" />
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                            </svg>
+                            {deleting ? 'Deleting...' : `Delete (${selected.size})`}
+                        </button>
+                    )}
+
+                    {/* Search Bar */}
                     {projects.length > 0 && (
                         <div style={{
                             position: 'relative',
@@ -237,42 +362,44 @@ export default function StudioDashboard() {
                     </div>
 
                     {/* New Project button */}
-                    <button
-                        id="new-project-btn"
-                        onClick={() => setShowCreate(true)}
-                        style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            padding: '9px 18px',
-                            borderRadius: '10px',
-                            border: 'none',
-                            background: '#337AFF',
-                            color: 'white',
-                            fontSize: '14px',
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                            transition: 'all 0.2s ease',
-                            boxShadow: '0 2px 8px rgba(51,122,255,0.3)',
-                            letterSpacing: '0.1px',
-                        }}
-                        onMouseEnter={e => {
-                            e.currentTarget.style.background = '#2868E5';
-                            e.currentTarget.style.boxShadow = '0 4px 14px rgba(51,122,255,0.4)';
-                            e.currentTarget.style.transform = 'translateY(-1px)';
-                        }}
-                        onMouseLeave={e => {
-                            e.currentTarget.style.background = '#337AFF';
-                            e.currentTarget.style.boxShadow = '0 2px 8px rgba(51,122,255,0.3)';
-                            e.currentTarget.style.transform = 'none';
-                        }}
-                    >
-                        <svg viewBox="0 0 24 24" style={{ width: '16px', height: '16px', fill: 'none', stroke: 'currentColor', strokeWidth: '2.5' }}>
-                            <line x1="12" y1="5" x2="12" y2="19" />
-                            <line x1="5" y1="12" x2="19" y2="12" />
-                        </svg>
-                        New Project
-                    </button>
+                    {!selectionMode && (
+                        <button
+                            id="new-project-btn"
+                            onClick={() => setShowCreate(true)}
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                padding: '9px 18px',
+                                borderRadius: '10px',
+                                border: 'none',
+                                background: '#337AFF',
+                                color: 'white',
+                                fontSize: '14px',
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                                transition: 'all 0.2s ease',
+                                boxShadow: '0 2px 8px rgba(51,122,255,0.3)',
+                                letterSpacing: '0.1px',
+                            }}
+                            onMouseEnter={e => {
+                                e.currentTarget.style.background = '#2868E5';
+                                e.currentTarget.style.boxShadow = '0 4px 14px rgba(51,122,255,0.4)';
+                                e.currentTarget.style.transform = 'translateY(-1px)';
+                            }}
+                            onMouseLeave={e => {
+                                e.currentTarget.style.background = '#337AFF';
+                                e.currentTarget.style.boxShadow = '0 2px 8px rgba(51,122,255,0.3)';
+                                e.currentTarget.style.transform = 'none';
+                            }}
+                        >
+                            <svg viewBox="0 0 24 24" style={{ width: '16px', height: '16px', fill: 'none', stroke: 'currentColor', strokeWidth: '2.5' }}>
+                                <line x1="12" y1="5" x2="12" y2="19" />
+                                <line x1="5" y1="12" x2="19" y2="12" />
+                            </svg>
+                            New Project
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -423,10 +550,6 @@ export default function StudioDashboard() {
 
             {/* Projects Grid */}
             {(() => {
-                const filtered = search.trim()
-                    ? projects.filter(p => p.name.toLowerCase().includes(search.trim().toLowerCase()))
-                    : projects;
-
                 if (projects.length === 0 && !error) {
                     return (
                         <div style={{
@@ -477,12 +600,83 @@ export default function StudioDashboard() {
                         gap: '20px',
                     }}>
                         {filtered.map(project => (
-                            <ProjectCard key={project.id} project={project} />
+                            <div
+                                key={project.id}
+                                style={{ position: 'relative' }}
+                                onClick={e => {
+                                    // If in selection mode, clicks toggle selection instead of navigating
+                                    if (selectionMode) {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        toggleSelect(project.id);
+                                    }
+                                }}
+                            >
+                                {/* Selection checkbox overlay */}
+                                <div
+                                    onClick={e => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        toggleSelect(project.id);
+                                    }}
+                                    style={{
+                                        position: 'absolute',
+                                        top: '12px',
+                                        left: '12px',
+                                        zIndex: 10,
+                                        width: '22px',
+                                        height: '22px',
+                                        borderRadius: '6px',
+                                        border: selected.has(project.id)
+                                            ? '2px solid #337AFF'
+                                            : '2px solid rgba(255,255,255,0.6)',
+                                        background: selected.has(project.id) ? '#337AFF' : 'rgba(0,0,0,0.15)',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        backdropFilter: 'blur(4px)',
+                                        transition: 'all 0.15s',
+                                        opacity: selectionMode || selected.has(project.id) ? 1 : 0,
+                                        pointerEvents: 'auto',
+                                    }}
+                                    onMouseEnter={e => {
+                                        (e.currentTarget as HTMLDivElement).style.opacity = '1';
+                                    }}
+                                    onMouseLeave={e => {
+                                        if (!selectionMode && !selected.has(project.id)) {
+                                            (e.currentTarget as HTMLDivElement).style.opacity = '0';
+                                        }
+                                    }}
+                                >
+                                    {selected.has(project.id) && (
+                                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            <polyline points="2,6 5,9 10,3" />
+                                        </svg>
+                                    )}
+                                </div>
+
+                                {/* Blue ring when selected */}
+                                <div style={{
+                                    borderRadius: '18px',
+                                    outline: selected.has(project.id) ? '2.5px solid #337AFF' : 'none',
+                                    outlineOffset: '2px',
+                                    transition: 'outline 0.15s',
+                                }}>
+                                    <ProjectCard project={project} />
+                                </div>
+                            </div>
                         ))}
                     </div>
                 );
             })()}
+
+            {/* Global style: show checkbox on hover */}
+            <style>{`
+                [style*="position: relative"]:hover > div:first-child {
+                    opacity: 1 !important;
+                }
+            `}</style>
         </div>
     );
 }
-
