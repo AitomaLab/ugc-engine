@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
+import { useTranslation } from '@/lib/i18n';
 
 interface PreviewAsset {
     url: string;
@@ -31,6 +32,7 @@ const EMPTY_GRADIENTS = [
 ];
 
 export function ProjectCard({ project }: ProjectCardProps) {
+    const { t, lang } = useTranslation();
     const [hovered, setHovered] = useState(false);
     const [failedUrls, setFailedUrls] = useState<Set<string>>(new Set());
     const counts = project.asset_counts || {};
@@ -49,13 +51,13 @@ export function ProjectCard({ project }: ProjectCardProps) {
         if (!project.created_at) return '';
         const diff = Date.now() - new Date(project.created_at).getTime();
         const mins = Math.floor(diff / 60000);
-        if (mins < 60) return `${mins}m ago`;
+        if (mins < 60) return t('creativeOs.card.minutesAgo').replace('{n}', String(mins));
         const hrs = Math.floor(mins / 60);
-        if (hrs < 24) return `${hrs}h ago`;
+        if (hrs < 24) return t('creativeOs.card.hoursAgo').replace('{n}', String(hrs));
         const days = Math.floor(hrs / 24);
-        if (days === 1) return 'Yesterday';
-        if (days < 30) return `${days} days ago`;
-        return new Date(project.created_at).toLocaleDateString('en-US', {
+        if (days === 1) return t('creativeOs.card.yesterday');
+        if (days < 30) return t('creativeOs.card.daysAgo').replace('{n}', String(days));
+        return new Date(project.created_at).toLocaleDateString(lang === 'es' ? 'es-ES' : 'en-US', {
             month: 'short', day: 'numeric', year: 'numeric',
         });
     })();
@@ -129,7 +131,9 @@ export function ProjectCard({ project }: ProjectCardProps) {
         );
     };
 
-    const renderThumb = (asset: PreviewAsset, index: number) => (
+    const renderThumb = (asset: PreviewAsset, index: number) => {
+        const isVideoFile = /\.(mp4|webm|mov)(\?|#|$)/i.test(asset.url);
+        return (
         <div
             key={index}
             style={{
@@ -140,19 +144,35 @@ export function ProjectCard({ project }: ProjectCardProps) {
                 transform: hovered ? 'scale(1.03)' : 'scale(1)',
             }}
         >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-                src={asset.url}
-                alt=""
-                loading="lazy"
-                onError={() => handleImgError(asset.url)}
-                style={{
-                    width: '100%',
-                    height: '100%',
-                    objectFit: 'cover',
-                    display: 'block',
-                }}
-            />
+            {isVideoFile ? (
+                <video
+                    src={asset.url}
+                    muted
+                    playsInline
+                    preload="metadata"
+                    onError={() => handleImgError(asset.url)}
+                    style={{
+                        width: '100%',
+                        height: '100%',
+                        objectFit: 'cover',
+                        display: 'block',
+                    }}
+                />
+            ) : (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img
+                    src={asset.url}
+                    alt=""
+                    loading="lazy"
+                    onError={() => handleImgError(asset.url)}
+                    style={{
+                        width: '100%',
+                        height: '100%',
+                        objectFit: 'cover',
+                        display: 'block',
+                    }}
+                />
+            )}
             {asset.type === 'video' && (
                 <div style={{
                     position: 'absolute',
@@ -176,7 +196,8 @@ export function ProjectCard({ project }: ProjectCardProps) {
                 </div>
             )}
         </div>
-    );
+        );
+    };
 
     return (
         <Link
@@ -248,7 +269,7 @@ export function ProjectCard({ project }: ProjectCardProps) {
                             letterSpacing: '0.5px',
                             flexShrink: 0,
                         }}>
-                            DEFAULT
+                            {t('creativeOs.card.default')}
                         </span>
                     )}
                 </div>
@@ -262,16 +283,16 @@ export function ProjectCard({ project }: ProjectCardProps) {
                     fontWeight: 500,
                 }}>
                     {(counts.images || 0) > 0 && (
-                        <span>{counts.images} Image{(counts.images || 0) !== 1 ? 's' : ''}</span>
+                        <span>{((counts.images || 0) === 1 ? t('creativeOs.card.imageOne') : t('creativeOs.card.imageOther')).replace('{n}', String(counts.images))}</span>
                     )}
                     {(counts.images || 0) > 0 && (counts.videos || 0) > 0 && (
                         <span style={{ opacity: 0.5 }}>·</span>
                     )}
                     {(counts.videos || 0) > 0 && (
-                        <span>{counts.videos} Video{(counts.videos || 0) !== 1 ? 's' : ''}</span>
+                        <span>{((counts.videos || 0) === 1 ? t('creativeOs.card.videoOne') : t('creativeOs.card.videoOther')).replace('{n}', String(counts.videos))}</span>
                     )}
                     {totalAssets === 0 && (
-                        <span>No assets yet</span>
+                        <span>{t('creativeOs.card.noAssets')}</span>
                     )}
                     {timeAgo && (
                         <>

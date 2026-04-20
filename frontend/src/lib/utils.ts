@@ -34,7 +34,7 @@ async function getAuthToken(): Promise<string | null> {
  */
 export async function apiFetch<T = unknown>(
     path: string,
-    options?: RequestInit
+    options?: RequestInit & { skipProjectScope?: boolean }
 ): Promise<T> {
     const method = options?.method?.toUpperCase() || 'GET';
     const headers: Record<string, string> = {};
@@ -50,11 +50,18 @@ export async function apiFetch<T = unknown>(
         headers['Authorization'] = `Bearer ${token}`;
     }
 
-    // Send active project ID so the backend scopes assets to the correct project
+    // Send active project ID so the backend scopes assets to the correct project.
+    // Callers that need data across all projects (dashboard aggregations) can
+    // opt out via { skipProjectScope: true } — we send an explicit skip header
+    // so the backend doesn't silently fall back to the user's default project.
     if (typeof window !== 'undefined') {
-        const projectId = localStorage.getItem('activeProjectId');
-        if (projectId) {
-            headers['X-Project-Id'] = projectId;
+        if (options?.skipProjectScope) {
+            headers['X-Skip-Project-Scope'] = '1';
+        } else {
+            const projectId = localStorage.getItem('activeProjectId');
+            if (projectId) {
+                headers['X-Project-Id'] = projectId;
+            }
         }
     }
 

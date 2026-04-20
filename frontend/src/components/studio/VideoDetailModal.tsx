@@ -3,6 +3,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { creativeFetch } from '@/lib/creative-os-api';
+import { useTranslation } from '@/lib/i18n';
 
 /* ── Types ─────────────────────────────────────────────────────── */
 
@@ -42,39 +43,41 @@ function formatDuration(sec?: number): string {
     return `${sec}s`;
 }
 
-function timeAgo(iso?: string): string {
+function timeAgo(iso: string | undefined, t: (k: string) => string): string {
     if (!iso) return '';
     const diff = Date.now() - new Date(iso).getTime();
     const hrs = Math.floor(diff / 3600000);
-    if (hrs < 1) return `${Math.floor(diff / 60000)}m ago`;
-    if (hrs < 24) return `${hrs}h ago`;
+    if (hrs < 1) return t('creativeOs.videoModal.minutesAgo').replace('{n}', String(Math.floor(diff / 60000)));
+    if (hrs < 24) return t('creativeOs.videoModal.hoursAgo').replace('{n}', String(hrs));
     const days = Math.floor(hrs / 24);
-    return days === 1 ? 'Yesterday' : `${days}d ago`;
+    if (days === 1) return t('creativeOs.videoModal.yesterday');
+    return t('creativeOs.videoModal.daysAgo').replace('{n}', String(days));
 }
 
-function modeLabel(api?: string, metadata?: Record<string, unknown>): string {
+function modeLabel(api: string | undefined, metadata: Record<string, unknown> | undefined, t: (k: string) => string): string {
     // Prefer the explicit mode stored in metadata
     const storedMode = metadata?.mode as string | undefined;
     if (storedMode) {
         const modeMap: Record<string, string> = {
-            cinematic_video: 'Cinematic',
-            ugc: 'UGC',
-            ai_clone: 'AI Clone',
+            cinematic_video: t('creativeOs.videoModal.modeCinematic'),
+            ugc: t('creativeOs.videoModal.modeUgc'),
+            ai_clone: t('creativeOs.videoModal.modeAiClone'),
         };
         if (modeMap[storedMode]) return modeMap[storedMode];
     }
     // Fallback: derive from model_api
-    if (!api) return 'Video';
+    if (!api) return t('creativeOs.videoModal.videoFallback');
     const lower = api.toLowerCase();
-    if (lower.includes('kling-3') || lower.includes('kling3')) return 'Cinematic';
-    if (lower.includes('veo')) return 'UGC';
-    if (lower.includes('seedance')) return 'Cinematic';
-    return 'Video';
+    if (lower.includes('kling-3') || lower.includes('kling3')) return t('creativeOs.videoModal.modeCinematic');
+    if (lower.includes('veo')) return t('creativeOs.videoModal.modeUgc');
+    if (lower.includes('seedance')) return t('creativeOs.videoModal.modeCinematic');
+    return t('creativeOs.videoModal.videoFallback');
 }
 
 /* ── Component ─────────────────────────────────────────────────── */
 
 export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: VideoDetailModalProps) {
+    const { t } = useTranslation();
     const router = useRouter();
     const videoRef = useRef<HTMLVideoElement>(null);
     const [isPlaying, setIsPlaying] = useState(false);
@@ -85,7 +88,7 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
     const [copied, setCopied] = useState(false);
 
     // ── Editable title ──────────────────────────────────────────────
-    const displayName = asset.campaign_name || asset.influencer_name || 'Video';
+    const displayName = asset.campaign_name || asset.influencer_name || t('creativeOs.videoModal.videoFallback');
     const [title, setTitle] = useState(displayName);
     const [editingTitle, setEditingTitle] = useState(false);
     const [savingTitle, setSavingTitle] = useState(false);
@@ -123,8 +126,8 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
     }, [editingTitle]);
 
     const videoUrl = asset.final_video_url || asset.video_url || '';
-    const createdAgo = timeAgo(asset.created_at);
-    const mode = modeLabel(asset.model_api, asset.metadata);
+    const createdAgo = timeAgo(asset.created_at, t);
+    const mode = modeLabel(asset.model_api, asset.metadata, t);
 
     /* ── Video player controls ─────────────────────────────────── */
 
@@ -198,8 +201,8 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
 
     const handleSchedule = useCallback(() => {
         // TODO: Open schedule modal — for now alert
-        alert('Schedule publishing coming soon!');
-    }, []);
+        alert(t('creativeOs.videoModal.scheduleComingSoon'));
+    }, [t]);
 
     const handleReGenerate = useCallback(async () => {
         if (!rePrompt.trim()) return;
@@ -218,11 +221,12 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
             onClose();
         } catch (err) {
             console.error('Re-generation failed:', err);
-            alert(`Generation failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+            const msg = err instanceof Error ? err.message : t('creativeOs.videoModal.unknownError');
+            alert(t('creativeOs.videoModal.generationFailed').replace('{msg}', msg));
         } finally {
             setGenerating(false);
         }
-    }, [rePrompt, projectId, asset.length, onRefresh, onClose]);
+    }, [rePrompt, projectId, asset.length, onRefresh, onClose, t]);
 
     const handleCopy = useCallback(() => {
         navigator.clipboard.writeText(rePrompt);
@@ -445,7 +449,7 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                                             alignItems: 'center',
                                             gap: '5px',
                                         }}
-                                        title="Click to rename"
+                                        title={t('creativeOs.videoModal.clickRename')}
                                     >
                                         {title}
                                         <svg viewBox="0 0 24 24" style={{
@@ -459,7 +463,7 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                                     </div>
                                 )}
                                 <div style={{ fontSize: '12px', color: '#8A93B0', marginTop: '1px' }}>
-                                    {createdAgo || 'Video'}
+                                    {createdAgo || t('creativeOs.videoModal.videoFallback')}
                                 </div>
                             </div>
                         </div>
@@ -501,7 +505,7 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                                     fontSize: '11px', fontWeight: 700, color: '#8A93B0',
                                     letterSpacing: '0.5px', textTransform: 'uppercase',
                                 }}>
-                                    {asset.script_text ? 'SCRIPT' : 'PROMPT'}
+                                    {asset.script_text ? t('creativeOs.videoModal.sectionScript') : t('creativeOs.videoModal.sectionPrompt')}
                                 </span>
                                 <button
                                     onClick={handleCopy}
@@ -511,7 +515,7 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                                         cursor: 'pointer', fontWeight: 600,
                                         padding: '2px 8px', borderRadius: '4px',
                                     }}
-                                >{copied ? '✓ Copied' : 'Copy'}</button>
+                                >{copied ? t('creativeOs.videoModal.copied') : t('creativeOs.videoModal.copy')}</button>
                             </div>
                             <div style={{
                                 padding: '12px 14px',
@@ -536,25 +540,25 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                             fontSize: '11px', fontWeight: 700, color: '#8A93B0',
                             letterSpacing: '0.5px', textTransform: 'uppercase',
                             display: 'block', marginBottom: '8px',
-                        }}>INFORMATION</span>
+                        }}>{t('creativeOs.videoModal.information')}</span>
                         <div style={{ display: 'flex', flexDirection: 'column' }}>
-                            <InfoRow label="Mode" value={mode} highlight />
-                            <InfoRow label="Duration" value={formatDuration(asset.length)} />
-                            <InfoRow label="Language" value={
-                                asset.video_language === 'en' ? 'English' :
-                                asset.video_language === 'es' ? 'Spanish' :
-                                asset.video_language || 'English'
+                            <InfoRow label={t('creativeOs.videoModal.labelMode')} value={mode} highlight />
+                            <InfoRow label={t('creativeOs.videoModal.labelDuration')} value={formatDuration(asset.length)} />
+                            <InfoRow label={t('creativeOs.videoModal.labelLanguage')} value={
+                                asset.video_language === 'en' ? t('creativeOs.videoModal.langEnglish') :
+                                asset.video_language === 'es' ? t('creativeOs.videoModal.langSpanish') :
+                                asset.video_language || t('creativeOs.videoModal.langEnglish')
                             } />
                             {asset.music_enabled !== undefined && (
-                                <InfoRow label="Music" value={asset.music_enabled ? 'Included' : 'None'} />
+                                <InfoRow label={t('creativeOs.videoModal.labelMusic')} value={asset.music_enabled ? t('creativeOs.videoModal.musicIncluded') : t('creativeOs.videoModal.musicNone')} />
                             )}
                             {asset.subtitles_enabled !== undefined && (
-                                <InfoRow label="Captions" value={asset.subtitles_enabled ? 'Burned' : 'None'} />
+                                <InfoRow label={t('creativeOs.videoModal.labelCaptions')} value={asset.subtitles_enabled ? t('creativeOs.videoModal.captionsBurned') : t('creativeOs.videoModal.captionsNone')} />
                             )}
                             {asset.credits_used && (
-                                <InfoRow label="Cost" value={`${asset.credits_used} credits`} />
+                                <InfoRow label={t('creativeOs.videoModal.labelCost')} value={t('creativeOs.videoModal.costCredits').replace('{n}', String(asset.credits_used))} />
                             )}
-                            {createdAgo && <InfoRow label="Created" value={createdAgo} />}
+                            {createdAgo && <InfoRow label={t('creativeOs.videoModal.labelCreated')} value={createdAgo} />}
                         </div>
                     </div>
 
@@ -564,11 +568,11 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                             fontSize: '11px', fontWeight: 700, color: '#8A93B0',
                             letterSpacing: '0.5px', textTransform: 'uppercase',
                             display: 'block', marginBottom: '8px',
-                        }}>RE-PROMPT</span>
+                        }}>{t('creativeOs.videoModal.rePrompt')}</span>
                         <textarea
                             value={rePrompt}
                             onChange={e => setRePrompt(e.target.value)}
-                            placeholder="Describe the video you want to regenerate..."
+                            placeholder={t('creativeOs.videoModal.rePromptPlaceholder')}
                             rows={3}
                             style={{
                                 width: '100%',
@@ -598,7 +602,7 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                                 color: '#8A93B0',
                                 lineHeight: '1.35',
                                 flex: 1,
-                            }}>Edit the prompt above and re-generate to create a new variation</span>
+                            }}>{t('creativeOs.videoModal.rePromptHint')}</span>
                             <button
                                 onClick={handleReGenerate}
                                 disabled={generating || !rePrompt.trim()}
@@ -617,7 +621,7 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                                     flexShrink: 0,
                                 }}
                             >
-                                {generating ? '⏳ Generating...' : '✨ Re-generate'}
+                                {generating ? t('creativeOs.videoModal.generating') : t('creativeOs.videoModal.regenerate')}
                             </button>
                         </div>
                     </div>
@@ -631,12 +635,12 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                         gridTemplateColumns: '1fr 1fr',
                         gap: '8px',
                     }}>
-                        <ActionButton label="Download" onClick={handleDownload} icon={
+                        <ActionButton label={t('creativeOs.videoModal.actionDownload')} onClick={handleDownload} icon={
                             <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: '2' }}>
                                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
                             </svg>
                         } />
-                        <ActionButton label="Schedule" onClick={handleSchedule} icon={
+                        <ActionButton label={t('creativeOs.videoModal.actionSchedule')} onClick={handleSchedule} icon={
                             <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: '2' }}>
                                 <rect x="3" y="4" width="18" height="18" rx="2" />
                                 <line x1="16" y1="2" x2="16" y2="6" />
@@ -645,7 +649,7 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                             </svg>
                         } />
                         <ActionButton
-                            label="Edit in Editor"
+                            label={t('creativeOs.videoModal.actionEditInEditor')}
                             onClick={handleEdit}
                             primary
                             icon={
@@ -655,8 +659,8 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                             }
                         />
                         <ActionButton
-                            label="Extend"
-                            onClick={() => alert('Video extension coming soon!')}
+                            label={t('creativeOs.videoModal.actionExtend')}
+                            onClick={() => alert(t('creativeOs.videoModal.extendComingSoon'))}
                             icon={
                                 <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: '2' }}>
                                     <path d="M17 1l4 4-4 4" />

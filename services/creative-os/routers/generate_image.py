@@ -14,7 +14,7 @@ Supports:
 """
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from typing import Optional
+from typing import List, Optional
 from auth import get_current_user
 from core_api_client import CoreAPIClient
 from services.prompt_enhancer import enhance_prompt
@@ -39,6 +39,7 @@ class ExecuteRequest(BaseModel):
     product_id: Optional[str] = None
     influencer_id: Optional[str] = None
     reference_image_url: Optional[str] = None  # Direct upload or pre-selected image
+    reference_image_urls: Optional[List[str]] = None  # Multiple direct uploads (dashboard attachments, @-refs)
     aspect_ratio: str = "9:16"
     quality: str = "4k"  # 2k, 4k
     quick_action: bool = False  # True when triggered from modal quick actions
@@ -108,16 +109,31 @@ async def execute_image_generation(data: ExecuteRequest, user: dict = Depends(ge
 
         # ── Path UGC: Build composite prompt from template builders ──
         if data.mode == "ugc":
-            if not data.product_id:
-                raise HTTPException(status_code=400, detail="UGC mode requires a product selection.")
+            # UGC mode can run in two flavors:
+            #   a) with a registered product_id (looks up DB row → prompt + product image)
+            #   b) with user-uploaded reference images (no DB row, treat first upload
+            #      as the product and fall back to generic descriptors)
+            # Reject only if we have neither — then we truly have nothing to work with.
+            has_upload_refs = bool(data.reference_image_url) or bool(data.reference_image_urls)
+            if not data.product_id and not has_upload_refs:
+                raise HTTPException(
+                    status_code=400,
+                    detail="UGC mode requires either a registered product or an uploaded reference image.",
+                )
 
-            product = await client.get_product(data.product_id)
-            if not product:
-                raise HTTPException(status_code=404, detail="Product not found.")
+            product = None
+            if data.product_id:
+                product = await client.get_product(data.product_id)
+                if not product:
+                    raise HTTPException(status_code=404, detail="Product not found.")
 
-            # Determine product type
-            product_type = product.get("product_type", "physical")
-            is_digital = product_type == "digital" or product.get("website_url")
+            # Determine product type — without a DB row, default to physical (digital
+            # SaaS apps need a registered product to pull app_type / visual_description).
+            if product:
+                product_type = product.get("product_type", "physical")
+                is_digital = product_type == "digital" or bool(product.get("website_url"))
+            else:
+                is_digital = False
 
             # Build influencer context for the template builder
             if influencer:
@@ -182,12 +198,18 @@ async def execute_image_generation(data: ExecuteRequest, user: dict = Depends(ge
                     f"no flat lighting, no overexposed lighting, no blown highlights"
                 )
             else:
-                # Physical product: build product-holding composite prompt
-                va = product.get("visual_description") or product.get("visual_analysis") or {}
-                if isinstance(va, str):
-                    visual_desc_str = va
+                # Physical product: build product-holding composite prompt.
+                # When `product` is None (upload-only path), fall back to a generic
+                # descriptor and let NanoBanana infer the actual product from the
+                # reference image(s) the user attached.
+                if product:
+                    va = product.get("visual_description") or product.get("visual_analysis") or {}
+                    if isinstance(va, str):
+                        visual_desc_str = va
+                    else:
+                        visual_desc_str = va.get("visual_description", "the product")
                 else:
-                    visual_desc_str = va.get("visual_description", "the product")
+                    visual_desc_str = "product visible in the reference image"
 
                 composite_prompt = (
                     f"action: character {scene_description}, casually presenting the product\n"
@@ -216,9 +238,14 @@ async def execute_image_generation(data: ExecuteRequest, user: dict = Depends(ge
             image_input = []
             if influencer_image_url:
                 image_input.append(influencer_image_url)
-            product_image = product.get("image_url")
+            product_image = product.get("image_url") if product else None
             if product_image:
                 image_input.append(product_image)
+            if data.reference_image_url and data.reference_image_url not in image_input:
+                image_input.append(data.reference_image_url)
+            for url in (data.reference_image_urls or []):
+                if url and url not in image_input:
+                    image_input.append(url)
 
             # Create a "processing" shot record FIRST so the frontend
             # can immediately show the generating card with estimated time.
@@ -226,6 +253,7 @@ async def execute_image_generation(data: ExecuteRequest, user: dict = Depends(ge
                 "shot_type": "ugc",
                 "status": "processing",
                 "prompt": composite_prompt,
+                "project_id": data.project_id,
                 "analysis_json": {
                     "mode": "ugc",
                     "quality": data.quality,
@@ -314,6 +342,9 @@ async def execute_image_generation(data: ExecuteRequest, user: dict = Depends(ge
                 image_input.append(influencer_image_url)
             if data.reference_image_url:
                 image_input.append(data.reference_image_url)
+            for url in (data.reference_image_urls or []):
+                if url and url not in image_input:
+                    image_input.append(url)
             # If we have a product, use its image as reference too
             if data.product_id:
                 product = await client.get_product(data.product_id)
@@ -420,6 +451,9 @@ async def execute_image_generation(data: ExecuteRequest, user: dict = Depends(ge
             image_input.append(influencer_image_url)
         if data.reference_image_url:
             image_input.append(data.reference_image_url)
+        for url in (data.reference_image_urls or []):
+            if url and url not in image_input:
+                image_input.append(url)
 
         # Create processing shot immediately — use actual mode for shot_type
         shot_data = {

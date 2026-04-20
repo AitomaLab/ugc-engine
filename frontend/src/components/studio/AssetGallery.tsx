@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { creativeFetch } from '@/lib/creative-os-api';
 import { ImageEditModal } from './ImageEditModal';
 import { VideoDetailModal } from './VideoDetailModal';
+import { useTranslation } from '@/lib/i18n';
 
 /** Extract file extension from URL path or Content-Type header */
 function getFileExtension(url: string, contentType: string | null, fallbackType: 'images' | 'videos'): string {
@@ -40,6 +41,7 @@ interface AssetGalleryProps {
 const PAGE_SIZE = 20;
 
 export function AssetGallery({ assets, type, loading, projectId, onRefresh, onAnimated, onCreateVideo }: AssetGalleryProps) {
+    const { t } = useTranslation();
     const [page, setPage] = useState(0);
     const [selectedImage, setSelectedImage] = useState<any>(null);
     const [selectedVideo, setSelectedVideo] = useState<any>(null);
@@ -93,7 +95,7 @@ export function AssetGallery({ assets, type, loading, projectId, onRefresh, onAn
             onRefresh?.();
         } catch (err) {
             console.error('Bulk delete failed:', err);
-            alert('Failed to delete some items. Please try again.');
+            alert(t('creativeOs.gallery.bulkDeleteFailed'));
         } finally {
             setBulkLoading(false);
         }
@@ -141,7 +143,7 @@ export function AssetGallery({ assets, type, loading, projectId, onRefresh, onAn
             onRefresh?.();
         } catch (err) {
             console.error('Delete failed:', err);
-            alert('Failed to delete. Please try again.');
+            alert(t('creativeOs.gallery.deleteFailed'));
         }
     }, [type, projectId, onRefresh]);
 
@@ -233,31 +235,31 @@ export function AssetGallery({ assets, type, loading, projectId, onRefresh, onAn
                         color: '#337AFF',
                         marginRight: 'auto',
                     }}>
-                        {selectedIds.size} selected
+                        {t('creativeOs.gallery.selected').replace('{n}', String(selectedIds.size))}
                     </span>
 
-                    <BulkButton label="Select All" onClick={selectAll} />
+                    <BulkButton label={t('creativeOs.gallery.selectAll')} onClick={selectAll} />
                     <BulkButton
-                        label="Download"
+                        label={t('creativeOs.gallery.download')}
                         onClick={handleBulkDownload}
                         icon={<svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: '2' }}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>}
                     />
                     {bulkDeleteConfirm ? (
                         <>
-                            <span style={{ fontSize: '13px', fontWeight: 600, color: '#DC3545' }}>Confirm delete?</span>
-                            <BulkButton label="Yes, Delete" onClick={handleBulkDelete} danger disabled={bulkLoading} />
-                            <BulkButton label="No" onClick={() => setBulkDeleteConfirm(false)} muted />
+                            <span style={{ fontSize: '13px', fontWeight: 600, color: '#DC3545' }}>{t('creativeOs.gallery.confirmDelete')}</span>
+                            <BulkButton label={t('creativeOs.gallery.yesDelete')} onClick={handleBulkDelete} danger disabled={bulkLoading} />
+                            <BulkButton label={t('creativeOs.gallery.no')} onClick={() => setBulkDeleteConfirm(false)} muted />
                         </>
                     ) : (
                         <BulkButton
-                            label="Delete"
+                            label={t('creativeOs.gallery.delete')}
                             onClick={handleBulkDelete}
                             danger
                             disabled={bulkLoading}
                             icon={<svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: '2' }}><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>}
                         />
                     )}
-                    <BulkButton label="Cancel" onClick={cancelSelection} muted />
+                    <BulkButton label={t('creativeOs.gallery.cancel')} onClick={cancelSelection} muted />
                 </div>
             )}
 
@@ -303,7 +305,7 @@ export function AssetGallery({ assets, type, loading, projectId, onRefresh, onAn
                             color: page === 0 ? '#8A93B0' : '#337AFF',
                             cursor: page === 0 ? 'default' : 'pointer', fontSize: '13px', fontWeight: 500,
                         }}
-                    >← Prev</button>
+                    >{t('creativeOs.gallery.prev')}</button>
                     <span style={{ fontSize: '13px', color: '#4A5578', fontWeight: 500 }}>
                         {page + 1} / {totalPages}
                     </span>
@@ -316,7 +318,7 @@ export function AssetGallery({ assets, type, loading, projectId, onRefresh, onAn
                             color: page >= totalPages - 1 ? '#8A93B0' : '#337AFF',
                             cursor: page >= totalPages - 1 ? 'default' : 'pointer', fontSize: '13px', fontWeight: 500,
                         }}
-                    >Next →</button>
+                    >{t('creativeOs.gallery.next')}</button>
                 </div>
             )}
 
@@ -425,6 +427,7 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
     onCancelDelete: () => void;
     onClick?: () => void;
 }) {
+    const { t } = useTranslation();
     const [hovered, setHovered] = useState(false);
     const [elapsed, setElapsed] = useState(0);
     const imageUrl = type === 'images' ? asset.image_url : null;
@@ -600,7 +603,7 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
                         <polyline points="3 6 5 6 21 6" />
                         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
                     </svg>
-                    <span style={{ color: 'white', fontSize: '13px', fontWeight: 600 }}>Delete this {type === 'images' ? 'image' : 'video'}?</span>
+                    <span style={{ color: 'white', fontSize: '13px', fontWeight: 600 }}>{type === 'images' ? t('creativeOs.gallery.deleteImage') : t('creativeOs.gallery.deleteVideo')}</span>
                     <div style={{ display: 'flex', gap: '8px' }}>
                         <button
                             onClick={(e) => { e.stopPropagation(); onConfirmDelete(); }}
@@ -614,7 +617,7 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
                                 fontWeight: 600,
                                 cursor: 'pointer',
                             }}
-                        >Delete</button>
+                        >{t('creativeOs.gallery.delete')}</button>
                         <button
                             onClick={(e) => { e.stopPropagation(); onCancelDelete(); }}
                             style={{
@@ -627,7 +630,7 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
                                 fontWeight: 600,
                                 cursor: 'pointer',
                             }}
-                        >Cancel</button>
+                        >{t('creativeOs.gallery.cancel')}</button>
                     </div>
                 </div>
             )}
@@ -642,21 +645,21 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
 
                 // Map status_message to user-friendly step labels
                 const stepLabel = (() => {
-                    if (!statusMsg) return status.includes('pending') ? 'Queued' : 'Generating...';
-                    if (statusMsg.includes('Composite Image')) return hasPreview ? 'Influencer image ready' : 'Generating image...';
-                    if (statusMsg.includes('Animating')) return hasPreview ? 'Animating scene' : 'Animating scene...';
-                    if (statusMsg.includes('Building scenes')) return 'Preparing scenes...';
-                    if (statusMsg.includes('Generating scenes')) return 'Generating scenes...';
-                    if (statusMsg.includes('Analyzing Product')) return 'Analyzing product...';
-                    if (statusMsg.includes('Adding Music')) return 'Adding music...';
-                    if (statusMsg.includes('Assembling')) return 'Assembling video...';
-                    if (statusMsg.includes('Subtitling')) return 'Adding captions...';
-                    if (statusMsg.includes('Voiceover')) return 'Generating voiceover...';
-                    if (statusMsg.includes('Preparing')) return 'Preparing UGC clip...';
-                    if (statusMsg.includes('Generating video')) return 'Generating video...';
+                    if (!statusMsg) return status.includes('pending') ? t('creativeOs.gallery.queued') : t('creativeOs.gallery.generatingDots');
+                    if (statusMsg.includes('Composite Image')) return hasPreview ? t('creativeOs.gallery.stepInfluencerReady') : t('creativeOs.gallery.stepGeneratingImage');
+                    if (statusMsg.includes('Animating')) return hasPreview ? t('creativeOs.gallery.stepAnimatingScene') : t('creativeOs.gallery.stepAnimatingSceneDots');
+                    if (statusMsg.includes('Building scenes')) return t('creativeOs.gallery.stepPreparingScenes');
+                    if (statusMsg.includes('Generating scenes')) return t('creativeOs.gallery.stepGeneratingScenes');
+                    if (statusMsg.includes('Analyzing Product')) return t('creativeOs.gallery.stepAnalyzingProduct');
+                    if (statusMsg.includes('Adding Music')) return t('creativeOs.gallery.stepAddingMusic');
+                    if (statusMsg.includes('Assembling')) return t('creativeOs.gallery.stepAssembling');
+                    if (statusMsg.includes('Subtitling')) return t('creativeOs.gallery.stepCaptions');
+                    if (statusMsg.includes('Voiceover')) return t('creativeOs.gallery.stepVoiceover');
+                    if (statusMsg.includes('Preparing')) return t('creativeOs.gallery.stepPreparingUgc');
+                    if (statusMsg.includes('Generating video')) return t('creativeOs.gallery.stepGeneratingVideo');
                     if (statusMsg.includes('Extend:') || statusMsg.includes('Gen:')) {
                         const match = statusMsg.match(/\((\d+)\/(\d+)\)/);
-                        return match ? `Generating scene ${match[1]}/${match[2]}...` : 'Generating scene...';
+                        return match ? t('creativeOs.gallery.stepGeneratingScene').replace('{n}', match[1]).replace('{total}', match[2]) : t('creativeOs.gallery.stepGeneratingSceneSimple');
                     }
                     return statusMsg;
                 })();
@@ -665,9 +668,9 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
                 const estMinutes = type === 'images' ? 1.5 : 3;
                 const elapsedMin = elapsed / 60;
                 const remainingMin = Math.max(0, estMinutes - elapsedMin);
-                const remainingLabel = progress > 85 ? 'finishing...' :
-                    remainingMin >= 1 ? `~${Math.ceil(remainingMin)}m left` :
-                    remainingMin > 0 ? `~${Math.ceil(remainingMin * 60)}s left` : 'finishing...';
+                const remainingLabel = progress > 85 ? t('creativeOs.gallery.finishing') :
+                    remainingMin >= 1 ? t('creativeOs.gallery.minLeft').replace('{n}', String(Math.ceil(remainingMin))) :
+                    remainingMin > 0 ? t('creativeOs.gallery.secLeft').replace('{n}', String(Math.ceil(remainingMin * 60))) : t('creativeOs.gallery.finishing');
 
                 return (
                     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
@@ -844,7 +847,7 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
                             fontSize: '10px',
                             fontWeight: 500,
                         }}>
-                            {type === 'images' ? 'Click to edit' : 'Click to view'}
+                            {type === 'images' ? t('creativeOs.gallery.clickEdit') : t('creativeOs.gallery.clickView')}
                         </span>
                     </div>
                 </div>

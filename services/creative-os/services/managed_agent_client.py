@@ -194,7 +194,14 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
 4. Pick the simplest tool chain that fulfills the brief. Don't run extra tools "to be safe".
 5. Long-running tools (create_ugc_video, create_clone_video, animate_image, render_edited_video, caption_video) block while polling. That's normal — let them finish.
 6. NEVER manually construct or modify caption/transcription JSON inside editor_state. Always use the caption_video tool — it runs real Whisper transcription on the audio and produces accurate, properly timed captions.
-7. You may call multiple tools in a single turn. For independent tasks (e.g., "generate 3 images"), dispatch all of them in the same turn and report all results together. For dependent tasks (e.g., "generate an image then animate it"), chain the tools sequentially within the same turn — call the first tool, receive its result, then immediately call the next without waiting for user input. Never ask for permission between chained steps."""
+7. You may call multiple tools in a single turn. For independent tasks (e.g., "generate 3 images"), dispatch all of them in the same turn and report all results together. For dependent tasks (e.g., "generate an image then animate it"), chain the tools sequentially within the same turn — call the first tool, receive its result, then immediately call the next without waiting for user input. Never ask for permission between chained steps.
+8. REFERENCED ASSETS — uploaded images the user attached directly from their computer appear in the brief preface as `[Referenced assets]` lines with synthetic tags like `@upload_xxxxxxxx (image), image_url='https://…'`. These are NOT database rows — there is no product_id / influencer_id for them. When the user asks you to generate / animate / compose using those images, you MUST forward the image_urls to the generation tool:
+   - `generate_image` → pass every relevant upload URL via `reference_image_urls: [url1, url2, ...]`. NanoBanana Pro uses them as direct visual references so the output actually contains the uploaded product/person. Failing to pass them means the model generates from prompt text only and the attached images are ignored.
+   - `generate_video` → for Seedance modes (seedance_2_ugc / seedance_2_cinematic / seedance_2_product) pass EVERY relevant upload URL via `reference_image_urls: [url1, url2, ...]` — Seedance 2.0 accepts up to 4 references and blends them (e.g. product + model). For Veo/Kling modes (ugc, cinematic_video) pass the most-relevant single URL via `reference_image_url` (first-frame / hero shot) since those models only accept one.
+   Only fall back to `product_id` / `influencer_id` when the user @-mentioned an existing DB asset; for raw uploads (upload_* tags) those IDs do not exist.
+9. UGC mode does NOT require a registered product. If the user provides uploaded images (upload_* refs), call `generate_image(mode="ugc", reference_image_urls=[...])` directly — the pipeline treats the first upload as the product and any additional upload as the character/influencer. Do not suggest switching to iPhone look or ask the user to create a product first when uploads are already present. Only create or request a registered product when the user explicitly asks to save the asset for future reuse.
+10. ASPECT RATIO — MANDATORY before gated generation. Before calling `generate_image` or `generate_video` with `confirmed=true`, you MUST know the aspect ratio. If the user's brief already specifies it ("vertical", "9:16", "horizontal", "16:9", "for TikTok", "for YouTube", "landscape", "portrait"), use it directly. Otherwise you MUST ask the user BEFORE presenting the cost confirmation: ask the question in one short sentence, then append the literal marker `[[ASPECT_BUTTONS]]` on the last line of your message. The frontend detects this marker and renders clickable Vertical / Horizontal buttons for the user. When the user replies with their choice, THEN show the cost confirmation, THEN call the tool with `confirmed=true` and `aspect_ratio="9:16"` or `"16:9"`. Never skip this step for gated generation. Do NOT include the marker when the aspect is already known.
+11. NO RANDOM INFLUENCER / PRODUCT — for cinematic / scene / b-roll prompts that do not mention a specific person or product (e.g. "rooftop chase", "sunset over a city", "close-up of a coffee cup"), you MUST call `generate_video` WITHOUT `influencer_id` and WITHOUT `product_id`. Never auto-attach an influencer or product "to be safe" — the pipeline will generate the scene from the prompt alone, which is what the user wants. Only pass `influencer_id` / `product_id` when the user @-mentioned that asset or explicitly named them in the brief."""
 
 
 # ── Tool definitions exposed to the agent ─────────────────────────────
@@ -340,6 +347,26 @@ def _custom_tools_for_agent() -> list[dict]:
                     "mode": {"type": "string", "enum": image_mode_ids, "description": "Image style mode."},
                     "product_id": {"type": "string", "description": "Optional product ID from list_project_assets."},
                     "influencer_id": {"type": "string", "description": "Optional influencer ID from list_project_assets."},
+                    "reference_image_urls": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Public image URLs to use as visual references for the NanoBanana generation. "
+                            "Pass every image_url from the '[Referenced assets]' preface that is relevant to this "
+                            "shot (e.g. uploaded product photo + uploaded influencer photo when neither is a "
+                            "DB-backed product_id/influencer_id). These are fed directly into the model as input "
+                            "images so the output matches the references."
+                        ),
+                    },
+                    "aspect_ratio": {
+                        "type": "string",
+                        "enum": ["9:16", "16:9"],
+                        "description": (
+                            "Image aspect ratio. '9:16' = vertical, '16:9' = horizontal. REQUIRED: you must "
+                            "ask the user which ratio they want before calling this tool with confirmed=true, "
+                            "unless the user already specified it in their brief."
+                        ),
+                    },
                     "confirmed": {"type": "boolean", "description": confirmed_desc},
                 },
                 "required": ["prompt", "mode"],
@@ -401,11 +428,33 @@ def _custom_tools_for_agent() -> list[dict]:
                     "reference_image_url": {
                         "type": "string",
                         "description": (
-                            "Direct image URL to use as the first frame. ONLY use this when no "
-                            "product_id/influencer_id is available (e.g. user uploaded a custom image)."
+                            "Single direct image URL to use as the first frame. Use for Veo/Kling modes "
+                            "(ugc, cinematic_video) when the user uploaded ONE custom image. For multiple "
+                            "uploads use reference_image_urls instead."
+                        ),
+                    },
+                    "reference_image_urls": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Multiple reference image URLs. REQUIRED for Seedance modes "
+                            "(seedance_2_ugc, seedance_2_cinematic, seedance_2_product) when the user "
+                            "attached multiple uploads (e.g. product + model) — Seedance 2.0 accepts up to "
+                            "4 references and blends them. Pass EVERY relevant upload URL from the "
+                            "'[Referenced assets]' preface. Not used by Veo/Kling modes."
                         ),
                     },
                     "clip_length": {"type": "integer", "enum": [5, 8, 10]},
+                    "aspect_ratio": {
+                        "type": "string",
+                        "enum": ["9:16", "16:9"],
+                        "description": (
+                            "Video aspect ratio. '9:16' = vertical (TikTok/Reels), '16:9' = horizontal "
+                            "(YouTube/landscape). REQUIRED: you must ask the user which ratio they want "
+                            "before calling this tool with confirmed=true, unless the user already specified "
+                            "it in their brief."
+                        ),
+                    },
                     "confirmed": {"type": "boolean", "description": confirmed_desc},
                 },
                 "required": ["prompt", "mode"],
@@ -1040,13 +1089,17 @@ async def _tool_generate_image(ctx: ToolContext, **kwargs: Any) -> str:
             echo={k: v for k, v in kwargs.items() if k != "confirmed"},
         )
 
-    req = ExecuteRequest(
+    exec_kwargs: dict = dict(
         prompt=kwargs["prompt"],
         mode=kwargs["mode"],
         project_id=ctx.project_id,
         product_id=kwargs.get("product_id"),
         influencer_id=kwargs.get("influencer_id"),
+        reference_image_urls=kwargs.get("reference_image_urls") or None,
     )
+    if kwargs.get("aspect_ratio"):
+        exec_kwargs["aspect_ratio"] = kwargs["aspect_ratio"]
+    req = ExecuteRequest(**exec_kwargs)
     user = {"token": ctx.user_token, "id": "agent"}
     try:
         result = await execute_image_generation(req, user=user)  # type: ignore[arg-type]
@@ -1175,7 +1228,10 @@ async def _tool_generate_video(ctx: ToolContext, **kwargs: Any) -> str:
         product_id=kwargs.get("product_id"),
         influencer_id=kwargs.get("influencer_id"),
         reference_image_url=kwargs.get("reference_image_url"),
+        reference_image_urls=kwargs.get("reference_image_urls") or None,
+        reference_video_urls=kwargs.get("reference_video_urls") or None,
         clip_length=kwargs.get("clip_length", 5),
+        aspect_ratio=kwargs.get("aspect_ratio") or None,
     )
     user = {"token": ctx.user_token, "id": "agent"}
     bg = BackgroundTasks()
@@ -2472,6 +2528,8 @@ class ManagedAgentClient:
         session_id: Optional[str] = None,
         max_tool_calls: int = 24,
         prior_turns: Optional[list[dict]] = None,
+        lang: Optional[str] = None,
+        image_urls: Optional[list[str]] = None,
     ) -> AsyncIterator[dict]:
         """Wrap the inner implementation with a persistent heartbeat task.
 
@@ -2495,6 +2553,8 @@ class ManagedAgentClient:
                     session_id=session_id,
                     max_tool_calls=max_tool_calls,
                     prior_turns=prior_turns,
+                    lang=lang,
+                    image_urls=image_urls,
                 ):
                     await queue.put(ev)
             except asyncio.CancelledError:
@@ -2536,6 +2596,8 @@ class ManagedAgentClient:
         session_id: Optional[str] = None,
         max_tool_calls: int = 24,
         prior_turns: Optional[list[dict]] = None,
+        lang: Optional[str] = None,
+        image_urls: Optional[list[str]] = None,
     ) -> AsyncIterator[dict]:
         """Drive the agent through one user turn, yielding normalized events.
 
@@ -2548,6 +2610,16 @@ class ManagedAgentClient:
           - {"type": "done", "session_id": str}
           - {"type": "error", "message": str}
         """
+        # Inject locale directive so conversational replies match the user's
+        # UI language. Tool calls / JSON payloads stay English — the directive
+        # is explicit about that so tool schemas are unaffected.
+        if lang == "es":
+            brief = (
+                "[LANG=es — Responde en español. Las llamadas a herramientas y los "
+                "payloads JSON deben permanecer en inglés; solo las respuestas "
+                "conversacionales al usuario son en español.]\n\n" + brief
+            )
+
         # Resolve / create session, with transparent fallback for stale ids.
         if session_id:
             try:
@@ -2620,9 +2692,15 @@ class ManagedAgentClient:
             text = _build_context_primer() if with_primer else brief
             if not text:
                 text = brief
+            content: list[dict] = [{"type": "text", "text": text}]
+            for url in (image_urls or []):
+                content.append({
+                    "type": "image",
+                    "source": {"type": "url", "url": url},
+                })
             await self._client.beta.sessions.events.send(
                 sid,
-                events=[{"type": "user.message", "content": [{"type": "text", "text": text}]}],
+                events=[{"type": "user.message", "content": content}],
             )
 
         async def _reset_and_send() -> str:

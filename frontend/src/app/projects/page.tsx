@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useApp } from '@/providers/AppProvider';
 import { creativeFetch } from '@/lib/creative-os-api';
 import { ProjectCard } from '@/components/studio/ProjectCard';
+import { useTranslation } from '@/lib/i18n';
 
 interface ProjectWithCounts {
     id: string;
@@ -21,6 +22,7 @@ interface ProjectWithCounts {
 
 export default function StudioDashboard() {
     const { session, isLoading } = useApp();
+    const { t } = useTranslation();
     const [projects, setProjects] = useState<ProjectWithCounts[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -64,7 +66,7 @@ export default function StudioDashboard() {
             await fetchProjects();
         } catch (err) {
             console.error('Failed to create project:', err);
-            alert(`Failed to create project: ${err instanceof Error ? err.message : 'Unknown error'}`);
+            alert(t('creativeOs.projects.createFailed').replace('{err}', err instanceof Error ? err.message : 'Unknown error'));
         } finally {
             setCreating(false);
         }
@@ -94,7 +96,7 @@ export default function StudioDashboard() {
     const handleDelete = async () => {
         if (selected.size === 0 || deleting) return;
         const count = selected.size;
-        if (!confirm(`Delete ${count} project${count !== 1 ? 's' : ''}? This action cannot be undone.`)) return;
+        if (!confirm(t('creativeOs.projects.deleteCountConfirm').replace('{n}', String(count)))) return;
         setDeleting(true);
         try {
             await Promise.all(
@@ -106,7 +108,7 @@ export default function StudioDashboard() {
             await fetchProjects();
         } catch (err) {
             console.error('Failed to delete projects:', err);
-            alert(`Failed to delete: ${err instanceof Error ? err.message : 'Unknown error'}`);
+            alert(t('creativeOs.projects.deleteFailed').replace('{err}', err instanceof Error ? err.message : 'Unknown error'));
         } finally {
             setDeleting(false);
         }
@@ -202,7 +204,7 @@ export default function StudioDashboard() {
                             )}
                         </button>
                         <span style={{ fontSize: '14px', fontWeight: 600, color: '#0D1B3E' }}>
-                            {selected.size} selected
+                            {t('creativeOs.projects.selected').replace('{n}', String(selected.size))}
                         </span>
                         <button
                             onClick={clearSelection}
@@ -215,7 +217,7 @@ export default function StudioDashboard() {
                             }}
                             onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,0,0,0.03)')}
                             onMouseLeave={e => (e.currentTarget.style.background = 'white')}
-                        >Cancel</button>
+                        >{t('creativeOs.projects.cancel')}</button>
                     </div>
                 ) : (
                     <p style={{
@@ -224,7 +226,7 @@ export default function StudioDashboard() {
                         margin: 0,
                         flexShrink: 0,
                     }}>
-                        Select a project to start creating
+                        {t('creativeOs.projects.selectPrompt')}
                     </p>
                 )}
 
@@ -262,7 +264,7 @@ export default function StudioDashboard() {
                                 <polyline points="3 6 5 6 21 6" />
                                 <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
                             </svg>
-                            {deleting ? 'Deleting...' : `Delete (${selected.size})`}
+                            {deleting ? t('creativeOs.projects.deleting') : t('creativeOs.projects.deleteWithCount').replace('{n}', String(selected.size))}
                         </button>
                     )}
 
@@ -297,7 +299,7 @@ export default function StudioDashboard() {
                                 type="text"
                                 value={search}
                                 onChange={e => setSearch(e.target.value)}
-                                placeholder="Search projects..."
+                                placeholder={t('creativeOs.projects.searchPlaceholder')}
                                 style={{
                                     width: '100%',
                                     padding: '8px 30px 8px 34px',
@@ -358,7 +360,7 @@ export default function StudioDashboard() {
                         fontWeight: 600,
                         color: '#337AFF',
                     }}>
-                        {projects.length} project{projects.length !== 1 ? 's' : ''}
+                        {(projects.length === 1 ? t('creativeOs.projects.countOne') : t('creativeOs.projects.countOther')).replace('{n}', String(projects.length))}
                     </div>
 
                     {/* New Project button */}
@@ -397,7 +399,7 @@ export default function StudioDashboard() {
                                 <line x1="12" y1="5" x2="12" y2="19" />
                                 <line x1="5" y1="12" x2="19" y2="12" />
                             </svg>
-                            New Project
+                            {t('creativeOs.projects.newProjectBtn')}
                         </button>
                     )}
                 </div>
@@ -438,14 +440,14 @@ export default function StudioDashboard() {
                             margin: '0 0 4px',
                             letterSpacing: '-0.3px',
                         }}>
-                            New Project
+                            {t('creativeOs.projects.newProjectBtn')}
                         </h2>
                         <p style={{
                             fontSize: '13px',
                             color: '#8A93B0',
                             margin: '0 0 20px',
                         }}>
-                            Projects organize your images, videos, and AI clones.
+                            {t('creativeOs.projects.createBlurb')}
                         </p>
                         <input
                             id="new-project-name"
@@ -453,7 +455,7 @@ export default function StudioDashboard() {
                             value={newName}
                             onChange={e => setNewName(e.target.value)}
                             onKeyDown={e => { if (e.key === 'Enter') handleCreate(); }}
-                            placeholder="e.g. Summer Campaign 2026"
+                            placeholder={t('creativeOs.projects.createExample')}
                             autoFocus
                             style={{
                                 width: '100%',
@@ -487,7 +489,7 @@ export default function StudioDashboard() {
                                 }}
                                 onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,0,0,0.03)')}
                                 onMouseLeave={e => (e.currentTarget.style.background = 'white')}
-                            >Cancel</button>
+                            >{t('creativeOs.projects.cancel')}</button>
                             <button
                                 id="create-project-submit"
                                 onClick={handleCreate}
@@ -505,7 +507,7 @@ export default function StudioDashboard() {
                                     boxShadow: newName.trim() && !creating ? '0 2px 8px rgba(51,122,255,0.3)' : 'none',
                                 }}
                             >
-                                {creating ? 'Creating...' : 'Create Project'}
+                                {creating ? t('creativeOs.projects.creating') : t('creativeOs.projects.createProject')}
                             </button>
                         </div>
                     </div>
@@ -562,7 +564,7 @@ export default function StudioDashboard() {
                             <svg viewBox="0 0 24 24" style={{ width: '48px', height: '48px', fill: 'none', stroke: '#8A93B0', strokeWidth: '1.2', margin: '0 auto 16px', display: 'block' }}>
                                 <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
                             </svg>
-                            <p style={{ color: '#4A5578', fontSize: '15px', fontWeight: 500, margin: '0 0 12px' }}>No projects yet</p>
+                            <p style={{ color: '#4A5578', fontSize: '15px', fontWeight: 500, margin: '0 0 12px' }}>{t('creativeOs.projects.emptyTitle')}</p>
                             <button
                                 onClick={() => setShowCreate(true)}
                                 style={{
@@ -575,7 +577,7 @@ export default function StudioDashboard() {
                                     fontWeight: 600,
                                     cursor: 'pointer',
                                 }}
-                            >+ Create your first project</button>
+                            >{t('creativeOs.projects.createFirst')}</button>
                         </div>
                     );
                 }
@@ -588,7 +590,7 @@ export default function StudioDashboard() {
                             color: '#8A93B0',
                             fontSize: '15px',
                         }}>
-                            No projects matching &ldquo;{search.trim()}&rdquo;
+                            {t('creativeOs.projects.noMatches').replace('{q}', search.trim())}
                         </div>
                     );
                 }

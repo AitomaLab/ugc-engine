@@ -4,10 +4,23 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { useApp } from '@/providers/AppProvider';
 import { creativeFetch } from '@/lib/creative-os-api';
+import { useTranslation } from '@/lib/i18n';
 import { AssetGallery } from '@/components/studio/AssetGallery';
 import { CreateBar } from '@/components/studio/CreateBar';
-import { AgentPanel } from '@/components/studio/AgentPanel';
+import dynamic from 'next/dynamic';
 import type { AgentPanelHandle, AgentPanelState } from '@/components/studio/AgentPanel';
+
+const AgentPanel = dynamic(
+    () => import('@/components/studio/AgentPanel').then(m => m.AgentPanel),
+    {
+        ssr: false,
+        loading: () => (
+            <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-3)', fontSize: 13 }}>
+                Loading agent…
+            </div>
+        ),
+    }
+);
 import Select from '@/components/ui/Select';
 
 type TabId = 'images' | 'videos';
@@ -47,6 +60,7 @@ function useIsWide(): boolean {
 /* ── Main Page Component ─────────────────────────────────────── */
 
 export default function ProjectContainerPage() {
+    const { t } = useTranslation();
     const params = useParams();
     const searchParams = useSearchParams();
     const projectId = params.id as string;
@@ -69,6 +83,7 @@ export default function ProjectContainerPage() {
     const [loading, setLoading] = useState(true);
     const [createVideoImage, setCreateVideoImage] = useState<any>(null);
     const pollRef = useRef<NodeJS.Timeout | null>(null);
+    const burstRef = useRef<NodeJS.Timeout | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
 
     // ── Filter state ──
@@ -107,7 +122,46 @@ export default function ProjectContainerPage() {
         fetchAssets();
     }, [fetchAssets]);
 
-    // Auto-poll: check for pending/processing assets every 5s
+    // Short-term aggressive refetch when an agent-launched job starts.
+    // The backend may take 1–8s to insert the "processing" shot/job row
+    // (influencer resolution, reference-image prep, product lookups),
+    // so we poll every 1.5s for up to 20s to catch it as soon as it lands.
+    // Once a pending row is in state, the 5s auto-poll below takes over.
+    const startJobRefetchBurst = useCallback(() => {
+        if (burstRef.current) clearInterval(burstRef.current);
+        const startedAt = Date.now();
+        const tick = () => { fetchAssets(true); };
+        tick();
+        burstRef.current = setInterval(() => {
+            if (Date.now() - startedAt > 20000) {
+                if (burstRef.current) clearInterval(burstRef.current);
+                burstRef.current = null;
+                return;
+            }
+            tick();
+        }, 1500);
+    }, [fetchAssets]);
+
+    // Stop the burst early once any pending row appears — auto-poll takes over.
+    useEffect(() => {
+        if (!burstRef.current) return;
+        const hasPending = [...images, ...videos].some(a => {
+            const s = (a.status || '').toLowerCase();
+            return s.includes('pending') || s.includes('processing') || s.includes('generating');
+        });
+        if (hasPending) {
+            clearInterval(burstRef.current);
+            burstRef.current = null;
+        }
+    }, [images, videos]);
+
+    useEffect(() => () => {
+        if (burstRef.current) clearInterval(burstRef.current);
+    }, []);
+
+    // Auto-poll: check for pending/processing assets every 5s.
+    // Pauses while the tab is hidden to avoid burning cycles for users
+    // who switched away, and fires an immediate refetch when they return.
     useEffect(() => {
         const hasPending = [
             ...images,
@@ -118,12 +172,23 @@ export default function ProjectContainerPage() {
         });
 
         if (hasPending) {
-            pollRef.current = setInterval(() => fetchAssets(true), 5000);
-        } else {
-            if (pollRef.current) clearInterval(pollRef.current);
-            pollRef.current = null;
+            pollRef.current = setInterval(() => {
+                if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+                fetchAssets(true);
+            }, 5000);
+            const onVisible = () => {
+                if (document.visibilityState === 'visible') fetchAssets(true);
+            };
+            document.addEventListener('visibilitychange', onVisible);
+            return () => {
+                if (pollRef.current) clearInterval(pollRef.current);
+                pollRef.current = null;
+                document.removeEventListener('visibilitychange', onVisible);
+            };
         }
 
+        if (pollRef.current) clearInterval(pollRef.current);
+        pollRef.current = null;
         return () => {
             if (pollRef.current) clearInterval(pollRef.current);
         };
@@ -308,7 +373,7 @@ export default function ProjectContainerPage() {
             {isWide && (
                 <div
                     onClick={() => agentRef.current?.toggleSeedance()}
-                    title={agentState.useSeedance ? 'Seedance 2.0 — ON' : 'Seedance 2.0 — OFF'}
+                    title={agentState.useSeedance ? t('creativeOs.project.seedanceOn') : t('creativeOs.project.seedanceOff')}
                     style={{
                         display: 'flex', alignItems: 'center', gap: '6px',
                         cursor: agentState.running ? 'not-allowed' : 'pointer',
@@ -342,7 +407,7 @@ export default function ProjectContainerPage() {
             {isWide && agentOpen && (
                 <button
                     onClick={() => agentRef.current?.reset()}
-                    title="Clear chat"
+                    title={t('creativeOs.project.clearChat')}
                     disabled={agentState.running || agentState.turnsCount === 0}
                     style={{
                         width: '26px', height: '26px', borderRadius: '6px', border: 'none',
@@ -365,7 +430,7 @@ export default function ProjectContainerPage() {
             {isWide && (
                 <button
                     onClick={() => setAgentOpen(!agentOpen)}
-                    title={agentOpen ? 'Hide agent panel' : 'Show agent panel'}
+                    title={agentOpen ? t('creativeOs.project.agentPanelHide') : t('creativeOs.project.agentPanelShow')}
                     style={{
                         width: '26px', height: '26px', borderRadius: '6px', border: 'none',
                         background: agentOpen ? 'rgba(51,122,255,0.08)' : 'transparent',
@@ -386,7 +451,7 @@ export default function ProjectContainerPage() {
             {isWide && (
                 <button
                     onClick={() => setCreateBarOpen(!createBarOpen)}
-                    title={createBarOpen ? 'Hide bottom panel' : 'Show bottom panel'}
+                    title={createBarOpen ? t('creativeOs.project.bottomPanelHide') : t('creativeOs.project.bottomPanelShow')}
                     style={{
                         width: '26px', height: '26px', borderRadius: '6px', border: 'none',
                         background: createBarOpen ? 'rgba(51,122,255,0.08)' : 'transparent',
@@ -433,7 +498,7 @@ export default function ProjectContainerPage() {
                             boxShadow: activeTab === tab ? '0 1px 4px rgba(51,122,255,0.12)' : 'none',
                         }}
                     >
-                        {tab === 'images' ? 'Images' : 'Videos'}
+                        {tab === 'images' ? t('creativeOs.project.tabImages') : t('creativeOs.project.tabVideos')}
                         <span style={{ marginLeft: '5px', fontSize: '11px', opacity: 0.6 }}>
                             {tab === 'images' ? images.length : videos.length}
                         </span>
@@ -445,12 +510,12 @@ export default function ProjectContainerPage() {
             <div style={{ width: '1px', height: '24px', background: 'rgba(0,0,0,0.08)', flexShrink: 0 }} />
 
             {/* Filters */}
-            <Select className="filter-select" value={filterProduct} onChange={setFilterProduct} placeholder="Product" style={{ width: '150px', flexShrink: 0 }}
-                options={[{ value: '', label: 'All Products' }, ...productOptions.map(p => ({ value: p, label: p }))]} />
-            <Select className="filter-select" value={filterInfluencer} onChange={setFilterInfluencer} placeholder="Influencer" style={{ width: '160px', flexShrink: 0 }}
-                options={[{ value: '', label: 'All Influencers' }, ...influencerOptions.map(i => ({ value: i, label: i }))]} />
-            <Select className="filter-select" value={filterMode} onChange={setFilterMode} placeholder="Mode" style={{ width: '130px', flexShrink: 0 }}
-                options={[{ value: '', label: 'All Modes' }, ...modeOptions.map(m => ({ value: m, label: m }))]} />
+            <Select className="filter-select" value={filterProduct} onChange={setFilterProduct} placeholder={t('creativeOs.project.filterProduct')} style={{ width: '150px', flexShrink: 0 }}
+                options={[{ value: '', label: t('creativeOs.project.filterAllProducts') }, ...productOptions.map(p => ({ value: p, label: p }))]} />
+            <Select className="filter-select" value={filterInfluencer} onChange={setFilterInfluencer} placeholder={t('creativeOs.project.filterInfluencer')} style={{ width: '160px', flexShrink: 0 }}
+                options={[{ value: '', label: t('creativeOs.project.filterAllInfluencers') }, ...influencerOptions.map(i => ({ value: i, label: i }))]} />
+            <Select className="filter-select" value={filterMode} onChange={setFilterMode} placeholder={t('creativeOs.project.filterMode')} style={{ width: '130px', flexShrink: 0 }}
+                options={[{ value: '', label: t('creativeOs.project.filterAllModes') }, ...modeOptions.map(m => ({ value: m, label: m }))]} />
 
             {hasActiveFilters && (
                 <button
@@ -516,7 +581,7 @@ export default function ProjectContainerPage() {
                 {projectHeaderBar}
                 {galleryBlock}
                 {createBarOpen && createBarBlock}
-                <AgentPanel ref={agentRef} projectId={projectId} onArtifact={() => fetchAssets(true)} onStateChange={setAgentState} initialBrief={initialBrief || undefined} initialRefs={initialRefs} initialUseSeedance={initialUseSeedance} />
+                <AgentPanel ref={agentRef} projectId={projectId} onArtifact={() => fetchAssets(true)} onStateChange={setAgentState} initialBrief={initialBrief || undefined} initialRefs={initialRefs} initialUseSeedance={initialUseSeedance} onJobStart={(kind) => { setActiveTab(kind === 'video' ? 'videos' : 'images'); startJobRefetchBurst(); }} />
             </div>
         );
     }
@@ -556,6 +621,7 @@ export default function ProjectContainerPage() {
                             initialBrief={initialBrief || undefined}
                             initialRefs={initialRefs}
                             initialUseSeedance={initialUseSeedance}
+                            onJobStart={(kind) => { setActiveTab(kind === 'video' ? 'videos' : 'images'); startJobRefetchBurst(); }}
                         />
                     </div>
                 )}

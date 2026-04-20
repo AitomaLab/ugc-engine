@@ -86,6 +86,7 @@ def generate_video(
     multi_prompt=None,
     reference_image_urls=None,
     reference_video_urls=None,
+    aspect_ratio="9:16",
 ):
     """Submit a video generation job to KIE and poll until completion.
 
@@ -109,8 +110,8 @@ def generate_video(
             "image_urls": [reference_image_url] if reference_image_url else [],
             "sound": True,
             "duration": kling_duration,
-            "aspectRatio": "9:16",
-            "aspect_ratio": "9:16",
+            "aspectRatio": aspect_ratio,
+            "aspect_ratio": aspect_ratio,
             "mode": "pro",
             "multi_shots": is_multi,
             "multi_prompt": multi_prompt if is_multi else [],
@@ -125,7 +126,7 @@ def generate_video(
         payload = {
             "prompt": prompt,
             "model": model_api_kie,
-            "aspect_ratio": "9:16",
+            "aspect_ratio": aspect_ratio,
             "enableFallback": False,
             "enableTranslation": False,
             "watermark": "",
@@ -139,7 +140,7 @@ def generate_video(
             "model": model_api_kie,
             "input": {
                 "prompt": prompt,
-                "aspect_ratio": "9:16",
+                "aspect_ratio": aspect_ratio,
                 "resolution": "720p",
                 "duration": duration,
                 "generate_audio": True,
@@ -162,11 +163,17 @@ def generate_video(
 
     # Submit
     try:
+        print(f"[KIE submit] family={family} model={model_api_kie} payload={json.dumps(payload)[:2000]}", flush=True)
+    except Exception:
+        pass
+    try:
         resp = requests.post(endpoints["generate"], headers=KIE_HEADERS, json=payload, timeout=60)
     except Exception as e:
         raise RuntimeError(f"KIE API network error: {e}")
 
     if resp.status_code != 200:
+        body = resp.text[:2000]
+        print(f"[KIE submit] HTTP {resp.status_code} body={body}", flush=True)
         try:
             err_data = resp.json()
             err_msg = err_data.get("message", err_data.get("msg", str(err_data)))
@@ -176,6 +183,7 @@ def generate_video(
 
     result = resp.json()
     if result.get("code") != 200:
+        print(f"[KIE submit] non-200 code result={str(result)[:2000]}", flush=True)
         raise RuntimeError(f"KIE API error: {result.get('message', result.get('msg', str(result)))}")
 
     task_id = result["data"]["taskId"]
@@ -244,6 +252,7 @@ def generate_video(
                     print(f"      Error parsing resultJson: {e}")
                     continue
             elif state == "fail":
+                print(f"[KIE poll] fail data={str(data)[:2000]}", flush=True)
                 error_msg = data.get("failMsg", "Unknown generation error")
                 raise RuntimeError(f"Generation failed: {error_msg}")
 
@@ -420,6 +429,7 @@ def generate_video_with_retry(
     max_retries=3,
     kling_elements=None,
     multi_prompt=None,
+    aspect_ratio="9:16",
 ):
     """Try KIE (with short retries) then fall back to WaveSpeed for the same family."""
     family = _get_model_family(model_api or "")
@@ -435,6 +445,7 @@ def generate_video_with_retry(
                 kling_elements=kling_elements,
                 multi_prompt=multi_prompt,
                 max_poll_seconds=kie_max_poll,
+                aspect_ratio=aspect_ratio,
             )
         except RuntimeError as e:
             last_error = e

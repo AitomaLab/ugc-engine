@@ -430,8 +430,9 @@ export function Header() {
             </nav>
 
             <div className="header-actions">
-                <CreateDropdown />
-                <div className="nav-divider hide-mobile" />
+                {/* CreateDropdown hidden — creation flows are now driven by the agents. */}
+                {/* <CreateDropdown /> */}
+                {/* <div className="nav-divider hide-mobile" /> */}
                 <LangToggle />
                 <NotificationDropdown />
                 <ProfileDropdown />

@@ -531,7 +531,12 @@ STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 
 def _resolve_project_id(request: Request, user: dict | None) -> str | None:
     """Read X-Project-Id header sent by the frontend.
-    Falls back to the user's default project if the header is missing."""
+    Falls back to the user's default project if the header is missing.
+    Callers that want cross-project data (dashboard aggregations) send
+    X-Skip-Project-Scope: 1 — we return None in that case so the caller
+    queries across all of the user's projects."""
+    if request.headers.get("x-skip-project-scope"):
+        return None
     pid = request.headers.get("x-project-id")
     if pid:
         return pid

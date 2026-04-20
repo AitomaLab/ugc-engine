@@ -51,6 +51,7 @@ class AgentRunRequest(BaseModel):
     project_id: str
     refs: Optional[list[AgentRef]] = None
     use_seedance: bool = False
+    lang: Optional[str] = None  # 'en' | 'es' — steers conversational reply language
 
 
 class AgentResetRequest(BaseModel):
@@ -98,16 +99,25 @@ async def stop_agent(
     data: AgentStopRequest,
     user: dict = Depends(get_current_user),
 ):
+    # Always clear the project's concurrency lock so the next /stream can start
+    # fresh, even if the previous run is wedged (hung SSE, dropped client, etc).
+    # A still-running task in the old lock finishes harmlessly into a lock no
+    # one is waiting on.
+    _active_streams.pop(data.project_id, None)
+
     thread = await get_thread(user["token"], user["id"], data.project_id)
     session_id = thread.get("anthropic_session_id") if thread else None
     if not session_id:
-        return {"ok": False, "reason": "no active session"}
+        return {"ok": True, "lock_cleared": True, "session_interrupted": False}
     try:
         client = get_managed_agent_client()
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
-    await client.interrupt_session(session_id)
-    return {"ok": True}
+    try:
+        await client.interrupt_session(session_id)
+    except Exception as e:
+        return {"ok": True, "lock_cleared": True, "session_interrupted": False, "interrupt_error": str(e)}
+    return {"ok": True, "lock_cleared": True, "session_interrupted": True}
 
 
 # ── POST /agent/stream (SSE) ───────────────────────────────────────────
@@ -240,12 +250,15 @@ async def agent_stream(
                     except Exception as e:
                         print(f"[agent_stream] mid-run upsert failed: {e}")
 
+                image_urls = [r.image_url for r in refs if r.image_url]
                 async for ev in client.run_stream(
                     brief=augmented_brief,
                     user_token=user_token,
                     project_id=project_id,
                     session_id=session_id,
                     prior_turns=prior_turns,
+                    lang=data.lang,
+                    image_urls=image_urls or None,
                 ):
                     t = ev.get("type")
                     if t == "session":

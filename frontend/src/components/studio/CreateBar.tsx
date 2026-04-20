@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { creativeFetch } from '@/lib/creative-os-api';
 import type { PromptOption, EnhanceResponse } from '@/lib/creative-os-api';
 import { useApp } from '@/providers/AppProvider';
+import { useTranslation } from '@/lib/i18n';
 
 type BarState = 'idle' | 'enhancing' | 'generating' | 'complete';
 
@@ -35,6 +36,7 @@ const LANGUAGES = ['EN', 'ES'];
 
 export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onPreloadConsumed }: CreateBarProps) {
     const { session } = useApp();
+    const { t } = useTranslation();
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const barRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -244,7 +246,7 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                     }
                 } catch (e: any) {
                     console.error('[CreateBar] Custom image upload failed:', e);
-                    setError(`Image upload failed: ${e.message || 'Unknown error'}`);
+                    setError(t('creativeOs.createBar.uploadFailed').replace('{msg}', e.message || t('creativeOs.createBar.unknownError')));
                 }
             }
 
@@ -383,7 +385,7 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
             setTimeout(() => onGenerated(), 5000);
             setTimeout(() => setBarState('idle'), 3000);
         } catch (err: any) {
-            setError(err.message || 'Generation failed');
+            setError(err.message || t('creativeOs.createBar.generationFailed'));
             setPrompt(userPrompt); // Restore prompt on error so user doesn't lose input
             setBarState('idle');
         }
@@ -396,7 +398,7 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
             const views = p.image_url ? [p.image_url, ...extras.filter((v: string) => v !== p.image_url)] : extras;
             return {
                 id: p.id,
-                name: p.name || p.product_name || 'Product',
+                name: p.name || p.product_name || t('creativeOs.createBar.productFallback'),
                 type: 'product' as const,
                 image_url: p.image_url,
                 views: views.length > 1 ? views : undefined,
@@ -407,7 +409,7 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
             const views = inf.image_url ? [inf.image_url, ...extras.filter((v: string) => v !== inf.image_url)] : extras;
             return {
                 id: inf.id,
-                name: inf.name || 'Model',
+                name: inf.name || t('creativeOs.createBar.modelFallback'),
                 type: 'influencer' as const,
                 image_url: inf.image_url,
                 views: views.length > 1 ? views : undefined,
@@ -514,21 +516,21 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
 
     const estimatedCost = fullVideo ? (videoLength === 15 ? 156 : 245) : (activeTab === 'images' ? 12 : 35);
 
-    let btnLabel = 'Generate ✦';
-    if (activeTab === 'videos') btnLabel = fullVideo ? 'Generate Video ✦' : 'Animate ✦';
-    if (barState === 'enhancing') btnLabel = 'Enhancing...';
-    if (barState === 'generating') btnLabel = 'Generating...';
+    let btnLabel = t('creativeOs.createBar.generateBtn');
+    if (activeTab === 'videos') btnLabel = fullVideo ? t('creativeOs.createBar.generateVideoBtn') : t('creativeOs.createBar.animateBtn');
+    if (barState === 'enhancing') btnLabel = t('creativeOs.createBar.enhancingBtn');
+    if (barState === 'generating') btnLabel = t('creativeOs.createBar.generatingBtn');
 
     const placeholder = activeTab === 'images'
-        ? 'Describe your scene... (e.g. woman applying mascara in golden hour light)'
-        : 'Describe your video... (e.g. woman showing mascara results in natural light)';
+        ? t('creativeOs.createBar.imagePlaceholder')
+        : t('creativeOs.createBar.videoPlaceholder');
 
     return (
         <>
             {/* Product Picker */}
-            {productPickerOpen && <PickerModal title="Select Product" items={products} onSelect={p => { setSelectedProduct(p); setProductPickerOpen(false); }} onClose={() => setProductPickerOpen(false)} onLoad={loadProducts} />}
-            {influencerPickerOpen && <PickerModal title="Select Model" items={influencers} onSelect={inf => { setSelectedInfluencer(inf); setInfluencerPickerOpen(false); }} onClose={() => setInfluencerPickerOpen(false)} onLoad={loadInfluencers} />}
-            {imagePickerOpen && <PickerModal title="Select Image" items={projectImages} onSelect={img => { setSelectedImage(img); setImagePickerOpen(false); }} onClose={() => setImagePickerOpen(false)} onLoad={loadProjectImages} />}
+            {productPickerOpen && <PickerModal title={t('creativeOs.createBar.selectProduct')} items={products} onSelect={p => { setSelectedProduct(p); setProductPickerOpen(false); }} onClose={() => setProductPickerOpen(false)} onLoad={loadProducts} />}
+            {influencerPickerOpen && <PickerModal title={t('creativeOs.createBar.selectModel')} items={influencers} onSelect={inf => { setSelectedInfluencer(inf); setInfluencerPickerOpen(false); }} onClose={() => setInfluencerPickerOpen(false)} onLoad={loadInfluencers} />}
+            {imagePickerOpen && <PickerModal title={t('creativeOs.createBar.selectImage')} items={projectImages} onSelect={img => { setSelectedImage(img); setImagePickerOpen(false); }} onClose={() => setImagePickerOpen(false)} onLoad={loadProjectImages} />}
 
             {/* Hidden file input for custom uploads */}
             <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFileUpload} />
@@ -536,7 +538,7 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
             {/* ═══════ MAIN CREATE BAR ═══════ */}
             <div className="co-bar-wrapper" ref={barRef}>
                 {error && <div className="co-bar-error">{error}</div>}
-                {barState === 'complete' && <div className="co-bar-success">✓ Generation started! Your {activeTab === 'images' ? 'image' : 'video'} will appear shortly.</div>}
+                {barState === 'complete' && <div className="co-bar-success">{activeTab === 'images' ? t('creativeOs.createBar.successImage') : t('creativeOs.createBar.successVideo')}</div>}
 
                 <div className="co-bar-card">
                     {/* ── ROW 1: References + Prompt ── */}
@@ -596,10 +598,10 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                                             onMouseDown={(e) => { e.preventDefault(); setMentionShotPicker(null); }}
                                             style={{ border: '1px solid rgba(13,27,62,0.15)', background: 'white', borderRadius: 6, padding: '2px 8px', cursor: 'pointer', fontSize: 11 }}
                                         >
-                                            ← Back
+                                            {t('creativeOs.createBar.mentionBack')}
                                         </button>
                                         <span style={{ fontSize: 11, fontWeight: 600 }}>
-                                            Pick a shot for {mentionShotPicker.name}
+                                            {t('creativeOs.createBar.mentionPickShot').replace('{name}', mentionShotPicker.name)}
                                         </span>
                                     </div>
                                     <div className="co-mention-grid">
@@ -612,11 +614,11 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                                                     const match = mentionItems.find(m => m.id === mentionShotPicker.id && m.type === mentionShotPicker.type);
                                                     if (match) finalizeMentionInsert(match, url);
                                                 }}
-                                                title={i === 0 ? 'Profile image' : `Shot ${i + 1}`}
+                                                title={i === 0 ? t('creativeOs.mention.profileImage') : t('creativeOs.createBar.mentionShot').replace('{n}', String(i + 1))}
                                             >
                                                 {/* eslint-disable-next-line @next/next/no-img-element */}
                                                 <img src={url} alt="" className="co-mention-card-img" />
-                                                <span className="co-mention-card-name">{i === 0 ? 'Profile' : `Shot ${i + 1}`}</span>
+                                                <span className="co-mention-card-name">{i === 0 ? t('creativeOs.createBar.mentionProfile') : t('creativeOs.createBar.mentionShot').replace('{n}', String(i + 1))}</span>
                                             </div>
                                         ))}
                                     </div>
@@ -630,7 +632,7 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                                 <div className="co-mention-dropdown" ref={mentionListRef}>
                                     {mentionModels.length > 0 && (
                                         <>
-                                            <div className="co-mention-header">👤 Models</div>
+                                            <div className="co-mention-header">{t('creativeOs.createBar.models')}</div>
                                             <div className="co-mention-grid">
                                                 {mentionModels.map((item) => {
                                                     const idx = ordered.indexOf(item);
@@ -655,7 +657,7 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                                     )}
                                     {mentionProducts.length > 0 && (
                                         <>
-                                            <div className="co-mention-header">📦 Products</div>
+                                            <div className="co-mention-header">{t('creativeOs.createBar.products')}</div>
                                             <div className="co-mention-grid">
                                                 {mentionProducts.map((item) => {
                                                     const idx = ordered.indexOf(item);
@@ -688,7 +690,7 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                     <div className="co-bar-row2">
                         <div className="co-bar-settings">
                             {/* Mode */}
-                            <Dropdown label={`Mode: ${currentMode.label}`} id="mode" activeDropdown={activeDropdown} onToggle={toggleDropdown} variant="primary">
+                            <Dropdown label={t('creativeOs.createBar.modeLabel').replace('{name}', currentMode.label)} id="mode" activeDropdown={activeDropdown} onToggle={toggleDropdown} variant="primary">
                                 {modes.map(m => (
                                     <button key={m.id} className={`co-dd-item ${mode === m.id ? 'active' : ''}`} onClick={() => { setMode(m.id); setActiveDropdown(null); }}>
                                         {m.label}
@@ -728,7 +730,7 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                                     </Dropdown>
 
                                     {!fullVideo && !multiShot && (
-                                        <Dropdown label={`Clip: ${clipLength}s`} id="clip" activeDropdown={activeDropdown} onToggle={toggleDropdown}>
+                                        <Dropdown label={t('creativeOs.createBar.clipLabel').replace('{n}', String(clipLength))} id="clip" activeDropdown={activeDropdown} onToggle={toggleDropdown}>
                                             {(currentVideoMode?.clipLengths || [5]).map(cl => (
                                                 <button key={cl} className={`co-dd-item ${clipLength === cl ? 'active' : ''}`} onClick={() => { setClipLength(cl); setActiveDropdown(null); }}>
                                                     {cl}s
@@ -741,7 +743,7 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                                         <>
                                             <div className="co-toggle-inline">
                                                 <ToggleSwitch checked={multiShot} onChange={(v) => { setMultiShot(v); if (v) setFullVideo(false); }} />
-                                                <span className="co-toggle-label">Multi-Shot{multiShot ? <span className="co-toggle-badge">ON</span> : ''}</span>
+                                                <span className="co-toggle-label">{t('creativeOs.createBar.multiShot')}{multiShot ? <span className="co-toggle-badge">{t('creativeOs.createBar.on')}</span> : ''}</span>
                                             </div>
                                             {multiShot && (
                                                 <div className="co-slider-inline">
@@ -761,7 +763,7 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                                     ) : (
                                         <div className="co-toggle-inline">
                                             <ToggleSwitch checked={fullVideo} onChange={(v) => { setFullVideo(v); if (v) setMultiShot(false); }} />
-                                            <span className="co-toggle-label">Multi-Shot{fullVideo ? <span className="co-toggle-badge">ON</span> : ''}</span>
+                                            <span className="co-toggle-label">{t('creativeOs.createBar.multiShot')}{fullVideo ? <span className="co-toggle-badge">{t('creativeOs.createBar.on')}</span> : ''}</span>
                                         </div>
                                     )}
 
@@ -770,9 +772,9 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                                         onClick={handleGenerateScript}
                                         disabled={scriptLoading || barState !== 'idle'}
                                         className="co-ai-script-btn"
-                                        title="Generate an AI script based on your product, influencer and language"
+                                        title={t('creativeOs.createBar.aiScriptTitle')}
                                     >
-                                        {scriptLoading ? 'Writing...' : <><svg width="14" height="14" viewBox="40 40 300 300" fill="currentColor" style={{display:'inline',verticalAlign:'-2px'}}><path d="M67.27 185.02L52.28 189.16L67.27 193.29C124.52 209.07 169.24 253.79 185.02 311.04L189.15 326.03L193.29 311.04C209.07 253.79 253.79 209.07 311.04 193.29L326.03 189.16L311.04 185.02C253.79 169.24 209.07 124.52 193.29 67.27L189.15 52.28L185.02 67.27C169.24 124.52 124.52 169.24 67.27 185.02Z"/></svg> AI Script</>}
+                                        {scriptLoading ? t('creativeOs.createBar.writingBtn') : <><svg width="14" height="14" viewBox="40 40 300 300" fill="currentColor" style={{display:'inline',verticalAlign:'-2px'}}><path d="M67.27 185.02L52.28 189.16L67.27 193.29C124.52 209.07 169.24 253.79 185.02 311.04L189.15 326.03L193.29 311.04C209.07 253.79 253.79 209.07 311.04 193.29L326.03 189.16L311.04 185.02C253.79 169.24 209.07 124.52 193.29 67.27L189.15 52.28L185.02 67.27C169.24 124.52 124.52 169.24 67.27 185.02Z"/></svg> {t('creativeOs.createBar.aiScript')}</>}
                                     </button>
                                 </>
                             )}
@@ -788,7 +790,7 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                     {activeTab === 'videos' && fullVideo && (
                         <div className="co-bar-row3">
                             <div className="co-bar-settings">
-                                <span className="co-row3-label">VIDEO LENGTH</span>
+                                <span className="co-row3-label">{t('creativeOs.createBar.videoLength')}</span>
                                 <Dropdown label={`${videoLength}s`} id="vl" activeDropdown={activeDropdown} onToggle={toggleDropdown}>
                                     {[15, 30].map(vl => (
                                         <button key={vl} className={`co-dd-item ${videoLength === vl ? 'active' : ''}`} onClick={() => { setVideoLength(vl); setActiveDropdown(null); }}>
@@ -798,11 +800,11 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                                 </Dropdown>
                                 <div className="co-toggle-inline">
                                     <ToggleSwitch checked={bgMusic} onChange={setBgMusic} />
-                                    <span className="co-toggle-label">Background Music</span>
+                                    <span className="co-toggle-label">{t('creativeOs.createBar.bgMusic')}</span>
                                 </div>
                                 <div className="co-toggle-inline">
                                     <ToggleSwitch checked={captions} onChange={setCaptions} />
-                                    <span className="co-toggle-label">Captions</span>
+                                    <span className="co-toggle-label">{t('creativeOs.createBar.captions')}</span>
                                 </div>
                             </div>
                             <span className="co-cost-label">Est. cost: <strong>{estimatedCost} credits</strong></span>
@@ -1117,10 +1119,11 @@ function ToggleSwitch({ checked, onChange }: { checked: boolean; onChange: (v: b
 function PickerModal({ title, items, onSelect, onClose, onLoad }: {
     title: string; items: any[]; onSelect: (item: any) => void; onClose: () => void; onLoad: () => void;
 }) {
+    const { t } = useTranslation();
     const [search, setSearch] = useState('');
     useEffect(() => { onLoad(); }, [onLoad]);
-    const isImagePicker = title === 'Select Image';
-    const isModelPicker = title === 'Select Model';
+    const isImagePicker = title === t('creativeOs.createBar.selectImage');
+    const isModelPicker = title === t('creativeOs.createBar.selectModel');
 
     const filtered = search.trim()
         ? items.filter(item => {
@@ -1158,7 +1161,7 @@ function PickerModal({ title, items, onSelect, onClose, onLoad }: {
                     <div style={{ padding: '12px 24px 4px' }}>
                         <input
                             type="text"
-                            placeholder={`Search ${isModelPicker ? 'models' : 'products'}...`}
+                            placeholder={isModelPicker ? t('creativeOs.createBar.searchModels') : t('creativeOs.createBar.searchProducts')}
                             value={search}
                             onChange={e => setSearch(e.target.value)}
                             style={{
@@ -1179,8 +1182,8 @@ function PickerModal({ title, items, onSelect, onClose, onLoad }: {
                     {filtered.length === 0
                         ? <div style={{ textAlign: 'center', padding: '48px 20px', color: '#8A93B0', fontSize: '14px' }}>
                             {items.length === 0
-                                ? (isImagePicker ? 'No images generated yet' : 'Loading...')
-                                : 'No results found'}
+                                ? (isImagePicker ? t('creativeOs.createBar.noImages') : t('creativeOs.createBar.loading'))
+                                : t('creativeOs.createBar.noResults')}
                           </div>
                         : <div style={{
                             display: 'grid',

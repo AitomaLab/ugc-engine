@@ -49,7 +49,7 @@ def _get_model_family(model_name=None):
     return "veo"
 
 
-def generate_video(prompt, reference_image_url=None, model_api=None, first_frame_url=None, return_last_frame=False, duration=12, kling_elements=None, max_poll_seconds=None, multi_prompt=None, reference_image_urls=None, reference_video_urls=None):
+def generate_video(prompt, reference_image_url=None, model_api=None, first_frame_url=None, return_last_frame=False, duration=12, kling_elements=None, max_poll_seconds=None, multi_prompt=None, reference_image_urls=None, reference_video_urls=None, aspect_ratio=None):
     """
     Generate video using specified AI model API (Seedance/Kie.ai).
 
@@ -72,13 +72,15 @@ def generate_video(prompt, reference_image_url=None, model_api=None, first_frame
     family = _get_model_family(model_api)
     endpoints = MODEL_ENDPOINTS[family]
 
+    resolved_ar = aspect_ratio or config.VIDEO_ASPECT_RATIO or "9:16"
+
     if family == "seedance":
         # --- Seedance 2.0 payload (bytedance/seedance-2 API spec) ---
         payload = {
             "model": model_api,
             "input": {
                 "prompt": prompt,
-                "aspect_ratio": config.VIDEO_ASPECT_RATIO,
+                "aspect_ratio": resolved_ar,
                 "resolution": config.SEEDANCE_QUALITY,
                 "duration": duration,  # Seedance 2.0 accepts 4/8/12 (integer)
                 "generate_audio": config.SEEDANCE_AUDIO,
@@ -112,7 +114,7 @@ def generate_video(prompt, reference_image_url=None, model_api=None, first_frame
             "image_urls": [reference_image_url] if reference_image_url else [],
             "sound": True,
             "duration": kling_duration,
-            "aspect_ratio": "9:16",
+            "aspect_ratio": resolved_ar,
             "mode": "pro",
             "multi_shots": is_multi,
             "multi_prompt": multi_prompt if is_multi else [],
@@ -129,7 +131,7 @@ def generate_video(prompt, reference_image_url=None, model_api=None, first_frame
         payload = {
             "prompt": prompt,
             "model": model_api,
-            "aspect_ratio": "9:16",
+            "aspect_ratio": resolved_ar,
             "enableFallback": False,
             "enableTranslation": False,
             "watermark": "",

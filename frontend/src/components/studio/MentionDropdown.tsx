@@ -1,5 +1,6 @@
 import React from 'react';
 import { AgentRef } from '@/lib/creative-os-api';
+import { useTranslation } from '@/lib/i18n';
 
 export interface MentionItem {
     type: AgentRef['type'];
@@ -21,14 +22,14 @@ export interface MentionDropdownProps {
     onBackFromShotPicker?: () => void;
 }
 
-const GROUP_LABELS: Record<MentionItem['type'], string> = {
-    product: 'Products',
-    influencer: 'Models',
-    image: 'Images',
-    video: 'Videos',
-};
-
 export function MentionDropdown({ groups, ordered, activeIndex, onPick, onHover, shotPickerItem, onPickShot, onBackFromShotPicker }: MentionDropdownProps) {
+    const { t } = useTranslation();
+    const GROUP_LABELS: Record<MentionItem['type'], string> = {
+        product: t('creativeOs.mention.products'),
+        influencer: t('creativeOs.mention.models'),
+        image: t('creativeOs.mention.images'),
+        video: t('creativeOs.mention.videos'),
+    };
     const groupOrder: MentionItem['type'][] = ['product', 'influencer', 'image', 'video'];
     const containerStyle: React.CSSProperties = {
         position: 'absolute',
@@ -61,10 +62,10 @@ export function MentionDropdown({ groups, ordered, activeIndex, onPick, onHover,
                             color: '#0D1B3E',
                         }}
                     >
-                        ← Back
+                        {t('creativeOs.mention.back')}
                     </button>
                     <span style={{ fontSize: '11px', fontWeight: 600, color: '#0D1B3E' }}>
-                        Pick a shot for {shotPickerItem.name}
+                        {t('creativeOs.mention.pickShotFor').replace('{name}', shotPickerItem.name)}
                     </span>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
@@ -73,7 +74,7 @@ export function MentionDropdown({ groups, ordered, activeIndex, onPick, onHover,
                             key={`${url}-${i}`}
                             type="button"
                             onMouseDown={(e) => { e.preventDefault(); onPickShot(url); }}
-                            title={i === 0 ? 'Profile image' : `Shot ${i + 1}`}
+                            title={i === 0 ? t('creativeOs.mention.profileImage') : t('creativeOs.mention.shot').replace('{n}', String(i + 1))}
                             style={{
                                 display: 'flex',
                                 flexDirection: 'column',
@@ -100,7 +101,7 @@ export function MentionDropdown({ groups, ordered, activeIndex, onPick, onHover,
                                 <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                             </div>
                             <span style={{ fontSize: '10px', color: '#0D1B3E', fontWeight: 500, textAlign: 'center' }}>
-                                {i === 0 ? 'Profile' : `Shot ${i + 1}`}
+                                {i === 0 ? t('creativeOs.mention.profile') : t('creativeOs.mention.shot').replace('{n}', String(i + 1))}
                             </span>
                         </button>
                     ))}
@@ -112,7 +113,7 @@ export function MentionDropdown({ groups, ordered, activeIndex, onPick, onHover,
         <div style={containerStyle}>
             {ordered.length === 0 ? (
                 <div style={{ padding: '12px 8px', fontSize: '12px', color: '#8A93B0', textAlign: 'center' }}>
-                    No matches found
+                    {t('creativeOs.mention.noMatches')}
                 </div>
             ) : (
                 groupOrder.map((gType) => {

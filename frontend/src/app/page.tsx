@@ -79,31 +79,31 @@ function groupByCampaign(jobs: Job[]): CampaignGroup[] {
 // Suggestion Chips
 // ---------------------------------------------------------------------------
 
-const SUGGESTION_CHIPS = [
-  "Create a UGC ad for my product",
-  "Generate product shots",
-  "Build a 5-video campaign",
-  "Make a Spanish-language ad",
-  "Create an AI clone video",
+const SUGGESTION_CHIP_KEYS = [
+  "creativeOs.dashboard.chipUgc",
+  "creativeOs.dashboard.chipProductShots",
+  "creativeOs.dashboard.chipCampaign",
+  "creativeOs.dashboard.chipSpanish",
+  "creativeOs.dashboard.chipClone",
 ];
 
 // ---------------------------------------------------------------------------
 // Relative Time Helper
 // ---------------------------------------------------------------------------
 
-function relativeTime(d: string): string {
+function relativeTime(d: string, t: (k: string) => string, lang: 'en' | 'es'): string {
   const now = new Date();
   const date = new Date(d);
   const diffMs = now.getTime() - date.getTime();
   const diffMins = Math.floor(diffMs / 60000);
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffMins < 1) return t('creativeOs.dashboard.justNow');
+  if (diffMins < 60) return t('creativeOs.dashboard.minutesAgo').replace('{n}', String(diffMins));
   const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffHours < 24) return t('creativeOs.dashboard.hoursAgo').replace('{n}', String(diffHours));
   const diffDays = Math.floor(diffHours / 24);
-  if (diffDays < 7) return `${diffDays}d ago`;
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
-  return date.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+  if (diffDays < 7) return t('creativeOs.dashboard.daysAgo').replace('{n}', String(diffDays));
+  if (diffDays < 30) return t('creativeOs.dashboard.weeksAgo').replace('{n}', String(Math.floor(diffDays / 7)));
+  return date.toLocaleDateString(lang === 'es' ? 'es-ES' : 'en-US', { day: 'numeric', month: 'short' });
 }
 
 interface MentionItem {
@@ -122,7 +122,7 @@ function slugify(s: string): string {
 // ---------------------------------------------------------------------------
 
 export default function StudioPage() {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const router = useRouter();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [influencers, setInfluencers] = useState<Influencer[]>([]);
@@ -300,28 +300,16 @@ export default function StudioPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [jobsData, infData, projectsData] = await Promise.all([
-        apiFetch<Job[]>("/jobs?limit=100&include_clones=true"),
+      const [jobsData, infData, projectsData, recentImgs] = await Promise.all([
+        apiFetch<Job[]>("/jobs?limit=100&include_clones=true", { skipProjectScope: true }),
         apiFetch<Influencer[]>("/influencers"),
         creativeFetch<any[]>('/creative-os/projects/').catch(() => []),
+        creativeFetch<RecentImage[]>('/creative-os/projects/recent-images?limit=20').catch(() => []),
       ]);
       setJobs(jobsData);
       setInfluencers(infData);
       setProjects(projectsData || []);
-
-      // Fetch recent images from first 8 projects (in parallel)
-      if (projectsData && projectsData.length > 0) {
-        const imagePromises = projectsData.slice(0, 8).map((p: any) =>
-          creativeFetch<RecentImage[]>(`/creative-os/projects/${p.id}/assets/images`).catch(() => [])
-        );
-        const imageResults = await Promise.all(imagePromises);
-        const allImages = imageResults
-          .flat()
-          .filter(img => img.image_url || img.result_url)
-          .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
-          .slice(0, 20);
-        setRecentImages(allImages);
-      }
+      setRecentImages(recentImgs || []);
     } catch (err) {
       console.error("Dashboard fetch error:", err);
     } finally {
@@ -331,8 +319,18 @@ export default function StudioPage() {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 15000);
-    return () => clearInterval(interval);
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      fetchData();
+    }, 30000);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') fetchData();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [fetchData]);
 
   // Derived data
@@ -551,15 +549,22 @@ export default function StudioPage() {
           position: 'relative',
           zIndex: 1,
         }}>
-          What will you create today,{' '}
-          <span style={{
-            background: 'linear-gradient(135deg, #337AFF, #6B4EFF)',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-          }}>
-            {userName}
-          </span>
-          ?
+          {(() => {
+            const parts = t('creativeOs.dashboard.heroGreeting').split('{name}');
+            return (
+              <>
+                {parts[0]}
+                <span style={{
+                  background: 'linear-gradient(135deg, #337AFF, #6B4EFF)',
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent',
+                }}>
+                  {userName}
+                </span>
+                {parts[1] ?? ''}
+              </>
+            );
+          })()}
         </h1>
 
         {/* ── Composer Card ──────────────────────────────────────────── */}
@@ -598,10 +603,10 @@ export default function StudioPage() {
                 margin: '0 auto 16px',
               }} />
               <p style={{ fontSize: '15px', fontWeight: 600, color: '#0D1B3E', margin: 0 }}>
-                Creating your project…
+                {t('creativeOs.dashboard.creatingProjectTitle')}
               </p>
               <p style={{ fontSize: '13px', color: '#8A93B0', marginTop: '6px' }}>
-                Generating name and setting up workspace
+                {t('creativeOs.dashboard.creatingProjectHint')}
               </p>
             </div>
           ) : (
@@ -730,7 +735,7 @@ export default function StudioPage() {
                 value={prompt}
                 onChange={handlePromptChange}
                 onKeyDown={handleMentionKeyDown}
-                placeholder="Tell the Creative Director what to make next..."
+                placeholder={t('creativeOs.dashboard.textareaPlaceholder')}
                 rows={2}
                 style={{
                   width: '100%',
@@ -758,7 +763,7 @@ export default function StudioPage() {
                   <button
                     onClick={() => setPlusMenuOpen(!plusMenuOpen)}
                     onBlur={() => setTimeout(() => setPlusMenuOpen(false), 150)}
-                    title="Menu"
+                    title={t('creativeOs.dashboard.menuTitle')}
                     style={{
                       width: '34px', height: '34px',
                       borderRadius: '10px',
@@ -807,7 +812,7 @@ export default function StudioPage() {
                         onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                       >
                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#337AFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-                         Attach
+                         {t('creativeOs.dashboard.menuAttach')}
                       </button>
                       <button
                         onClick={openReferenceDropdown}
@@ -822,7 +827,7 @@ export default function StudioPage() {
                         onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                       >
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#337AFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.92 7.94"/></svg>
-                         Reference
+                         {t('creativeOs.dashboard.menuReference')}
                       </button>
                     </div>
                   )}
@@ -871,7 +876,7 @@ export default function StudioPage() {
                 <button
                   onClick={recording ? stopRecording : startRecording}
                   disabled={transcribing}
-                  title={recording ? 'Stop recording' : transcribing ? 'Transcribing…' : 'Dictate'}
+                  title={recording ? t('creativeOs.dashboard.micStop') : transcribing ? t('creativeOs.dashboard.micTranscribing') : t('creativeOs.dashboard.micDictate')}
                   style={{
                     width: '34px', height: '34px',
                     borderRadius: '50%', border: 'none',
@@ -903,7 +908,7 @@ export default function StudioPage() {
                 <button
                   onClick={() => handleSubmit()}
                   disabled={!canSend}
-                  title="Send"
+                  title={t('creativeOs.dashboard.sendTitle')}
                   style={{
                     width: '36px', height: '36px',
                     borderRadius: '50%', border: 'none',
@@ -939,9 +944,11 @@ export default function StudioPage() {
             position: 'relative',
             zIndex: 1,
           }}>
-            {SUGGESTION_CHIPS.map((chip) => (
+            {SUGGESTION_CHIP_KEYS.map((key) => {
+              const chip = t(key);
+              return (
               <button
-                key={chip}
+                key={key}
                 onClick={() => handleSubmit(chip)}
                 style={{
                   padding: '7px 16px',
@@ -969,7 +976,8 @@ export default function StudioPage() {
               >
                 {chip}
               </button>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -1000,10 +1008,10 @@ export default function StudioPage() {
         }}>
           {(['projects', 'videos', 'images', 'campaigns'] as const).map((tab) => {
             const labels = {
-              projects: 'My Projects',
-              videos: 'Recent Videos',
-              images: 'Recent Images',
-              campaigns: 'My Campaigns',
+              projects: t('creativeOs.dashboard.tabProjects'),
+              videos: t('creativeOs.dashboard.tabVideos'),
+              images: t('creativeOs.dashboard.tabImages'),
+              campaigns: t('creativeOs.dashboard.tabCampaigns'),
             };
             const counts: Record<string, number> = {
               projects: projects.length,
@@ -1055,7 +1063,7 @@ export default function StudioPage() {
               textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px', padding: '16px 0',
             }}
           >
-            Browse all
+            {t('creativeOs.dashboard.browseAll')}
             <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
               <line x1="5" y1="12" x2="19" y2="12" />
               <polyline points="12 5 19 12 12 19" />
@@ -1078,6 +1086,8 @@ export default function StudioPage() {
                 const imageCount = p.asset_counts?.images || 0;
                 const hasAssets = videoCount > 0 || imageCount > 0;
                 const previewUrl = p.recent_previews?.[0]?.url;
+                const previewIsVideo = !!previewUrl && /\.(mp4|webm|mov)(\?|#|$)/i.test(previewUrl);
+                const fallbackGradient = `linear-gradient(135deg, hsl(${(p.name?.charCodeAt(0) || 0) * 7 % 360}, 45%, 90%), hsl(${((p.name?.charCodeAt(0) || 0) * 7 + 40) % 360}, 45%, 84%))`;
                 return (
                   <Link key={p.id} href={`/projects/${p.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
                     <div style={{
@@ -1094,11 +1104,28 @@ export default function StudioPage() {
                       {/* Large thumbnail — like Lovable */}
                       <div style={{
                         height: '200px',
-                        background: previewUrl
+                        background: previewUrl && !previewIsVideo
                           ? `url(${previewUrl}) center/cover no-repeat`
-                          : `linear-gradient(135deg, hsl(${(p.name?.charCodeAt(0) || 0) * 7 % 360}, 45%, 90%), hsl(${((p.name?.charCodeAt(0) || 0) * 7 + 40) % 360}, 45%, 84%))`,
+                          : fallbackGradient,
                         position: 'relative',
+                        overflow: 'hidden',
                       }}>
+                        {previewIsVideo && previewUrl && (
+                          <video
+                            src={previewUrl}
+                            muted
+                            playsInline
+                            preload="metadata"
+                            style={{
+                              position: 'absolute',
+                              inset: 0,
+                              width: '100%',
+                              height: '100%',
+                              objectFit: 'cover',
+                              display: 'block',
+                            }}
+                          />
+                        )}
                         {/* Status badge */}
                         {hasAssets && (
                           <span style={{
@@ -1108,7 +1135,7 @@ export default function StudioPage() {
                             background: 'rgba(34,197,94,0.9)',
                             color: 'white',
                           }}>
-                            {videoCount > 0 && imageCount > 0 ? 'Active' : 'Done'}
+                            {videoCount > 0 && imageCount > 0 ? t('creativeOs.dashboard.badgeActive') : t('creativeOs.dashboard.badgeDone')}
                           </span>
                         )}
                       </div>
@@ -1123,9 +1150,13 @@ export default function StudioPage() {
                             {p.name}
                           </div>
                           <div style={{ fontSize: '12px', color: '#8A93B0', marginTop: '2px' }}>
-                            {p.updated_at ? `Edited ${relativeTime(p.updated_at)}` : p.created_at ? `Created ${relativeTime(p.created_at)}` : ''}
-                            {videoCount > 0 && ` · ${videoCount} video${videoCount !== 1 ? 's' : ''}`}
-                            {imageCount > 0 && ` · ${imageCount} image${imageCount !== 1 ? 's' : ''}`}
+                            {p.updated_at
+                              ? t('creativeOs.dashboard.edited').replace('{time}', relativeTime(p.updated_at, t, lang))
+                              : p.created_at
+                                ? t('creativeOs.dashboard.created').replace('{time}', relativeTime(p.created_at, t, lang))
+                                : ''}
+                            {videoCount > 0 && ` · ${videoCount === 1 ? t('creativeOs.dashboard.videoCountOne') : t('creativeOs.dashboard.videoCountMany').replace('{n}', String(videoCount))}`}
+                            {imageCount > 0 && ` · ${imageCount === 1 ? t('creativeOs.dashboard.imageCountOne') : t('creativeOs.dashboard.imageCountMany').replace('{n}', String(imageCount))}`}
                           </div>
                         </div>
                       </div>
@@ -1153,8 +1184,8 @@ export default function StudioPage() {
                       <polyline points="14 2 14 8 20 8" />
                     </svg>
                   </div>
-                  <span style={{ fontSize: '14px', fontWeight: 600 }}>No projects yet</span>
-                  <span style={{ fontSize: '13px', marginTop: '4px' }}>Start by typing a prompt above</span>
+                  <span style={{ fontSize: '14px', fontWeight: 600 }}>{t('creativeOs.dashboard.emptyProjectsLabel')}</span>
+                  <span style={{ fontSize: '13px', marginTop: '4px' }}>{t('creativeOs.dashboard.emptyProjectsHint')}</span>
                 </div>
               )}
             </div>
@@ -1163,7 +1194,7 @@ export default function StudioPage() {
           {/* ── Recent Videos — 9:16 portrait cards ─────────────── */}
           {activeBottomTab === 'videos' && (
             recentVideos.length === 0 ? (
-              <EmptyState icon="video" label="No videos yet" desc="Ask the agent to generate one" />
+              <EmptyState icon="video" label={t('creativeOs.dashboard.emptyVideosLabel')} desc={t('creativeOs.dashboard.emptyVideosHint')} />
             ) : (
               <div style={{
                 display: 'grid',
@@ -1199,10 +1230,10 @@ export default function StudioPage() {
                     </div>
                     <div style={{ padding: '10px 12px' }}>
                       <div style={{ fontSize: '12.5px', fontWeight: 600, color: '#0D1B3E', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {job.campaign_name || 'Creative OS'}
+                        {job.campaign_name || t('creativeOs.dashboard.cardFallbackName')}
                       </div>
                       <div style={{ fontSize: '11px', color: '#8A93B0', marginTop: '2px' }}>
-                        {relativeTime(job.created_at)}
+                        {relativeTime(job.created_at, t, lang)}
                       </div>
                     </div>
                   </div>
@@ -1214,7 +1245,7 @@ export default function StudioPage() {
           {/* ── Recent Images — 9:16 portrait cards ─────────────── */}
           {activeBottomTab === 'images' && (
             recentImages.length === 0 ? (
-              <EmptyState icon="image" label="No images yet" desc="Recent images will appear here after generation" />
+              <EmptyState icon="image" label={t('creativeOs.dashboard.emptyImagesLabel')} desc={t('creativeOs.dashboard.emptyImagesHint')} />
             ) : (
               <div style={{
                 display: 'grid',
@@ -1251,10 +1282,10 @@ export default function StudioPage() {
                       </div>
                       <div style={{ padding: '10px 12px' }}>
                         <div style={{ fontSize: '12.5px', fontWeight: 600, color: '#0D1B3E', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {img.product_name || 'Creative OS'}
+                          {img.product_name || t('creativeOs.dashboard.cardFallbackName')}
                         </div>
                         <div style={{ fontSize: '11px', color: '#8A93B0', marginTop: '2px' }}>
-                          {img.created_at ? relativeTime(img.created_at) : ''}
+                          {img.created_at ? relativeTime(img.created_at, t, lang) : ''}
                         </div>
                       </div>
                     </div>
@@ -1267,7 +1298,7 @@ export default function StudioPage() {
           {/* ── My Campaigns ────────────────────────────────────── */}
           {activeBottomTab === 'campaigns' && (
             campaigns.length === 0 ? (
-              <EmptyState icon="campaign" label="No campaigns yet" desc="Campaigns group related videos together" />
+              <EmptyState icon="campaign" label={t('creativeOs.dashboard.emptyCampaignsLabel')} desc={t('creativeOs.dashboard.emptyCampaignsHint')} />
             ) : (
               <div style={{
                 display: 'grid',
@@ -1292,7 +1323,7 @@ export default function StudioPage() {
                           <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg, #337AFF, #5B8FFF)', borderRadius: '3px', transition: 'width 0.3s ease' }} />
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', color: '#8A93B0' }}>
-                          <span>{c.success}/{c.total} completed</span>
+                          <span>{t('creativeOs.dashboard.campaignCompleted').replace('{done}', String(c.success)).replace('{total}', String(c.total))}</span>
                           <span>{pct}%</span>
                         </div>
                       </div>

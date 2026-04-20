@@ -19,7 +19,7 @@ CORE_API_URL = os.getenv("CORE_API_URL", "http://localhost:8000")
 class CoreAPIClient:
     """Async HTTP client for proxying requests to the core UGC backend."""
 
-    def __init__(self, token: str, project_id: Optional[str] = None):
+    def __init__(self, token: str, project_id: Optional[str] = None, skip_project_scope: bool = False):
         self.token = token
         self.project_id = project_id
         self._headers = {
@@ -28,6 +28,11 @@ class CoreAPIClient:
         }
         if project_id:
             self._headers["X-Project-Id"] = project_id
+        elif skip_project_scope:
+            # Tell the core backend NOT to fall back to the user's default
+            # project when no project header is sent. Used for dashboard
+            # aggregations that need data across every project the user owns.
+            self._headers["X-Skip-Project-Scope"] = "1"
 
     async def _request(self, method: str, path: str, _retries: int = 3, **kwargs) -> dict:
         import asyncio as _aio

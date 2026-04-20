@@ -15,6 +15,7 @@ import {
     type AgentStreamEvent,
 } from '@/lib/creative-os-api';
 import { supabase } from '@/lib/supabaseClient';
+import { useTranslation } from '@/lib/i18n';
 
 export interface AgentPanelHandle {
     useSeedance: boolean;
@@ -49,6 +50,8 @@ interface AgentPanelProps {
     initialRefs?: AgentRef[];
     /** Pre-set the Seedance toggle (e.g. from dashboard composer). */
     initialUseSeedance?: boolean;
+    /** Fires when the agent starts a generation job, so the parent can switch the gallery tab. */
+    onJobStart?: (kind: 'image' | 'video') => void;
 }
 
 interface MentionItem {
@@ -75,7 +78,61 @@ function slugify(s: string): string {
     return (s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 }
 
-export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse, hideHeader = false, onStateChange, onSubmitOverride, initialBrief, initialRefs, initialUseSeedance }: AgentPanelProps, ref: React.Ref<AgentPanelHandle>) {
+// Maps a backend tool_call event to a user-facing activity label. Specific
+// long-running jobs (animate, generate_video, render_edited_video, etc.) keep
+// their detailed copy; everything else falls into a phase category so the
+// indicator varies instead of flashing "Thinking…" for every call.
+function toolActivityLabel(
+    name: string,
+    mode: string | null | undefined,
+    summary: string | null | undefined,
+    t: (k: string) => string,
+): string {
+    const lmode = (mode || '').toLowerCase();
+    const lsum = (summary || '').toLowerCase();
+
+    if (name === 'animate_image') return t('creativeOs.agent.activityAnimatingKling');
+    if (name === 'generate_video') {
+        const isSeedance = lmode.startsWith('seedance_2') || lsum.includes('seedance_2');
+        const isCinematic = lmode === 'cinematic_video' || lsum.includes('"mode":"cinematic');
+        return isSeedance
+            ? t('creativeOs.agent.activityGeneratingSeedanceFull')
+            : isCinematic
+                ? t('creativeOs.agent.activityGeneratingCinematicFull')
+                : t('creativeOs.agent.activityGeneratingUgcFull');
+    }
+    if (name === 'create_ugc_video' || name === 'create_clone_video') {
+        return t('creativeOs.agent.activityProducingFull').replace('{name}', name);
+    }
+    if (name === 'create_bulk_campaign') return t('creativeOs.agent.activityBulkCampaign');
+    if (name === 'render_edited_video') return t('creativeOs.agent.activityRenderingEditFull');
+
+    if (name === 'generate_image' || name === 'generate_influencer'
+        || name === 'generate_identity' || name === 'generate_product_shots') {
+        return t('creativeOs.agent.activityGeneratingImage');
+    }
+
+    if (name.startsWith('list_') || name.startsWith('get_') || name === 'estimate_credits') {
+        return t('creativeOs.agent.activityChecking');
+    }
+    if (name.startsWith('analyze_')) return t('creativeOs.agent.activityAnalyzing');
+    if (name === 'generate_scripts' || name === 'generate_ai_script' || name === 'generate_caption') {
+        return t('creativeOs.agent.activityWriting');
+    }
+    if (name === 'caption_video') return t('creativeOs.agent.activityCaptioning');
+    if (name === 'combine_videos') return t('creativeOs.agent.activityCombining');
+    if (name === 'schedule_posts' || name === 'cancel_scheduled_post') {
+        return t('creativeOs.agent.activityScheduling');
+    }
+    if (name.startsWith('create_') || name === 'manage_app_clips') {
+        return t('creativeOs.agent.activitySettingUp');
+    }
+
+    return t('creativeOs.agent.activityWorking');
+}
+
+export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse, hideHeader = false, onStateChange, onSubmitOverride, initialBrief, initialRefs, initialUseSeedance, onJobStart }: AgentPanelProps, ref: React.Ref<AgentPanelHandle>) {
+    const { lang, t } = useTranslation();
     const [open, setOpen] = useState(false);
     const [brief, setBrief] = useState('');
     const [turns, setTurns] = useState<AgentTurn[]>([]);
@@ -115,7 +172,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     ? 'video'
                     : null;
             if (!kind) {
-                setError(`Unsupported file type: ${ct || 'unknown'}`);
+                setError(t('creativeOs.agent.unsupportedFile').replace('{type}', ct || 'unknown'));
                 continue;
             }
             const id = (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
@@ -197,9 +254,12 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
     // Voice dictation state
     const [recording, setRecording] = useState(false);
     const [transcribing, setTranscribing] = useState(false);
+    const [audioLevel, setAudioLevel] = useState(0);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const audioChunksRef = useRef<Blob[]>([]);
     const audioStreamRef = useRef<MediaStream | null>(null);
+    const audioContextRef = useRef<AudioContext | null>(null);
+    const silenceTimerRef = useRef<number | null>(null);
     // Refs the user has actually inserted into the current draft, keyed by tag.
     const [activeRefs, setActiveRefs] = useState<Map<string, AgentRef>>(new Map());
 
@@ -345,6 +405,9 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
     // Auto-start: if initialBrief is provided, pre-fill textarea and auto-submit once
     const hasAutoSubmitted = useRef(false);
     const pendingBriefRef = useRef<string | null>(null);
+    // Tags seeded from initialRefs (dashboard uploads / pre-populated mentions) —
+    // always forwarded regardless of whether @tag appears in the brief text.
+    const initialRefTagsRef = useRef<Set<string>>(new Set());
 
     // Phase 1: store the brief and pre-fill textarea (runs early)
     useEffect(() => {
@@ -358,10 +421,13 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         // Pre-populate activeRefs from initialRefs so handleRun includes them
         if (initialRefs && initialRefs.length > 0) {
             const refMap = new Map<string, AgentRef>();
+            const seedTags = new Set<string>();
             for (const r of initialRefs) {
                 refMap.set(r.tag, r);
+                seedTags.add(r.tag);
             }
             setActiveRefs(refMap);
+            initialRefTagsRef.current = seedTags;
         }
         console.log('[AgentPanel] Auto-submit: stored pending brief', initialBrief.slice(0, 50), 'refs:', initialRefs?.length ?? 0);
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -389,7 +455,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         const readyAttachments = attachments.filter((a) => a.status === 'ready' && a.url);
         const stillUploading = attachments.some((a) => a.status === 'uploading');
         if (stillUploading) {
-            setError('Wait for uploads to finish before sending.');
+            setError(t('creativeOs.agent.uploadWait'));
             return;
         }
         if ((!text && readyAttachments.length === 0) || running) return;
@@ -398,7 +464,9 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         // the final text (user may have deleted a tag manually).
         const refsForRequest: AgentRef[] = [];
         for (const [tag, ref] of activeRefs.entries()) {
-            if (text.includes(`@${tag}`)) refsForRequest.push(ref);
+            if (text.includes(`@${tag}`) || initialRefTagsRef.current.has(tag)) {
+                refsForRequest.push(ref);
+            }
         }
         // Include uploaded attachments as refs (always sent — user explicitly attached them).
         for (const att of readyAttachments) {
@@ -443,7 +511,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         setMentionOpen(false);
         setError(null);
         setRunning(true);
-        setActivity('Thinking…');
+        setActivity(t('creativeOs.agent.activityThinking'));
 
         // Submit intercept: parent handles the prompt (e.g. home page creates a project)
         if (onSubmitOverride) {
@@ -525,6 +593,9 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     setSessionId(e.session_id);
                     break;
                 case 'agent_message':
+                    // Text has started arriving — clear the thinking indicator now
+                    // so the user sees the message instead of a redundant spinner.
+                    setActivity('');
                     setTurns((prev) => {
                         const copy = prev.slice();
                         const idx = copy.length - 1;
@@ -547,27 +618,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     });
                     break;
                 case 'tool_call': {
-                    const mode = (e.mode || '').toLowerCase();
-                    const summary = (e.input_summary || '').toLowerCase();
-                    const isSeedance = mode.startsWith('seedance_2') || summary.includes('seedance_2');
-                    const isCinematic = mode === 'cinematic_video' || summary.includes('"mode":"cinematic');
-                    setActivity(
-                        e.name === 'animate_image'
-                            ? 'Animating image (Kling 3.0, ~1-3 min)…'
-                            : e.name === 'generate_video'
-                                ? (isSeedance
-                                    ? 'Generating clip (Seedance 2.0 Fast, ~2-4 min)…'
-                                    : isCinematic
-                                        ? 'Generating cinematic clip (Kling 3.0, ~1-3 min)…'
-                                        : 'Generating UGC clip (Veo 3.1, ~1-3 min)…')
-                                : e.name === 'create_ugc_video' || e.name === 'create_clone_video'
-                                    ? `Producing full video (${e.name}, ~5-12 min)…`
-                                    : e.name === 'create_bulk_campaign'
-                                        ? 'Dispatching bulk campaign…'
-                                        : e.name === 'render_edited_video'
-                                            ? 'Rendering edited video (~1-10 min)…'
-                                            : `Calling ${e.name}…`
-                    );
+                    setActivity(toolActivityLabel(e.name, e.mode, e.input_summary, t));
                     updateLastAgentTurn((t) => ({
                         ...t,
                         tool_calls: [
@@ -584,14 +635,23 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                         'create_ugc_video', 'create_clone_video',
                         'render_edited_video',
                     ]);
+                    const imageTools = new Set([
+                        'generate_image', 'generate_influencer',
+                        'generate_identity', 'generate_product_shots',
+                    ]);
                     if (videoTools.has(e.name)) {
-                        setTimeout(() => onArtifact?.(), 2500);
-                        setTimeout(() => onArtifact?.(), 7000);
+                        onJobStart?.('video');
+                    } else if (imageTools.has(e.name)) {
+                        onJobStart?.('image');
                     }
                     break;
                 }
                 case 'tool_result':
-                    setActivity('');
+                    // Keep the indicator visible — the model is now synthesizing
+                    // its reply from this tool's output and may take a few seconds
+                    // before `agent_message` begins streaming. Clearing activity
+                    // here creates a dead-zone where the UI looks frozen.
+                    setActivity(t('creativeOs.agent.activityProcessing'));
                     onArtifact?.(); // refresh gallery — tool may have created assets
                     break;
                 case 'keepalive':
@@ -622,7 +682,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     // Silently fall back to polling the persisted thread so
                     // the user sees new turns/artifacts as the backend finishes.
                     // No red error pill — this is invisible recovery.
-                    setActivity('Reconnecting...');
+                    setActivity(t('creativeOs.agent.reconnectingShort'));
                     startThreadPolling();
                     break;
                 case 'error':
@@ -635,7 +695,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         };
 
         try {
-            await streamAgent(text, projectId, onEvent, controller.signal, refsForRequest, useSeedance);
+            await streamAgent(text, projectId, onEvent, controller.signal, refsForRequest, useSeedance, lang);
         } catch (err) {
             if ((err as Error).name === 'AbortError') {
                 updateLastAgentTurn((t) => ({ ...t, interrupted: true }));
@@ -653,7 +713,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     // Transient connection failure — silently fall back to
                     // polling the persisted thread. No red error pill.
                     console.warn('stream failed, polling thread:', msg);
-                    setActivity('Reconnecting...');
+                    setActivity(t('creativeOs.agent.reconnectingShort'));
                     startThreadPolling();
                     return;
                 }
@@ -824,17 +884,88 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             mediaRecorderRef.current = recorder;
             recorder.start();
             setRecording(true);
+
+            // Auto-stop after 3s of continuous silence, and drive the
+            // live waveform visualizer on the mic button. RMS baseline
+            // is calibrated from the first ~600ms so ambient noise /
+            // AGC boost doesn't prevent silence detection.
+            const AC: typeof AudioContext | undefined =
+                window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+            if (AC) {
+                const ac = new AC();
+                audioContextRef.current = ac;
+                if (ac.state === 'suspended') await ac.resume().catch(() => {});
+                const source = ac.createMediaStreamSource(stream);
+                const analyser = ac.createAnalyser();
+                analyser.fftSize = 1024;
+                source.connect(analyser);
+                const buf = new Uint8Array(analyser.fftSize);
+                const startedAt = Date.now();
+                let lastSoundAt = Date.now();
+                let baseline = 0;       // max RMS seen during calibration
+                let hasCalibrated = false;
+                const SILENCE_MS = 3000;
+                const CALIBRATION_MS = 600;
+                silenceTimerRef.current = window.setInterval(() => {
+                    analyser.getByteTimeDomainData(buf);
+                    let sumSq = 0;
+                    for (let i = 0; i < buf.length; i++) {
+                        const v = (buf[i] - 128) / 128;
+                        sumSq += v * v;
+                    }
+                    const rms = Math.sqrt(sumSq / buf.length);
+
+                    // Smooth level for UI (scale so normal speech ≈ 1).
+                    setAudioLevel((prev) => {
+                        const target = Math.min(1, rms * 8);
+                        return prev * 0.5 + target * 0.5;
+                    });
+
+                    const elapsed = Date.now() - startedAt;
+                    if (elapsed < CALIBRATION_MS) {
+                        if (rms > baseline) baseline = rms;
+                        lastSoundAt = Date.now();
+                        return;
+                    }
+                    if (!hasCalibrated) {
+                        hasCalibrated = true;
+                        // Threshold is baseline * 2.5 with a floor of 0.03
+                        // and a ceiling of 0.15 (very noisy rooms).
+                        baseline = Math.min(0.15, Math.max(0.03, baseline * 2.5));
+                        lastSoundAt = Date.now();
+                    }
+                    if (rms > baseline) {
+                        lastSoundAt = Date.now();
+                    } else if (Date.now() - lastSoundAt > SILENCE_MS) {
+                        stopRecordingRef.current?.();
+                    }
+                }, 50);
+            }
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Microphone access denied');
+            setError(err instanceof Error ? err.message : t('creativeOs.agent.micDenied'));
         }
     }, [recording, transcribing]);
 
     const stopRecording = useCallback(() => {
+        if (silenceTimerRef.current !== null) {
+            clearInterval(silenceTimerRef.current);
+            silenceTimerRef.current = null;
+        }
+        if (audioContextRef.current) {
+            audioContextRef.current.close().catch(() => {});
+            audioContextRef.current = null;
+        }
         const r = mediaRecorderRef.current;
         if (r && r.state !== 'inactive') r.stop();
         mediaRecorderRef.current = null;
         setRecording(false);
+        setAudioLevel(0);
     }, []);
+
+    // Indirection so the silence watcher can call the latest stopRecording
+    // without recreating the interval each time the callback identity changes.
+    const stopRecordingRef = useRef<(() => void) | null>(null);
+    useEffect(() => { stopRecordingRef.current = stopRecording; }, [stopRecording]);
 
     const handleStop = useCallback(() => {
         abortRef.current?.abort();
@@ -843,7 +974,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
     }, [projectId]);
 
     const handleReset = useCallback(async () => {
-        if (!confirm('Clear this agent chat? This cannot be undone.')) return;
+        if (!confirm(t('creativeOs.agent.clearConfirm'))) return;
         try {
             await resetAgentThread(projectId);
             setTurns([]);
@@ -891,13 +1022,13 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                             <svg viewBox="0 0 24 24" style={{ width: '16px', height: '16px', fill: 'none', stroke: '#337AFF', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
                                 <path d="M12 2 L13.5 8.5 L20 10 L13.5 11.5 L12 18 L10.5 11.5 L4 10 L10.5 8.5 Z" />
                             </svg>
-                            <span style={{ fontSize: '14px', fontWeight: 700, color: '#0D1B3E' }}>Creative Agent</span>
-                            <span style={{ fontSize: '10px', fontWeight: 600, color: '#337AFF', background: 'rgba(51,122,255,0.12)', padding: '2px 6px', borderRadius: '4px' }}>BETA</span>
+                            <span style={{ fontSize: '14px', fontWeight: 700, color: '#0D1B3E' }}>{t('creativeOs.agent.creativeAgent')}</span>
+                            <span style={{ fontSize: '10px', fontWeight: 600, color: '#337AFF', background: 'rgba(51,122,255,0.12)', padding: '2px 6px', borderRadius: '4px' }}>{t('creativeOs.agent.beta')}</span>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                             <div
                                 onClick={() => { if (!running) setUseSeedance((v) => !v); }}
-                                title={useSeedance ? 'Seedance 2.0 engine — ON' : 'Seedance 2.0 engine — OFF'}
+                                title={useSeedance ? t('creativeOs.agent.seedanceOn') : t('creativeOs.agent.seedanceOff')}
                                 style={{
                                     display: 'flex',
                                     alignItems: 'center',
@@ -945,7 +1076,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                             </div>
                             <button
                                 onClick={handleReset}
-                                title="Clear chat"
+                                title={t('creativeOs.agent.clearChat')}
                                 disabled={running || turns.length === 0}
                                 style={{
                                     width: '28px',
@@ -968,7 +1099,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                             {embedded && onCollapse && (
                                 <button
                                     onClick={onCollapse}
-                                    title="Collapse agent panel"
+                                    title={t('creativeOs.agent.collapse')}
                                     style={{
                                         width: '28px',
                                         height: '28px',
@@ -990,7 +1121,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                             {!embedded && (
                                 <button
                                     onClick={() => setOpen(false)}
-                                    title="Close"
+                                    title={t('creativeOs.agent.close')}
                                     style={{
                                         width: '28px',
                                         height: '28px',
@@ -1025,7 +1156,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     >
                         {hydrating && (
                             <div style={{ fontSize: '12px', color: '#8A93B0', textAlign: 'center' }}>
-                                Loading chat…
+                                {t('creativeOs.agent.loadingChat')}
                             </div>
                         )}
                         {!hydrating && turns.length === 0 && (
@@ -1038,7 +1169,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                     lineHeight: 1.6,
                                 }}
                             >
-                                Describe what you want the agent to make. It can chain image generation, animation, and video tools to deliver finished assets.
+                                {t('creativeOs.agent.emptyHint')}
                             </div>
                         )}
 
@@ -1052,9 +1183,27 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                     }
                                 }
                             }
-                            return turns.map((turn, idx) => (
-                                <TurnBubble key={idx} turn={turn} refMap={refMap} />
-                            ));
+                            return turns.map((turn, idx) => {
+                                // If this agent turn asked for aspect ratio ([[ASPECT_BUTTONS]]
+                                // marker) and the next turn is the user's reply, detect which
+                                // ratio they picked so the bubble can render it as "selected".
+                                const next = turns[idx + 1];
+                                const nextUserText = next?.role === 'user' ? (next.text || '') : '';
+                                const selectedAspect: 'vertical' | 'horizontal' | null =
+                                    /9\s*:\s*16|vertical/i.test(nextUserText) ? 'vertical'
+                                        : /16\s*:\s*9|horizontal/i.test(nextUserText) ? 'horizontal'
+                                            : null;
+                                return (
+                                    <TurnBubble
+                                        key={idx}
+                                        turn={turn}
+                                        refMap={refMap}
+                                        isLast={idx === turns.length - 1}
+                                        onQuickReply={(text) => { handleRun(text); }}
+                                        selectedAspect={selectedAspect}
+                                    />
+                                );
+                            });
                         })()}
 
                         {running && activity && (
@@ -1156,7 +1305,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                 value={brief}
                                 onChange={handleBriefChange}
                                 onKeyDown={handleBriefKeyDown}
-                                placeholder="Ask the agent… use @ to reference products, models, images, or videos"
+                                placeholder={t('creativeOs.agent.composerPlaceholder')}
                                 disabled={running}
                                 rows={3}
                                 style={{
@@ -1182,7 +1331,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                     setMenuOpen((v) => !v);
                                 }}
                                 disabled={running}
-                                title="Add attachment, reference, or history"
+                                title={t('creativeOs.agent.addAttachmentMenu')}
                                 style={{
                                     position: 'absolute',
                                     left: '8px',
@@ -1209,7 +1358,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                 <button
                                     onClick={recording ? stopRecording : startRecording}
                                     disabled={transcribing}
-                                    title={recording ? 'Stop recording' : transcribing ? 'Transcribing…' : 'Dictate'}
+                                    title={recording ? t('creativeOs.agent.stopRecording') : transcribing ? t('creativeOs.agent.transcribing') : t('creativeOs.agent.dictate')}
                                     style={{
                                         position: 'absolute',
                                         right: '46px',
@@ -1233,6 +1382,8 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                             <span style={{ width: '4px', height: '4px', borderRadius: '50%', background: 'currentColor', animation: 'pulse 1s ease-in-out 0.15s infinite' }} />
                                             <span style={{ width: '4px', height: '4px', borderRadius: '50%', background: 'currentColor', animation: 'pulse 1s ease-in-out 0.3s infinite' }} />
                                         </span>
+                                    ) : recording ? (
+                                        <WaveformBars level={audioLevel} />
                                     ) : (
                                         <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
                                             <rect x="9" y="3" width="6" height="12" rx="3" />
@@ -1245,7 +1396,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                             {running ? (
                                 <button
                                     onClick={handleStop}
-                                    title="Stop"
+                                    title={t('creativeOs.agent.stop')}
                                     style={{
                                         position: 'absolute',
                                         right: '8px',
@@ -1261,7 +1412,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                         fontWeight: 600,
                                     }}
                                 >
-                                    Stop
+                                    {t('creativeOs.agent.stop')}
                                 </button>
                             ) : (() => {
                                 const hasReadyAttachments = attachments.some((a) => a.status === 'ready');
@@ -1271,7 +1422,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                     <button
                                         onClick={() => handleRun()}
                                         disabled={!canSend}
-                                        title={uploading ? 'Uploading…' : 'Send'}
+                                        title={uploading ? t('creativeOs.agent.uploading') : t('creativeOs.agent.send')}
                                         style={{
                                             position: 'absolute',
                                             right: '8px',
@@ -1357,7 +1508,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             {!open && (
                 <button
                     onClick={() => setOpen(true)}
-                    title="Run AI agent"
+                    title={t('creativeOs.agent.runAgent')}
                     style={{
                         position: 'fixed',
                         right: '24px',
@@ -1380,7 +1531,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     <svg viewBox="0 0 24 24" style={{ width: '16px', height: '16px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
                         <path d="M12 2 L13.5 8.5 L20 10 L13.5 11.5 L12 18 L10.5 11.5 L4 10 L10.5 8.5 Z" />
                     </svg>
-                    Agent
+                    {t('creativeOs.agent.agentButton')}
                 </button>
             )}
 
@@ -1532,6 +1683,32 @@ function renderMessageContent(
     return parts;
 }
 
+/** Live waveform visualizer for the mic button.
+ *  Five vertical bars whose heights track `level` (0-1) with a slight
+ *  per-bar offset so the animation feels natural rather than rigid. */
+function WaveformBars({ level }: { level: number }) {
+    const offsets = [0.55, 0.85, 1.0, 0.85, 0.55];
+    return (
+        <span style={{ display: 'flex', alignItems: 'center', gap: '2px', height: '14px' }}>
+            {offsets.map((o, i) => {
+                const h = Math.max(2, Math.min(14, level * 14 * o + 2));
+                return (
+                    <span
+                        key={i}
+                        style={{
+                            width: '2px',
+                            height: `${h}px`,
+                            borderRadius: '1px',
+                            background: 'currentColor',
+                            transition: 'height 60ms linear',
+                        }}
+                    />
+                );
+            })}
+        </span>
+    );
+}
+
 function ComposerMenu({
     onAttach,
     onReference,
@@ -1543,6 +1720,7 @@ function ComposerMenu({
     onHistory: () => void;
     onClose: () => void;
 }) {
+    const { t } = useTranslation();
     const rootRef = useRef<HTMLDivElement | null>(null);
     useEffect(() => {
         const onDocMouseDown = (e: MouseEvent) => {
@@ -1602,14 +1780,14 @@ function ComposerMenu({
             }}
         >
             {item(
-                'Attach',
+                t('creativeOs.agent.menuAttach'),
                 <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
                     <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
                 </svg>,
                 onAttach,
             )}
             {item(
-                'Reference',
+                t('creativeOs.agent.menuReference'),
                 <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
                     <circle cx="12" cy="12" r="4" />
                     <path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.92 7.94" />
@@ -1617,7 +1795,7 @@ function ComposerMenu({
                 onReference,
             )}
             {item(
-                'History',
+                t('creativeOs.agent.menuHistory'),
                 <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
                     <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
                     <polyline points="3 3 3 8 8 8" />
@@ -1638,6 +1816,7 @@ function HistoryPopover({
     onPick: (m: MentionItem) => void;
     onClose: () => void;
 }) {
+    const { t } = useTranslation();
     const rootRef = useRef<HTMLDivElement | null>(null);
     useEffect(() => {
         const onDocMouseDown = (e: MouseEvent) => {
@@ -1675,7 +1854,7 @@ function HistoryPopover({
         >
             {items.length === 0 ? (
                 <div style={{ padding: '16px 12px', fontSize: '12px', color: '#8A93B0', textAlign: 'center' }}>
-                    No generations yet in this project.
+                    {t('creativeOs.agent.noHistory')}
                 </div>
             ) : (
                 items.map((m) => (
@@ -1741,8 +1920,23 @@ function HistoryPopover({
     );
 }
 
-function TurnBubble({ turn, refMap }: { turn: AgentTurn; refMap: Map<string, AgentRef> }) {
+function TurnBubble({ turn, refMap, isLast, onQuickReply, selectedAspect }: { turn: AgentTurn; refMap: Map<string, AgentRef>; isLast?: boolean; onQuickReply?: (text: string) => void; selectedAspect?: 'vertical' | 'horizontal' | null }) {
+    const { t } = useTranslation();
     const isUser = turn.role === 'user';
+    const hasRefPreviews = isUser && !!turn.refs?.some((r) => r.image_url || r.video_url);
+    // Detect the `[[ASPECT_BUTTONS]]` marker emitted by the agent when asking
+    // for aspect ratio. ALWAYS strip it from display — the marker is an
+    // internal signal, never user-facing. Render the two quick-reply buttons
+    // alongside the question; on the active turn they are clickable, on
+    // historical turns they reflect the user's selection (filled vs. muted).
+    const rawText = turn.text || '';
+    const hasAspectMarker = !isUser && rawText.includes('[[ASPECT_BUTTONS]]');
+    const displayText = hasAspectMarker
+        ? rawText.replace(/\s*\[\[ASPECT_BUTTONS\]\]\s*/g, '').trim()
+        : rawText;
+    const aspectButtonsActive = hasAspectMarker && !!isLast && !!onQuickReply && !selectedAspect;
+    const hasContent = !!displayText || !!turn.artifacts?.length || turn.interrupted || hasRefPreviews || hasAspectMarker;
+    if (!isUser && !hasContent) return null;
     return (
         <div
             style={{
@@ -1768,8 +1962,86 @@ function TurnBubble({ turn, refMap }: { turn: AgentTurn; refMap: Map<string, Age
                     boxShadow: isUser ? 'none' : '0 1px 3px rgba(13,27,62,0.04)',
                 }}
             >
-                {turn.text && (
-                    <div style={{ whiteSpace: 'pre-wrap' }}>{renderMessageContent(turn.text, refMap, isUser)}</div>
+                {isUser && turn.refs && turn.refs.some((r) => r.image_url || r.video_url) && (
+                    <div
+                        style={{
+                            display: 'flex',
+                            flexWrap: 'wrap',
+                            gap: '4px',
+                            marginBottom: turn.text ? '8px' : 0,
+                        }}
+                    >
+                        {turn.refs
+                            .filter((r) => r.image_url || r.video_url)
+                            .map((r, i) => (
+                                <a
+                                    key={`${r.tag}-${i}`}
+                                    href={r.image_url || r.video_url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    title={r.name || r.tag}
+                                    style={{
+                                        display: 'block',
+                                        width: '56px',
+                                        height: '56px',
+                                        borderRadius: '8px',
+                                        overflow: 'hidden',
+                                        background: 'rgba(255,255,255,0.18)',
+                                        border: '1px solid rgba(255,255,255,0.3)',
+                                        flexShrink: 0,
+                                    }}
+                                >
+                                    {r.video_url && !r.image_url ? (
+                                        <video src={r.video_url} muted playsInline style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                    ) : (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img src={r.image_url || r.video_url} alt={r.name || ''} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                    )}
+                                </a>
+                            ))}
+                    </div>
+                )}
+
+                {displayText && (
+                    <div style={{ whiteSpace: 'pre-wrap' }}>{renderMessageContent(displayText, refMap, isUser)}</div>
+                )}
+
+                {hasAspectMarker && (
+                    <div style={{ display: 'flex', gap: '8px', marginTop: displayText ? '10px' : 0, flexWrap: 'wrap' }}>
+                        {(['vertical', 'horizontal'] as const).map((kind) => {
+                            const label = kind === 'vertical'
+                                ? t('creativeOs.agent.aspectVertical')
+                                : t('creativeOs.agent.aspectHorizontal');
+                            const isSelected = selectedAspect === kind;
+                            const muted = !!selectedAspect && !isSelected;
+                            return (
+                                <button
+                                    key={kind}
+                                    type="button"
+                                    disabled={!aspectButtonsActive}
+                                    onClick={() => aspectButtonsActive && onQuickReply?.(label)}
+                                    style={{
+                                        padding: '6px 14px',
+                                        borderRadius: '8px',
+                                        border: isSelected
+                                            ? '1px solid #337AFF'
+                                            : '1px solid rgba(51,122,255,0.15)',
+                                        background: isSelected
+                                            ? 'linear-gradient(135deg, #337AFF 0%, #5B8FFF 100%)'
+                                            : muted
+                                                ? 'rgba(51,122,255,0.03)'
+                                                : 'white',
+                                        color: isSelected ? 'white' : muted ? '#8A93B0' : '#337AFF',
+                                        fontSize: '13px',
+                                        fontWeight: 500,
+                                        cursor: aspectButtonsActive ? 'pointer' : 'default',
+                                    }}
+                                >
+                                    {label}
+                                </button>
+                            );
+                        })}
+                    </div>
                 )}
 
                 {turn.artifacts && turn.artifacts.length > 0 && (
@@ -1816,7 +2088,7 @@ function TurnBubble({ turn, refMap }: { turn: AgentTurn; refMap: Map<string, Age
                             fontStyle: 'italic',
                         }}
                     >
-                        (stopped)
+                        {t('creativeOs.agent.stopped')}
                     </div>
                 )}
             </div>
@@ -1825,6 +2097,7 @@ function TurnBubble({ turn, refMap }: { turn: AgentTurn; refMap: Map<string, Age
 }
 
 function AttachmentChip({ att, onRemove }: { att: AttachedFile; onRemove: () => void }) {
+    const { t } = useTranslation();
     const thumb = att.previewUrl || att.url;
     const isVideo = att.type === 'video';
     return (
@@ -1916,16 +2189,16 @@ function AttachmentChip({ att, onRemove }: { att: AttachedFile; onRemove: () => 
                     }}
                 >
                     {att.status === 'uploading'
-                        ? 'Uploading'
+                        ? t('creativeOs.agent.uploadingChip')
                         : att.status === 'error'
-                            ? 'Failed'
+                            ? t('creativeOs.agent.failedChip')
                             : att.type}
                 </span>
             </div>
             <button
                 type="button"
                 onClick={onRemove}
-                title="Remove"
+                title={t('creativeOs.agent.remove')}
                 style={{
                     width: '18px',
                     height: '18px',
@@ -1960,14 +2233,14 @@ interface MentionDropdownProps {
     onBackFromShotPicker?: () => void;
 }
 
-const GROUP_LABELS: Record<MentionItem['type'], string> = {
-    product: 'Products',
-    influencer: 'Models',
-    image: 'Images',
-    video: 'Videos',
-};
-
 function MentionDropdown({ groups, ordered, activeIndex, onPick, onHover, shotPickerItem, onPickShot, onBackFromShotPicker }: MentionDropdownProps) {
+    const { t } = useTranslation();
+    const GROUP_LABELS_T: Record<MentionItem['type'], string> = {
+        product: t('creativeOs.mention.products'),
+        influencer: t('creativeOs.mention.models'),
+        image: t('creativeOs.mention.images'),
+        video: t('creativeOs.mention.videos'),
+    };
     const groupOrder: MentionItem['type'][] = ['product', 'influencer', 'image', 'video'];
     const containerStyle: React.CSSProperties = {
         position: 'absolute',
@@ -2000,10 +2273,10 @@ function MentionDropdown({ groups, ordered, activeIndex, onPick, onHover, shotPi
                             color: '#0D1B3E',
                         }}
                     >
-                        ← Back
+                        {t('creativeOs.mention.back')}
                     </button>
                     <span style={{ fontSize: '11px', fontWeight: 600, color: '#0D1B3E' }}>
-                        Pick a shot for {shotPickerItem.name}
+                        {t('creativeOs.mention.pickShotFor').replace('{name}', shotPickerItem.name)}
                     </span>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
@@ -2012,7 +2285,7 @@ function MentionDropdown({ groups, ordered, activeIndex, onPick, onHover, shotPi
                             key={`${url}-${i}`}
                             type="button"
                             onMouseDown={(e) => { e.preventDefault(); onPickShot(url); }}
-                            title={i === 0 ? 'Profile image' : `Shot ${i + 1}`}
+                            title={i === 0 ? t('creativeOs.mention.profileImage') : t('creativeOs.mention.shot').replace('{n}', String(i + 1))}
                             style={{
                                 display: 'flex',
                                 flexDirection: 'column',
@@ -2039,7 +2312,7 @@ function MentionDropdown({ groups, ordered, activeIndex, onPick, onHover, shotPi
                                 <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                             </div>
                             <span style={{ fontSize: '10px', color: '#0D1B3E', fontWeight: 500, textAlign: 'center' }}>
-                                {i === 0 ? 'Profile' : `Shot ${i + 1}`}
+                                {i === 0 ? t('creativeOs.mention.profile') : t('creativeOs.mention.shot').replace('{n}', String(i + 1))}
                             </span>
                         </button>
                     ))}
@@ -2064,7 +2337,7 @@ function MentionDropdown({ groups, ordered, activeIndex, onPick, onHover, shotPi
                                 padding: '4px 6px',
                             }}
                         >
-                            {GROUP_LABELS[g]}
+                            {GROUP_LABELS_T[g]}
                         </div>
                         <div
                             style={{

@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { creativeFetch } from '@/lib/creative-os-api';
+import { useTranslation } from '@/lib/i18n';
 
 /* Renders the animation preview clip; falls back to a large emoji tile on load error.
    The container is a fixed 9:16 box to match Kling's output aspect ratio. */
@@ -67,52 +68,54 @@ interface ImageEditModalProps {
 
 /* ── All 12 animation styles — all use Kling 3.0 ── */
 /* previewUrl points to a 5s looping MP4 in /public/animation-previews/.
-   Cards fall back to the emoji if the video file is missing. */
+   Cards fall back to the emoji if the video file is missing.
+   Labels + descriptions are translated via labelKey / descKey. */
 const ANIMATION_STYLES = [
-    { id: 'dolly_in', label: 'Dolly In', emoji: '🎯', desc: 'Camera pushes toward subject', previewUrl: '/animation-previews/dolly_in.mp4' },
-    { id: 'dolly_out', label: 'Dolly Out', emoji: '🔭', desc: 'Camera pulls away from subject', previewUrl: '/animation-previews/dolly_out.mp4' },
-    { id: 'orbit', label: 'Orbit', emoji: '🌀', desc: 'Camera circles around subject', previewUrl: '/animation-previews/orbit.mp4' },
-    { id: 'tracking', label: 'Tracking', emoji: '🏃', desc: 'Camera follows subject laterally', previewUrl: '/animation-previews/tracking.mp4' },
-    { id: 'pan', label: 'Pan', emoji: '↔️', desc: 'Camera rotates horizontally', previewUrl: '/animation-previews/pan.mp4' },
-    { id: 'tilt', label: 'Tilt', emoji: '↕️', desc: 'Camera rotates vertically', previewUrl: '/animation-previews/tilt.mp4' },
-    { id: 'crane', label: 'Crane', emoji: '🏗️', desc: 'Camera rises or descends', previewUrl: '/animation-previews/crane.mp4' },
-    { id: 'static', label: 'Static', emoji: '📷', desc: 'Fixed camera, subtle motion', previewUrl: '/animation-previews/static.mp4' },
-    { id: 'handheld', label: 'Handheld', emoji: '🤳', desc: 'Natural handheld movement', previewUrl: '/animation-previews/handheld.mp4' },
-    { id: 'reveal', label: 'Reveal', emoji: '✨', desc: 'Dramatic subject reveal', previewUrl: '/animation-previews/reveal.mp4' },
-    { id: 'float', label: 'Float', emoji: '🎈', desc: 'Smooth floating camera', previewUrl: '/animation-previews/float.mp4' },
-    { id: 'drift', label: 'Drift', emoji: '🌊', desc: 'Subtle lateral drift', previewUrl: '/animation-previews/drift.mp4' },
+    { id: 'dolly_in', labelKey: 'creativeOs.imageModal.animStyleDollyIn', descKey: 'creativeOs.imageModal.animStyleDollyInDesc', emoji: '🎯', previewUrl: '/animation-previews/dolly_in.mp4' },
+    { id: 'dolly_out', labelKey: 'creativeOs.imageModal.animStyleDollyOut', descKey: 'creativeOs.imageModal.animStyleDollyOutDesc', emoji: '🔭', previewUrl: '/animation-previews/dolly_out.mp4' },
+    { id: 'orbit', labelKey: 'creativeOs.imageModal.animStyleOrbit', descKey: 'creativeOs.imageModal.animStyleOrbitDesc', emoji: '🌀', previewUrl: '/animation-previews/orbit.mp4' },
+    { id: 'tracking', labelKey: 'creativeOs.imageModal.animStyleTracking', descKey: 'creativeOs.imageModal.animStyleTrackingDesc', emoji: '🏃', previewUrl: '/animation-previews/tracking.mp4' },
+    { id: 'pan', labelKey: 'creativeOs.imageModal.animStylePan', descKey: 'creativeOs.imageModal.animStylePanDesc', emoji: '↔️', previewUrl: '/animation-previews/pan.mp4' },
+    { id: 'tilt', labelKey: 'creativeOs.imageModal.animStyleTilt', descKey: 'creativeOs.imageModal.animStyleTiltDesc', emoji: '↕️', previewUrl: '/animation-previews/tilt.mp4' },
+    { id: 'crane', labelKey: 'creativeOs.imageModal.animStyleCrane', descKey: 'creativeOs.imageModal.animStyleCraneDesc', emoji: '🏗️', previewUrl: '/animation-previews/crane.mp4' },
+    { id: 'static', labelKey: 'creativeOs.imageModal.animStyleStatic', descKey: 'creativeOs.imageModal.animStyleStaticDesc', emoji: '📷', previewUrl: '/animation-previews/static.mp4' },
+    { id: 'handheld', labelKey: 'creativeOs.imageModal.animStyleHandheld', descKey: 'creativeOs.imageModal.animStyleHandheldDesc', emoji: '🤳', previewUrl: '/animation-previews/handheld.mp4' },
+    { id: 'reveal', labelKey: 'creativeOs.imageModal.animStyleReveal', descKey: 'creativeOs.imageModal.animStyleRevealDesc', emoji: '✨', previewUrl: '/animation-previews/reveal.mp4' },
+    { id: 'float', labelKey: 'creativeOs.imageModal.animStyleFloat', descKey: 'creativeOs.imageModal.animStyleFloatDesc', emoji: '🎈', previewUrl: '/animation-previews/float.mp4' },
+    { id: 'drift', labelKey: 'creativeOs.imageModal.animStyleDrift', descKey: 'creativeOs.imageModal.animStyleDriftDesc', emoji: '🌊', previewUrl: '/animation-previews/drift.mp4' },
 ];
 
 /* ── Quick action system prompts for NanoBanana Pro enhancements ── */
 const QUICK_ACTIONS = [
     {
         id: 'animate',
-        label: 'Animate',
+        labelKey: 'creativeOs.imageModal.quickAnimate',
         icon: 'M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653z',
         systemPrompt: '',
         isAnimate: true,
     },
     {
         id: 'upscale',
-        label: 'Upscale',
+        labelKey: 'creativeOs.imageModal.quickUpscale',
         icon: 'M21 21l-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607zM10.5 7.5v6m3-3h-6',
         systemPrompt: 'Upscale this image to ultra-high resolution. Enhance fine details, textures, skin pores, fabric patterns, and text sharpness. Maintain exact composition, colors, and lighting.',
     },
     {
         id: 'relight',
-        label: 'Relight',
+        labelKey: 'creativeOs.imageModal.quickRelight',
         icon: 'M12 18v-5.25m0 0a6.01 6.01 0 0 0 1.5-.189m-1.5.189a6.01 6.01 0 0 1-1.5-.189m3.75 7.478a12.06 12.06 0 0 1-4.5 0m3.75 2.383a14.406 14.406 0 0 1-3 0M14.25 18v-.192c0-.983.658-1.823 1.508-2.316a7.5 7.5 0 1 0-7.517 0c.85.493 1.509 1.333 1.509 2.316V18',
         systemPrompt: 'Relight this image with golden hour natural lighting. Add warm, soft directional light from the upper left. Create gentle shadows for depth. Add a subtle rim light on the subject. Make the lighting look like a professional studio setup.',
     },
     {
         id: 'angles',
-        label: 'New Angle',
+        labelKey: 'creativeOs.imageModal.quickNewAngle',
         icon: 'M6.827 6.175A2.31 2.31 0 0 1 5.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 0 0-1.134-.175 2.31 2.31 0 0 1-1.64-1.055l-.822-1.316a2.192 2.192 0 0 0-1.736-1.039 48.774 48.774 0 0 0-5.232 0 2.192 2.192 0 0 0-1.736 1.039l-.821 1.316z M16.5 12.75a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0z',
         systemPrompt: 'Generate a new angle of this same subject. Keep the same person, product, and styling, but change the camera angle to a different perspective. Try a 3/4 view, slightly from below, or an over-the-shoulder angle. Maintain identical lighting and color grade.',
     },
 ];
 
 export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnimated, onCreateVideo }: ImageEditModalProps) {
+    const { t } = useTranslation();
     const [editPrompt, setEditPrompt] = useState(asset.prompt || '');
     const [isAnimating, setIsAnimating] = useState(false);
     const [selectedAnimStyle, setSelectedAnimStyle] = useState<string>('dolly_in');
@@ -123,7 +126,7 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
     const [showAnimateModal, setShowAnimateModal] = useState(false);
 
     // ── Editable title ──────────────────────────────────────────────
-    const displayName = asset.product_name || 'Image';
+    const displayName = asset.product_name || t('creativeOs.imageModal.imageFallback');
     const [title, setTitle] = useState(displayName);
     const [editingTitle, setEditingTitle] = useState(false);
     const [savingTitle, setSavingTitle] = useState(false);
@@ -165,10 +168,11 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
         ? (() => {
             const diff = Date.now() - new Date(asset.created_at).getTime();
             const hrs = Math.floor(diff / 3600000);
-            if (hrs < 1) return `${Math.floor(diff / 60000)}m ago`;
-            if (hrs < 24) return `${hrs}h ago`;
+            if (hrs < 1) return t('creativeOs.imageModal.minutesAgo').replace('{n}', String(Math.floor(diff / 60000)));
+            if (hrs < 24) return t('creativeOs.imageModal.hoursAgo').replace('{n}', String(hrs));
             const days = Math.floor(hrs / 24);
-            return days === 1 ? 'Yesterday' : `${days}d ago`;
+            if (days === 1) return t('creativeOs.imageModal.yesterday');
+            return t('creativeOs.imageModal.daysAgo').replace('{n}', String(days));
         })()
         : '';
 
@@ -195,11 +199,12 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
             onAnimated?.();
         } catch (err) {
             console.error('Animation failed:', err);
-            alert(`Animation failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+            const msg = err instanceof Error ? err.message : t('creativeOs.imageModal.unknownError');
+            alert(t('creativeOs.imageModal.animationFailed').replace('{msg}', msg));
         } finally {
             setIsAnimating(false);
         }
-    }, [editPrompt, selectedAnimStyle, animDuration, projectId, imageUrl, onAnimated]);
+    }, [editPrompt, selectedAnimStyle, animDuration, projectId, imageUrl, onAnimated, t]);
 
     // Extract influencer ID from the original shot metadata
     const influencerId = asset.influencer_id
@@ -226,11 +231,12 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
             onClose();
         } catch (err) {
             console.error('Re-generation failed:', err);
-            alert(`Generation failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+            const msg = err instanceof Error ? err.message : t('creativeOs.imageModal.unknownError');
+            alert(t('creativeOs.imageModal.generationFailed').replace('{msg}', msg));
         } finally {
             setGenerating(false);
         }
-    }, [editPrompt, asset.analysis_json, asset.shot_type, asset.product_id, influencerId, projectId, onGenerated, onClose]);
+    }, [editPrompt, asset.analysis_json, asset.shot_type, asset.product_id, influencerId, projectId, onGenerated, onClose, t]);
 
     const handleQuickAction = useCallback(async (action: typeof QUICK_ACTIONS[0]) => {
         setActionLoading(action.id);
@@ -252,12 +258,14 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
             });
             onGenerated?.();
         } catch (err) {
-            console.error(`${action.label} failed:`, err);
-            alert(`${action.label} failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+            const label = t(action.labelKey);
+            console.error(`${label} failed:`, err);
+            const msg = err instanceof Error ? err.message : t('creativeOs.imageModal.unknownError');
+            alert(t('creativeOs.imageModal.actionFailed').replace('{label}', label).replace('{msg}', msg));
         } finally {
             setActionLoading(null);
         }
-    }, [editPrompt, asset.analysis_json, asset.shot_type, asset.product_id, influencerId, projectId, onGenerated]);
+    }, [editPrompt, asset.analysis_json, asset.shot_type, asset.product_id, influencerId, projectId, imageUrl, onGenerated, t]);
 
     const handleDownload = async () => {
         if (!imageUrl) return;
@@ -428,7 +436,7 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                                             alignItems: 'center',
                                             gap: '5px',
                                         }}
-                                        title="Click to rename"
+                                        title={t('creativeOs.imageModal.clickRename')}
                                     >
                                         {title}
                                         <svg viewBox="0 0 24 24" style={{
@@ -442,7 +450,7 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                                     </div>
                                 )}
                                 <div style={{ fontSize: '12px', color: '#8A93B0', marginTop: '1px' }}>
-                                    {createdAgo || 'Image'}
+                                    {createdAgo || t('creativeOs.imageModal.imageFallback')}
                                 </div>
                             </div>
                         </div>
@@ -461,9 +469,9 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                                 }}
                                 onMouseEnter={e => (e.currentTarget.style.color = '#337AFF')}
                                 onMouseLeave={e => (e.currentTarget.style.color = '#5A6178')}
-                            >Download</button>
+                            >{t('creativeOs.imageModal.download')}</button>
                             <button
-                                onClick={() => alert('Publishing coming soon!')}
+                                onClick={() => alert(t('creativeOs.imageModal.publishComingSoon'))}
                                 style={{
                                     fontSize: '13px',
                                     fontWeight: 600,
@@ -476,7 +484,7 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                                 }}
                                 onMouseEnter={e => (e.currentTarget.style.color = '#337AFF')}
                                 onMouseLeave={e => (e.currentTarget.style.color = '#5A6178')}
-                            >Publish</button>
+                            >{t('creativeOs.imageModal.publish')}</button>
                             <button
                                 onClick={onClose}
                                 style={{
@@ -518,7 +526,7 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                                 color: '#8A93B0',
                                 letterSpacing: '0.5px',
                                 textTransform: 'uppercase',
-                            }}>PROMPT</span>
+                            }}>{t('creativeOs.imageModal.promptSection')}</span>
                             <button
                                 onClick={handleCopyPrompt}
                                 style={{
@@ -531,12 +539,12 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                                     padding: '2px 8px',
                                     borderRadius: '4px',
                                 }}
-                            >{copied ? '✓ Copied' : 'Copy'}</button>
+                            >{copied ? t('creativeOs.imageModal.copied') : t('creativeOs.imageModal.copy')}</button>
                         </div>
                         <textarea
                             value={editPrompt}
                             onChange={e => setEditPrompt(e.target.value)}
-                            placeholder="Describe the image you want..."
+                            placeholder={t('creativeOs.imageModal.promptTextPlaceholder')}
                             rows={8}
                             style={{
                                 width: '100%',
@@ -566,7 +574,7 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                                 color: '#8A93B0',
                                 lineHeight: '1.35',
                                 flex: 1,
-                            }}>Edit the prompt above and re-generate to create a new variation</span>
+                            }}>{t('creativeOs.imageModal.rePromptHint')}</span>
                             <button
                                 onClick={handleReGenerate}
                                 disabled={generating || !editPrompt.trim()}
@@ -585,7 +593,7 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                                     flexShrink: 0,
                                 }}
                             >
-                                {generating ? '⏳ Generating...' : '✨ Re-generate'}
+                                {generating ? t('creativeOs.imageModal.generating') : t('creativeOs.imageModal.regenerate')}
                             </button>
                         </div>
                     </div>
@@ -600,21 +608,26 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                             textTransform: 'uppercase',
                             display: 'block',
                             marginBottom: '8px',
-                        }}>INFORMATION</span>
+                        }}>{t('creativeOs.imageModal.information')}</span>
                         <div style={{
                             display: 'flex',
                             flexDirection: 'column',
                             gap: '0',
                         }}>
-                            <InfoRow label="Mode" value={(() => {
+                            <InfoRow label={t('creativeOs.imageModal.labelMode')} value={(() => {
                                 const m = (asset.analysis_json?.mode as string) || asset.shot_type || '';
-                                const map: Record<string, string> = { iphone_look: 'iPhone Look', cinematic: 'Cinematic', luxury: 'Luxury', ugc: 'UGC' };
-                                return map[m] || m.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || 'Standard';
+                                const map: Record<string, string> = {
+                                    iphone_look: t('creativeOs.imageModal.modeIphoneLook'),
+                                    cinematic: t('creativeOs.imageModal.modeCinematic'),
+                                    luxury: t('creativeOs.imageModal.modeLuxury'),
+                                    ugc: t('creativeOs.imageModal.modeUgc'),
+                                };
+                                return map[m] || m.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || t('creativeOs.imageModal.modeStandard');
                             })()} highlight />
-                            <InfoRow label="Quality" value={(asset.analysis_json?.quality as string || '4k').toUpperCase()} />
-                            <InfoRow label="Aspect" value={(asset.analysis_json?.aspect_ratio as string) || '9:16'} />
-                            <InfoRow label="Cost" value="12 credits" />
-                            {createdAgo && <InfoRow label="Created" value={createdAgo} />}
+                            <InfoRow label={t('creativeOs.imageModal.labelQuality')} value={(asset.analysis_json?.quality as string || '4k').toUpperCase()} />
+                            <InfoRow label={t('creativeOs.imageModal.labelAspect')} value={(asset.analysis_json?.aspect_ratio as string) || '9:16'} />
+                            <InfoRow label={t('creativeOs.imageModal.labelCost')} value={t('creativeOs.imageModal.costCredits')} />
+                            {createdAgo && <InfoRow label={t('creativeOs.imageModal.labelCreated')} value={createdAgo} />}
                         </div>
                     </div>
 
@@ -642,7 +655,7 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                                 letterSpacing: '0.3px',
                             }}
                         >
-                            Create Video
+                            {t('creativeOs.imageModal.createVideo')}
                         </button>
                     </div>
 
@@ -652,7 +665,7 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                             fontSize: '11px', fontWeight: 700, color: '#8A93B0',
                             letterSpacing: '0.5px', textTransform: 'uppercase',
                             display: 'block', marginBottom: '14px',
-                        }}>QUICK ACTIONS</span>
+                        }}>{t('creativeOs.imageModal.quickActions')}</span>
                         <div style={{
                             display: 'grid',
                             gridTemplateColumns: '1fr 1fr',
@@ -661,7 +674,7 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                             {QUICK_ACTIONS.map(action => (
                                 <ActionButton
                                     key={action.id}
-                                    label={actionLoading === action.id ? '...' : action.label}
+                                    label={actionLoading === action.id ? '...' : t(action.labelKey)}
                                     onClick={() => {
                                         if ((action as any).isAnimate) {
                                             setShowAnimateModal(true);
@@ -720,12 +733,12 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                                     color: '#0D1B3E',
                                     margin: 0,
                                     letterSpacing: '-0.2px',
-                                }}>Choose Animation Style</h3>
+                                }}>{t('creativeOs.imageModal.chooseAnimationStyle')}</h3>
                                 <span style={{
                                     fontSize: '12px',
                                     color: '#8A93B0',
                                     fontWeight: 500,
-                                }}>All styles powered by Kling 3.0</span>
+                                }}>{t('creativeOs.imageModal.poweredByKling')}</span>
                             </div>
                             <button
                                 onClick={() => setShowAnimateModal(false)}
@@ -788,12 +801,12 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                                                 fontWeight: 700,
                                                 color: isSelected ? '#337AFF' : '#0D1B3E',
                                                 marginBottom: '3px',
-                                            }}>{style.label}</div>
+                                            }}>{t(style.labelKey)}</div>
                                             <div style={{
                                                 fontSize: '11px',
                                                 color: '#8A93B0',
                                                 lineHeight: 1.3,
-                                            }}>{style.desc}</div>
+                                            }}>{t(style.descKey)}</div>
                                         </div>
                                     </button>
                                 );
@@ -816,7 +829,7 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                                 fontWeight: 600,
                                 color: '#4A5578',
                                 marginRight: 'auto',
-                            }}>Duration</span>
+                            }}>{t('creativeOs.imageModal.durationLabel')}</span>
                             {[5, 10].map(d => (
                                 <button
                                     key={d}
@@ -832,7 +845,7 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                                         cursor: 'pointer',
                                         transition: 'all 0.15s',
                                     }}
-                                >{d}s</button>
+                                >{t('creativeOs.imageModal.durationSeconds').replace('{n}', String(d))}</button>
                             ))}
                         </div>
 
@@ -848,7 +861,11 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                                 color: '#8A93B0',
                                 fontWeight: 500,
                             }}>
-                                {ANIMATION_STYLES.find(s => s.id === selectedAnimStyle)?.label ?? 'Select'} · Kling 3.0 · {animDuration}s
+                                {(() => {
+                                    const sel = ANIMATION_STYLES.find(s => s.id === selectedAnimStyle);
+                                    const label = sel ? t(sel.labelKey) : t('creativeOs.imageModal.styleSelect');
+                                    return t('creativeOs.imageModal.styleSummary').replace('{label}', label).replace('{n}', String(animDuration));
+                                })()}
                             </span>
                             <button
                                 onClick={() => {
@@ -870,7 +887,7 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                                     whiteSpace: 'nowrap',
                                 }}
                             >
-                                {isAnimating ? '⏳ Generating...' : 'Animate ✦'}
+                                {isAnimating ? t('creativeOs.imageModal.animateGenerating') : t('creativeOs.imageModal.animate')}
                             </button>
                         </div>
                     </div>

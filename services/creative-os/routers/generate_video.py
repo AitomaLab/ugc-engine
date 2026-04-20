@@ -92,6 +92,7 @@ class VideoGenerateRequest(BaseModel):
     multi_shot_mode: bool = False  # Kling 3.0 multi-shot (backend auto-splits prompt into shots)
     reference_image_urls: Optional[list[str]] = None  # Seedance 2.0 — multi-image reference
     reference_video_urls: Optional[list[str]] = None  # Seedance 2.0 — video reference
+    aspect_ratio: Optional[str] = None  # "9:16" (vertical) or "16:9" (horizontal). None = pipeline default (vertical).
 
 
 # ── Job record helpers (via core API — handles auth + RLS) ───────────
@@ -545,6 +546,11 @@ async def _generate_seedance_video(
     Static / Audio). No NanoBanana composite is built: Seedance accepts
     multiple image + video reference URLs directly.
     """
+    # The video_jobs table has a FK on influencer_id, so the core API's /jobs
+    # endpoint rejects the nil UUID. Fall back to the first influencer purely
+    # to satisfy the FK — the downstream pipeline below gates image injection
+    # on the ORIGINAL data.influencer_id, so no persona image / product leaks
+    # into a prompt that didn't ask for one.
     influencer_id = data.influencer_id
     if not influencer_id:
         try:
@@ -683,7 +689,12 @@ async def _run_seedance_clip_pipeline(
             "progress": 10,
         })
 
-        print(f"[Seedance] ref_images={reference_image_urls or []} ref_videos={reference_video_urls or []}")
+        print(
+            f"[Seedance] ref_images={reference_image_urls or []} "
+            f"ref_videos={reference_video_urls or []} duration={data.clip_length}s "
+            f"aspect={data.aspect_ratio or '9:16'} prompt_len={len(structured_prompt)}",
+            flush=True,
+        )
 
         def _submit():
             return generate_scenes.generate_video(
@@ -692,6 +703,7 @@ async def _run_seedance_clip_pipeline(
                 duration=data.clip_length,
                 reference_image_urls=reference_image_urls or None,
                 reference_video_urls=reference_video_urls or None,
+                aspect_ratio=data.aspect_ratio or "9:16",
             )
 
         result = await asyncio.to_thread(_submit)
@@ -741,9 +753,14 @@ async def _run_seedance_clip_pipeline(
         print(f"[Seedance] Job {job_id} complete: {final_url[:80]}...")
     except Exception as e:
         import traceback; traceback.print_exc()
+        summary = (
+            f"refs={len(reference_image_urls or [])}i/{len(reference_video_urls or [])}v "
+            f"dur={data.clip_length}s aspect={data.aspect_ratio or '9:16'}"
+        )
+        print(f"[Seedance] FAILED {summary} err={str(e)[:600]}", flush=True)
         await _update_video_job_via_api(token, project_id, job_id, {
             "status": "failed",
-            "error_message": f"Seedance generation failed: {str(e)[:400]}",
+            "error_message": f"Seedance generation failed [{summary}]: {str(e)[:400]}",
         })
         _refund_on_failure(user_id, credit_cost, job_id, "seedance_generation_failed")
 
@@ -763,7 +780,11 @@ async def _generate_kling_video(
     kling_director system prompt. Otherwise uses a single reference image.
     """
 
-    # 1. Create job record immediately so frontend can poll
+    # 1. Create job record immediately so frontend can poll.
+    # The video_jobs FK requires a real influencer_id, so fall back to the
+    # first available one purely to satisfy the constraint. The downstream
+    # pipeline gates influencer_image_url on the ORIGINAL data.influencer_id
+    # below, so a random persona's image never leaks into the rendered scene.
     influencer_id = data.influencer_id
     if not influencer_id:
         try:
@@ -1245,6 +1266,7 @@ async def _run_cinematic_clip_pipeline(
                 duration=duration,
                 kling_elements=kling_elements if kling_elements else None,
                 multi_prompt=multi_prompt_payload,
+                aspect_ratio=data.aspect_ratio or "9:16",
             )
             video_url = result["videoUrl"]
             print(f"[Cinematic] Kling animation complete: {video_url[:80]}...")
@@ -1902,6 +1924,7 @@ async def _run_ugc_clip_pipeline(
                     reference_image_url=composite_url,
                     model_api="veo-3.1-fast",
                     duration=data.clip_length,
+                    aspect_ratio=data.aspect_ratio or "9:16",
                 )
             else:
                 # Text-to-video (no reference image)
@@ -1911,6 +1934,7 @@ async def _run_ugc_clip_pipeline(
                     reference_image_url=data.reference_image_url,
                     model_api="veo-3.1-fast",
                     duration=data.clip_length,
+                    aspect_ratio=data.aspect_ratio or "9:16",
                 )
             video_url = result["videoUrl"]
             print(f"[UGC Clip] Veo animation complete: {video_url[:80]}...")
