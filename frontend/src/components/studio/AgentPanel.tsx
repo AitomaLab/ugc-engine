@@ -61,6 +61,10 @@ interface MentionItem {
     image_url?: string;   // thumbnail
     views?: string[];     // additional shots/views (product_views / character_views) — profile first, then extras
     ref: AgentRef;        // payload sent to backend
+    product_type?: 'physical' | 'digital';
+    // For digital products: maps a first_frame_url (shown in the picker grid)
+    // to its underlying app clip so finalizeMention can attach app_clip_id.
+    clipsByFrame?: Record<string, { clip_id: string; video_url?: string }>;
 }
 
 interface AttachedFile {
@@ -76,6 +80,13 @@ interface AttachedFile {
 
 function slugify(s: string): string {
     return (s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+}
+
+function formatElapsed(sec: number): string {
+    if (sec < 0) sec = 0;
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
 // Maps a backend tool_call event to a user-facing activity label. Specific
@@ -140,6 +151,17 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
     const [running, setRunning] = useState(false);
     const [activity, setActivity] = useState<string>('');
     const [error, setError] = useState<string | null>(null);
+    // ── Perceived-latency UX state ────────────────────────────────────────
+    // `activityStartedAt` anchors the mm:ss counter next to the activity label;
+    // `lastHeartbeatAt` re-triggers the pulsing dot on each SSE keepalive so
+    // the UI visibly breathes during minutes-long tool runs; the artifact
+    // counter + flash tick give feedback when a multi-artifact job emits
+    // intermediate results.
+    const [activityStartedAt, setActivityStartedAt] = useState<number | null>(null);
+    const [elapsedSec, setElapsedSec] = useState(0);
+    const [lastHeartbeatAt, setLastHeartbeatAt] = useState(0);
+    const [artifactsReadyCount, setArtifactsReadyCount] = useState(0);
+    const [artifactFlashTick, setArtifactFlashTick] = useState(0);
     // Start `true` when initialBrief is provided so the auto-submit Phase 2
     // effect waits for hydration to complete (otherwise setTurns on hydrate
     // wipes the user turn appended by the auto-fired handleRun).
@@ -160,6 +182,22 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             onStateChange({ useSeedance, running, turnsCount: turns.length });
         }
     }, [useSeedance, running, turns.length, onStateChange]);
+
+    // Tick the elapsed counter once per second while a run is active. Keeps
+    // the activity label alive ("Generating video · 1:32") instead of showing
+    // a frozen string for minutes at a time.
+    useEffect(() => {
+        if (!running || !activityStartedAt) {
+            setElapsedSec(0);
+            return;
+        }
+        // Seed immediately so the counter doesn't wait a full second to show 0:00.
+        setElapsedSec(Math.floor((Date.now() - activityStartedAt) / 1000));
+        const id = setInterval(() => {
+            setElapsedSec(Math.floor((Date.now() - activityStartedAt) / 1000));
+        }, 1000);
+        return () => clearInterval(id);
+    }, [running, activityStartedAt]);
 
     const handleFilesPicked = useCallback(async (files: FileList | null) => {
         if (!files || files.length === 0) return;
@@ -298,15 +336,40 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         const items: MentionItem[] = [];
         for (const p of products) {
             const name = p.name || p.product_name || 'product';
-            const extraViews = Array.isArray(p.product_views) ? p.product_views.filter(Boolean) : [];
-            const views = p.image_url ? [p.image_url, ...extraViews.filter((v: string) => v !== p.image_url)] : extraViews;
+            const isDigital = p.type === 'digital';
+            const appClips = Array.isArray(p.app_clips) ? p.app_clips.filter((c: any) => c.first_frame_url) : [];
+
+            let views: string[] = [];
+            let clipsByFrame: Record<string, { clip_id: string; video_url?: string }> | undefined;
+            let thumb = p.image_url;
+
+            if (isDigital && appClips.length) {
+                views = appClips.map((c: any) => c.first_frame_url);
+                clipsByFrame = Object.fromEntries(
+                    appClips.map((c: any) => [c.first_frame_url, { clip_id: c.id, video_url: c.video_url }])
+                );
+                if (!thumb) thumb = views[0];
+            } else {
+                const extraViews = Array.isArray(p.product_views) ? p.product_views.filter(Boolean) : [];
+                views = p.image_url ? [p.image_url, ...extraViews.filter((v: string) => v !== p.image_url)] : extraViews;
+            }
+
             items.push({
                 type: 'product',
                 tag: slugify(name),
                 name,
-                image_url: p.image_url,
+                image_url: thumb,
                 views: views.length > 1 ? views : undefined,
-                ref: { type: 'product', tag: slugify(name), name, id: p.id, image_url: p.image_url },
+                product_type: isDigital ? 'digital' : 'physical',
+                clipsByFrame,
+                ref: {
+                    type: 'product',
+                    tag: slugify(name),
+                    name,
+                    id: p.id,
+                    image_url: thumb,
+                    product_type: isDigital ? 'digital' : 'physical',
+                },
             });
         }
         for (const inf of influencers) {
@@ -512,12 +575,17 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         setError(null);
         setRunning(true);
         setActivity(t('creativeOs.agent.activityThinking'));
+        setActivityStartedAt(Date.now());
+        setArtifactsReadyCount(0);
+        setArtifactFlashTick(0);
+        setLastHeartbeatAt(Date.now());
 
         // Submit intercept: parent handles the prompt (e.g. home page creates a project)
         if (onSubmitOverride) {
             onSubmitOverride(finalText);
             setRunning(false);
             setActivity('');
+            setActivityStartedAt(null);
             return;
         }
 
@@ -564,6 +632,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                         stopThreadPolling();
                         setRunning(false);
                         setActivity('');
+                        setActivityStartedAt(null);
                         abortRef.current = null;
                         return;
                     }
@@ -619,6 +688,11 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     break;
                 case 'tool_call': {
                     setActivity(toolActivityLabel(e.name, e.mode, e.input_summary, t));
+                    // Reset elapsed anchor + per-tool artifact counter so the
+                    // mm:ss heartbeat restarts from 0 for this new tool.
+                    setActivityStartedAt(Date.now());
+                    setArtifactsReadyCount(0);
+                    setArtifactFlashTick(0);
                     updateLastAgentTurn((t) => ({
                         ...t,
                         tool_calls: [
@@ -652,10 +726,16 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     // before `agent_message` begins streaming. Clearing activity
                     // here creates a dead-zone where the UI looks frozen.
                     setActivity(t('creativeOs.agent.activityProcessing'));
+                    // Reset elapsed anchor — counter now reflects post-tool latency
+                    // rather than the (completed) tool's runtime.
+                    setActivityStartedAt(Date.now());
                     onArtifact?.(); // refresh gallery — tool may have created assets
                     break;
                 case 'keepalive':
-                    // SSE keepalive ping — prevents connection timeout, no UI action needed
+                    // Bump the heartbeat tick so the activity-row dot remounts
+                    // and its pulse animation re-fires — visible proof every 15s
+                    // that the connection is still alive during minutes-long tools.
+                    setLastHeartbeatAt(Date.now());
                     break;
                 case 'artifact': {
                     const art = e.artifact as AgentArtifact;
@@ -663,12 +743,15 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                         ...t,
                         artifacts: [...(t.artifacts || []), art],
                     }));
+                    setArtifactsReadyCount((c) => c + 1);
+                    setArtifactFlashTick(Date.now());
                     onArtifact?.();
                     break;
                 }
                 case 'done':
                     setRunning(false);
                     setActivity('');
+                    setActivityStartedAt(null);
                     abortRef.current = null;
                     onArtifact?.(); // final refresh — pick up anything generated
                     break;
@@ -676,6 +759,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     updateLastAgentTurn((t) => ({ ...t, interrupted: true }));
                     setRunning(false);
                     setActivity('');
+                    setActivityStartedAt(null);
                     abortRef.current = null;
                     break;
                 case 'disconnected':
@@ -689,6 +773,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     setError(e.message);
                     setRunning(false);
                     setActivity('');
+                    setActivityStartedAt(null);
                     abortRef.current = null;
                     break;
             }
@@ -721,6 +806,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         } finally {
             setRunning(false);
             setActivity('');
+            setActivityStartedAt(null);
             abortRef.current = null;
         }
     }, [brief, running, projectId, onArtifact, activeRefs, attachments, onSubmitOverride, useSeedance]);
@@ -764,9 +850,19 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         const tagText = `@${item.tag}`;
         const newBrief = before + tagText + ' ' + after;
         setBrief(newBrief);
-        const finalRef: AgentRef = chosenImageUrl
+        let finalRef: AgentRef = chosenImageUrl
             ? { ...item.ref, image_url: chosenImageUrl }
             : item.ref;
+        if (chosenImageUrl && item.clipsByFrame && item.clipsByFrame[chosenImageUrl]) {
+            finalRef = { ...finalRef, app_clip_id: item.clipsByFrame[chosenImageUrl].clip_id };
+        } else if (!chosenImageUrl && item.clipsByFrame) {
+            // Digital product with a single app clip — auto-attach it.
+            const entries = Object.entries(item.clipsByFrame);
+            if (entries.length === 1) {
+                const [frameUrl, { clip_id }] = entries[0];
+                finalRef = { ...finalRef, image_url: frameUrl, app_clip_id: clip_id };
+            }
+        }
         setActiveRefs((prev) => {
             const next = new Map(prev);
             next.set(item.tag, finalRef);
@@ -1199,6 +1295,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                         turn={turn}
                                         refMap={refMap}
                                         isLast={idx === turns.length - 1}
+                                        running={running}
                                         onQuickReply={(text) => { handleRun(text); }}
                                         selectedAspect={selectedAspect}
                                     />
@@ -1217,7 +1314,9 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                     gap: '6px',
                                 }}
                             >
+                                {/* `key` flips on each keepalive → span remounts → pulse animation replays. */}
                                 <span
+                                    key={`pulse-${lastHeartbeatAt}`}
                                     style={{
                                         display: 'inline-block',
                                         width: '6px',
@@ -1227,7 +1326,23 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                         animation: 'pulse 1.2s ease-in-out infinite',
                                     }}
                                 />
-                                {activity}
+                                <span>{activity}</span>
+                                {activityStartedAt !== null && (
+                                    <span style={{ opacity: 0.65, fontVariantNumeric: 'tabular-nums' }}>
+                                        · {formatElapsed(elapsedSec)}
+                                    </span>
+                                )}
+                                {artifactsReadyCount > 0 && (
+                                    <span
+                                        key={`ready-${artifactFlashTick}`}
+                                        style={{
+                                            color: '#2BA04A',
+                                            animation: 'artifactFlash 0.5s ease-out',
+                                        }}
+                                    >
+                                        · {artifactsReadyCount} ready
+                                    </span>
+                                )}
                             </div>
                         )}
 
@@ -1488,6 +1603,15 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             @keyframes pulse {
                 0%, 100% { opacity: 0.4; transform: scale(0.85); }
                 50% { opacity: 1; transform: scale(1.15); }
+            }
+            @keyframes artifactFlash {
+                0% { transform: scale(1.25); opacity: 0.4; }
+                50% { transform: scale(1); opacity: 1; }
+                100% { transform: scale(1); opacity: 1; }
+            }
+            @keyframes thinkingDot {
+                0%, 80%, 100% { opacity: 0.2; transform: translateY(0); }
+                40% { opacity: 1; transform: translateY(-2px); }
             }
         `}</style>
     );
@@ -1920,7 +2044,38 @@ function HistoryPopover({
     );
 }
 
-function TurnBubble({ turn, refMap, isLast, onQuickReply, selectedAspect }: { turn: AgentTurn; refMap: Map<string, AgentRef>; isLast?: boolean; onQuickReply?: (text: string) => void; selectedAspect?: 'vertical' | 'horizontal' | null }) {
+// Progressive text reveal — the Managed Agents API hands us whole messages
+// (no token deltas), so we animate the reveal client-side at ~60 chars/s to
+// give the bubble a "streaming" feel. When `text` grows (the agent emits a
+// longer version of the same message), the reveal continues from wherever the
+// previous animation left off instead of snapping back to the start.
+function AnimatedText({ text, refMap, speedCharsPerSec = 60 }: { text: string; refMap: Map<string, AgentRef>; speedCharsPerSec?: number }) {
+    const [revealed, setRevealed] = useState(0);
+    const textRef = useRef<string>(text);
+    useEffect(() => {
+        textRef.current = text;
+        let cancelled = false;
+        const startedAt = performance.now();
+        const startFrom = Math.min(revealed, text.length);
+        const tick = () => {
+            if (cancelled) return;
+            const current = textRef.current;
+            const elapsedSecs = (performance.now() - startedAt) / 1000;
+            const target = Math.min(current.length, startFrom + Math.floor(elapsedSecs * speedCharsPerSec));
+            setRevealed(target);
+            if (target < current.length) requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+        return () => { cancelled = true; };
+        // Intentionally depend only on `text` — we don't want `revealed` updates
+        // to restart the animation every frame.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [text, speedCharsPerSec]);
+    const shown = text.slice(0, revealed);
+    return <>{renderMessageContent(shown, refMap, false)}</>;
+}
+
+function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspect }: { turn: AgentTurn; refMap: Map<string, AgentRef>; isLast?: boolean; running?: boolean; onQuickReply?: (text: string) => void; selectedAspect?: 'vertical' | 'horizontal' | null }) {
     const { t } = useTranslation();
     const isUser = turn.role === 'user';
     const hasRefPreviews = isUser && !!turn.refs?.some((r) => r.image_url || r.video_url);
@@ -1936,7 +2091,12 @@ function TurnBubble({ turn, refMap, isLast, onQuickReply, selectedAspect }: { tu
         : rawText;
     const aspectButtonsActive = hasAspectMarker && !!isLast && !!onQuickReply && !selectedAspect;
     const hasContent = !!displayText || !!turn.artifacts?.length || turn.interrupted || hasRefPreviews || hasAspectMarker;
-    if (!isUser && !hasContent) return null;
+    // While a run is active, show a placeholder "…" bubble (three breathing
+    // dots) in place of the empty agent turn so the UI never looks frozen
+    // while waiting for the first `agent_message`. Historical empty turns
+    // (e.g. mid-run refresh from Supabase) still render nothing.
+    const showThinkingDots = !isUser && !hasContent && !!isLast && !!running;
+    if (!isUser && !hasContent && !showThinkingDots) return null;
     return (
         <div
             style={{
@@ -2002,8 +2162,32 @@ function TurnBubble({ turn, refMap, isLast, onQuickReply, selectedAspect }: { tu
                     </div>
                 )}
 
+                {showThinkingDots && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '2px 0' }}>
+                        {[0, 1, 2].map((i) => (
+                            <span
+                                key={i}
+                                style={{
+                                    display: 'inline-block',
+                                    width: '6px',
+                                    height: '6px',
+                                    borderRadius: '50%',
+                                    background: '#8A93B0',
+                                    animation: `thinkingDot 1.2s ease-in-out ${i * 0.15}s infinite`,
+                                }}
+                            />
+                        ))}
+                    </div>
+                )}
+
                 {displayText && (
-                    <div style={{ whiteSpace: 'pre-wrap' }}>{renderMessageContent(displayText, refMap, isUser)}</div>
+                    <div style={{ whiteSpace: 'pre-wrap' }}>
+                        {/* Progressive reveal only for the agent's active last bubble — gives
+                            a streaming feel even though Managed Agents delivers whole messages. */}
+                        {!isUser && !!isLast && !!running
+                            ? <AnimatedText text={displayText} refMap={refMap} />
+                            : renderMessageContent(displayText, refMap, isUser)}
+                    </div>
                 )}
 
                 {hasAspectMarker && (

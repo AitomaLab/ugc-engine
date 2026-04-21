@@ -197,6 +197,8 @@ export interface AgentRef {
     video_url?: string;
     shot_id?: string;
     job_id?: string;
+    app_clip_id?: string;
+    product_type?: 'physical' | 'digital';
 }
 
 export interface AgentTurn {

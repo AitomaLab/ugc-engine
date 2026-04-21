@@ -734,6 +734,24 @@ def api_list_products(request: Request, category: Optional[str] = None, user: di
                 products = []
         else:
             products = list_products(category)
+
+        for p in products:
+            if p.get("type") == "digital":
+                try:
+                    clips = list_app_clips_by_product(p["id"]) or []
+                    p["app_clips"] = [
+                        {
+                            "id": c.get("id"),
+                            "name": c.get("name"),
+                            "video_url": c.get("video_url"),
+                            "first_frame_url": c.get("first_frame_url"),
+                            "duration_seconds": c.get("duration_seconds"),
+                        }
+                        for c in clips
+                    ]
+                except Exception as clip_err:
+                    print(f"WARN: failed to load app clips for product {p.get('id')}: {clip_err}")
+                    p["app_clips"] = []
         return products
     except Exception as e:
         print(f"ERROR in api_list_products: {e}")

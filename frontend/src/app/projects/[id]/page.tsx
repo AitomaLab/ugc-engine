@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { useParams, useSearchParams } from 'next/navigation';
+import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useApp } from '@/providers/AppProvider';
 import { creativeFetch } from '@/lib/creative-os-api';
 import { useTranslation } from '@/lib/i18n';
@@ -63,15 +63,39 @@ export default function ProjectContainerPage() {
     const { t } = useTranslation();
     const params = useParams();
     const searchParams = useSearchParams();
+    const pathname = usePathname();
+    const router = useRouter();
     const projectId = params.id as string;
-    const initialBrief = searchParams.get('brief');
-    const refsParam = searchParams.get('refs');
-    const seedanceParam = searchParams.get('seedance');
-    const initialUseSeedance = seedanceParam === '1';
-    const initialRefs = useMemo(() => {
-        if (!refsParam) return undefined;
-        try { return JSON.parse(refsParam); } catch { return undefined; }
-    }, [refsParam]);
+    // Capture the auto-submit params ONCE at mount. We immediately strip them
+    // from the URL so a browser refresh doesn't re-trigger the initial
+    // message send.
+    const initialParamsRef = useRef<{ brief: string | null; refs: any; seedance: boolean } | null>(null);
+    if (initialParamsRef.current === null) {
+        const refsParamRaw = searchParams.get('refs');
+        let parsedRefs: any = undefined;
+        if (refsParamRaw) {
+            try { parsedRefs = JSON.parse(refsParamRaw); } catch { parsedRefs = undefined; }
+        }
+        initialParamsRef.current = {
+            brief: searchParams.get('brief'),
+            refs: parsedRefs,
+            seedance: searchParams.get('seedance') === '1',
+        };
+    }
+    const initialBrief = initialParamsRef.current.brief;
+    const initialRefs = initialParamsRef.current.refs;
+    const initialUseSeedance = initialParamsRef.current.seedance;
+
+    useEffect(() => {
+        if (!pathname) return;
+        const hasAutoSubmitParams =
+            searchParams.get('brief') || searchParams.get('refs') || searchParams.get('seedance');
+        if (hasAutoSubmitParams) {
+            router.replace(pathname, { scroll: false });
+        }
+        // Only run once on mount — we want the cleanup to happen exactly once.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
     const { session } = useApp();
 
     const [activeTab, setActiveTab] = useState<TabId>('images');

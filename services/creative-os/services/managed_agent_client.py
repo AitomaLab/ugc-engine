@@ -55,6 +55,21 @@ SYSTEM_PROMPT = """You are Aitoma — the creative director embedded in Aitoma S
 
 When given a brief, plan briefly then act. Prefer chaining tools end-to-end rather than describing what you would do.
 
+## Speech hygiene — how you talk to the user (HARD RULES)
+Users do NOT see your tool catalogue or the internal architecture. Treat every user-facing message as studio copy, not engineering notes.
+
+NEVER say in chat any of the following:
+- Tool names, in any form: `combine_videos`, `load_editor_state`, `save_editor_state`, `render_edited_video`, `generate_video`, `create_ugc_video`, `splice_app_clip`, `caption_video`, `generate_music`, etc. If you must refer to an action, use plain verbs: "combining", "re-editing", "rendering the final cut", "adding a soundtrack".
+- Internal architecture or engine names: "pipeline", "Remotion", "Remotion pipeline", "editor state", "editor_state", "job_id", "video_jobs table", "API", "endpoint", "backend", "worker", "Supabase", "Kie", "Suno", "Veo", "Kling", "Seedance", "NanoBanana", "ffmpeg". The user picks the engine via the Seedance toggle; everything else is an implementation detail they should never see.
+- Parameter names from tool schemas: `confirmed`, `aspect_ratio`, `reference_image_url`, `app_clip_id`, `clip_length`, `mode`, `music_prompt`, `mute_audio_indices`, etc. If asking a clarifying question, use plain English ("vertical or horizontal?", "how long?", "with music or silent?").
+- Job IDs, asset URLs, UUIDs — UNLESS the user explicitly asked for them.
+- Phrases that describe internal limits as user-facing problems: "the editor state doesn't expose X", "that's a stitched MP4 outside the pipeline", "no job_id so I can't apply Y", "the API doesn't support Z", "that's a platform-side issue", "I can't work around this on my end". If you hit a real limitation, find another path that works and take it — or ask ONE plain-English clarifying question.
+- Option-list deflections like "Option A: do X / Option B: do Y" when ONE of the options actually works. Pick the working path and do it. Only offer options when there is a GENUINE creative choice the user should make.
+
+ALWAYS:
+- Describe outcomes in the user's vocabulary: "your final cut with a new soundtrack", "Ava's UGC scene then the cinematic ingredients B-roll", "the app walkthrough at the end".
+- If you are blocked by a genuine constraint that has no workaround, say so in one short plain-English sentence and suggest the nearest alternative the user CAN choose (e.g. "I can swap the soundtrack but not mute individual spoken lines — want me to do the soundtrack swap?"). Do NOT pile on technical explanation.
+
 ## Tool catalogue
 
 ### Discovery (read-only, free)
@@ -109,7 +124,7 @@ When given a brief, plan briefly then act. Prefer chaining tools end-to-end rath
 - render_edited_video(job_id, editor_state, codec?) — Re-render the edited timeline into a final MP4. GATED.
 
 ### Video combination
-- combine_videos(video_urls, transition?, transition_duration?) — Combine 2+ videos into one MP4 with smooth transitions (dissolve, fade, wipe). NOT gated — runs automatically.
+- combine_videos(video_urls, transition?, transition_duration?, mute_audio_indices?, music_prompt?) — Combine 2+ videos into one MP4 with smooth transitions (dissolve, fade, wipe). Optional: silence specific clips' source audio (`mute_audio_indices`) and/or mix a freshly generated instrumental soundtrack UNDER the whole combined video (`music_prompt`). NOT gated — runs automatically.
 
 ## CRITICAL — Cost confirmation rule (applies to ALL gated tools)
 Gated tools cost real credits. You MUST get explicit user confirmation before spending them. The flow is:
@@ -130,13 +145,16 @@ The gated tools are exactly: generate_image, generate_influencer, generate_ident
 
 ## Model routing
 
-**Default engines (use these unless the brief carries `[ENGINE=seedance]`):**
+Every user brief carries an explicit engine marker in the preface — either `[ENGINE=default ...]` or `[ENGINE=seedance ...]`. You MUST read the marker on the CURRENT turn's brief and route accordingly. IGNORE engine choices from earlier turns — a Seedance run yesterday does NOT mean the next turn should also use Seedance. Each turn's marker is authoritative for that turn only.
+
+**When the current brief carries `[ENGINE=default]`:**
 - **UGC videos** (all lengths): powered by **Veo 3.1**. Use `generate_video(mode="ugc")` for short clips (5-10s) or `create_ugc_video` for full 15/30s produced videos (script + scenes + captions + music).
 - **Cinematic videos**: powered by **Kling 3.0**. Use `generate_video(mode="cinematic_video")` for cinematic clips (5-10s).
 - **AI Clone** (lip-synced): use `create_clone_video`.
+Do NOT use `seedance_2_ugc` / `seedance_2_cinematic` / `seedance_2_product` on a default-marker turn, even if an earlier turn used them.
 
-**Seedance engines (ONLY when the brief preface contains `[ENGINE=seedance]`):**
-The user has toggled the Seedance 2.0 engine ON. Do NOT use `ugc` or `cinematic_video` modes for new clips in this turn — use the Seedance equivalents below. These are single-shot 5-15s clips with Seedance 2.0 Fast (bilingual EN/ES, supports multi-image + video references directly, no composite step needed).
+**When the current brief carries `[ENGINE=seedance]`:**
+The user has toggled the Seedance 2.0 engine ON for this turn. Do NOT use `ugc` or `cinematic_video` modes for new clips in this turn — use the Seedance equivalents below. These are single-shot 5-15s clips with Seedance 2.0 Fast (bilingual EN/ES, supports multi-image + video references directly, no composite step needed).
 - **UGC**: `generate_video(mode="seedance_2_ugc")` — authentic handheld UGC with optional Spanish (Latin) dialogue.
 - **Cinematic**: `generate_video(mode="seedance_2_cinematic")` — high-end commercial single-shot cinematic.
 - **Product scene**: `generate_video(mode="seedance_2_product")` — standalone product showcase, no person.
@@ -185,6 +203,12 @@ Trigger it in TWO cases:
   1. Explicit — user says "combine / merge / stitch / join / concatenate" existing videos. Use their @video refs.
   2. Implicit — user asks for ONE final video made of MULTIPLE clips (e.g. "generate a video with a UGC opening and a cinematic ending", "primero X, luego Y", "clip 1 then clip 2"). After ALL the gated generation tools finish and return their URLs, chain combine_videos in the SAME turn and present ONLY the combined result. Do NOT present the individual clips as the deliverable — they are intermediates.
 
+**Music / audio control inside combine_videos**: the tool takes two extra optional params:
+  - `mute_audio_indices: [i, j, ...]` — zero-based indices of clips whose source audio should be silenced in the final cut. Use this for clips that are MUSIC-ONLY with no dialogue (e.g. cinematic B-roll scenes) when the user wants to swap that music out. NEVER mute clips that contain a person speaking (UGC clips, clone/lip-sync clips, app-clip walkthroughs with narration) — dialogue must always remain audible.
+  - `music_prompt: "..."` — if set, a fresh instrumental soundtrack is generated and mixed UNDER the kept audio of the whole combined video. Use plain English ("upbeat modern pop instrumental for a grocery app ad"). The music spans the entire final duration.
+
+When a user asks to "remove the music and add a new soundtrack" (or "replace the music", "swap the music", "add background music") on an already-combined video: DO NOT try to re-edit the combined MP4 in place. Instead, call combine_videos AGAIN with the ORIGINAL per-clip source URLs (the ones you used on the first combine call, in the same order), set `mute_audio_indices` to the indices of the music-only clips the user wants silenced, and set `music_prompt` to a short style description matching the product/vibe. This rebuilds the final cut with dialogue preserved and a new bed underneath — one tool call, no confirmation needed.
+
 CLIP ORDER — critical: video_urls must follow the order the USER specified in their prompt, not the order clips finished generating. Parse the user's sequence markers ("first / then / after", "primero / luego / después", timestamps like "0-8s then 8-12s", numbered lists "1. UGC 2. cinematic"). Match each position to the correct generated URL by its modality (UGC→Veo URL, cinematic→Kling URL) or by the prompt that produced it. If the order is ambiguous, ask the user before calling combine_videos — do NOT guess.
 
 ## General rules
@@ -199,9 +223,11 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
    - `generate_image` → pass every relevant upload URL via `reference_image_urls: [url1, url2, ...]`. NanoBanana Pro uses them as direct visual references so the output actually contains the uploaded product/person. Failing to pass them means the model generates from prompt text only and the attached images are ignored.
    - `generate_video` → for Seedance modes (seedance_2_ugc / seedance_2_cinematic / seedance_2_product) pass EVERY relevant upload URL via `reference_image_urls: [url1, url2, ...]` — Seedance 2.0 accepts up to 4 references and blends them (e.g. product + model). For Veo/Kling modes (ugc, cinematic_video) pass the most-relevant single URL via `reference_image_url` (first-frame / hero shot) since those models only accept one.
    Only fall back to `product_id` / `influencer_id` when the user @-mentioned an existing DB asset; for raw uploads (upload_* tags) those IDs do not exist.
+   IMPORTANT: `reference_image_urls` / `reference_video_urls` are ONLY for `upload_*` tags. For @-mentioned DB entities (products / influencers / app clips), forward the IDs (`product_id`, `influencer_id`, `app_clip_id`) and NOTHING else — the pipeline resolves every image / video URL server-side. Mixing IDs with explicit URLs causes duplicate references and face-swap artifacts.
 9. UGC mode does NOT require a registered product. If the user provides uploaded images (upload_* refs), call `generate_image(mode="ugc", reference_image_urls=[...])` directly — the pipeline treats the first upload as the product and any additional upload as the character/influencer. Do not suggest switching to iPhone look or ask the user to create a product first when uploads are already present. Only create or request a registered product when the user explicitly asks to save the asset for future reuse.
 10. ASPECT RATIO — MANDATORY before gated generation. Before calling `generate_image` or `generate_video` with `confirmed=true`, you MUST know the aspect ratio. If the user's brief already specifies it ("vertical", "9:16", "horizontal", "16:9", "for TikTok", "for YouTube", "landscape", "portrait"), use it directly. Otherwise you MUST ask the user BEFORE presenting the cost confirmation: ask the question in one short sentence, then append the literal marker `[[ASPECT_BUTTONS]]` on the last line of your message. The frontend detects this marker and renders clickable Vertical / Horizontal buttons for the user. When the user replies with their choice, THEN show the cost confirmation, THEN call the tool with `confirmed=true` and `aspect_ratio="9:16"` or `"16:9"`. Never skip this step for gated generation. Do NOT include the marker when the aspect is already known.
-11. NO RANDOM INFLUENCER / PRODUCT — for cinematic / scene / b-roll prompts that do not mention a specific person or product (e.g. "rooftop chase", "sunset over a city", "close-up of a coffee cup"), you MUST call `generate_video` WITHOUT `influencer_id` and WITHOUT `product_id`. Never auto-attach an influencer or product "to be safe" — the pipeline will generate the scene from the prompt alone, which is what the user wants. Only pass `influencer_id` / `product_id` when the user @-mentioned that asset or explicitly named them in the brief."""
+11. NO RANDOM INFLUENCER / PRODUCT — for cinematic / scene / b-roll prompts that do not mention a specific person or product (e.g. "rooftop chase", "sunset over a city", "close-up of a coffee cup"), you MUST call `generate_video` WITHOUT `influencer_id` and WITHOUT `product_id`. Never auto-attach an influencer or product "to be safe" — the pipeline will generate the scene from the prompt alone, which is what the user wants. Only pass `influencer_id` / `product_id` when the user @-mentioned that asset or explicitly named them in the brief.
+12. DIGITAL PRODUCTS — when the user @-mentions a digital product (app / SaaS / software), the `[Referenced assets]` preface includes both `product_id=...` AND `app_clip_id=...` (the specific clip the user picked from the shot modal). You MUST forward BOTH to `generate_video` along with `product_type='digital'`. The pipeline renders the generated clip (composited inside a phone for 9:16 / a computer for 16:9). Then — **in the SAME turn, immediately after `generate_video` returns status=success** — you MUST chain `splice_app_clip(job_id=<returned_job_id>, app_clip_id=<same_app_clip_id>)` to append the app clip walkthrough as B-roll with a dissolve transition. Present the splice step in natural language ("Your cinematic is ready — now splicing the app clip as B-roll...") so the user knows what's happening during the ~1-2 min splice. This two-step flow applies to ALL modes (ugc, cinematic_video, seedance_2_ugc, seedance_2_cinematic, seedance_2_product). Do NOT call `combine_videos` for the app-clip splice — that's what `splice_app_clip` is for. `combine_videos` is only for stitching two *independently generated* videos the user explicitly asked to combine. Never call `list_app_clips` to pick a clip manually — the preface already tells you which one. NEVER pass the app clip's first_frame_url (or any URL derived from the clip) as `reference_image_url` / `reference_image_urls` / `reference_video_urls` — the Seedance pipeline uses the clip's VIDEO as a reference server-side. Forwarding a URL in addition to `app_clip_id` causes duplicate references."""
 
 
 # ── Tool definitions exposed to the agent ─────────────────────────────
@@ -404,8 +430,11 @@ def _custom_tools_for_agent() -> list[dict]:
                 "NanoBanana Pro composite of the influencer holding the product before animating with "
                 "Veo 3.1, so both references make it into the final clip. Only fall back to "
                 "reference_image_url when the user uploaded a custom image. "
-                "FIRST call returns a credit cost estimate without spending credits. "
-                "After user confirms, call again with confirmed=true."
+                "If the referenced product is digital, pass product_type='digital' and app_clip_id from the "
+                "[Referenced assets] preface. The pipeline renders the clip's first frame inside a phone "
+                "(9:16 clip) or computer (16:9 clip) and concats the full app clip as B-roll — "
+                "automatic in ALL modes, so never call combine_videos to splice the app clip. "
+                "FIRST call returns a credit cost estimate; after user confirms, call again with confirmed=true."
             ),
             "input_schema": {
                 "type": "object",
@@ -453,6 +482,24 @@ def _custom_tools_for_agent() -> list[dict]:
                             "(YouTube/landscape). REQUIRED: you must ask the user which ratio they want "
                             "before calling this tool with confirmed=true, unless the user already specified "
                             "it in their brief."
+                        ),
+                    },
+                    "product_type": {
+                        "type": "string",
+                        "enum": ["physical", "digital"],
+                        "description": (
+                            "Type of the referenced product. Pass 'digital' whenever the referenced product "
+                            "is a digital product (app / SaaS / software) so the composite renders the app "
+                            "inside a device and the app clip is concatenated as B-roll. Defaults to "
+                            "'physical' when omitted."
+                        ),
+                    },
+                    "app_clip_id": {
+                        "type": "string",
+                        "description": (
+                            "UUID of the specific app clip to use as composite reference and B-roll. "
+                            "REQUIRED when product_type='digital'. Read it from the [Referenced assets] "
+                            "preface (app_clip_id=...). Never fetch manually via list_app_clips."
                         ),
                     },
                     "confirmed": {"type": "boolean", "description": confirmed_desc},
@@ -894,6 +941,34 @@ def _custom_tools_for_agent() -> list[dict]:
             },
         },
 
+        # ── App-clip B-roll splice (digital products) ────────────────
+        {
+            "type": "custom",
+            "name": "splice_app_clip",
+            "description": (
+                "Append an app clip as B-roll to a completed generate_video job, with a dissolve "
+                "transition. DIGITAL PRODUCTS ONLY — chain this immediately after generate_video "
+                "succeeds, passing the returned job_id and the app_clip_id from the [Referenced "
+                "assets] preface. Takes ~1-2 min (download + ffmpeg + upload). Free — no "
+                "confirmation. On success, the job's final_video_url is updated to the spliced "
+                "version; the pre-splice URL is kept in metadata.pre_splice_url."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "job_id": {
+                        "type": "string",
+                        "description": "The job_id returned by generate_video (must be status=success with a final_video_url).",
+                    },
+                    "app_clip_id": {
+                        "type": "string",
+                        "description": "The app clip to append as B-roll. Use the app_clip_id from the [Referenced assets] preface.",
+                    },
+                },
+                "required": ["job_id", "app_clip_id"],
+            },
+        },
+
         # ── Video combination ─────────────────────────────────────────
         {
             "type": "custom",
@@ -903,7 +978,13 @@ def _custom_tools_for_agent() -> list[dict]:
                 "transitions. video_urls MUST be in the order the user requested in their prompt — "
                 "NOT the order clips finished generating. Match each slot by modality (UGC clip = Veo "
                 "URL, cinematic clip = Kling URL) or by the originating prompt. Runs automatically — "
-                "no confirmation needed."
+                "no confirmation needed. Optional audio controls: silence specific source clips via "
+                "mute_audio_indices (use ONLY for music-only clips with no dialogue — never mute clips "
+                "containing a person speaking) and/or generate a fresh instrumental soundtrack via "
+                "music_prompt that is mixed UNDER the kept dialogue for the full duration. These two "
+                "params together are how you 'swap the music' on an already-combined video: call this "
+                "tool again with the SAME source URLs in the SAME order, plus the mute list and music "
+                "prompt."
             ),
             "input_schema": {
                 "type": "object",
@@ -921,6 +1002,15 @@ def _custom_tools_for_agent() -> list[dict]:
                     "transition_duration": {
                         "type": "number",
                         "description": "Transition duration in seconds (0.3-1.5). Default: 0.6.",
+                    },
+                    "mute_audio_indices": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "Zero-based indices (into video_urls) of clips whose source audio should be silenced in the final cut. Use ONLY for music-only / no-dialogue clips (e.g. cinematic B-roll) when the user wants to swap the music. NEVER include a clip that contains a person speaking.",
+                    },
+                    "music_prompt": {
+                        "type": "string",
+                        "description": "Optional short English style description of a background soundtrack to generate and mix UNDER the kept dialogue (e.g. 'upbeat modern pop instrumental for a grocery app ad'). When set, the whole combined video gets a fresh instrumental bed at a dialogue-safe level. Leave unset to keep the source audio untouched.",
                     },
                 },
                 "required": ["video_urls"],
@@ -1232,6 +1322,8 @@ async def _tool_generate_video(ctx: ToolContext, **kwargs: Any) -> str:
         reference_video_urls=kwargs.get("reference_video_urls") or None,
         clip_length=kwargs.get("clip_length", 5),
         aspect_ratio=kwargs.get("aspect_ratio") or None,
+        product_type=kwargs.get("product_type") or None,
+        app_clip_id=kwargs.get("app_clip_id") or None,
     )
     user = {"token": ctx.user_token, "id": "agent"}
     bg = BackgroundTasks()
@@ -1270,7 +1362,27 @@ async def _tool_generate_video(ctx: ToolContext, **kwargs: Any) -> str:
         video_url = final_status.get("final_video_url") or final_status.get("video_url")
         if video_url:
             _record_artifact(ctx, {"type": "video", "url": video_url, "job_id": job_id})
-        return json.dumps({"job_id": job_id, "video_url": video_url, "status": "success"})
+        payload: dict = {"job_id": job_id, "video_url": video_url, "status": "success"}
+        # Digital-product flows are two-step: generate_video renders the
+        # cinematic, then splice_app_clip appends the app walkthrough as
+        # B-roll. The agent sometimes forgets the second step and tells the
+        # user "auto-spliced" without actually calling the tool. Emit an
+        # explicit required-next-step instruction in the tool result so the
+        # chain is enforced regardless of system-prompt recall.
+        app_clip_id = kwargs.get("app_clip_id")
+        product_type = (kwargs.get("product_type") or "").lower()
+        if app_clip_id and product_type == "digital":
+            payload["required_next_step"] = {
+                "tool": "splice_app_clip",
+                "arguments": {"job_id": job_id, "app_clip_id": app_clip_id},
+                "reason": (
+                    "Digital-product videos must be spliced with the app-clip B-roll. "
+                    "Call splice_app_clip NOW in this same turn — do not tell the user "
+                    "'auto-spliced' without actually calling the tool. The user will see "
+                    "only the raw cinematic until splice_app_clip completes."
+                ),
+            }
+        return json.dumps(payload)
     if state in ("failed", "error"):
         return json.dumps({
             "error": final_status.get("error_message") or "video generation failed",
@@ -1874,12 +1986,96 @@ def _get_ffmpeg_path() -> str:
 
 
 
+async def _tool_splice_app_clip(ctx: ToolContext, **kwargs: Any) -> str:
+    """Concat a completed generate_video job's output with an app clip as
+    B-roll (dissolve transition) and update the job's final_video_url.
+
+    Free tool. Designed to be chained after generate_video for digital
+    products so the user sees two discrete activity cards ("cinematic
+    done" → "splicing B-roll") instead of a single ~3-min blocking wait.
+    """
+    import asyncio as _asyncio
+    import tempfile as _tempfile
+    from datetime import datetime as _dt
+
+    job_id = kwargs.get("job_id")
+    app_clip_id = kwargs.get("app_clip_id")
+    if not job_id or not app_clip_id:
+        return json.dumps({"error": "job_id and app_clip_id are required"})
+
+    try:
+        job = await ctx.core().get_job_status(job_id)
+    except Exception as e:
+        return json.dumps({"error": f"get_job_status failed: {e}", "job_id": job_id})
+
+    primary_url = job.get("final_video_url")
+    if not primary_url:
+        return json.dumps({
+            "error": f"job {job_id} has no final_video_url — is it complete?",
+            "job_id": job_id,
+            "status": job.get("status"),
+        })
+
+    try:
+        app_clip = await ctx.core().get_app_clip(app_clip_id)
+    except Exception as e:
+        return json.dumps({"error": f"get_app_clip failed: {e}"})
+
+    broll_url = app_clip.get("video_url") if app_clip else None
+    if not broll_url:
+        return json.dumps({"error": f"app clip {app_clip_id} has no video_url"})
+
+    try:
+        from utils.video_concat import concat_videos_matched
+        concat_path = await _asyncio.to_thread(
+            concat_videos_matched, primary_url, broll_url
+        )
+    except Exception as e:
+        return json.dumps({"error": f"concat failed: {e}", "job_id": job_id})
+
+    timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
+    storage_filename = f"spliced_{job_id[:8]}_{timestamp}.mp4"
+    try:
+        from ugc_db.db_manager import get_supabase
+        sb = get_supabase()
+        with open(concat_path, "rb") as f:
+            sb.storage.from_("generated-videos").upload(
+                storage_filename, f,
+                file_options={"content-type": "video/mp4"},
+            )
+        final_url = sb.storage.from_("generated-videos").get_public_url(storage_filename)
+    except Exception as e:
+        return json.dumps({"error": f"upload failed: {e}", "job_id": job_id})
+
+    try:
+        from routers.generate_video import _update_video_job_via_api
+        existing_meta = job.get("metadata") or {}
+        new_meta = {**existing_meta, "pre_splice_url": primary_url, "spliced_app_clip_id": app_clip_id}
+        await _update_video_job_via_api(
+            ctx.user_token, ctx.project_id or "", job_id,
+            {"final_video_url": final_url, "metadata": new_meta},
+        )
+    except Exception as e:
+        # Non-fatal — the spliced video exists in storage; just log.
+        print(f"[splice_app_clip] Job row update failed (non-fatal): {e}")
+
+    _record_artifact(ctx, {"type": "video", "url": final_url, "job_id": job_id})
+    return json.dumps({
+        "job_id": job_id,
+        "video_url": final_url,
+        "pre_splice_url": primary_url,
+        "status": "success",
+    })
+
+
 async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
     """Combine multiple videos with dissolve transitions. Gated tool."""
     import subprocess
     import tempfile
     import shutil
+    import sys as _sys
     from datetime import datetime as _dt
+    from pathlib import Path as _Path
 
     video_urls: list[str] = kwargs.get("video_urls") or []
     if len(video_urls) < 2:
@@ -1888,6 +2084,41 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
     transition = kwargs.get("transition", "dissolve")
     transition_dur = float(kwargs.get("transition_duration", 0.6))
     transition_dur = max(0.3, min(1.5, transition_dur))  # clamp
+
+    # Audio controls. `mute_audio_indices` silences specific source clips
+    # (used for music-only cinematic B-roll when the user wants to swap the
+    # soundtrack). `music_prompt` triggers a fresh Suno instrumental that is
+    # mixed UNDER any kept dialogue.
+    mute_indices: set[int] = set()
+    for idx in (kwargs.get("mute_audio_indices") or []):
+        try:
+            idx_int = int(idx)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= idx_int < len(video_urls):
+            mute_indices.add(idx_int)
+    music_prompt = (kwargs.get("music_prompt") or "").strip() or None
+
+    # Kick off Suno generation in parallel with the video download/normalize
+    # work — music generation typically takes 30s-2min and masking it behind
+    # the ffmpeg passes avoids paying it serially.
+    music_task: Optional[asyncio.Task] = None
+    if music_prompt:
+        try:
+            # generate_scenes.generate_music lives at the repo root and is
+            # imported by adding the repo to sys.path (same pattern as
+            # routers/generate_video.py).
+            repo_root = str(_Path(__file__).resolve().parents[3])
+            if repo_root not in _sys.path:
+                _sys.path.insert(0, repo_root)
+            import generate_scenes as _gs  # type: ignore
+            print(f"[combine_videos] Starting Suno music generation (prompt={music_prompt[:60]}...)")
+            music_task = asyncio.create_task(
+                asyncio.to_thread(_gs.generate_music, prompt=music_prompt, instrumental=True)
+            )
+        except Exception as e:
+            print(f"[combine_videos] Failed to start music generation: {e}")
+            music_task = None
 
     # combine_videos runs automatically (no confirmation gate). Credits are
     # deducted by the upstream core API when the merged MP4 is processed.
@@ -1914,11 +2145,41 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
 
         # 2. Normalize all clips to consistent resolution/codec using ffmpeg
         #    IMPORTANT: Every clip MUST have an audio track for xfade+acrossfade.
-        #    If a source clip has no audio, we generate a silent audio track.
+        #    If a source clip has no audio — OR the agent asked us to silence
+        #    this clip via mute_audio_indices — we attach a silent audio track.
         normalized: list[str] = []
         target_res = "1080:1920"  # 9:16 vertical — most UGC content
+
+        def _silent_normalize_cmd(src_path: str, out_path: str) -> list[str]:
+            return [
+                FFMPEG, "-y",
+                "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+                "-i", src_path,
+                "-map", "1:v", "-map", "0:a",
+                "-vf", f"scale={target_res}:force_original_aspect_ratio=decrease,"
+                       f"pad={target_res}:(ow-iw)/2:(oh-ih)/2:color=black",
+                "-r", "30", "-pix_fmt", "yuv420p",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                "-c:a", "aac", "-ar", "44100", "-ac", "2",
+                "-shortest",
+                out_path,
+            ]
+
         for i, path in enumerate(local_paths):
             norm_path = os.path.join(work_dir, f"norm_{i}.mp4")
+            if i in mute_indices:
+                # Agent explicitly requested this clip be silent. Go straight
+                # to the silent-audio path — do NOT try the source audio first.
+                print(f"[combine_videos] Clip {i} muted by request")
+                cmd_silent = _silent_normalize_cmd(path, norm_path)
+                result = await asyncio.to_thread(
+                    subprocess.run, cmd_silent, capture_output=True, text=True
+                )
+                if result.returncode != 0:
+                    return json.dumps({"error": f"Failed to normalize muted clip {i}: {result.stderr[-300:]}"})
+                normalized.append(norm_path)
+                continue
+
             cmd = [
                 FFMPEG, "-y", "-i", path,
                 "-vf", f"scale={target_res}:force_original_aspect_ratio=decrease,"
@@ -1935,18 +2196,7 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
             if result.returncode != 0:
                 # Source has no audio → add a silent audio track so all clips are uniform
                 print(f"[combine_videos] Clip {i} has no audio, adding silent track")
-                cmd_silent = [
-                    FFMPEG, "-y",
-                    "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
-                    "-i", path,
-                    "-vf", f"scale={target_res}:force_original_aspect_ratio=decrease,"
-                           f"pad={target_res}:(ow-iw)/2:(oh-ih)/2:color=black",
-                    "-r", "30", "-pix_fmt", "yuv420p",
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-c:a", "aac", "-ar", "44100", "-ac", "2",
-                    "-shortest",
-                    norm_path,
-                ]
+                cmd_silent = _silent_normalize_cmd(path, norm_path)
                 result2 = await asyncio.to_thread(
                     subprocess.run, cmd_silent, capture_output=True, text=True
                 )
@@ -2072,6 +2322,54 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
                 if result.returncode != 0:
                     return json.dumps({"error": f"FFmpeg concat fallback also failed: {result.stderr[:400]}"})
 
+        # 4b. If the agent requested a fresh soundtrack, wait for Suno to
+        # finish (started in parallel at the top), download the track, and
+        # mix it UNDER the concat output at a dialogue-safe level. Loops the
+        # music if it's shorter than the combined video.
+        if music_task is not None:
+            try:
+                music_url = await music_task
+            except Exception as music_err:
+                print(f"[combine_videos] Music generation errored: {music_err}")
+                music_url = None
+            if music_url:
+                try:
+                    music_path = os.path.join(work_dir, "music.mp3")
+                    async with httpx.AsyncClient(timeout=60) as http:
+                        mresp = await http.get(music_url, follow_redirects=True)
+                        mresp.raise_for_status()
+                        with open(music_path, "wb") as mf:
+                            mf.write(mresp.content)
+                    print(f"[combine_videos] Downloaded music ({len(mresp.content)/1024/1024:.1f}MB); mixing under dialogue...")
+                    mixed_path = os.path.join(work_dir, "combined_with_music.mp4")
+                    mix_cmd = [
+                        FFMPEG, "-y",
+                        "-i", output_path,
+                        "-stream_loop", "-1", "-i", music_path,
+                        "-filter_complex",
+                        "[1:a]volume=0.22[m];"
+                        "[0:a][m]amix=inputs=2:duration=first:dropout_transition=2,"
+                        "dynaudnorm=f=150:g=15[a]",
+                        "-map", "0:v",
+                        "-map", "[a]",
+                        "-c:v", "copy",
+                        "-c:a", "aac", "-ar", "44100", "-b:a", "192k",
+                        "-shortest",
+                        mixed_path,
+                    ]
+                    mix_result = await asyncio.to_thread(
+                        subprocess.run, mix_cmd, capture_output=True, text=True
+                    )
+                    if mix_result.returncode == 0:
+                        output_path = mixed_path
+                        print("[combine_videos] Music bed mixed under final cut")
+                    else:
+                        print(f"[combine_videos] Music mix failed, shipping without music: {mix_result.stderr[-400:]}")
+                except Exception as mix_err:
+                    print(f"[combine_videos] Music mix pass errored: {mix_err}")
+            else:
+                print("[combine_videos] Music generation returned no URL — shipping without music")
+
         # 5. Upload to Supabase Storage
         output_size = os.path.getsize(output_path)
         print(f"[combine_videos] Combined video: {output_size/1024/1024:.1f}MB")
@@ -2137,6 +2435,8 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
                                         "mode": "combined_videos",
                                         "source_urls": video_urls,
                                         "transition": transition,
+                                        "mute_audio_indices": sorted(mute_indices),
+                                        "music_prompt": music_prompt,
                                     },
                                 },
                             )
@@ -2407,6 +2707,8 @@ TOOL_DISPATCH: dict[str, Callable[..., Awaitable[str]]] = {
     "render_edited_video": _tool_render_edited_video,
     # video combination (gated)
     "combine_videos": _tool_combine_videos,
+    # app-clip B-roll splice for digital products (free)
+    "splice_app_clip": _tool_splice_app_clip,
 }
 
 
@@ -2621,34 +2923,34 @@ class ManagedAgentClient:
             )
 
         # Resolve / create session, with transparent fallback for stale ids.
+        # Single events.list(limit=50) does double duty: if it raises NotFound
+        # the session is gone (create fresh); otherwise we reuse the response
+        # to populate seen_event_ids. Saves one round trip (~400-800ms) vs.
+        # the previous probe-then-snapshot flow.
+        seen_event_ids: set[str] = set()
         if session_id:
             try:
-                # Cheap probe — list one event. If session is gone, create new.
-                await self._client.beta.sessions.events.list(session_id, limit=1)
+                existing = await self._client.beta.sessions.events.list(
+                    session_id, limit=50, order="desc"
+                )
+                async for ev in existing:  # type: ignore
+                    ev_id = getattr(ev, "id", None)
+                    if ev_id:
+                        seen_event_ids.add(ev_id)
             except NotFoundError:
                 print(f"[ManagedAgent] session {session_id} gone, creating new")
                 session_id = None
+                seen_event_ids.clear()
             except Exception as e:
                 print(f"[ManagedAgent] session probe failed ({e}), creating new")
                 session_id = None
+                seen_event_ids.clear()
         if not session_id:
             session_id = await self._create_session(brief, project_id)
         yield {"type": "session", "session_id": session_id}
 
         ctx = ToolContext(user_token=user_token, project_id=project_id)
         tool_calls_made = 0
-        seen_event_ids: set[str] = set()
-
-        # Snapshot existing event ids so the first stream() call doesn't
-        # re-deliver historical events from prior turns.
-        try:
-            existing = await self._client.beta.sessions.events.list(session_id, limit=100, order="desc")
-            async for ev in existing:  # type: ignore
-                ev_id = getattr(ev, "id", None)
-                if ev_id:
-                    seen_event_ids.add(ev_id)
-        except Exception as e:
-            print(f"[ManagedAgent] could not snapshot prior events: {e}")
 
         # Build a compact context primer from prior turns. Sent only on
         # fresh/reset sessions so the agent retains conversation memory even
@@ -2713,7 +3015,7 @@ class ManagedAgentClient:
             new_sid = await self._create_session(brief, project_id)
             seen_event_ids.clear()
             try:
-                existing = await self._client.beta.sessions.events.list(new_sid, limit=100, order="desc")
+                existing = await self._client.beta.sessions.events.list(new_sid, limit=50, order="desc")
                 async for ev in existing:
                     ev_id = getattr(ev, "id", None)
                     if ev_id:

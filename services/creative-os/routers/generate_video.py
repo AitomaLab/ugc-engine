@@ -93,6 +93,8 @@ class VideoGenerateRequest(BaseModel):
     reference_image_urls: Optional[list[str]] = None  # Seedance 2.0 — multi-image reference
     reference_video_urls: Optional[list[str]] = None  # Seedance 2.0 — video reference
     aspect_ratio: Optional[str] = None  # "9:16" (vertical) or "16:9" (horizontal). None = pipeline default (vertical).
+    product_type: Optional[str] = None  # "physical" | "digital" — resolved from product row when omitted.
+    app_clip_id: Optional[str] = None  # Picked app clip UUID — drives composite + B-roll concat.
 
 
 # ── Job record helpers (via core API — handles auth + RLS) ───────────
@@ -120,10 +122,26 @@ async def _create_video_job_record(
             print("[Creative OS] WARNING: No valid influencer_id — job record may fail")
             influencer_id = "00000000-0000-0000-0000-000000000000"
 
-        job = await client.create_job({
+        product_type = data.product_type
+        if not product_type and data.app_clip_id:
+            product_type = "digital"
+        if not product_type and data.product_id:
+            try:
+                p = await client.get_product(data.product_id)
+                if p:
+                    if p.get("type") in ("physical", "digital"):
+                        product_type = p["type"]
+                    elif p.get("website_url"):
+                        product_type = "digital"
+            except Exception:
+                pass
+        if product_type not in ("physical", "digital"):
+            product_type = "physical"
+
+        job_payload: dict = {
             "influencer_id": influencer_id,
             "product_id": data.product_id,
-            "product_type": "physical",
+            "product_type": product_type,
             "model_api": model_api,
             "length": duration,
             "campaign_name": "Creative OS",
@@ -131,7 +149,10 @@ async def _create_video_job_record(
             "subtitles_enabled": data.captions,
             "music_enabled": data.background_music,
             "hook": prompt[:500],
-        })
+        }
+        if data.app_clip_id:
+            job_payload["app_clip_id"] = data.app_clip_id
+        job = await client.create_job(job_payload)
         job_id = job.get("id") or job.get("job", {}).get("id")
         print(f"[Creative OS] Created video job record: {job_id}")
         return {"id": job_id, "kie_task_id": task_id}
@@ -481,7 +502,21 @@ async def generate_video(
     product_image_url = None
     influencer_image_url = None
 
-    if data.product_id:
+    # Digital-product app-clip override: when the user picked a specific app clip,
+    # use its first frame as the "product image" for the composite step.
+    if data.app_clip_id:
+        try:
+            clip = await client.get_app_clip(data.app_clip_id)
+            if clip and clip.get("first_frame_url"):
+                product_image_url = clip["first_frame_url"]
+                # Force digital routing downstream
+                if not data.product_type:
+                    data.product_type = "digital"
+                print(f"[Video Gen] Using app clip {data.app_clip_id} first frame as product image")
+        except Exception as e:
+            print(f"[Video Gen] WARNING: Failed to fetch app clip {data.app_clip_id}: {e}")
+
+    if data.product_id and not product_image_url:
         try:
             product = await client.get_product(data.product_id)
             product_image_url = product.get("image_url") if product else None
@@ -586,11 +621,40 @@ async def _generate_seedance_video(
     if not job_id:
         raise HTTPException(status_code=500, detail="Failed to create job record")
 
-    # Resolve reference images: explicit list > product+influencer > single ref
+    # Resolve references.
+    #
+    # For digital products (app_clip_id set): feed Seedance the full app clip
+    # as a VIDEO reference — it anchors on real motion + UI pixels, which is
+    # dramatically more faithful than a static first-frame screenshot. The
+    # influencer face (if @-mentioned) stays as an image reference so the
+    # persona is locked in.
+    #
+    # For physical products (no app_clip): fall back to product + influencer
+    # images as before.
     ref_images: list[str] = []
-    if data.reference_image_urls:
-        ref_images.extend([u for u in data.reference_image_urls if u])
-    else:
+    ref_videos: list[str] = []
+    app_clip = None
+    app_clip_first_frame = None
+    if data.app_clip_id:
+        try:
+            app_clip = await client.get_app_clip(data.app_clip_id)
+            if app_clip:
+                if app_clip.get("video_url"):
+                    ref_videos.append(app_clip["video_url"])
+                app_clip_first_frame = app_clip.get("first_frame_url")
+        except Exception as e:
+            print(f"[Seedance] WARNING: app clip fetch failed: {e}")
+
+    if data.influencer_id:
+        try:
+            inf = await client.get_influencer(data.influencer_id)
+            if inf and inf.get("image_url"):
+                ref_images.append(inf["image_url"])
+        except Exception as e:
+            print(f"[Seedance] WARNING: influencer fetch failed: {e}")
+
+    # Only fall back to product / bare ref image when NO app clip is set.
+    if not app_clip:
         if data.product_id:
             try:
                 product = await client.get_product(data.product_id)
@@ -598,17 +662,24 @@ async def _generate_seedance_video(
                     ref_images.append(product["image_url"])
             except Exception as e:
                 print(f"[Seedance] WARNING: product fetch failed: {e}")
-        if data.influencer_id:
-            try:
-                inf = await client.get_influencer(data.influencer_id)
-                if inf and inf.get("image_url"):
-                    ref_images.append(inf["image_url"])
-            except Exception as e:
-                print(f"[Seedance] WARNING: influencer fetch failed: {e}")
         if not ref_images and data.reference_image_url:
             ref_images.append(data.reference_image_url)
 
-    ref_videos = [u for u in (data.reference_video_urls or []) if u]
+    # Merge explicit URLs from the agent, deduped. Drop the app clip's
+    # first_frame_url if the agent passed it — the video reference covers it.
+    if data.reference_image_urls:
+        for u in data.reference_image_urls:
+            if not u or u in ref_images or u == app_clip_first_frame:
+                continue
+            ref_images.append(u)
+    if data.reference_video_urls:
+        for u in data.reference_video_urls:
+            if u and u not in ref_videos:
+                ref_videos.append(u)
+
+    # Cap at Seedance's 4-image ceiling.
+    seen: set[str] = set()
+    ref_images = [u for u in ref_images if not (u in seen or seen.add(u))][:4]
 
     background_tasks.add_task(
         _run_seedance_clip_pipeline,
@@ -646,6 +717,20 @@ async def _run_seedance_clip_pipeline(
     from datetime import datetime as _dt
     import generate_scenes
 
+    client_sync = CoreAPIClient(token=token, project_id=project_id)
+
+    # ── Digital-product app-clip context ──
+    # Reference resolution (video ref for the app clip, image ref for the
+    # influencer) is owned by _generate_seedance_video upstream. Here we only
+    # refetch the app clip so the post-generation B-roll concat step below has
+    # access to the walkthrough video_url.
+    app_clip = None
+    if data.app_clip_id:
+        try:
+            app_clip = await client_sync.get_app_clip(data.app_clip_id)
+        except Exception as e:
+            print(f"[Seedance] WARNING: Failed to fetch app clip {data.app_clip_id}: {e}")
+
     try:
         await _update_video_job_via_api(token, project_id, job_id, {
             "status_message": "Enhancing prompt...",
@@ -673,16 +758,31 @@ async def _run_seedance_clip_pipeline(
         except Exception as e:
             print(f"[Seedance] Prompt enhance failed (using raw): {e}")
 
-        # Safety net: ensure @Image1 binding is present when reference images
-        # are provided. Without it, Seedance treats the image as a loose style
-        # guide and hallucinates product label text.
-        if reference_image_urls and "@Image1" not in structured_prompt:
+        # Safety net: ensure reference bindings are present. Without them,
+        # Seedance treats the references as loose style guides and
+        # hallucinates on-screen content.
+        if reference_video_urls and "@Video1" not in structured_prompt:
             structured_prompt += (
-                "\n\nIMPORTANT: The product shown in @Image1 must be rendered with exact visual "
-                "fidelity — preserve all text, logos, typography, and spelling from @Image1. "
-                "Do not hallucinate or alter any text on the product."
+                "\n\nIMPORTANT: The app interface shown in @Video1 must be rendered with exact "
+                "visual fidelity — preserve its layout, typography, colors, and any visible UI "
+                "text from @Video1. Do not invent screen content."
             )
-            print("[Seedance] Injected @Image1 binding (not found in enhanced prompt)")
+            print("[Seedance] Injected @Video1 binding (not found in enhanced prompt)")
+        if reference_image_urls and "@Image1" not in structured_prompt:
+            subject = "person" if reference_video_urls else "product"
+            if subject == "person":
+                structured_prompt += (
+                    "\n\nIMPORTANT: The person shown in @Image1 must be rendered with exact "
+                    "facial likeness — preserve their features, skin tone, and hair from @Image1. "
+                    "Do not invent a different face."
+                )
+            else:
+                structured_prompt += (
+                    "\n\nIMPORTANT: The product shown in @Image1 must be rendered with exact visual "
+                    "fidelity — preserve all text, logos, typography, and spelling from @Image1. "
+                    "Do not hallucinate or alter any text on the product."
+                )
+            print(f"[Seedance] Injected @Image1 binding (subject={subject})")
 
         await _update_video_job_via_api(token, project_id, job_id, {
             "status_message": "Generating Seedance video...",
@@ -717,11 +817,11 @@ async def _run_seedance_clip_pipeline(
         })
 
         final_url = video_url
+        timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
         try:
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
                 tmp_path = tmp.name
             await asyncio.to_thread(generate_scenes.download_video, video_url, tmp_path)
-            timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
             storage_filename = f"seedance_clip_{job_id[:8]}_{timestamp}.mp4"
             try:
                 from ugc_db.db_manager import get_supabase
@@ -741,6 +841,14 @@ async def _run_seedance_clip_pipeline(
         except Exception as e:
             print(f"[Seedance] Upload failed, using raw URL: {e}")
 
+        # App-clip B-roll concat (digital products) is now a separate agent
+        # step — the agent chains `splice_app_clip(job_id)` after this tool
+        # returns so the user sees two discrete activity cards (cinematic
+        # done → splicing B-roll) instead of a single 3-min wait. We stash
+        # app_clip_id in metadata so splice_app_clip can find it.
+        meta = {"mode": data.mode, "engine": "seedance-2.0-fast"}
+        if app_clip and app_clip.get("video_url"):
+            meta["app_clip_id"] = data.app_clip_id
         await _update_video_job_via_api(token, project_id, job_id, {
             "status": "success",
             "progress": 100,
@@ -748,7 +856,7 @@ async def _run_seedance_clip_pipeline(
             "preview_url": None,
             "preview_type": None,
             "status_message": None,
-            "metadata": {"mode": data.mode, "engine": "seedance-2.0-fast"},
+            "metadata": meta,
         })
         print(f"[Seedance] Job {job_id} complete: {final_url[:80]}...")
     except Exception as e:
@@ -1058,6 +1166,22 @@ async def _run_cinematic_clip_pipeline(
             except Exception as e:
                 print(f"[Cinematic] Influencer fetch warning: {e}")
 
+        # ── App-clip context (digital products) ──
+        # When a clip is picked, use its first frame as the lead reference
+        # (Kling first_frame_url + product element image) so the animation
+        # visually leads into the real app UI. Full clip is spliced as
+        # B-roll after Kling finishes.
+        app_clip = None
+        if data.app_clip_id:
+            try:
+                app_clip = await client.get_app_clip(data.app_clip_id)
+                if app_clip and app_clip.get("first_frame_url"):
+                    product_image_url = app_clip["first_frame_url"]
+                    first_frame_url = data.reference_image_url or app_clip["first_frame_url"]
+                    print(f"[Cinematic] Using app clip {data.app_clip_id} first frame as lead reference")
+            except Exception as e:
+                print(f"[Cinematic] WARNING: Failed to fetch app clip {data.app_clip_id}: {e}")
+
         # Product element
         if product_image_url:
             visual_desc = product.get("visual_description") or {} if product else {}
@@ -1320,6 +1444,13 @@ async def _run_cinematic_clip_pipeline(
             print(f"[Cinematic] Upload failed, using raw URL: {e}")
             final_url = video_url
 
+        # App-clip B-roll concat is now a separate agent step — see Seedance
+        # pipeline for rationale. Stash app_clip_id in metadata so the agent's
+        # splice_app_clip tool can find it.
+        meta = {"mode": "cinematic_video", "multi_shot": bool(multi_prompt_payload)}
+        if app_clip and app_clip.get("video_url"):
+            meta["app_clip_id"] = data.app_clip_id
+
         # ── Step 5: Mark job as success ──
         await _update_video_job_via_api(token, project_id, job_id, {
             "status": "success",
@@ -1328,7 +1459,7 @@ async def _run_cinematic_clip_pipeline(
             "preview_url": None,
             "preview_type": None,
             "status_message": None,
-            "metadata": {"mode": "cinematic_video", "multi_shot": bool(multi_prompt_payload)},
+            "metadata": meta,
         })
         print(f"[Cinematic] Job {job_id} complete! Video: {final_url[:80]}...")
 
@@ -1646,6 +1777,27 @@ async def _run_ugc_clip_pipeline(
             except Exception as e:
                 print(f"[UGC Clip] Product fetch failed: {e}")
 
+        # ── Step 1b: App-clip context (digital products) ──
+        app_clip = None
+        clip_orientation = None  # 'phone' | 'laptop'
+        if data.app_clip_id:
+            try:
+                app_clip = await client_sync.get_app_clip(data.app_clip_id)
+                if app_clip:
+                    product_type = "digital"
+                    # Override product.image_url with clip's first_frame_url so
+                    # the composite prompt uses the app UI as the "product".
+                    if product is not None and app_clip.get("first_frame_url"):
+                        product["image_url"] = app_clip["first_frame_url"]
+                    # Detect clip native orientation via ffprobe
+                    from utils.video_concat import probe_orientation
+                    probe_src = app_clip.get("video_url") or app_clip.get("first_frame_url")
+                    if probe_src:
+                        clip_orientation = await asyncio.to_thread(probe_orientation, probe_src)
+                        print(f"[UGC Clip] App clip orientation: {clip_orientation}")
+            except Exception as e:
+                print(f"[UGC Clip] App clip fetch/probe failed: {e}")
+
         # ── Step 2: Fetch influencer (only if user explicitly selected one) ──
         influencer = None
         if user_selected_influencer and influencer_id and influencer_id != "00000000-0000-0000-0000-000000000000":
@@ -1773,25 +1925,73 @@ async def _run_ugc_clip_pipeline(
                 "product": product,
             }
 
-            nano_prompt = (
-                f"action: character holding the product up close to the camera with an excited expression, "
-                f"casually presenting the product\n"
-                f"anatomy: exactly one person with exactly two arms and two hands, "
-                f"one hand explicitly holds the product, other arm rests naturally TO THE PERSON'S SIDE\n"
-                f"character: infer exact appearance from reference image, preserve facial features and skin tone, "
-                f"detailed realistic complexion with fine natural imperfections, unretouched raw look\n"
-                f"product: the {visual_desc_str} is clearly visible, "
-                f"preserve all visible text and logos exactly as in reference image\n"
-                f"setting: {ctx['setting']}, natural lighting\n"
-                f"camera: amateur iPhone selfie, slightly uneven framing\n"
-                f"style: candid UGC look, no filters, photorealistic, high detail, "
-                f"raw unedited photo quality\n"
-                f"negative: no artificial smoothing, no plastic CGI appearance, "
-                f"no third arm, no third hand, no extra limbs, no extra fingers, "
-                f"no studio backdrop, no geometric distortion, "
-                f"no mutated hands, no floating limbs, disconnected limbs, mutation, "
-                f"no arm crossing screen, no unnatural arm position"
-            )
+            # The composite device framing follows the APP CLIP's native
+            # orientation — a phone-native recording gets a phone prop; a
+            # laptop-native recording gets a laptop prop. The COMPOSITE CANVAS
+            # aspect is independent: it follows the user-selected final video
+            # aspect ratio (passed as `composite_aspect` to NanoBanana below).
+            # B-roll letterboxing in concat_videos_matched handles any aspect
+            # mismatch between the UGC clip and the B-roll at render time.
+            digital_device = clip_orientation if clip_orientation in ("phone", "laptop") else "phone"
+
+            if product_type == "digital" and digital_device == "phone":
+                nano_prompt = (
+                    f"action: character holding a smartphone facing the camera in portrait orientation "
+                    f"with an excited expression, casually showing the app on screen\n"
+                    f"device: modern smartphone held vertically, phone screen fills the frame from the "
+                    f"phone's perspective; the phone screen displays the provided app interface EXACTLY as "
+                    f"shown in the reference image — pixel-perfect, do NOT redraw or reinterpret UI, keep "
+                    f"all text, icons, layout, colors identical\n"
+                    f"anatomy: exactly one person with exactly two arms and two hands, "
+                    f"one hand explicitly holds the phone, other arm rests naturally TO THE PERSON'S SIDE\n"
+                    f"character: infer exact appearance from reference image, preserve facial features and skin tone, "
+                    f"detailed realistic complexion with fine natural imperfections, unretouched raw look\n"
+                    f"setting: {ctx['setting']}, natural lighting\n"
+                    f"camera: amateur iPhone selfie, slightly uneven framing\n"
+                    f"style: candid UGC look, no filters, photorealistic, high detail, raw unedited photo quality\n"
+                    f"negative: no artificial smoothing, no plastic CGI appearance, no third arm, no third hand, "
+                    f"no extra limbs, no extra fingers, no studio backdrop, no geometric distortion, "
+                    f"no mutated hands, no floating limbs, disconnected limbs, mutation, "
+                    f"no arm crossing screen, no unnatural arm position, no altered UI, no made-up UI elements"
+                )
+            elif product_type == "digital" and digital_device == "laptop":
+                nano_prompt = (
+                    f"action: character seated at a desk in front of a laptop or desktop monitor with an "
+                    f"engaged expression, casually presenting the app on-screen\n"
+                    f"device: laptop or desktop monitor in landscape orientation facing the camera at a "
+                    f"natural angle; the screen displays the provided app interface EXACTLY as shown in "
+                    f"the reference image — pixel-perfect, do NOT redraw or reinterpret UI, keep all text, "
+                    f"icons, layout, colors identical\n"
+                    f"anatomy: exactly one person with exactly two arms and two hands, hands resting near "
+                    f"the keyboard or gesturing naturally toward the screen\n"
+                    f"character: infer exact appearance from reference image, preserve facial features and skin tone, "
+                    f"detailed realistic complexion with fine natural imperfections, unretouched raw look\n"
+                    f"setting: {ctx['setting']}, natural lighting\n"
+                    f"camera: amateur iPhone capture, slightly uneven framing\n"
+                    f"style: candid UGC look, no filters, photorealistic, high detail, raw unedited photo quality\n"
+                    f"negative: no artificial smoothing, no plastic CGI appearance, no extra limbs, no extra fingers, "
+                    f"no studio backdrop, no geometric distortion, no altered UI, no made-up UI elements"
+                )
+            else:
+                nano_prompt = (
+                    f"action: character holding the product up close to the camera with an excited expression, "
+                    f"casually presenting the product\n"
+                    f"anatomy: exactly one person with exactly two arms and two hands, "
+                    f"one hand explicitly holds the product, other arm rests naturally TO THE PERSON'S SIDE\n"
+                    f"character: infer exact appearance from reference image, preserve facial features and skin tone, "
+                    f"detailed realistic complexion with fine natural imperfections, unretouched raw look\n"
+                    f"product: the {visual_desc_str} is clearly visible, "
+                    f"preserve all visible text and logos exactly as in reference image\n"
+                    f"setting: {ctx['setting']}, natural lighting\n"
+                    f"camera: amateur iPhone selfie, slightly uneven framing\n"
+                    f"style: candid UGC look, no filters, photorealistic, high detail, "
+                    f"raw unedited photo quality\n"
+                    f"negative: no artificial smoothing, no plastic CGI appearance, "
+                    f"no third arm, no third hand, no extra limbs, no extra fingers, "
+                    f"no studio backdrop, no geometric distortion, "
+                    f"no mutated hands, no floating limbs, disconnected limbs, mutation, "
+                    f"no arm crossing screen, no unnatural arm position"
+                )
 
             scene = {
                 "nano_banana_prompt": nano_prompt,
@@ -1799,7 +1999,12 @@ async def _run_ugc_clip_pipeline(
                 "product_image_url": product.get("image_url", ""),
             }
 
-            print(f"[UGC Clip] Generating NanoBanana composite...")
+            # Composite aspect MUST match the downstream video aspect —
+            # otherwise Veo/Kling crop or stretch the first frame and the
+            # output looks zoomed-in (9:16 composite feeding a 16:9 render
+            # was the bug that prompted this plumbing).
+            composite_aspect = data.aspect_ratio or "9:16"
+            print(f"[UGC Clip] Generating NanoBanana composite (aspect={composite_aspect})...")
             try:
                 import random
                 global_seed = random.randint(0, 2**32 - 1)
@@ -1809,6 +2014,7 @@ async def _run_ugc_clip_pipeline(
                     influencer=influencer,
                     product=product,
                     seed=global_seed,
+                    aspect_ratio=composite_aspect,
                 )
                 print(f"[UGC Clip] Composite ready: {composite_url[:80]}...")
 
@@ -1991,15 +2197,25 @@ async def _run_ugc_clip_pipeline(
             print(f"[UGC Clip] Upload failed, using raw URL: {e}")
             final_url = video_url
 
+        # App-clip B-roll concat is now a separate agent step — see Seedance
+        # pipeline for rationale. Stash app_clip_id in metadata so the agent's
+        # splice_app_clip tool can find it.
+        meta: dict = {}
+        if app_clip and app_clip.get("video_url"):
+            meta["app_clip_id"] = data.app_clip_id
+
         # ── Step 8: Mark job as success ──
-        await _update_video_job_via_api(token, project_id, job_id, {
+        success_update: dict = {
             "status": "success",
             "progress": 100,
             "final_video_url": final_url,
             "preview_url": None,
             "preview_type": None,
             "status_message": None,
-        })
+        }
+        if meta:
+            success_update["metadata"] = meta
+        await _update_video_job_via_api(token, project_id, job_id, success_update)
         print(f"[UGC Clip] Job {job_id} complete! Video: {final_url[:80]}...")
 
     except Exception as e:

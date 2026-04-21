@@ -504,8 +504,15 @@ def download_video(url, output_path, max_retries=5):
 # ---------------------------------------------------------------------------
 # generate_composite_image_with_retry  (NanoBanana Pro)
 # ---------------------------------------------------------------------------
-def generate_composite_image(scene: dict, influencer: dict, product: dict, seed: int = None) -> str:
-    """Generate a composite image using NanoBanana Pro API."""
+def generate_composite_image(
+    scene: dict, influencer: dict, product: dict, seed: int = None,
+    aspect_ratio: str = "9:16",
+) -> str:
+    """Generate a composite image using NanoBanana Pro API.
+
+    `aspect_ratio` must match the downstream video aspect ("9:16" or "16:9")
+    so Veo/Kling don't crop or stretch the first frame.
+    """
     endpoint = f"{KIE_API_URL}/api/v1/jobs/createTask"
 
     final_prompt = scene.get("nano_banana_prompt") or scene.get("prompt")
@@ -525,7 +532,7 @@ def generate_composite_image(scene: dict, influencer: dict, product: dict, seed:
                 scene["reference_image_url"],
                 scene["product_image_url"],
             ],
-            "aspect_ratio": "9:16",
+            "aspect_ratio": aspect_ratio,
             "resolution": "2K",
         },
     }
@@ -625,13 +632,18 @@ def generate_composite_image_wavespeed(scene: dict) -> str:
 
 
 def generate_composite_image_with_retry(
-    scene: dict, influencer: dict, product: dict, seed: int = None, max_retries: int = 5
+    scene: dict, influencer: dict, product: dict, seed: int = None, max_retries: int = 5,
+    aspect_ratio: str = "9:16",
 ) -> str:
-    """Try KIE NanoBanana with retry; fall back to WaveSpeed on exhaustion / overload."""
+    """Try KIE NanoBanana with retry; fall back to WaveSpeed on exhaustion / overload.
+
+    `aspect_ratio` forwards to the NanoBanana input so the composite matches
+    the downstream video orientation ("9:16" or "16:9").
+    """
     last_error: Exception | None = None
     for attempt in range(max_retries):
         try:
-            return generate_composite_image(scene, influencer, product, seed)
+            return generate_composite_image(scene, influencer, product, seed, aspect_ratio=aspect_ratio)
         except RuntimeError as e:
             last_error = e
             err = str(e).lower()

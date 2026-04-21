@@ -112,6 +112,9 @@ interface MentionItem {
   name: string;
   image_url?: string;
   ref?: any;
+  views?: string[];
+  product_type?: 'physical' | 'digital';
+  clipsByFrame?: Record<string, { clip_id: string; video_url?: string }>;
 }
 function slugify(s: string): string {
   return (s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
@@ -148,7 +151,8 @@ export default function StudioPage() {
   const [mentionCursorStart, setMentionCursorStart] = useState(-1);
   const [mentionsLoaded, setMentionsLoaded] = useState(false);
   const [mentionItems, setMentionItems] = useState<MentionItem[]>([]);
-  const [activeRefs, setActiveRefs] = useState<Map<string, { type: string; tag: string; name: string; id?: string; image_url?: string }>>(new Map());
+  const [activeRefs, setActiveRefs] = useState<Map<string, { type: string; tag: string; name: string; id?: string; image_url?: string; app_clip_id?: string; product_type?: 'physical' | 'digital' }>>(new Map());
+  const [shotPickerItem, setShotPickerItem] = useState<MentionItem | null>(null);
 
   const loadMentionData = async () => {
     if (mentionsLoaded) return;
@@ -164,11 +168,44 @@ export default function StudioPage() {
       const items: MentionItem[] = [];
       for (const p of (prodRes || [])) {
         const name = p.name || p.product_name || 'product';
-        items.push({ type: 'product', tag: slugify(name), name, image_url: p.image_url, ref: p });
+        const isDigital = p.type === 'digital';
+        const appClips = Array.isArray(p.app_clips) ? p.app_clips.filter((c: any) => c.first_frame_url) : [];
+        let views: string[] = [];
+        let clipsByFrame: Record<string, { clip_id: string; video_url?: string }> | undefined;
+        let thumb = p.image_url;
+        if (isDigital && appClips.length) {
+          views = appClips.map((c: any) => c.first_frame_url);
+          clipsByFrame = Object.fromEntries(
+            appClips.map((c: any) => [c.first_frame_url, { clip_id: c.id, video_url: c.video_url }])
+          );
+          if (!thumb) thumb = views[0];
+        } else {
+          const extras = Array.isArray(p.product_views) ? p.product_views.filter(Boolean) : [];
+          views = p.image_url ? [p.image_url, ...extras.filter((v: string) => v !== p.image_url)] : extras;
+        }
+        items.push({
+          type: 'product',
+          tag: slugify(name),
+          name,
+          image_url: thumb,
+          ref: p,
+          views: views.length > 1 ? views : undefined,
+          product_type: isDigital ? 'digital' : 'physical',
+          clipsByFrame,
+        });
       }
       for (const inf of (infRes || [])) {
         const name = inf.name || 'model';
-        items.push({ type: 'influencer', tag: slugify(name), name, image_url: inf.image_url, ref: inf });
+        const extras = Array.isArray(inf.character_views) ? inf.character_views.filter(Boolean) : [];
+        const views = inf.image_url ? [inf.image_url, ...extras.filter((v: string) => v !== inf.image_url)] : extras;
+        items.push({
+          type: 'influencer',
+          tag: slugify(name),
+          name,
+          image_url: inf.image_url,
+          ref: inf,
+          views: views.length > 1 ? views : undefined,
+        });
       }
       setMentionItems(items);
       setMentionsLoaded(true);
@@ -201,14 +238,22 @@ export default function StudioPage() {
     }
   };
 
-  const finalizeMention = (item: MentionItem) => {
+  const finalizeMention = (item: MentionItem, chosenImageUrl?: string) => {
     const cursor = textareaRef.current?.selectionStart ?? prompt.length;
     const before = prompt.slice(0, mentionCursorStart);
     const after = prompt.slice(cursor);
     const tagText = `@${item.tag}`;
     const newPrompt = before + tagText + ' ' + after;
     setPrompt(newPrompt);
-    // Track the ref for this mention so we can pass it to the project page
+    let clipInfo = chosenImageUrl && item.clipsByFrame ? item.clipsByFrame[chosenImageUrl] : undefined;
+    let imgUrl = chosenImageUrl || item.image_url;
+    if (!clipInfo && !chosenImageUrl && item.clipsByFrame) {
+      const entries = Object.entries(item.clipsByFrame);
+      if (entries.length === 1) {
+        clipInfo = entries[0][1];
+        imgUrl = entries[0][0];
+      }
+    }
     setActiveRefs(prev => {
       const next = new Map(prev);
       next.set(item.tag, {
@@ -216,16 +261,27 @@ export default function StudioPage() {
         tag: item.tag,
         name: item.name,
         id: item.ref?.id,
-        image_url: item.image_url,
+        image_url: imgUrl,
+        ...(clipInfo ? { app_clip_id: clipInfo.clip_id } : {}),
+        ...(item.product_type ? { product_type: item.product_type } : {}),
       });
       return next;
     });
     setMentionOpen(false);
+    setShotPickerItem(null);
     setTimeout(() => {
       const pos = before.length + tagText.length + 1;
       textareaRef.current?.focus();
       textareaRef.current?.setSelectionRange(pos, pos);
     }, 0);
+  };
+
+  const insertMention = (item: MentionItem) => {
+    if (item.views && item.views.length > 1) {
+      setShotPickerItem(item);
+      return;
+    }
+    finalizeMention(item);
   };
 
   const handleMentionKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -238,9 +294,10 @@ export default function StudioPage() {
         setMentionIndex(i => (i - 1 + filteredMentions.length) % filteredMentions.length);
       } else if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault();
-        if (filteredMentions[mentionIndex]) finalizeMention(filteredMentions[mentionIndex]);
+        if (filteredMentions[mentionIndex]) insertMention(filteredMentions[mentionIndex]);
       } else if (e.key === 'Escape') {
         setMentionOpen(false);
+        setShotPickerItem(null);
       }
       return;
     }
@@ -678,7 +735,41 @@ export default function StudioPage() {
                   padding: '8px',
                   zIndex: 100,
                 }}>
-                  {filteredMentions.length === 0 ? (
+                  {shotPickerItem ? (
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 6px 8px' }}>
+                        <button
+                          type="button"
+                          onMouseDown={(e) => { e.preventDefault(); setShotPickerItem(null); }}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px', color: '#8A93B0', padding: 0 }}
+                          aria-label="Back"
+                        >
+                          ←
+                        </button>
+                        <span style={{ fontSize: '11px', fontWeight: 700, color: '#8A93B0', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          {shotPickerItem.product_type === 'digital' ? `Pick clip for ${shotPickerItem.name}` : `Pick shot for ${shotPickerItem.name}`}
+                        </span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
+                        {(shotPickerItem.views || []).map((url) => (
+                          <button
+                            key={url}
+                            type="button"
+                            onMouseDown={(e) => { e.preventDefault(); finalizeMention(shotPickerItem, url); }}
+                            style={{
+                              padding: 0, border: '1px solid transparent', background: 'transparent',
+                              borderRadius: '8px', cursor: 'pointer', overflow: 'hidden',
+                            }}
+                          >
+                            <div style={{ width: '100%', aspectRatio: '1 / 1', borderRadius: '6px', background: '#F4F6FA', overflow: 'hidden' }}>
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : filteredMentions.length === 0 ? (
                     <div style={{ padding: '8px', fontSize: '12px', color: '#8A93B0', textAlign: 'center' }}>No matches</div>
                   ) : (
                     (['product', 'influencer'] as const).map(groupType => {
@@ -700,7 +791,7 @@ export default function StudioPage() {
                                 <button
                                   key={item.tag}
                                   type="button"
-                                  onMouseDown={(e) => { e.preventDefault(); finalizeMention(item); }}
+                                  onMouseDown={(e) => { e.preventDefault(); insertMention(item); }}
                                   onMouseEnter={() => setMentionIndex(globalIdx)}
                                   title={item.name}
                                   style={{

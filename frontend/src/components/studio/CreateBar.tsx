@@ -83,6 +83,8 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
     // When set, the dropdown renders a shot picker for this asset instead of
     // the mention list (products / models with multiple views).
     const [mentionShotPicker, setMentionShotPicker] = useState<{ id: string; type: 'product' | 'influencer'; name: string; views: string[] } | null>(null);
+    // Picked app clip for digital products (drives composite + B-roll).
+    const [pickedAppClipId, setPickedAppClipId] = useState<string | null>(null);
 
     useEffect(() => {
         setMode(activeTab === 'images' ? 'cinematic' : 'ugc');
@@ -363,6 +365,10 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                 if (elementRefs.length > 0) {
                     videoPayload.element_refs = elementRefs;
                 }
+                if (pickedAppClipId) {
+                    videoPayload.app_clip_id = pickedAppClipId;
+                    videoPayload.product_type = 'digital';
+                }
                 console.log('[CreateBar] Video payload:', {
                     mode, full_video_mode: fullVideo, multi_shot_mode: isCinematicMulti,
                     clip_length: videoPayload.clip_length,
@@ -394,14 +400,29 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
     // ── @Mention helpers ──
     const mentionItems = [
         ...products.map((p: any) => {
-            const extras = Array.isArray(p.product_views) ? p.product_views.filter(Boolean) : [];
-            const views = p.image_url ? [p.image_url, ...extras.filter((v: string) => v !== p.image_url)] : extras;
+            const isDigital = p.type === 'digital';
+            const appClips = Array.isArray(p.app_clips) ? p.app_clips.filter((c: any) => c.first_frame_url) : [];
+            let views: string[];
+            let clipsByFrame: Record<string, { clip_id: string; video_url?: string }> | undefined;
+            let thumb = p.image_url;
+            if (isDigital && appClips.length) {
+                views = appClips.map((c: any) => c.first_frame_url);
+                clipsByFrame = Object.fromEntries(
+                    appClips.map((c: any) => [c.first_frame_url, { clip_id: c.id, video_url: c.video_url }])
+                );
+                if (!thumb) thumb = views[0];
+            } else {
+                const extras = Array.isArray(p.product_views) ? p.product_views.filter(Boolean) : [];
+                views = p.image_url ? [p.image_url, ...extras.filter((v: string) => v !== p.image_url)] : extras;
+            }
             return {
                 id: p.id,
                 name: p.name || p.product_name || t('creativeOs.createBar.productFallback'),
                 type: 'product' as const,
-                image_url: p.image_url,
+                image_url: thumb,
                 views: views.length > 1 ? views : undefined,
+                product_type: isDigital ? 'digital' as const : 'physical' as const,
+                clipsByFrame,
             };
         }),
         ...influencers.map((inf: any) => {
@@ -453,6 +474,13 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
         setPrompt(newPrompt);
         setMentionOpen(false);
         setMentionShotPicker(null);
+
+        if (item.type === 'product' && chosenImageUrl && (item as any).clipsByFrame?.[chosenImageUrl]) {
+            setPickedAppClipId((item as any).clipsByFrame[chosenImageUrl].clip_id);
+        } else if (item.type === 'product' && !chosenImageUrl && (item as any).clipsByFrame) {
+            const entries = Object.entries((item as any).clipsByFrame as Record<string, { clip_id: string }>);
+            if (entries.length === 1) setPickedAppClipId(entries[0][1].clip_id);
+        }
 
         // Auto-select this item as product/influencer if not already selected.
         // If the user picked a specific shot, override the selected asset's

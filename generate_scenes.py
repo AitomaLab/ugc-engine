@@ -627,7 +627,7 @@ def generate_video_wavespeed(prompt, reference_image_url=None, duration=8):
     raise RuntimeError("WaveSpeed Veo 3.1 generation timed out after 20 minutes")
 
 
-def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, first_frame_url=None, return_last_frame=False, duration=12, max_retries=3, kling_elements=None, multi_prompt=None):
+def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, first_frame_url=None, return_last_frame=False, duration=12, max_retries=3, kling_elements=None, multi_prompt=None, aspect_ratio=None):
     """
     Smart video generation with pre-flight health routing.
 
@@ -647,7 +647,7 @@ def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, 
     if family != "veo":
         for attempt in range(max_retries):
             try:
-                return generate_video(prompt, reference_image_url, model_api, first_frame_url, return_last_frame, duration, kling_elements=kling_elements, multi_prompt=multi_prompt)
+                return generate_video(prompt, reference_image_url, model_api, first_frame_url, return_last_frame, duration, kling_elements=kling_elements, multi_prompt=multi_prompt, aspect_ratio=aspect_ratio)
             except RuntimeError as e:
                 error_str = str(e).lower()
                 is_retriable = any(p in error_str for p in RETRIABLE_PATTERNS)
@@ -679,6 +679,7 @@ def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, 
                     first_frame_url, return_last_frame, duration,
                     kling_elements=kling_elements,
                     max_poll_seconds=180,  # 3 minutes fast-fail
+                    aspect_ratio=aspect_ratio,
                 )
             else:
                 # WaveSpeed gets full timeout (it's the fallback, no next option)
@@ -1140,14 +1141,16 @@ def generate_music(prompt="upbeat, trendy, short-form social media background mu
 # Physical Product Generation (Nano Banana + Veo)
 # ---------------------------------------------------------------------------
 
-def generate_composite_image_with_retry(scene: dict, influencer: dict, product: dict, seed: int = None, max_retries: int = 5) -> str:
+def generate_composite_image_with_retry(scene: dict, influencer: dict, product: dict, seed: int = None, max_retries: int = 5, aspect_ratio: str = "9:16") -> str:
     """
     Generate composite image with automatic retry on rate limit errors.
+    `aspect_ratio` forwards to NanoBanana so the composite matches the
+    downstream video orientation ("9:16" or "16:9").
     """
     for attempt in range(max_retries):
         try:
             # Call the original function
-            return generate_composite_image(scene, influencer, product, seed)
+            return generate_composite_image(scene, influencer, product, seed, aspect_ratio=aspect_ratio)
         except RuntimeError as e:
             # Check for the specific rate limit error message
             if "concurrent requests limit" in str(e).lower() or "429" in str(e):
@@ -1164,10 +1167,13 @@ def generate_composite_image_with_retry(scene: dict, influencer: dict, product: 
             raise
 
 
-def generate_composite_image(scene: dict, influencer: dict, product: dict, seed: int = None) -> str:
+def generate_composite_image(scene: dict, influencer: dict, product: dict, seed: int = None, aspect_ratio: str = "9:16") -> str:
     """
     Calls Nano Banana Pro API to generate a composite image.
     Uses the dedicated prompt from scene builder.
+
+    `aspect_ratio` must match the downstream video aspect ("9:16" or "16:9")
+    so Veo/Kling don't crop or stretch the first frame.
     """
     print("   🖼️ Generating composite image with Nano Banana Pro...")
     if seed:
@@ -1196,7 +1202,7 @@ def generate_composite_image(scene: dict, influencer: dict, product: dict, seed:
                 scene["reference_image_url"],
                 scene["product_image_url"]
             ],
-            "aspect_ratio": "9:16",
+            "aspect_ratio": aspect_ratio,
             "resolution": "2K"
         }
     }

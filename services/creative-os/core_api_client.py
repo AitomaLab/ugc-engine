@@ -99,6 +99,25 @@ class CoreAPIClient:
         except Exception:
             return {}
 
+    # ── App Clips ─────────────────────────────────────────────────────
+    async def list_app_clips_by_product(self, product_id: str) -> list:
+        try:
+            return await self._request(
+                "GET", "/api/app-clips", params={"product_id": product_id}
+            )
+        except Exception:
+            return []
+
+    async def get_app_clip(self, clip_id: str) -> dict:
+        try:
+            clips = await self._request("GET", "/api/app-clips")
+        except Exception:
+            return {}
+        for c in clips or []:
+            if c.get("id") == clip_id:
+                return c
+        return {}
+
     # ── Product Shots (images) ────────────────────────────────────────
     async def list_product_shots(self, product_id: str) -> list:
         return await self._request("GET", f"/api/products/{product_id}/shots")

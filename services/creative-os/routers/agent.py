@@ -44,6 +44,8 @@ class AgentRef(BaseModel):
     video_url: Optional[str] = None
     shot_id: Optional[str] = None
     job_id: Optional[str] = None
+    app_clip_id: Optional[str] = None
+    product_type: Optional[str] = None  # 'physical' | 'digital'
 
 
 class AgentRunRequest(BaseModel):
@@ -158,13 +160,20 @@ async def agent_stream(
         "[ENGINE=seedance — use seedance_2_ugc / seedance_2_cinematic / seedance_2_product "
         "video modes for this turn. Do NOT use ugc or cinematic_video modes.]"
     )
-    if data.use_seedance and not refs:
-        augmented_brief = seedance_marker + "\n\n" + augmented_brief
+    # Explicit negative marker when the toggle is OFF. Without this, the agent
+    # carries Seedance preference over from earlier turns (sessions are
+    # persistent) — an absent marker is not a strong enough signal to override
+    # prior-turn behavior.
+    default_marker = (
+        "[ENGINE=default — use Veo 3.1 for `ugc` and Kling 3.0 for `cinematic_video` this turn. "
+        "Do NOT use seedance_2_ugc / seedance_2_cinematic / seedance_2_product, regardless of "
+        "what was used in earlier turns.]"
+    )
+    engine_marker = seedance_marker if data.use_seedance else default_marker
+    if not refs:
+        augmented_brief = engine_marker + "\n\n" + augmented_brief
     if refs:
-        lines = []
-        if data.use_seedance:
-            lines.append(seedance_marker)
-            lines.append("")
+        lines = [engine_marker, ""]
         lines.append("[Referenced assets — these are the EXACT items the user is talking about]")
         for r in refs:
             parts = [f"@{r.tag} ({r.type})"]
@@ -180,6 +189,10 @@ async def agent_stream(
                 parts.append(f"image_url={r.image_url}")
             if r.video_url:
                 parts.append(f"video_url={r.video_url}")
+            if r.app_clip_id:
+                parts.append(f"app_clip_id={r.app_clip_id}")
+            if r.product_type:
+                parts.append(f"product_type={r.product_type}")
             lines.append("- " + ", ".join(parts))
         lines.append("")
         lines.append("Use these IDs/URLs directly. Do not call list_project_assets to look them up.")
@@ -200,12 +213,23 @@ async def agent_stream(
             if refs:
                 user_turn["refs"] = [r.model_dump(exclude_none=True) for r in refs]
             turns.append(user_turn)
-            await upsert_thread(
-                user_token, user_id, project_id,
-                anthropic_session_id=session_id,
-                turns=turns,
-                title=(turns[0]["text"][:80] if turns and turns[0].get("role") == "user" else None),
-            )
+
+            # Fire the initial upsert in the background so it doesn't block
+            # client.run_stream from starting. Saves ~300-600ms on first-token
+            # latency per turn. A refresh mid-run may briefly miss the new user
+            # turn, but the final upsert in `finally` always persists it.
+            async def _initial_upsert():
+                try:
+                    await upsert_thread(
+                        user_token, user_id, project_id,
+                        anthropic_session_id=session_id,
+                        turns=turns,
+                        title=(turns[0]["text"][:80] if turns and turns[0].get("role") == "user" else None),
+                    )
+                except Exception as e:
+                    print(f"[agent_stream] initial upsert failed: {e}")
+
+            asyncio.create_task(_initial_upsert())
 
             interrupted = False
             # `prior_turns` is everything persisted before this run (excluding
