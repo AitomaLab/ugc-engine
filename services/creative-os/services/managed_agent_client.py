@@ -3869,7 +3869,10 @@ async def _tool_generate_product_shots(ctx: ToolContext, **kwargs: Any) -> str:
             user=user,
         )
     except Exception as e:
-        return json.dumps({"error": f"generate_product_shots failed: {e}"})
+        import traceback
+        print(f"[tool_generate_product_shots] FAILED: {type(e).__name__}: {e}")
+        traceback.print_exc()
+        return json.dumps({"error": f"generate_product_shots failed: {type(e).__name__}: {e}"})
 
     sheet_url = result.get("product_sheet_url")
     if sheet_url:
