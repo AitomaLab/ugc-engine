@@ -9,12 +9,22 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import io
+import os
 from urllib.parse import urlparse
 
 import httpx
 from PIL import Image
+from supabase import create_client
 
-from ugc_db.db_manager import get_supabase
+
+def _get_supabase():
+    """Local service-role Supabase client. Kept inline so this module has no
+    dependency on `ugc_db`, which isn't present on the creative-os Railway
+    deployment."""
+    return create_client(
+        os.getenv("SUPABASE_URL"),
+        os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY"),
+    )
 
 _KLING_OK_EXTS = {".jpg", ".jpeg", ".png"}
 _KLING_OK_CT = {"image/jpeg", "image/jpg", "image/png"}
@@ -40,7 +50,7 @@ async def ensure_kling_compatible(url: str | None) -> str | None:
 
     digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:32]
     cached_path = f"{_CACHE_PREFIX}/{digest}.png"
-    sb = get_supabase()
+    sb = _get_supabase()
 
     public = sb.storage.from_(_CACHE_BUCKET).get_public_url(cached_path)
     try:
