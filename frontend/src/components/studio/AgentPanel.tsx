@@ -13,9 +13,13 @@ import {
     type AgentArtifact,
     type AgentRef,
     type AgentStreamEvent,
+    type CaptionStylePreview,
 } from '@/lib/creative-os-api';
+import { CaptionStylePreviewCard } from '@/components/captions/CaptionStylePreviewCard';
 import { supabase } from '@/lib/supabaseClient';
 import { useTranslation } from '@/lib/i18n';
+import { FEATURE_AGENTPANEL_EDITOR_ROUTING } from '@/editor/flags';
+import { classifyEditorAgentRoute } from '@/editor-agent/route-intent';
 
 export interface AgentPanelHandle {
     useSeedance: boolean;
@@ -52,6 +56,13 @@ interface AgentPanelProps {
     initialUseSeedance?: boolean;
     /** Fires when the agent starts a generation job, so the parent can switch the gallery tab. */
     onJobStart?: (kind: 'image' | 'video') => void;
+    /**
+     * When set, edit-intent prompts (e.g. "trim clip 2 to 5 seconds") are routed to
+     * the editor-AI module (/api/editor/ai) instead of the managed agent stream.
+     * Generation-intent prompts still go through /api/agent/stream as today.
+     * Unset = current behavior (all prompts go to managed agent).
+     */
+    jobId?: string | null;
 }
 
 interface MentionItem {
@@ -131,7 +142,20 @@ function toolActivityLabel(
         return t('creativeOs.agent.activityWriting');
     }
     if (name === 'caption_video') return t('creativeOs.agent.activityCaptioning');
-    if (name === 'combine_videos') return t('creativeOs.agent.activityCombining');
+    if (name === 'list_caption_styles') return t('creativeOs.agent.activityShowingCaptionStyles');
+    if (name === 'add_voiceover') return t('creativeOs.agent.activityAddingVoiceover');
+    if (name === 'combine_videos') {
+        // combine_videos doubles as the "add music to a single video" path.
+        // Pick a more specific label when the summary indicates a music_prompt
+        // and/or only one video_url — so the user sees "Adding background music…"
+        // instead of "Combining videos…" during that flow.
+        const hasMusic = lsum.includes('music_prompt');
+        const urlCount = (lsum.match(/https?:\/\//g) || []).length;
+        const isSingleVideoMusic = hasMusic && urlCount <= 1;
+        if (isSingleVideoMusic) return t('creativeOs.agent.activityAddingMusic');
+        if (hasMusic) return t('creativeOs.agent.activityCombiningWithMusic');
+        return t('creativeOs.agent.activityCombining');
+    }
     if (name === 'schedule_posts' || name === 'cancel_scheduled_post') {
         return t('creativeOs.agent.activityScheduling');
     }
@@ -142,7 +166,7 @@ function toolActivityLabel(
     return t('creativeOs.agent.activityWorking');
 }
 
-export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse, hideHeader = false, onStateChange, onSubmitOverride, initialBrief, initialRefs, initialUseSeedance, onJobStart }: AgentPanelProps, ref: React.Ref<AgentPanelHandle>) {
+export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse, hideHeader = false, onStateChange, onSubmitOverride, initialBrief, initialRefs, initialUseSeedance, onJobStart, jobId }: AgentPanelProps, ref: React.Ref<AgentPanelHandle>) {
     const { lang, t } = useTranslation();
     const [open, setOpen] = useState(false);
     const [brief, setBrief] = useState('');
@@ -779,6 +803,49 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             }
         };
 
+        // Phase 2: edit-intent routing. When jobId is attached and the prompt is
+        // classified as an edit (trim/caption/music/etc.), we bypass the managed
+        // agent stream and hit the editor-AI module directly. The response fills
+        // the placeholder turn just like a normal agent_message would.
+        const editorRoute =
+            FEATURE_AGENTPANEL_EDITOR_ROUTING && jobId
+                ? classifyEditorAgentRoute(text, jobId)
+                : 'managed';
+
+        if (editorRoute === 'editor') {
+            try {
+                setActivity('');
+                const stateRes = await fetch(`/api/editor/state/${jobId}`, {
+                    method: 'GET',
+                    credentials: 'include',
+                });
+                const timelineContext = stateRes.ok ? await stateRes.json() : null;
+                const aiRes = await fetch('/api/editor/ai', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        messages: [{ role: 'user', content: text }],
+                        timelineContext,
+                    }),
+                });
+                if (!aiRes.ok) {
+                    const errBody = await aiRes.json().catch(() => ({ error: aiRes.statusText }));
+                    throw new Error(errBody.error || `Editor AI request failed (${aiRes.status})`);
+                }
+                const { text: replyText } = (await aiRes.json()) as { text: string };
+                updateLastAgentTurn((t) => ({ ...t, text: replyText }));
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                setError(msg);
+            } finally {
+                setRunning(false);
+                setActivity('');
+                setActivityStartedAt(null);
+                abortRef.current = null;
+            }
+            return;
+        }
+
         try {
             await streamAgent(text, projectId, onEvent, controller.signal, refsForRequest, useSeedance, lang);
         } catch (err) {
@@ -809,7 +876,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             setActivityStartedAt(null);
             abortRef.current = null;
         }
-    }, [brief, running, projectId, onArtifact, activeRefs, attachments, onSubmitOverride, useSeedance]);
+    }, [brief, running, projectId, onArtifact, activeRefs, attachments, onSubmitOverride, useSeedance, jobId]);
 
     // Phase 2: fire handleRun AFTER hydration completes (hydrating: true → false)
     // This ensures the panel is fully initialized before auto-submitting.
@@ -1714,8 +1781,9 @@ function renderMessageContent(
     }
 
     const parts: React.ReactNode[] = [];
-    // Match **bold**, @tag_name patterns
-    const regex = /(\*\*(.+?)\*\*)|(@([a-z0-9_]+))/g;
+    // Match **bold**, *italic*, @tag_name patterns.
+    // Bold must be tested first so `**foo**` is not mistaken for two italic runs.
+    const regex = /(\*\*([^*]+?)\*\*)|(\*([^*\s][^*]*?)\*)|(@([a-z0-9_]+))/g;
     let lastIndex = 0;
     let match: RegExpExecArray | null;
     let key = 0;
@@ -1730,8 +1798,11 @@ function renderMessageContent(
             // **bold** match
             parts.push(<strong key={`b${key++}`}>{match[2]}</strong>);
         } else if (match[3]) {
+            // *italic* match
+            parts.push(<em key={`i${key++}`}>{match[4]}</em>);
+        } else if (match[5]) {
             // @tag match
-            const tag = match[4];
+            const tag = match[6];
             const ref = refMap.get(tag);
             if (ref && (ref.image_url || ref.video_url)) {
                 // Render as asset chip with thumbnail
@@ -2228,40 +2299,51 @@ function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspec
                     </div>
                 )}
 
-                {turn.artifacts && turn.artifacts.length > 0 && (
-                    <div
-                        style={{
-                            marginTop: turn.text ? '10px' : 0,
-                            display: 'grid',
-                            gridTemplateColumns: turn.artifacts.length === 1 ? '1fr' : '1fr 1fr',
-                            gap: '6px',
-                        }}
-                    >
-                        {turn.artifacts.map((a, i) => (
-                            <a
-                                key={i}
-                                href={a.url}
-                                target="_blank"
-                                rel="noreferrer"
-                                style={{
-                                    display: 'block',
-                                    aspectRatio: '9 / 16',
-                                    borderRadius: '8px',
-                                    overflow: 'hidden',
-                                    background: '#F4F6FA',
-                                    border: '1px solid rgba(13,27,62,0.08)',
-                                }}
-                            >
-                                {a.type === 'video' ? (
-                                    <video src={a.url} muted loop autoPlay playsInline style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                ) : (
-                                    // eslint-disable-next-line @next/next/no-img-element
-                                    <img src={a.url} alt="artifact" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                )}
-                            </a>
-                        ))}
-                    </div>
-                )}
+                {(() => {
+                    const mediaArts = (turn.artifacts || []).filter(a => a.type === 'video' || a.type === 'image');
+                    const styleArts = (turn.artifacts || []).filter(a => a.type === 'caption_styles_preview');
+                    return (
+                        <>
+                            {mediaArts.length > 0 && (
+                                <div
+                                    style={{
+                                        marginTop: turn.text ? '10px' : 0,
+                                        display: 'grid',
+                                        gridTemplateColumns: mediaArts.length === 1 ? '1fr' : '1fr 1fr',
+                                        gap: '6px',
+                                    }}
+                                >
+                                    {mediaArts.map((a, i) => (
+                                        <a
+                                            key={i}
+                                            href={a.url}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            style={{
+                                                display: 'block',
+                                                aspectRatio: '9 / 16',
+                                                borderRadius: '8px',
+                                                overflow: 'hidden',
+                                                background: '#F4F6FA',
+                                                border: '1px solid rgba(13,27,62,0.08)',
+                                            }}
+                                        >
+                                            {a.type === 'video' ? (
+                                                <video src={a.url} muted loop autoPlay playsInline style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                            ) : (
+                                                // eslint-disable-next-line @next/next/no-img-element
+                                                <img src={a.url} alt="artifact" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                            )}
+                                        </a>
+                                    ))}
+                                </div>
+                            )}
+                            {styleArts.map((a, i) => (
+                                <CaptionStylesPreviewCard key={`cs-${i}`} styles={a.styles || []} />
+                            ))}
+                        </>
+                    );
+                })()}
 
                 {turn.interrupted && (
                     <div
@@ -2276,6 +2358,24 @@ function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspec
                     </div>
                 )}
             </div>
+        </div>
+    );
+}
+
+function CaptionStylesPreviewCard({ styles }: { styles: CaptionStylePreview[] }) {
+    if (!styles || styles.length === 0) return null;
+    return (
+        <div
+            style={{
+                marginTop: '10px',
+                display: 'grid',
+                gridTemplateColumns: 'repeat(2, 1fr)',
+                gap: '8px',
+            }}
+        >
+            {styles.map((s) => (
+                <CaptionStylePreviewCard key={s.id} style={s} size="sm" />
+            ))}
         </div>
     );
 }

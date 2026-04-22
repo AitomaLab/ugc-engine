@@ -36,6 +36,7 @@ export async function editorFetchUploadUrl(body: {
  */
 export async function editorFetchCaptions(body: {
 	fileKey: string;
+	language?: string;
 }): Promise<Response> {
 	const API_URL = getApiUrl();
 	const { supabase } = await import('@/lib/supabaseClient');
@@ -43,6 +44,28 @@ export async function editorFetchCaptions(body: {
 	const token = session?.access_token;
 
 	return fetch(`${API_URL}/api/editor/captions`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			...(token ? { Authorization: `Bearer ${token}` } : {}),
+		},
+		body: JSON.stringify(body),
+	});
+}
+
+/**
+ * Request generated music from the backend.
+ */
+export async function editorFetchMusic(body: {
+	prompt: string;
+	duration?: number;
+}): Promise<Response> {
+	const API_URL = getApiUrl();
+	const { supabase } = await import('@/lib/supabaseClient');
+	const { data: { session } } = await supabase.auth.getSession();
+	const token = session?.access_token;
+
+	return fetch(`${API_URL}/api/editor/music`, {
 		method: 'POST',
 		headers: {
 			'Content-Type': 'application/json',

@@ -434,14 +434,35 @@ class CoreAPIClient:
     async def get_editor_render_progress(self, render_id: str) -> dict:
         return await self._request("GET", f"/api/editor/render/{render_id}/progress")
 
-    async def caption_video(self, job_id: str, style: str = "hormozi", placement: str = "middle") -> dict:
+    async def caption_video(
+        self,
+        job_id: str,
+        style: str = "hormozi",
+        placement: str = "middle",
+        stroke_mode: Optional[str] = None,
+        shadow_color: Optional[str] = None,
+        shadow_blur: Optional[int] = None,
+        shadow_offset_x: Optional[int] = None,
+        shadow_offset_y: Optional[int] = None,
+    ) -> dict:
         """Trigger server-side Whisper captioning — same pipeline as the editor's 'Caption video' button."""
+        payload: dict = {"style": style, "placement": placement}
+        if stroke_mode is not None:
+            payload["stroke_mode"] = stroke_mode
+        if shadow_color is not None:
+            payload["shadow_color"] = shadow_color
+        if shadow_blur is not None:
+            payload["shadow_blur"] = shadow_blur
+        if shadow_offset_x is not None:
+            payload["shadow_offset_x"] = shadow_offset_x
+        if shadow_offset_y is not None:
+            payload["shadow_offset_y"] = shadow_offset_y
         async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.request(
                 "POST",
                 f"{CORE_API_URL}/api/editor/caption-video/{job_id}",
                 headers=self._headers,
-                json={"style": style, "placement": placement},
+                json=payload,
             )
             resp.raise_for_status()
             return resp.json()

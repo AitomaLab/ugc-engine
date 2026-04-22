@@ -219,10 +219,18 @@ export default function StudioPage() {
     return mentionItems.filter(m => m.tag.includes(mentionFilter) || m.name.toLowerCase().includes(mentionFilter));
   }, [mentionItems, mentionFilter]);
 
+  const autosizeTextarea = (el: HTMLTextAreaElement | null) => {
+    if (!el) return;
+    el.style.height = 'auto';
+    const maxHeight = 200;
+    el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
+  };
+
   const handlePromptChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     const cursor = e.target.selectionStart;
     setPrompt(val);
+    autosizeTextarea(e.target);
 
     const before = val.slice(0, cursor);
     const atMatch = before.match(/@([\w_]*)$/);
@@ -822,15 +830,18 @@ export default function StudioPage() {
                 </div>
               )}
               <textarea
-                ref={textareaRef}
+                ref={(el) => {
+                  textareaRef.current = el;
+                  autosizeTextarea(el);
+                }}
                 value={prompt}
                 onChange={handlePromptChange}
                 onKeyDown={handleMentionKeyDown}
                 placeholder={t('creativeOs.dashboard.textareaPlaceholder')}
-                rows={2}
+                rows={1}
                 style={{
                   width: '100%',
-                  padding: '24px 24px 12px',
+                  padding: '18px 24px 10px',
                   border: 'none',
                   outline: 'none',
                   resize: 'none',
@@ -839,6 +850,7 @@ export default function StudioPage() {
                   color: '#0D1B3E',
                   background: 'transparent',
                   lineHeight: 1.5,
+                  overflow: 'hidden',
                 }}
               />
 
@@ -1216,18 +1228,6 @@ export default function StudioPage() {
                               display: 'block',
                             }}
                           />
-                        )}
-                        {/* Status badge */}
-                        {hasAssets && (
-                          <span style={{
-                            position: 'absolute', top: '12px', right: '12px',
-                            padding: '4px 12px', borderRadius: '999px',
-                            fontSize: '11px', fontWeight: 700,
-                            background: 'rgba(34,197,94,0.9)',
-                            color: 'white',
-                          }}>
-                            {videoCount > 0 && imageCount > 0 ? t('creativeOs.dashboard.badgeActive') : t('creativeOs.dashboard.badgeDone')}
-                          </span>
                         )}
                       </div>
 

@@ -17,6 +17,8 @@ export const FEATURE_LOAD_STATE = true;
 export const FEATURE_SAVE_BUTTON = true;
 export const FEATURE_UNDO_BUTTON = true;
 export const FEATURE_REDO_BUTTON = true;
+export const FEATURE_AI_AGENT = true;
+export const FEATURE_AGENTPANEL_EDITOR_ROUTING = true;
 
 // Timeline
 export const FEATURE_TIMELINE_ZOOM_SLIDER = true;

@@ -52,9 +52,93 @@ def _get_job_any(job_id: str) -> tuple:
     return None, None
 
 
+def _probe_video_dimensions(video_url: str) -> Optional[tuple]:
+    """
+    Probe a remote (or local) video URL with ffprobe and return (width, height)
+    in *display* orientation — i.e. axes are swapped when the stream carries a
+    ±90° rotation via the `displaymatrix` side-data or the legacy `rotate` tag.
+    This matches what a browser's HTML5 `<video>` `videoWidth`/`videoHeight`
+    reports after applying rotation metadata.
+
+    Returns None if probing fails or ffprobe is unavailable. Bounded by a short
+    timeout so the state endpoint stays responsive.
+    """
+    import json as _json
+
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-show_streams",
+                "-print_format", "json",
+                video_url,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+        if result.returncode != 0:
+            return None
+        data = _json.loads(result.stdout or "{}")
+        streams = data.get("streams") or []
+        if not streams:
+            return None
+        s = streams[0]
+        w = int(s.get("width") or 0)
+        h = int(s.get("height") or 0)
+        if w <= 0 or h <= 0:
+            return None
+
+        rotation = 0
+        tags = s.get("tags") or {}
+        if tags.get("rotate"):
+            try:
+                rotation = int(tags["rotate"])
+            except (TypeError, ValueError):
+                rotation = 0
+        for sd in s.get("side_data_list") or []:
+            if "rotation" in sd:
+                try:
+                    rotation = int(sd["rotation"])
+                except (TypeError, ValueError):
+                    pass
+
+        if abs(rotation) % 180 == 90:
+            w, h = h, w
+        return (w, h)
+    except Exception:
+        return None
+
+
 # ============================================================================
 # ADAPTER: Build UndoableState from video_jobs row
 # ============================================================================
+
+def _primary_video_bounds(items: dict, composition_w: int, composition_h: int) -> tuple:
+    """Return (left, top, width, height) covering all video items, or full canvas.
+
+    For single-video jobs this collapses to the one video item's bounds. For
+    combined videos with multiple video items side-by-side, we use the UNION
+    bounding box so captions center over the combined visible area instead of
+    just the first clip.
+    """
+    video_items = [i for i in items.values() if i.get("type") == "video"]
+    if not video_items:
+        return (0, 0, composition_w, composition_h)
+
+    lefts = [int(i.get("left", 0)) for i in video_items]
+    tops = [int(i.get("top", 0)) for i in video_items]
+    rights = [int(i.get("left", 0)) + int(i.get("width", composition_w)) for i in video_items]
+    bottoms = [int(i.get("top", 0)) + int(i.get("height", composition_h)) for i in video_items]
+
+    min_left = min(lefts)
+    min_top = min(tops)
+    union_w = max(rights) - min_left
+    union_h = max(bottoms) - min_top
+    return (min_left, min_top, union_w, union_h)
+
 
 def _build_editor_state(job: dict) -> dict:
     """
@@ -73,8 +157,17 @@ def _build_editor_state(job: dict) -> dict:
             duration_seconds = float(duration_seconds)
         except ValueError:
             duration_seconds = 30.0
-    width = job.get("video_width") or 1080
-    height = job.get("video_height") or 1920
+    # Always probe the source so we get display-correct (rotation-aware)
+    # dimensions. The DB's `video_width`/`video_height` columns were populated
+    # before rotation handling existed, so they can be axis-swapped on iPhone
+    # footage. Probe result wins; fall back to stored columns only if probe
+    # fails; final fallback is portrait 1080x1920 to match the prior default.
+    probed = _probe_video_dimensions(video_url)
+    if probed:
+        width, height = probed
+    else:
+        width = job.get("video_width") or 1080
+        height = job.get("video_height") or 1920
     transcription = job.get("transcription")
     duration_frames = round(duration_seconds * fps)
 
@@ -158,12 +251,15 @@ def _build_editor_state(job: dict) -> dict:
             })
 
         placement = job.get("subtitle_placement", "middle")
+        vx, vy, vw, vh = _primary_video_bounds(items, width, height)
         caption_top_map = {
-            "top": round(height * 0.10),
-            "middle": round(height * 0.45),
-            "bottom": round(height * 0.75),
+            "top": vy + round(vh * 0.10),
+            "middle": vy + round(vh * 0.45),
+            "bottom": vy + round(vh * 0.75),
         }
-        caption_top = caption_top_map.get(placement, round(height * 0.45))
+        caption_top = caption_top_map.get(placement, vy + round(vh * 0.45))
+        caption_box_width = round(vw * 0.90)
+        caption_box_left = vx + round(vw * 0.05)
 
         # Read the subtitle style from the job to match the original rendering
         style = job.get("subtitle_style", "hormozi")
@@ -186,9 +282,9 @@ def _build_editor_state(job: dict) -> dict:
             "durationInFrames": duration_frames,
             "from": 0,
             "top": caption_top,
-            "left": round(width * 0.05),
-            "width": round(width * 0.90),
-            "height": round(height * 0.20),
+            "left": caption_box_left,
+            "width": caption_box_width,
+            "height": round(vh * 0.20),
             "opacity": 1,
             "isDraggingInTimeline": False,
             "rotation": 0,
@@ -212,7 +308,10 @@ def _build_editor_state(job: dict) -> dict:
 
         assets[caption_asset_id] = caption_asset
         items[caption_item_id] = caption_item
-        tracks.append({
+        # Frontend renders tracks reversed (canvas/layers.tsx), so index 0 is
+        # rendered on top. Prepend the caption track so captions sit above the
+        # video instead of behind it.
+        tracks.insert(0, {
             "id": caption_track_id,
             "items": [caption_item_id],
             "hidden": False,
@@ -327,7 +426,10 @@ def get_editor_state(job_id: str, force_rebuild: bool = False, user: dict = Depe
         if not job.get("final_video_url"):
             raise HTTPException(status_code=400, detail="Job has no final video")
 
-        # Return saved editor state if it exists (from a previous edit session)
+        # Return saved editor state if it exists (from a previous edit session).
+        # Cached state represents user intent — never mutate it here. To pick up
+        # newer dimension/probe logic, clients must request ?force_rebuild=true
+        # which discards the cached state and rebuilds via _build_editor_state.
         if job.get("editor_state") and not force_rebuild:
             return job["editor_state"]
 
@@ -386,10 +488,19 @@ def save_editor_state(job_id: str, state: dict = Body(...), user: dict = Depends
 # HELPER: Auto-transcribe video using Whisper
 # ============================================================================
 
-def _auto_transcribe_video(video_url: str) -> dict:
+def _auto_transcribe_video(
+    video_url: str,
+    script_prompt: Optional[str] = None,
+    language: Optional[str] = None,
+) -> dict:
     """
     Download a video from URL, extract audio, and transcribe with Whisper.
     Returns {"words": [...], "text": "..."} or None.
+
+    When `script_prompt` is provided (e.g. the full VO script from
+    metadata.voiceover_script), Whisper biases decoding toward those words —
+    closes gaps in word timestamps that otherwise appear when audio is ducked
+    or noisy.
     """
     import requests as req_lib
     from ugc_backend.transcription_client import TranscriptionClient
@@ -416,7 +527,11 @@ def _auto_transcribe_video(video_url: str) -> dict:
         # Transcribe with Whisper
         print(f"[EDITOR] Transcribing with Whisper...")
         client = TranscriptionClient()
-        transcription = client.transcribe_audio(str(audio_path))
+        transcription = client.transcribe_audio(
+            str(audio_path),
+            script_prompt=script_prompt,
+            language=language,
+        )
 
         if transcription and transcription.get("words"):
             # Normalize word objects to plain dicts
@@ -504,8 +619,11 @@ def generate_captions(req: CaptionsRequest, user: dict = Depends(get_current_use
                     start = float(getattr(w, "start", 0))
                     end = float(getattr(w, "end", 0))
 
+                stripped = word.strip()
+                if not stripped:
+                    continue
                 captions.append({
-                    "text": " " + word.strip(),
+                    "text": stripped + " ",
                     "startMs": round(start * 1000),
                     "endMs": round(end * 1000),
                     "timestampMs": round(start * 1000),
@@ -553,10 +671,19 @@ CAPTION_STYLES = {
     },
 }
 
+# Valid values for the caption_video `stroke_mode` input — mirrors
+# `StrokeMode` in frontend/src/editor/items/captions/captions-item-type.ts.
+STROKE_MODES = {"solid", "shadow", "glow"}
+
 
 class CaptionVideoRequest(BaseModel):
     style: Optional[str] = "hormozi"
     placement: Optional[str] = "middle"
+    stroke_mode: Optional[str] = "solid"
+    shadow_color: Optional[str] = None
+    shadow_blur: Optional[int] = 8
+    shadow_offset_x: Optional[int] = 0
+    shadow_offset_y: Optional[int] = 4
 
 
 @router.post("/caption-video/{job_id}")
@@ -583,12 +710,29 @@ def caption_video(job_id: str, body: CaptionVideoRequest = CaptionVideoRequest()
             raise HTTPException(status_code=400, detail="Job has no final video URL")
 
         # ── Step 1: Get or create transcription ──────────────────────
+        # For voiceover_on_video jobs the mix drops source audio volume which
+        # confuses Whisper — prefer the clean TTS mp3 saved in metadata.
+        metadata = job.get("metadata") or {}
+        vo_audio_url = metadata.get("voiceover_audio_url") if isinstance(metadata, dict) else None
+        vo_script = metadata.get("voiceover_script") if isinstance(metadata, dict) else None
+        # Fall back to other known dialogue fields the job may carry.
+        script_prompt = vo_script or job.get("hook") or job.get("script")
+        transcription_source = vo_audio_url or video_url
+
         transcription = job.get("transcription")
         if not transcription or not transcription.get("words"):
-            print(f"[CAPTION] No existing transcription for {job_id}, running Whisper...")
-            transcription = _auto_transcribe_video(video_url)
+            if vo_audio_url:
+                print(f"[CAPTION] Using VO audio from metadata for {job_id}: {vo_audio_url}")
+            else:
+                print(f"[CAPTION] Transcribing final_video_url for {job_id}: {video_url}")
+            if script_prompt:
+                print(f"[CAPTION] Seeding Whisper with {len(str(script_prompt).split())}-word script prompt")
+            transcription = _auto_transcribe_video(transcription_source, script_prompt=script_prompt)
             if not transcription or not transcription.get("words"):
-                raise HTTPException(status_code=500, detail="Whisper transcription returned no words")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Whisper transcription returned no words (source={transcription_source})",
+                )
             # Persist so we don't re-transcribe next time
             _save_transcription(job_id, table, transcription)
         else:
@@ -655,12 +799,13 @@ def caption_video(job_id: str, body: CaptionVideoRequest = CaptionVideoRequest()
         style_props = CAPTION_STYLES.get(style_name, CAPTION_STYLES["hormozi"])
 
         placement = (body.placement or "middle").lower()
+        vx, vy, vw, vh = _primary_video_bounds(existing_items, width, height)
         caption_top_map = {
-            "top": round(height * 0.10),
-            "middle": round(height * 0.45),
-            "bottom": round(height * 0.75),
+            "top": vy + round(vh * 0.10),
+            "middle": vy + round(vh * 0.45),
+            "bottom": vy + round(vh * 0.75),
         }
-        caption_top = caption_top_map.get(placement, round(height * 0.45))
+        caption_top = caption_top_map.get(placement, vy + round(vh * 0.45))
 
         caption_asset_id = str(uuid.uuid4())
         caption_item_id = str(uuid.uuid4())
@@ -681,7 +826,15 @@ def caption_video(job_id: str, body: CaptionVideoRequest = CaptionVideoRequest()
             "captions": captions,
         }
 
-        caption_width = min(width, 900) - 40
+        caption_width = min(vw, 900) - 40
+        stroke_mode = (body.stroke_mode or "solid").lower()
+        if stroke_mode not in STROKE_MODES:
+            stroke_mode = "solid"
+        shadow_color = body.shadow_color or style_props["strokeColor"]
+        shadow_blur = int(body.shadow_blur) if body.shadow_blur is not None else 8
+        shadow_offset_x = int(body.shadow_offset_x) if body.shadow_offset_x is not None else 0
+        shadow_offset_y = int(body.shadow_offset_y) if body.shadow_offset_y is not None else 4
+
         caption_item = {
             "id": caption_item_id,
             "type": "captions",
@@ -689,7 +842,7 @@ def caption_video(job_id: str, body: CaptionVideoRequest = CaptionVideoRequest()
             "durationInFrames": duration_frames,
             "from": 0,
             "top": caption_top,
-            "left": round((width - caption_width) / 2),
+            "left": vx + round((vw - caption_width) / 2),
             "width": caption_width,
             "height": round(style_props["fontSize"] * 1.2 * style_props["maxLines"]),
             "opacity": 1,
@@ -705,6 +858,11 @@ def caption_video(job_id: str, body: CaptionVideoRequest = CaptionVideoRequest()
             "highlightColor": style_props["highlightColor"],
             "strokeWidth": style_props["strokeWidth"],
             "strokeColor": style_props["strokeColor"],
+            "strokeMode": stroke_mode,
+            "shadowColor": shadow_color,
+            "shadowBlur": shadow_blur,
+            "shadowOffsetX": shadow_offset_x,
+            "shadowOffsetY": shadow_offset_y,
             "direction": "ltr",
             "pageDurationInMilliseconds": style_props["pageDurationInMilliseconds"],
             "captionStartInSeconds": 0,
@@ -717,23 +875,16 @@ def caption_video(job_id: str, body: CaptionVideoRequest = CaptionVideoRequest()
         existing_assets[caption_asset_id] = caption_asset
         existing_items[caption_item_id] = caption_item
 
-        # Find the video track index to place captions directly above it
-        video_track_idx = 0
-        for idx, track in enumerate(existing_tracks):
-            for ti in track.get("items", []):
-                item_obj = existing_items.get(ti, {})
-                if item_obj.get("type") == "video":
-                    video_track_idx = idx
-                    break
-
         caption_track = {
             "id": caption_track_id,
             "items": [caption_item_id],
             "hidden": False,
             "muted": False,
         }
-        # Insert above the video track (higher index = rendered on top)
-        existing_tracks.insert(video_track_idx + 1, caption_track)
+        # Frontend renders tracks with `.slice().reverse()` in canvas/layers.tsx,
+        # so lower index = rendered on top. Captions must always be ON TOP of
+        # the video, so insert at index 0.
+        existing_tracks.insert(0, caption_track)
 
         undoable["tracks"] = existing_tracks
         undoable["items"] = existing_items
@@ -764,6 +915,7 @@ def caption_video(job_id: str, body: CaptionVideoRequest = CaptionVideoRequest()
             "duration_seconds": round(last_end_ms / 1000, 1),
             "style": style_name,
             "placement": placement,
+            "stroke_mode": stroke_mode,
         }
 
     except HTTPException:
@@ -795,6 +947,11 @@ def get_upload_url(req: UploadUrlRequest, user: dict = Depends(get_current_user)
         sb = get_supabase()
         result = sb.storage.from_("editor-assets").create_signed_upload_url(file_key)
         signed_url = result.get("signedURL") or result.get("signed_url") or result.get("signedUrl")
+        if not signed_url:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to create signed upload URL: no URL returned from storage",
+            )
         public_url = sb.storage.from_("editor-assets").get_public_url(file_key)
 
         return {
@@ -804,6 +961,52 @@ def get_upload_url(req: UploadUrlRequest, user: dict = Depends(get_current_user)
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# ROUTE: POST /api/editor/music
+# Generates an instrumental music track for use in the editor.
+# Wraps generate_scenes.generate_music (the same Suno-backed helper used by
+# the studio pipeline).
+# ============================================================================
+
+class MusicRequest(BaseModel):
+    prompt: str
+    duration: Optional[float] = None
+
+
+@router.post("/music")
+def generate_editor_music(req: MusicRequest, user: dict = Depends(get_current_user)):
+    """
+    Generates background music from a text prompt. Returns {url, duration}.
+    Falls back to 502 if the upstream provider fails.
+    """
+    try:
+        from generate_scenes import generate_music
+
+        prompt = (req.prompt or "").strip()
+        if not prompt:
+            raise HTTPException(status_code=400, detail="prompt is required")
+
+        result = generate_music(prompt=prompt, instrumental=True)
+        if not result:
+            raise HTTPException(status_code=502, detail="Music generation failed")
+
+        if isinstance(result, dict):
+            url = result.get("url") or result.get("audio_url") or result.get("remoteUrl")
+            duration = result.get("duration") or result.get("durationInSeconds")
+        else:
+            url = str(result)
+            duration = None
+
+        if not url:
+            raise HTTPException(status_code=502, detail="Music generation returned no URL")
+
+        return {"url": url, "duration": duration}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 # ============================================================================

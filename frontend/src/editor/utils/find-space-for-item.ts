@@ -17,6 +17,11 @@ export type FindSpaceStartPosition =
 	| {
 			type: 'directly-above';
 			trackIndex: number;
+	  }
+	| {
+			/** Inserts a new track at `trackIndex` (before the current track at that index). */
+			type: 'insert-track-before';
+			trackIndex: number;
 	  };
 
 const findSpaceForItemAbove = ({
@@ -159,6 +164,14 @@ export const findSpaceForItem = ({
 			above: startPosition.trackIndex,
 			items,
 		});
+	}
+
+	if (startPosition.type === 'insert-track-before') {
+		const idx = Math.max(0, startPosition.trackIndex);
+		return {
+			trackIndex: Math.min(idx, tracks.length),
+			forceCreateNewTrack: true,
+		};
 	}
 
 	if (startPosition.type === 'front') {

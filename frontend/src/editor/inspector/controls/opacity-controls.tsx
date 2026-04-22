@@ -45,17 +45,17 @@ const OpacityControlsUnmemoized: React.FC<{
 	return (
 		<div>
 			<InspectorSubLabel>Opacity</InspectorSubLabel>
-			<div className="flex w-full items-center gap-3">
+			<div className="inspector-slider-row flex w-full min-w-0 items-center gap-2">
 				<Slider
 					value={opacityPercent}
 					onValueChange={handleSliderChange}
 					min={0}
 					max={100}
 					step={1}
-					className="flex-1"
+					className="min-w-0 flex-1"
 					title={`Opacity: ${opacityPercent}%`}
 				/>
-				<div className="min-w-[40px] text-right text-xs text-white/75">
+				<div className="inspector-slider-value shrink-0 text-right text-xs text-white/75 tabular-nums">
 					{opacityPercent}%
 				</div>
 			</div>

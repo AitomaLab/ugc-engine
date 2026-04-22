@@ -54,7 +54,7 @@ export const Slider: React.FC<SliderProps> = ({
 				onPointerDown={handlePointerDown}
 				title={title}
 				aria-label={title}
-				className="slider-thumb relative mt-2 mb-2 h-2 w-full cursor-pointer appearance-none rounded-full bg-white/20 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-white/20 focus-visible:ring-offset-2 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+				className="slider-thumb relative h-2 w-full cursor-pointer appearance-none rounded-full bg-white/20 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-white/20 focus-visible:ring-offset-2 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
 				style={{
 					background: `linear-gradient(to right, rgba(255, 255, 255, 0.5) 0%, rgba(255, 255, 255, 0.5) ${percentage}%, rgba(255, 255, 255, 0.2) ${percentage}%, rgba(255, 255, 255, 0.2) 100%)`,
 				}}

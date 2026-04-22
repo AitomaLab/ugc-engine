@@ -397,7 +397,14 @@ def update_profile(user_id: str, data: dict):
 
 def list_projects(user_id: str):
     sb = get_supabase()
-    result = sb.table("projects").select("*").eq("user_id", user_id).order("created_at", desc=False).execute()
+    result = (
+        sb.table("projects")
+        .select("*")
+        .eq("user_id", user_id)
+        .order("updated_at", desc=True)
+        .order("created_at", desc=True)
+        .execute()
+    )
     return result.data
 
 def create_project(user_id: str, name: str):

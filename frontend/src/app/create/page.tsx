@@ -7,6 +7,8 @@ import { useTranslation } from '@/lib/i18n';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { ProductShot } from '@/lib/types';
 import Select from '@/components/ui/Select';
+import { CaptionStylePreviewCard } from '@/components/captions/CaptionStylePreviewCard';
+import { CAPTION_STYLE_PREVIEWS } from '@/components/captions/styles';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1186,22 +1188,18 @@ function CreateContent() {
                             {/* Style Selector */}
                             <div>
                                 <div style={{ marginBottom: '8px', fontSize: '12px', color: '#6B7280' }}>{t('create.subtitleStyle')}</div>
-<div style={{ display: 'flex', flexWrap: 'nowrap', gap: '8px' }}>
-    {[
-        { value: 'hormozi', label: 'Hormozi' },
-        { value: 'mrbeast', label: 'MrBeast' },
-        { value: 'plain', label: 'Plain' },
-    ].map(s => (
-        <button
-            key={s.value}
-            className={`btn-secondary ${subtitleStyle === s.value ? 'active' : ''}`}
-            onClick={() => setSubtitleStyle(s.value)}
-            style={{ flex: 1, textAlign: 'center', padding: '8px 0' }}
-        >
-            {s.label}
-        </button>
-    ))}
-</div>
+                                <div style={{ display: 'flex', flexWrap: 'nowrap', gap: '8px' }}>
+                                    {CAPTION_STYLE_PREVIEWS.map(s => (
+                                        <button
+                                            key={s.id}
+                                            className={`btn-secondary ${subtitleStyle === s.id ? 'active' : ''}`}
+                                            onClick={() => setSubtitleStyle(s.id)}
+                                            style={{ flex: 1, textAlign: 'center', padding: '8px 0' }}
+                                        >
+                                            {s.name}
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
 
                             {/* Placement Selector */}
@@ -1227,72 +1225,10 @@ function CreateContent() {
                             {/* Live Preview */}
                             <div>
                                 <div style={{ marginBottom: '8px', fontSize: '12px', color: '#6B7280' }}>{t('create.subtitlePreview')}</div>
-                                <div style={{
-                                    position: 'relative' as const,
-                                    width: '100%',
-                                    paddingTop: '56%',
-                                    backgroundColor: '#1a1a2e',
-                                    borderRadius: '12px',
-                                    overflow: 'hidden',
-                                    backgroundImage: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
-                                }}>
-                                    <div style={{
-                                        position: 'absolute' as const,
-                                        left: '50%',
-                                        top: '50%',
-                                        transform: 'translate(-50%, -50%)',
-                                        width: '90%',
-                                        textAlign: 'center' as const,
-                                    }}>
-                                        {subtitleStyle === 'hormozi' && (
-                                            <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '3px' }}>
-                                                {['THIS', 'APP', 'IS', 'INSANE'].map((word, i) => (
-                                                    <span key={i} style={{
-                                                        fontFamily: 'Impact, Arial Black, sans-serif',
-                                                        fontSize: '22px',
-                                                        fontWeight: 900,
-                                                        color: word === 'INSANE' ? '#FFFF00' : '#FFFFFF',
-                                                        textShadow: '-2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000',
-                                                        textTransform: 'uppercase' as const,
-                                                        display: 'inline-block',
-                                                        transform: word === 'INSANE' ? 'scale(1.1)' : 'scale(1)',
-                                                    }}>
-                                                        {word}
-                                                    </span>
-                                                ))}
-                                            </div>
-                                        )}
-                                        {subtitleStyle === 'mrbeast' && (
-                                            <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '4px' }}>
-                                                {['THIS', 'APP', 'IS', 'INSANE'].map((word, i) => (
-                                                    <span key={i} style={{
-                                                        fontFamily: 'Arial Black, sans-serif',
-                                                        fontSize: '18px',
-                                                        fontWeight: 900,
-                                                        color: '#FFFFFF',
-                                                        backgroundColor: 'rgba(0,0,0,0.75)',
-                                                        padding: '2px 8px',
-                                                        borderRadius: '6px',
-                                                        display: 'inline-block',
-                                                    }}>
-                                                        {word}
-                                                    </span>
-                                                ))}
-                                            </div>
-                                        )}
-                                        {subtitleStyle === 'plain' && (
-                                            <span style={{
-                                                fontFamily: 'Arial, sans-serif',
-                                                fontSize: '16px',
-                                                fontWeight: 700,
-                                                color: '#FFFFFF',
-                                                textShadow: '1px 1px 4px rgba(0,0,0,0.9)',
-                                            }}>
-                                                This app is insane
-                                            </span>
-                                        )}
-                                    </div>
-                                </div>
+                                {(() => {
+                                    const picked = CAPTION_STYLE_PREVIEWS.find(s => s.id === subtitleStyle) || CAPTION_STYLE_PREVIEWS[0];
+                                    return <CaptionStylePreviewCard style={picked} size="md" />;
+                                })()}
                             </div>
 
                         </div>

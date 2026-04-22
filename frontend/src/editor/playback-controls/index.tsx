@@ -28,14 +28,18 @@ export const PlaybackControls: React.FC<{
 }> = ({playerRef}) => {
 	const {fps} = useFps();
 	return (
-		<div className="border-t-editor-starter-border bg-editor-starter-bg relative flex h-12 w-full shrink-0 flex-row items-center justify-between overflow-hidden border-t-[1px] px-4 text-white">
-			<div className="flex flex-1 items-center">
+		<div
+			data-playback-bar=""
+			className="border-t-editor-starter-border bg-editor-starter-bg relative flex w-full min-w-0 shrink-0 flex-row items-center justify-between overflow-x-auto overflow-y-hidden border-t-[1px] text-white"
+			style={{height: '46px', minHeight: '46px', maxHeight: '46px', padding: '0 12px'}}
+		>
+			<div className="flex min-w-0 flex-1 items-center">
 				{FEATURE_SPLIT_ITEM ? <SplitItemTool playerRef={playerRef} /> : null}
 				{FEATURE_TIMELINE_SNAPPING || FEATURE_CANVAS_SNAPPING ? (
 					<SnappingToggle />
 				) : null}
 			</div>
-			<div className="flex items-center gap-8">
+			<div className="flex shrink-0 items-center gap-6">
 				<CurrentTimeDisplay playerRef={playerRef} fps={fps} />
 				<div className="flex items-center gap-2">
 					{FEATURE_JUMP_TO_START_BUTTON && (
@@ -48,7 +52,7 @@ export const PlaybackControls: React.FC<{
 				</div>
 				<ProjectDurationDisplay fps={fps} />
 			</div>
-			<div className="flex flex-1 items-center justify-end gap-4">
+			<div className="flex min-w-0 flex-1 items-center justify-end gap-2 sm:gap-3">
 				{FEATURE_LOOP_BUTTON && <LoopButton />}
 				{FEATURE_MUTE_BUTTON && <MuteButton playerRef={playerRef} />}
 				{FEATURE_FULLSCREEN_CONTROL && (

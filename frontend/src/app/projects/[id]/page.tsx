@@ -115,6 +115,17 @@ export default function ProjectContainerPage() {
     const [filterInfluencer, setFilterInfluencer] = useState('');
     const [filterMode, setFilterMode] = useState('');
 
+    // Most recent completed video in this project — used as the jobId the
+    // agent panel can edit via the Phase 2 editor-AI route. When null, the
+    // agent panel falls back to the managed-agent stream for all prompts.
+    const selectedJobId = useMemo<string | null>(() => {
+        const completed = videos.find((v) => {
+            const s = (v?.status || '').toString().toLowerCase();
+            return s === 'success' || s === 'complete' || s === 'completed' || s === 'done';
+        });
+        return completed?.id ? String(completed.id) : null;
+    }, [videos]);
+
     // ── Agent panel visibility (split-panel layout only) ──
     const [agentOpen, setAgentOpen] = useState(true);
     const [createBarOpen, setCreateBarOpen] = useState(true);
@@ -605,7 +616,7 @@ export default function ProjectContainerPage() {
                 {projectHeaderBar}
                 {galleryBlock}
                 {createBarOpen && createBarBlock}
-                <AgentPanel ref={agentRef} projectId={projectId} onArtifact={() => fetchAssets(true)} onStateChange={setAgentState} initialBrief={initialBrief || undefined} initialRefs={initialRefs} initialUseSeedance={initialUseSeedance} onJobStart={(kind) => { setActiveTab(kind === 'video' ? 'videos' : 'images'); startJobRefetchBurst(); }} />
+                <AgentPanel ref={agentRef} projectId={projectId} jobId={selectedJobId} onArtifact={() => fetchAssets(true)} onStateChange={setAgentState} initialBrief={initialBrief || undefined} initialRefs={initialRefs} initialUseSeedance={initialUseSeedance} onJobStart={(kind) => { setActiveTab(kind === 'video' ? 'videos' : 'images'); startJobRefetchBurst(); }} />
             </div>
         );
     }
@@ -638,6 +649,7 @@ export default function ProjectContainerPage() {
                         <AgentPanel
                             ref={agentRef}
                             projectId={projectId}
+                            jobId={selectedJobId}
                             onArtifact={() => fetchAssets(true)}
                             embedded={true}
                             hideHeader={true}

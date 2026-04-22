@@ -1,3 +1,4 @@
+import {decodeJsonFromUrlHash} from '@/lib/editor-state-hash';
 import {FEATURE_LOAD_STATE_FROM_URL} from '../flags';
 import {UndoableState} from './types';
 
@@ -15,10 +16,8 @@ export const getStateFromUrl = (): UndoableState | null => {
 		return null;
 	}
 
-	const base64Decoded = atob(state);
-
 	try {
-		return JSON.parse(base64Decoded);
+		return decodeJsonFromUrlHash<UndoableState>(state);
 	} catch {
 		return null;
 	}

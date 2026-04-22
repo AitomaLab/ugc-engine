@@ -171,11 +171,26 @@ export async function transcribeAudio(blob: Blob): Promise<{ text: string; langu
 }
 
 // ── Managed Agent ──────────────────────────────────────────────────────
+export interface CaptionStylePreview {
+    id: string;
+    name: string;
+    description: string;
+    sample_text: string;
+    highlight_word_index: number;
+    font_family: string;
+    font_weight: number;
+    color: string;
+    highlight_color: string;
+    stroke_color?: string;
+    uppercase?: boolean;
+}
+
 export interface AgentArtifact {
-    type: 'image' | 'video';
-    url: string;
+    type: 'image' | 'video' | 'caption_styles_preview';
+    url?: string;
     shot_id?: string;
     job_id?: string;
+    styles?: CaptionStylePreview[];
 }
 
 export type AgentTurnRole = 'user' | 'agent';

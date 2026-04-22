@@ -169,17 +169,17 @@ const PlaybackRateControlsUnmemoized: React.FC<{
 	return (
 		<div>
 			<InspectorSubLabel>Playback Rate</InspectorSubLabel>
-			<div className="flex w-full items-center gap-3">
+			<div className="inspector-slider-row flex w-full min-w-0 items-center gap-2">
 				<Slider
 					value={playbackRatePercent}
 					onValueChange={handleSliderChange}
 					min={MIN_PLAYBACK_RATE * 100}
 					max={MAX_PLAYBACK_RATE * 100}
 					step={5}
-					className="flex-1"
+					className="min-w-0 flex-1"
 					title={`Playback Rate: ${playbackRate.toFixed(2)}x`}
 				/>
-				<div className="min-w-[40px] text-right text-xs text-white/75">
+				<div className="inspector-slider-value shrink-0 text-right text-xs text-white/75 tabular-nums">
 					{playbackRate.toFixed(2)}x
 				</div>
 			</div>

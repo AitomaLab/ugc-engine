@@ -57,13 +57,13 @@ export const TokensControls: React.FC<{
 		<CollapsableInspectorSection
 			summary={
 				<div className="flex justify-between">
-					<InspectorLabel>Tokens</InspectorLabel>
+					<InspectorLabel>Words</InspectorLabel>
 					<div className="w-2"></div>
 					<div className="text-xs text-neutral-300">{captions.length}</div>
 				</div>
 			}
 			id={`tokens-${item.id}`}
-			defaultOpen={false}
+			defaultOpen
 		>
 			<div className="flex flex-col gap-2">
 				{captions.map((caption: Caption, i: number) => {

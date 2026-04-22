@@ -57,7 +57,7 @@ const PositionControlUnmemoized: React.FC<{
 	return (
 		<div>
 			<InspectorSubLabel>Position</InspectorSubLabel>
-			<div className="flex gap-2">
+			<div className="flex w-full min-w-0 gap-2">
 				<div className="flex-1">
 					<NumberControl
 						label="X"

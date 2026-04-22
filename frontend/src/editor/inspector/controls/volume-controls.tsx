@@ -44,17 +44,17 @@ const VolumeControlsUnmemoized: React.FC<{
 	return (
 		<div>
 			<InspectorSubLabel>Volume</InspectorSubLabel>
-			<div className="flex w-full items-center gap-3">
+			<div className="inspector-slider-row flex w-full min-w-0 items-center gap-2">
 				<Slider
 					value={decibelAdjustment}
 					onValueChange={handleSliderChange}
 					min={MIN_VOLUME_DB}
 					max={MAX_VOLUME_DB}
 					step={0.5}
-					className="flex-1"
+					className="min-w-0 flex-1"
 					title={`Volume: ${decibelAdjustment.toFixed(1)} db`}
 				/>
-				<div className="min-w-[50px] text-right text-xs text-white/75">
+				<div className="inspector-slider-value shrink-0 text-right text-xs text-white/75 tabular-nums">
 					{decibelAdjustment.toFixed(1)} dB
 				</div>
 			</div>

@@ -6,7 +6,7 @@ import {CompositionInspector} from './composition-inspector';
 import {InspectorContent} from './inspector-content';
 import {useInspectorScrollRestoration} from './scroll-restoration';
 
-export const INSPECTOR_WIDTH = 350;
+export const INSPECTOR_WIDTH = 384;
 
 export const Inspector: React.FC = () => {
 	const {selectedItems} = useSelectedItems();
@@ -26,7 +26,7 @@ export const Inspector: React.FC = () => {
 
 	return (
 		<div
-			className="border-l-editor-starter-border bg-editor-starter-panel w-[350px] overflow-y-auto border-l-[1px] text-white"
+			className="border-l-editor-starter-border bg-editor-starter-panel box-border min-h-0 min-w-0 shrink-0 overflow-y-auto overflow-x-hidden border-l-[1px] text-white"
 			style={style}
 			ref={ref}
 		>

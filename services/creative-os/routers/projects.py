@@ -324,24 +324,35 @@ async def _bulk_project_previews(
             return []
 
     async def _fetch_all_products() -> list[dict]:
-        """Parallel-fetch products for every project. The core /api/products
-        endpoint requires X-Project-Id, so we scope per project and gather.
-        Each returned product is tagged with its owning project_id so shots
-        linked via product_id can be routed back to their project."""
-        async def _one(pid: str) -> list[dict]:
-            try:
-                scoped = CoreAPIClient(token=client.token, project_id=pid)
-                prods = await scoped.list_products()
-                for p in prods or []:
-                    p["project_id"] = pid
-                return prods or []
-            except Exception:
-                return []
-        batches = await asyncio.gather(*[_one(pid) for pid in project_ids])
-        flat: list[dict] = []
-        for b in batches:
-            flat.extend(b)
-        return flat
+        """Single bulk fetch of products for all projects via Supabase REST —
+        replaces a 19-round-trip per-project fan-out through the core API.
+        We only need (id, project_id) to route shots-by-product back to
+        projects; the `product_id IN (...)` shot query below uses these keys.
+        """
+        if not (supabase_url and anon_key):
+            return []
+        headers = {
+            "apikey": anon_key,
+            "Authorization": f"Bearer {client.token}",
+            "Content-Type": "application/json",
+        }
+        import httpx as _httpx
+        try:
+            async with _httpx.AsyncClient(timeout=15.0) as http:
+                resp = await http.get(
+                    f"{supabase_url}/rest/v1/products",
+                    headers=headers,
+                    params={
+                        "select": "id,project_id",
+                        "project_id": f"in.({','.join(project_ids)})",
+                        "limit": "1000",
+                    },
+                )
+                if resp.status_code != 200:
+                    return []
+                return resp.json() or []
+        except Exception:
+            return []
 
     async def _fetch_all_shots(product_ids: list[str]) -> list:
         if not (supabase_url and anon_key):
@@ -547,28 +558,35 @@ async def list_recent_images(limit: int = 20, user: dict = Depends(get_current_u
     if not project_ids:
         return []
 
-    async def _products_for(pid: str) -> list[dict]:
-        try:
-            scoped = CoreAPIClient(token=user["token"], project_id=pid)
-            return (await scoped.list_products()) or []
-        except Exception:
-            return []
-    product_batches = await asyncio.gather(*[_products_for(pid) for pid in project_ids])
-    product_ids: list[str] = []
-    product_name_by_id: dict[str, str] = {}
-    for batch in product_batches:
-        for p in batch:
-            pid = p.get("id")
-            if pid:
-                product_ids.append(pid)
-                product_name_by_id[pid] = p.get("name", "")
-
     headers = {
         "apikey": anon_key,
         "Authorization": f"Bearer {user['token']}",
         "Content-Type": "application/json",
     }
     import httpx as _httpx
+
+    # Bulk fetch products for ALL projects in one round-trip (was: N parallel
+    # scoped /api/products calls — 19 projects → ~4s). We only need id, name,
+    # project_id to route shots-by-product back to their owning project.
+    async with _httpx.AsyncClient(timeout=15.0) as http:
+        prod_resp = await http.get(
+            f"{supabase_url}/rest/v1/products",
+            headers=headers,
+            params={
+                "select": "id,name,project_id",
+                "project_id": f"in.({','.join(project_ids)})",
+                "limit": "1000",
+            },
+        )
+    product_ids: list[str] = []
+    product_name_by_id: dict[str, str] = {}
+    if prod_resp.status_code == 200:
+        for p in prod_resp.json() or []:
+            pid = p.get("id")
+            if pid:
+                product_ids.append(pid)
+                product_name_by_id[pid] = p.get("name", "")
+
     async with _httpx.AsyncClient(timeout=15.0) as http:
         fetches = [
             http.get(

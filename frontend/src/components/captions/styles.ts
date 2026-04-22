@@ -1,0 +1,57 @@
+import type { CaptionStylePreview } from '@/lib/creative-os-api';
+
+export type { CaptionStylePreview };
+
+export const CAPTION_STYLE_PREVIEWS: CaptionStylePreview[] = [
+    {
+        id: 'hormozi',
+        name: 'Hormozi',
+        description: 'Bold word-by-word pop with a yellow highlight (the classic viral look).',
+        sample_text: 'THIS APP IS INSANE',
+        highlight_word_index: 3,
+        font_family: 'Anton, Impact, "Arial Black", sans-serif',
+        font_weight: 900,
+        color: '#FFFFFF',
+        highlight_color: '#FFFF00',
+        stroke_color: '#000000',
+        uppercase: true,
+    },
+    {
+        id: 'bold',
+        name: 'Bold',
+        description: 'Large chunky text with a hot-pink highlight, high energy for fast-paced content.',
+        sample_text: 'THIS APP IS INSANE',
+        highlight_word_index: 3,
+        font_family: 'Bebas Neue, Impact, "Arial Black", sans-serif',
+        font_weight: 900,
+        color: '#FFFFFF',
+        highlight_color: '#FF3366',
+        stroke_color: '#000000',
+        uppercase: true,
+    },
+    {
+        id: 'karaoke',
+        name: 'Karaoke',
+        description: 'Words highlight one at a time in bright blue as they are spoken.',
+        sample_text: 'THIS APP IS INSANE',
+        highlight_word_index: 2,
+        font_family: 'Anton, Impact, "Arial Black", sans-serif',
+        font_weight: 900,
+        color: '#FFFFFF',
+        highlight_color: '#337AFF',
+        stroke_color: '#000000',
+        uppercase: true,
+    },
+    {
+        id: 'minimal',
+        name: 'Minimal',
+        description: 'Clean, understated subtitles for a premium, editorial feel.',
+        sample_text: 'This app is insane',
+        highlight_word_index: -1,
+        font_family: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        font_weight: 600,
+        color: '#FFFFFF',
+        highlight_color: '#FFFFFF',
+        uppercase: false,
+    },
+];

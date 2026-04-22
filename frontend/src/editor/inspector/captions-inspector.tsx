@@ -38,6 +38,7 @@ import {MaxLinesControls} from './controls/max-lines-controls';
 import {OpacityControls} from './controls/opacity-controls';
 import {PositionControl} from './controls/position-control';
 import {RotationControl} from './controls/rotation-controls';
+import {StrokeModeControls} from './controls/stroke-mode-controls';
 import {StrokeWidthControls} from './controls/stroke-width-controls';
 import {TextAlignmentControls} from './controls/text-alignment-controls';
 import {TextDirectionControls} from './controls/text-direction-controls';
@@ -47,6 +48,8 @@ const CaptionsInspectorUnmemoized: React.FC<{
 }> = ({item}) => {
 	return (
 		<div>
+			{FEATURE_TOKENS_CONTROL && <TokensControls item={item} />}
+			<InspectorDivider />
 			<CollapsableInspectorSection
 				summary={<InspectorLabel>Layout</InspectorLabel>}
 				id={`layout-${item.id}`}
@@ -142,19 +145,24 @@ const CaptionsInspectorUnmemoized: React.FC<{
 				id={`stroke-${item.id}`}
 				defaultOpen={false}
 			>
-				{FEATURE_TEXT_STROKE_WIDTH_CONTROL && (
-					<StrokeWidthControls
-						strokeWidth={item.strokeWidth}
-						itemId={item.id}
-					/>
-				)}
-				{FEATURE_TEXT_STROKE_COLOR_CONTROL && (
-					<ColorInspector
-						color={item.strokeColor}
-						itemId={item.id}
-						colorType="strokeColor"
-						accessibilityLabel="Stroke color"
-					/>
+				<StrokeModeControls item={item} />
+				{(item.strokeMode ?? 'solid') === 'solid' && (
+					<>
+						{FEATURE_TEXT_STROKE_WIDTH_CONTROL && (
+							<StrokeWidthControls
+								strokeWidth={item.strokeWidth}
+								itemId={item.id}
+							/>
+						)}
+						{FEATURE_TEXT_STROKE_COLOR_CONTROL && (
+							<ColorInspector
+								color={item.strokeColor}
+								itemId={item.id}
+								colorType="strokeColor"
+								accessibilityLabel="Stroke color"
+							/>
+						)}
+					</>
 				)}
 			</CollapsableInspectorSection>
 			<InspectorDivider />
@@ -173,8 +181,6 @@ const CaptionsInspectorUnmemoized: React.FC<{
 					<MaxLinesControls maxLines={item.maxLines} itemId={item.id} />
 				)}
 			</CollapsableInspectorSection>
-			<InspectorDivider />
-			{FEATURE_TOKENS_CONTROL && <TokensControls item={item} />}
 		</div>
 	);
 };

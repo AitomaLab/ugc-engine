@@ -7,15 +7,16 @@ import {useLoop} from './utils/use-context';
 
 export const TopPanel: React.FC<{
 	playerRef: React.RefObject<PlayerRef | null>;
-}> = ({playerRef}) => {
+	inspectorOpen: boolean;
+}> = ({playerRef, inspectorOpen}) => {
 	const loop = useLoop();
 
 	return (
-		<div className="relative h-full w-full flex-1">
+		<div className="relative min-h-0 min-w-0 w-full flex-1">
 			<div className="absolute flex h-full w-full flex-row">
 				<JobHistorySidebar />
 				<Canvas playerRef={playerRef} loop={loop} />
-				<Inspector />
+				{inspectorOpen ? <Inspector /> : null}
 			</div>
 		</div>
 	);

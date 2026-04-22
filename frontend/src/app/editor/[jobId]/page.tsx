@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { apiFetch } from '@/lib/utils';
+import { encodeJsonForUrlHash, decodeJsonFromUrlHash } from '@/lib/editor-state-hash';
 
 const EditorComponent = dynamic(
   () => import('@/editor/editor').then((mod) => ({ default: mod.Editor })),
@@ -85,10 +86,7 @@ function EditorPageInner() {
 
         const qs = forceRebuild ? '?force_rebuild=true' : '';
         const editorState = await apiFetch(`/api/editor/state/${jobId}${qs}`);
-        // Unicode-safe Base64: encode via TextEncoder to handle emoji/non-Latin1 chars
-        const encodedState = btoa(
-          Array.from(new TextEncoder().encode(JSON.stringify(editorState)), (b) => String.fromCharCode(b)).join('')
-        );
+        const encodedState = encodeJsonForUrlHash(editorState);
         window.location.hash = `#state=${encodedState}`;
 
         setReady(true);
@@ -113,10 +111,7 @@ function EditorPageInner() {
         if (!hash.startsWith('#state=')) return;
 
         const encoded = hash.slice('#state='.length);
-        // Unicode-safe Base64 decode
-        const state = JSON.parse(
-          new TextDecoder().decode(Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0)))
-        );
+        const state = decodeJsonFromUrlHash(encoded);
 
         await apiFetch(`/api/editor/state/${jobId}`, {
           method: 'POST',

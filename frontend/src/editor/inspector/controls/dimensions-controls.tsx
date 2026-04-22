@@ -118,7 +118,7 @@ const DimensionsControlsUnmemoized: React.FC<{
 	return (
 		<div>
 			<InspectorSubLabel>Dimensions</InspectorSubLabel>
-			<div className="flex w-full flex-row gap-2">
+			<div className="flex w-full min-w-0 flex-row gap-2">
 				<div className="flex-1">
 					<NumberControl
 						label="W"

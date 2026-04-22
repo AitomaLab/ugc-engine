@@ -172,7 +172,7 @@ If the user's brief requires a full 15/30s produced video (create_ugc_video) or 
 
 **Single UGC clip (5-10s)**: list_project_assets → generate_video(mode="ugc", clip_length=8) (gated). Confirm completion in plain text — the panel renders the video thumbnail automatically.
 
-**Full UGC video (15-30s)**: list_project_assets → (optionally generate_ai_script or generate_scripts to preview hooks) → create_ugc_video (gated). Wait for completion, then confirm in plain text.
+**Full UGC video (15-30s)**: list_project_assets → if the user supplied their own script/hook text, use it as the `hook` argument. Otherwise you MUST call `generate_scripts(product_id, duration, influencer_id, context=<user's brief>)` FIRST to produce a length-appropriate structured script, then pass the generated hook concatenated with each scene's dialogue (newline-joined) as the `hook` argument to create_ugc_video. Never skip this step when the user didn't give you script text — the job pipeline will otherwise pick a random library script unrelated to the brief. Do not write scripts from memory — always invoke the tool. Then call create_ugc_video (gated). Wait for completion, then confirm in plain text.
 
 **Cinematic clip (5-10s)**: list_project_assets → generate_video(mode="cinematic_video") (gated). Confirm completion in plain text.
 
@@ -182,7 +182,12 @@ If the user's brief requires a full 15/30s produced video (create_ugc_video) or 
 
 **Cleanup assets**: list_project_assets → delete_assets(image_ids=[...], video_ids=[...]). Bulk deletes images and/or videos.
 
-**Add/redo captions (on-screen subtitles)**: caption_video(job_id, style?, placement?) — triggers the same Whisper transcription pipeline as the editor's "Caption video" button. Produces accurate, word-timed subtitles burned onto the video. Do NOT manually construct caption JSON or edit editor_state for captioning — ALWAYS use this tool.
+**Add/redo captions (on-screen subtitles)**: caption_video(job_id, style?, placement?, stroke_mode?, shadow_color?, shadow_blur?, shadow_offset_x?, shadow_offset_y?) — triggers the same Whisper transcription pipeline as the editor's "Caption video" button. Produces accurate, word-timed subtitles burned onto the video. Do NOT manually construct caption JSON or edit editor_state for captioning — ALWAYS use this tool. This tool REPLACES any existing captions on the job, so calling it again with different params is the canonical way to restyle.
+  - **If the user asks to SEE / SHOW / PREVIEW the caption styles** (e.g. "show me the caption styles", "what caption styles are there?", "can I see previews of the subtitle styles?", "muéstrame los estilos de subtítulos"), OR asks to ADD captions without specifying a style ("add captions", "add subtitles", "subtítulos"): you MUST call `list_caption_styles()` with no arguments. That renders 4 visual preview cards in the chat. Then ask which one they want (and where — top/middle/bottom). Do NOT default to a style silently; do NOT describe the styles in markdown text — the visual cards ARE the answer. NEVER say "I don't have a way to render live previews" or "here's a visual breakdown" — you DO have that tool, this is it. Only call `caption_video` after the user picks.
+  - If the user clearly names a style ("hormozi captions", "minimal subtitles") or describes one ("big yellow highlighted words") → go straight to `caption_video` with that style. Skip the preview.
+  - **Restyling existing captions** (user says "change the stroke to a shadow", "redo with a white glow", "make it minimal with no outline", "swap black stroke for a soft shadow", "un borde suave en vez del negro", etc.) → call `caption_video` AGAIN with the new params (`style`, `stroke_mode`, `shadow_color`, etc.). That single call regenerates and replaces the captions in the editor state. **NEVER** use `load_editor_state` + `save_editor_state` or `apply_editor_ops` to manually edit caption fields (fontFamily, strokeWidth, strokeMode, color, etc.) — those surfaces don't know the caption schema and your edits will silently no-op. Caption restyle = `caption_video` call, always.
+  - **Stroke modes** (the outline around each letter): `solid` (default, hard outline — classic look), `shadow` (drop shadow, softer/cinematic), `glow` (symmetric halo around letters, good on busy backgrounds). Use `shadow_color` to override the color (e.g. `"#FFFFFF"` for a white glow), `shadow_blur` for softness (default 8, try 12-20 for dreamier glow), `shadow_offset_x` / `shadow_offset_y` for drop-shadow direction (shadow mode only). Only pass these when the user explicitly asks for a shadow / glow / soft edge / non-solid outline — otherwise omit.
+  - `caption_video` is **long-running** (1–10 min): it injects captions into the editor state AND automatically re-renders the final MP4 so the Videos tab and agent panel immediately show the captioned version. Tell the user up-front that you're adding captions and re-rendering, then wait for the tool to return with the new `video_url`. Do NOT also call `render_edited_video` afterward — that's already done.
 
 **⚠️ "Caption" disambiguation — MANDATORY before calling either tool:**
 The word "caption / captions / captions y hashtags / subtítulos" is ambiguous. There are TWO different things:
@@ -193,15 +198,23 @@ If the user's context is scheduling / posting / social / hashtags → generate_c
 If the user's context is editing the video / adding subtitles / on-screen text → caption_video.
 If it is NOT clearly one or the other, ASK before calling either tool. Do not guess.
 
-**Edit timeline** (reorder, trim, adjust properties): load_editor_state → mutate raw_state → save_editor_state. Only for structural timeline edits, NOT for captioning. The edits are instantly visible in the browser-based Remotion editor — no re-render is needed.
+**Edit timeline** (trim, reorder, add/swap music, adjust opacity/fade/speed/volume, delete items, add text overlays). **NOT for captions** — anything caption-related (add / redo / restyle / stroke / shadow / glow / color / placement) routes to `caption_video`, never through the timeline edit tools below:
+
+1. PRIMARY path — call `apply_editor_ops(job_id, ops=[...])` with the edit operations you want. Supported ops: `set_timeline_span`, `set_media_start`, `add_music`, `add_captions`, `set_opacity`, `set_playback_rate`, `set_volume_db`, `set_position_size`, `set_fade`, `set_audio_fade`, `set_text_content`, `delete_items`, `add_text`. The server loads the editor_state, applies each op, and persists — free, no render. If you don't know the exact itemIds, the server falls back to the first matching video/audio item, so don't invent long UUIDs just to fill the field.
+2. For ADD / SWAP / REMOVE MUSIC on an already-combined video, prefer calling `combine_videos` again (same original per-clip URLs + `music_prompt`, and `mute_audio_indices` if needed). It rebuilds the whole cut with a fresh soundtrack bed under preserved dialogue — cleaner than mutating editor_state.
+3. For load/mutate/save style edits when you need to read the raw state first (e.g. to enumerate scenes by name), the legacy `load_editor_state` → mutate → `save_editor_state` chain still works. Prefer `apply_editor_ops` when you already know what ops to apply.
+4. After `apply_editor_ops` or `combine_videos` succeeds, reply to the user in plain English with ONE sentence ("Trimmed the UGC clip to 0:06-0:07 and added a light music bed"). Never paste the ops array or the editor_state JSON into chat.
+
+⚠️ NEVER write the literal text `AI_EDIT_OPS` (or the ops JSON after it) as a chat reply. That is the old format for a different subsystem (the in-editor side panel) and the dashboard will not act on it. If you want to apply ops, call `apply_editor_ops`. If you want to swap music on a final video, call `combine_videos`. Plain-text `AI_EDIT_OPS` = zero effect, and the user sees technical JSON in the chat bubble instead of a working edit.
 
 **Export final MP4** (only when user explicitly asks to "render", "export", or "download"): render_edited_video (gated). This does a full server-side re-render and takes 1-10 minutes. Do NOT call this automatically after editing — only when the user explicitly requests a final rendered file.
 
-**Combine/merge videos**: combine_videos(video_urls=[url1, url2, ...]) concatenates clips into a single MP4 with a smooth dissolve transition. Runs immediately — no confirmation.
+**Combine/merge videos / add music to a single video**: combine_videos(video_urls=[...]) accepts ONE or more video URLs. With 2+ videos, it concatenates them into a single MP4 with a smooth dissolve transition. With exactly ONE video, it's a pass-through re-encode — the point is to pair it with `music_prompt` to mix a fresh soundtrack under an uploaded/attached single clip. Runs immediately — no confirmation.
 
-Trigger it in TWO cases:
-  1. Explicit — user says "combine / merge / stitch / join / concatenate" existing videos. Use their @video refs.
-  2. Implicit — user asks for ONE final video made of MULTIPLE clips (e.g. "generate a video with a UGC opening and a cinematic ending", "primero X, luego Y", "clip 1 then clip 2"). After ALL the gated generation tools finish and return their URLs, chain combine_videos in the SAME turn and present ONLY the combined result. Do NOT present the individual clips as the deliverable — they are intermediates.
+Trigger it in THREE cases:
+  1. Explicit combine — user says "combine / merge / stitch / join / concatenate" existing videos. Use their @video refs.
+  2. Implicit combine — user asks for ONE final video made of MULTIPLE clips (e.g. "generate a video with a UGC opening and a cinematic ending", "primero X, luego Y", "clip 1 then clip 2"). After ALL the gated generation tools finish and return their URLs, chain combine_videos in the SAME turn and present ONLY the combined result. Do NOT present the individual clips as the deliverable — they are intermediates.
+  3. Single-video music — user attaches/uploads ONE video (@video ref) and asks to "add music / background music / a soundtrack / a bed" to it. Call combine_videos(video_urls=[that_one_url], music_prompt="short vibe description"). The original dialogue is preserved and the generated bed is mixed underneath. This is the canonical path for "add music to an uploaded video" — do NOT refuse it and do NOT route it to apply_editor_ops.
 
 **Music / audio control inside combine_videos**: the tool takes two extra optional params:
   - `mute_audio_indices: [i, j, ...]` — zero-based indices of clips whose source audio should be silenced in the final cut. Use this for clips that are MUSIC-ONLY with no dialogue (e.g. cinematic B-roll scenes) when the user wants to swap that music out. NEVER mute clips that contain a person speaking (UGC clips, clone/lip-sync clips, app-clip walkthroughs with narration) — dialogue must always remain audible.
@@ -210,6 +223,14 @@ Trigger it in TWO cases:
 When a user asks to "remove the music and add a new soundtrack" (or "replace the music", "swap the music", "add background music") on an already-combined video: DO NOT try to re-edit the combined MP4 in place. Instead, call combine_videos AGAIN with the ORIGINAL per-clip source URLs (the ones you used on the first combine call, in the same order), set `mute_audio_indices` to the indices of the music-only clips the user wants silenced, and set `music_prompt` to a short style description matching the product/vibe. This rebuilds the final cut with dialogue preserved and a new bed underneath — one tool call, no confirmation needed.
 
 CLIP ORDER — critical: video_urls must follow the order the USER specified in their prompt, not the order clips finished generating. Parse the user's sequence markers ("first / then / after", "primero / luego / después", timestamps like "0-8s then 8-12s", numbered lists "1. UGC 2. cinematic"). Match each position to the correct generated URL by its modality (UGC→Veo URL, cinematic→Kling URL) or by the prompt that produced it. If the order is ambiguous, ask the user before calling combine_videos — do NOT guess.
+
+**Voiceover on an existing video** (user has a clip — uploaded, combined, or generated — and wants an AI TTS voice on top; NOT a fresh synthetic persona video): call `add_voiceover(video_url, script, voice, original_audio)`.
+  - You MUST write the `script` yourself. Ad-style: hook (first 2s) + body + CTA. Pace ~2.5 words/sec of the target duration (e.g. ~38 words for 15s, ~75 words for 30s). No stage directions, no `[SFX]` tags — just speakable text.
+  - If an `@product` ref is present AND the user asked for a product-aware pitch, call `generate_scripts` first (product_id, duration, context=user's brief) and pass the flattened `hook + scenes[].dialogue` as `script`. Otherwise write the script directly.
+  - `voice`: `meg` (female, warm, default) or `max` (male). Swap based on the user's explicit request. NEVER mention the voice names "Meg" or "Max" in your chat reply — users don't know who those are. Say "female voiceover" / "male voiceover" instead.
+  - `original_audio`: `duck` (default — source audio softened under the VO), `mute` (VO replaces all audio — use when the source has unwanted talking), `keep` (equal mix — rare, only on request).
+  - DO NOT route this to `create_ugc_video` — that produces a whole new synthetic video. `add_voiceover` is the correct path any time the user already has the footage.
+  - `add_voiceover` returns a real `job_id`. That job_id IS a valid, first-class video job — you CAN chain `caption_video(job_id=...)`, `generate_caption(...)`, `schedule_posts(...)` on it just like any other generated video. Never tell the user "the voiceover output has no timeline / can't be captioned" — that's wrong. If the response includes `job_id`, use it directly. If the JSON response does NOT include a job_id (rare — DB insert failure), say "something went wrong saving that as a job, let me re-run it" and re-call add_voiceover — don't claim the file itself is defective.
 
 ## General rules
 1. Within a session, you may freely reference URLs, shot IDs, job IDs, or asset names from earlier tool results — they are still valid. Do not re-list assets unless the user explicitly asks for fresh data.
@@ -742,6 +763,7 @@ def _custom_tools_for_agent() -> list[dict]:
                     "duration": {"type": "integer", "enum": [15, 30]},
                     "script_id": {"type": "string", "description": "Optional pre-generated script id."},
                     "hook": {"type": "string", "description": "Optional hook line override."},
+                    "context": {"type": "string", "description": "Freeform user brief used to auto-generate a script via generate_scripts when neither script_id nor hook is supplied. Forward the user's own words describing what the video should be about."},
                     "campaign_name": {"type": "string"},
                     "video_language": {"type": "string"},
                     "subtitles_enabled": {"type": "boolean"},
@@ -864,6 +886,21 @@ def _custom_tools_for_agent() -> list[dict]:
         # ── Remotion editor ───────────────────────────────────────────
         {
             "type": "custom",
+            "name": "list_caption_styles",
+            "description": (
+                "Render the 4 available caption styles as visual preview cards directly in "
+                "the chat. CALL THIS whenever the user asks to SEE / SHOW / PREVIEW / "
+                "compare / choose caption or subtitle styles — examples: 'show me the "
+                "caption styles', 'what subtitle styles are there?', 'can I see previews?', "
+                "'muéstrame los estilos de subtítulos', OR when they ask to add captions "
+                "without specifying a style. Do NOT describe the styles in text — the cards "
+                "ARE the answer. Never say you can't render previews; this tool IS that. "
+                "Free, instant."
+            ),
+            "input_schema": {"type": "object", "properties": {}, "required": []},
+        },
+        {
+            "type": "custom",
             "name": "caption_video",
             "description": (
                 "Add word-level captions to a completed video using the editor's built-in "
@@ -886,6 +923,21 @@ def _custom_tools_for_agent() -> list[dict]:
                         "enum": ["top", "middle", "bottom"],
                         "description": "Vertical position on screen. Default: middle.",
                     },
+                    "stroke_mode": {
+                        "type": "string",
+                        "enum": ["solid", "shadow", "glow"],
+                        "description": (
+                            "How the outline around each letter is drawn. "
+                            "'solid' (default) — a hard outline. 'shadow' — drop shadow, "
+                            "good for soft/cinematic looks. 'glow' — symmetric halo, "
+                            "useful on busy backgrounds. Only set this when the user asks "
+                            "for a shadow, glow, or softer edge — otherwise omit to keep the default."
+                        ),
+                    },
+                    "shadow_color": {"type": "string", "description": "Hex color for shadow/glow (e.g. #000000). Defaults to the style's stroke color."},
+                    "shadow_blur": {"type": "integer", "description": "Shadow/glow blur radius in px. Default 8."},
+                    "shadow_offset_x": {"type": "integer", "description": "Shadow X offset in px (shadow mode only). Default 0."},
+                    "shadow_offset_y": {"type": "integer", "description": "Shadow Y offset in px (shadow mode only). Default 4."},
                 },
                 "required": ["job_id"],
             },
@@ -917,6 +969,37 @@ def _custom_tools_for_agent() -> list[dict]:
                     "editor_state": {"type": "object", "description": "Full Remotion editor state JSON."},
                 },
                 "required": ["job_id", "editor_state"],
+            },
+        },
+        {
+            "type": "custom",
+            "name": "apply_editor_ops",
+            "description": (
+                "Apply a batch of timeline edit operations to a video's editor_state. "
+                "Use this WHENEVER you would otherwise emit an 'AI_EDIT_OPS' text block — it is the real, "
+                "working surface for trims, music, captions, fades, speed, opacity, deletes, and text. "
+                "Accepts the same ops shape as the in-editor AI panel. The server loads the state, "
+                "applies each op, and persists. Free — no render. "
+                "For ADD / SWAP / REMOVE MUSIC on a finished combined video, prefer calling combine_videos "
+                "again (with music_prompt) — it rebuilds the whole cut with a fresh soundtrack bed under "
+                "preserved dialogue."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "job_id": {"type": "string"},
+                    "ops": {
+                        "type": "array",
+                        "description": (
+                            "Ordered list of edit ops. Each op is an object with an `op` field. Supported: "
+                            "set_timeline_span, set_media_start, add_music, add_captions, set_opacity, "
+                            "set_playback_rate, set_volume_db, set_position_size, set_fade, set_audio_fade, "
+                            "set_text_content, delete_items, add_text."
+                        ),
+                        "items": {"type": "object"},
+                    },
+                },
+                "required": ["job_id", "ops"],
             },
         },
         {
@@ -974,17 +1057,15 @@ def _custom_tools_for_agent() -> list[dict]:
             "type": "custom",
             "name": "combine_videos",
             "description": (
-                "Combine (concatenate) two or more videos into a single MP4 with smooth dissolve "
-                "transitions. video_urls MUST be in the order the user requested in their prompt — "
-                "NOT the order clips finished generating. Match each slot by modality (UGC clip = Veo "
-                "URL, cinematic clip = Kling URL) or by the originating prompt. Runs automatically — "
-                "no confirmation needed. Optional audio controls: silence specific source clips via "
-                "mute_audio_indices (use ONLY for music-only clips with no dialogue — never mute clips "
-                "containing a person speaking) and/or generate a fresh instrumental soundtrack via "
-                "music_prompt that is mixed UNDER the kept dialogue for the full duration. These two "
-                "params together are how you 'swap the music' on an already-combined video: call this "
-                "tool again with the SAME source URLs in the SAME order, plus the mute list and music "
-                "prompt."
+                "Combine 1+ videos into a single MP4. With 2+ urls: concatenates with dissolve "
+                "transitions; order MUST match the user's requested sequence, not generation order. "
+                "With 1 url: pass-through + optional music mix — the canonical path for 'add "
+                "background music to an uploaded/attached video' (call with video_urls=[that_url], "
+                "music_prompt='...'). Runs automatically, no confirmation. Optional: mute_audio_indices "
+                "silences music-only source clips (never mute clips with dialogue); music_prompt "
+                "generates an instrumental bed mixed UNDER kept audio. To 'swap music' on an "
+                "already-combined video, call again with the SAME source URLs in the SAME order plus "
+                "mute list + music_prompt."
             ),
             "input_schema": {
                 "type": "object",
@@ -1014,6 +1095,51 @@ def _custom_tools_for_agent() -> list[dict]:
                     },
                 },
                 "required": ["video_urls"],
+            },
+        },
+
+        # ── Voiceover on an existing video ────────────────────────────
+        {
+            "type": "custom",
+            "name": "add_voiceover",
+            "description": (
+                "Mix an AI TTS voiceover on top of an existing video. Use when the user already "
+                "has footage (uploaded, combined, or previously generated) and wants an AI voice "
+                "narration added — NOT for producing a fresh synthetic persona video. The agent "
+                "MUST supply the `script` text (ad-style hook + body + CTA, ~2.5 words/sec). "
+                "Runs automatically, no confirmation."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "video_url": {
+                        "type": "string",
+                        "description": "Public URL of the source video to voice over.",
+                    },
+                    "script": {
+                        "type": "string",
+                        "description": "Exact TTS text. Speakable prose only — no stage directions, no SFX tags. Pace ~2.5 words/sec of the target duration.",
+                    },
+                    "voice": {
+                        "type": "string",
+                        "enum": ["meg", "max"],
+                        "description": "Preset voice. 'meg' (female, warm) is the default; 'max' (male) on user request.",
+                    },
+                    "voice_id": {
+                        "type": "string",
+                        "description": "Optional ElevenLabs voice_id override. Beats `voice` when both are set.",
+                    },
+                    "original_audio": {
+                        "type": "string",
+                        "enum": ["duck", "mute", "keep"],
+                        "description": "Handling of the source clip's audio under the VO. 'duck' (default) softens the original, 'mute' removes it, 'keep' mixes at equal volume.",
+                    },
+                    "duration_sec": {
+                        "type": "number",
+                        "description": "Optional target total duration in seconds. Informational.",
+                    },
+                },
+                "required": ["video_url", "script"],
             },
         },
     ]
@@ -1072,6 +1198,93 @@ async def _tool_list_project_assets(ctx: ToolContext, **_: Any) -> str:
 def _record_artifact(ctx: ToolContext, artifact: dict) -> None:
     ctx.artifacts.append(artifact)
     ctx.new_artifacts.append(artifact)
+
+
+def _user_id_from_jwt(token: str) -> Optional[str]:
+    """Decode the Supabase JWT to extract user_id (sub claim). Returns None on failure."""
+    try:
+        import base64 as _b64
+        import json as _json
+        payload_b64 = token.split(".")[1]
+        padding = "=" * (-len(payload_b64) % 4)
+        decoded = _b64.urlsafe_b64decode(payload_b64 + padding)
+        return _json.loads(decoded).get("sub")
+    except Exception:
+        return None
+
+
+async def _insert_agent_video_job(
+    ctx: ToolContext,
+    *,
+    final_video_url: str,
+    model_api: str,
+    campaign_name: str,
+    duration_seconds: float,
+    hook: str,
+    metadata: dict,
+) -> Optional[str]:
+    """Insert a video_jobs row directly (bypasses POST /jobs, which needs a real
+    influencer). Returns job_id or None. The row is scoped to the current user
+    and project so it shows up in the right-panel Videos tab."""
+    from uuid import uuid4 as _uuid4
+
+    supabase_url = os.getenv("SUPABASE_URL")
+    anon_key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+    if not supabase_url or not anon_key:
+        print("[agent_video_job] missing SUPABASE_URL / anon key — skipping persist")
+        return None
+
+    user_id = _user_id_from_jwt(ctx.user_token)
+    if not user_id:
+        print("[agent_video_job] could not decode user_id from JWT — skipping persist")
+        return None
+
+    candidate_id = str(_uuid4())
+    row = {
+        "id": candidate_id,
+        "user_id": user_id,
+        "status": "success",
+        "progress": 100,
+        "final_video_url": final_video_url,
+        "model_api": model_api,
+        "campaign_name": campaign_name,
+        "video_language": "en",
+        "subtitles_enabled": False,
+        "music_enabled": False,
+        "product_type": "physical",
+        "length": int(round(duration_seconds)) or 15,
+        "video_duration_seconds": round(duration_seconds, 2) or 15.0,
+        "hook": hook,
+        "metadata": metadata,
+    }
+    if ctx.project_id:
+        row["project_id"] = ctx.project_id
+
+    try:
+        import httpx as _httpx
+        async with _httpx.AsyncClient(timeout=10.0) as http:
+            resp = await http.post(
+                f"{supabase_url}/rest/v1/video_jobs",
+                headers={
+                    "apikey": anon_key,
+                    "Authorization": f"Bearer {ctx.user_token}",
+                    "Content-Type": "application/json",
+                    "Prefer": "return=representation",
+                },
+                json=row,
+            )
+        if resp.status_code in (200, 201):
+            try:
+                rows = resp.json()
+                if isinstance(rows, list) and rows:
+                    return rows[0].get("id") or candidate_id
+            except Exception:
+                pass
+            return candidate_id
+        print(f"[agent_video_job] insert failed {resp.status_code}: {resp.text[:300]}")
+    except Exception as e:
+        print(f"[agent_video_job] insert exception: {e}")
+    return None
 
 
 # ── Credit cost helpers ───────────────────────────────────────────────
@@ -1643,6 +1856,31 @@ async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
             echo={k: v for k, v in kwargs.items() if k != "confirmed"},
         )
 
+    # Safety net: if the LLM forgot to run generate_scripts first, do it here so
+    # the job pipeline never falls through to the random-library fallback.
+    if not kwargs.get("script_id") and not kwargs.get("hook") and kwargs.get("product_id"):
+        try:
+            script_result = await ctx.core().generate_scripts(
+                product_id=kwargs["product_id"],
+                duration=duration,
+                product_type=product_type,
+                influencer_id=kwargs.get("influencer_id"),
+                context=kwargs.get("context"),
+                video_language=kwargs.get("video_language", "en"),
+            )
+            script_json = (script_result or {}).get("script_json") or {}
+            hook_line = (script_json.get("hook") or "").strip()
+            dialogue_lines = [
+                (sc.get("dialogue") or "").strip()
+                for sc in (script_json.get("scenes") or [])
+                if sc.get("dialogue")
+            ]
+            flattened = "\n".join([hook_line] + dialogue_lines).strip()
+            if flattened:
+                kwargs["hook"] = flattened
+        except Exception as e:
+            print(f"[create_ugc_video] auto generate_scripts failed (non-fatal): {e}")
+
     payload = {
         "influencer_id": kwargs["influencer_id"],
         "product_type": product_type,
@@ -1861,18 +2099,188 @@ async def _tool_generate_caption(ctx: ToolContext, **kwargs: Any) -> str:
 
 
 # ── Phase 5: Remotion editor ──────────────────────────────────────────
+# Visual specs for the 4 caption styles. Mirrors ugc_backend/editor_api.py
+# CAPTION_STYLES at line 608. Kept in sync manually — if a new style is
+# added to that file, add it here too.
+CAPTION_STYLE_PREVIEWS = [
+    {
+        "id": "hormozi",
+        "name": "Hormozi",
+        "description": "Bold, high-contrast word-by-word pop (the classic viral look).",
+        "sample_text": "MAKE THEM STOP SCROLLING",
+        "highlight_word_index": 1,
+        "font_family": "Anton, Impact, 'Arial Black', sans-serif",
+        "font_weight": 900,
+        "color": "#FFFFFF",
+        "highlight_color": "#FFFF00",
+        "stroke_color": "#000000",
+        "uppercase": True,
+    },
+    {
+        "id": "bold",
+        "name": "Bold",
+        "description": "Large chunky text, great for fast-paced content.",
+        "sample_text": "WATCH THIS NOW",
+        "highlight_word_index": 2,
+        "font_family": "'Bebas Neue', Impact, sans-serif",
+        "font_weight": 700,
+        "color": "#FFFFFF",
+        "highlight_color": "#FF3366",
+        "stroke_color": "#000000",
+        "uppercase": True,
+    },
+    {
+        "id": "karaoke",
+        "name": "Karaoke",
+        "description": "Words highlight one at a time as they're spoken.",
+        "sample_text": "SING ALONG WITH ME",
+        "highlight_word_index": 2,
+        "font_family": "Anton, Impact, sans-serif",
+        "font_weight": 900,
+        "color": "#FFFFFF",
+        "highlight_color": "#337AFF",
+        "stroke_color": "#000000",
+        "uppercase": True,
+    },
+    {
+        "id": "minimal",
+        "name": "Minimal",
+        "description": "Clean, understated subtitles for a more premium feel.",
+        "sample_text": "clean and understated",
+        "highlight_word_index": None,
+        "font_family": "Inter, -apple-system, sans-serif",
+        "font_weight": 600,
+        "color": "#FFFFFF",
+        "highlight_color": "#FFFF00",
+        "stroke_color": "#000000",
+        "uppercase": False,
+    },
+]
+
+
+async def _tool_list_caption_styles(ctx: ToolContext, **_: Any) -> str:
+    """Return the 4 caption style previews and emit a visual artifact so the
+    frontend can render styled preview cards in the chat. Free, instant.
+
+    The agent should call this whenever the user asks 'what caption styles
+    are available?' or asks to add captions without specifying a style —
+    the rendered cards show how each style looks visually.
+    """
+    _record_artifact(ctx, {
+        "type": "caption_styles_preview",
+        "styles": CAPTION_STYLE_PREVIEWS,
+    })
+    return json.dumps({
+        "status": "success",
+        "styles": [
+            {"id": s["id"], "name": s["name"], "description": s["description"]}
+            for s in CAPTION_STYLE_PREVIEWS
+        ],
+        "note": "Visual previews of all 4 styles were sent to the user's chat as cards. Ask which one they want.",
+    })
+
+
 async def _tool_caption_video(ctx: ToolContext, **kwargs: Any) -> str:
-    """Add captions via server-side Whisper — same pipeline as the editor's 'Caption video' button."""
+    """Add captions via server-side Whisper, then re-render so the job's
+    final_video_url reflects the burned-in captions.
+
+    Two-phase: (1) call caption_video to inject caption item into editor_state,
+    (2) re-render the edited timeline and persist the new URL onto the job row.
+    Without phase 2 the Videos tab / agent panel keep showing the pre-caption
+    MP4 because they read `final_video_url`.
+    """
     job_id = kwargs.get("job_id")
     if not job_id:
         return json.dumps({"error": "job_id is required"})
     style = kwargs.get("style", "hormozi")
     placement = kwargs.get("placement", "middle")
+    extra = {
+        k: kwargs[k]
+        for k in ("stroke_mode", "shadow_color", "shadow_blur", "shadow_offset_x", "shadow_offset_y")
+        if k in kwargs and kwargs[k] is not None
+    }
+
+    # ── Phase 1: inject captions into editor_state ───────────────────
     try:
-        result = await ctx.core().caption_video(job_id, style=style, placement=placement)
-        return json.dumps(result)
+        caption_result = await ctx.core().caption_video(job_id, style=style, placement=placement, **extra)
     except Exception as e:
         return json.dumps({"error": f"caption_video failed: {e}"})
+
+    # ── Phase 2: re-render so final_video_url shows the captions ─────
+    try:
+        editor_state = await ctx.core().get_editor_state(job_id)
+    except Exception as e:
+        return json.dumps({
+            **caption_result,
+            "status": "captions_saved_render_skipped",
+            "warning": f"editor_state load failed — captions saved but not rendered: {e}",
+        })
+
+    try:
+        render_dispatch = await ctx.core().trigger_editor_render(
+            job_id=job_id, editor_state=editor_state, codec="h264",
+        )
+    except Exception as e:
+        return json.dumps({
+            **caption_result,
+            "status": "captions_saved_render_skipped",
+            "warning": f"render dispatch failed: {e}",
+        })
+
+    render_id = render_dispatch.get("renderId")
+    if not render_id:
+        return json.dumps({
+            **caption_result,
+            "status": "captions_saved_render_skipped",
+            "warning": "render dispatched but no renderId returned",
+            "raw": render_dispatch,
+        })
+
+    waited = 0
+    max_wait_s = 600
+    poll_interval_s = 6
+    progress_payload: dict | None = None
+    while waited < max_wait_s:
+        await asyncio.sleep(poll_interval_s)
+        waited += poll_interval_s
+        try:
+            progress_payload = await ctx.core().get_editor_render_progress(render_id)
+        except Exception as e:
+            print(f"[caption_video] render poll error (retrying): {e}")
+            continue
+        ptype = progress_payload.get("type")
+        if ptype == "done":
+            new_url = progress_payload.get("outputFile")
+            if new_url:
+                try:
+                    from routers.generate_video import _update_video_job_via_api
+                    await _update_video_job_via_api(
+                        ctx.user_token, ctx.project_id or "", job_id,
+                        {"final_video_url": new_url},
+                    )
+                except Exception as e:
+                    print(f"[caption_video] final_video_url persist failed (non-fatal): {e}")
+                _record_artifact(ctx, {"type": "video", "url": new_url, "job_id": job_id})
+            return json.dumps({
+                **caption_result,
+                "status": "success",
+                "render_id": render_id,
+                "video_url": new_url,
+            })
+        if ptype == "error":
+            return json.dumps({
+                **caption_result,
+                "status": "captions_saved_render_failed",
+                "render_id": render_id,
+                "error": progress_payload.get("error", "render failed"),
+            })
+
+    return json.dumps({
+        **caption_result,
+        "status": "captions_saved_render_still_processing",
+        "render_id": render_id,
+        "warning": "Render is taking longer than 10 minutes. The Videos tab will update when it finishes.",
+    })
 
 
 async def _tool_load_editor_state(ctx: ToolContext, **kwargs: Any) -> str:
@@ -1905,6 +2313,266 @@ async def _tool_save_editor_state(ctx: ToolContext, **kwargs: Any) -> str:
         return json.dumps(await ctx.core().save_editor_state(job_id, state))
     except Exception as e:
         return json.dumps({"error": f"save_editor_state failed: {e}"})
+
+
+async def _tool_apply_editor_ops(ctx: ToolContext, **kwargs: Any) -> str:
+    """Apply a batch of AI_EDIT_OPS-shaped ops to a video's editor_state.
+
+    Loads the state, mutates items in place per each op, persists. Unknown ops
+    are logged and skipped. Missing itemIds fall back to the first matching
+    video/audio item so small model hallucinations still produce an edit.
+    """
+    import math
+
+    job_id = kwargs.get("job_id")
+    ops = kwargs.get("ops")
+    if not job_id or not isinstance(ops, list):
+        return json.dumps({"error": "job_id and ops (array) are required"})
+
+    try:
+        state = await ctx.core().get_editor_state(job_id)
+    except Exception as e:
+        return json.dumps({"error": f"load_editor_state failed: {e}"})
+
+    undoable = state.get("undoableState") if isinstance(state, dict) else None
+    if not isinstance(undoable, dict):
+        return json.dumps({"error": "editor_state has no undoableState — cannot apply ops"})
+
+    items = undoable.get("items")
+    if not isinstance(items, dict):
+        return json.dumps({"error": "editor_state.undoableState.items is missing or wrong shape"})
+
+    fps = state.get("fps") or undoable.get("fps") or 30
+    try:
+        fps = int(fps)
+    except Exception:
+        fps = 30
+    max_dur = min(3600 * fps, 1_000_000)
+
+    def _item_type(it: dict) -> str:
+        return (it or {}).get("type") or ""
+
+    def _first_item_of(*types: str) -> Optional[str]:
+        for iid, it in items.items():
+            if _item_type(it) in types:
+                return iid
+        return None
+
+    def _resolve_item_id(op_item_id: Any, kind: str) -> Optional[str]:
+        if isinstance(op_item_id, str) and op_item_id in items:
+            return op_item_id
+        if kind == "video":
+            return _first_item_of("video")
+        if kind == "audio":
+            return _first_item_of("audio", "music")
+        return _first_item_of("video", "audio", "image", "text", "gif", "music")
+
+    applied = 0
+    skipped = 0
+    notes: list[str] = []
+
+    def _note(s: str) -> None:
+        notes.append(s)
+
+    for op in ops:
+        if not isinstance(op, dict):
+            skipped += 1
+            continue
+        kind = op.get("op")
+
+        try:
+            if kind == "delete_items":
+                ids = op.get("itemIds") or []
+                removed = 0
+                for iid in ids:
+                    if iid in items:
+                        items.pop(iid, None)
+                        removed += 1
+                # Also scrub from tracks.
+                for t in undoable.get("tracks", []) or []:
+                    t["items"] = [i for i in (t.get("items") or []) if i in items]
+                if removed:
+                    applied += 1
+                    _note(f"deleted {removed} item(s)")
+                else:
+                    skipped += 1
+
+            elif kind == "set_timeline_span":
+                iid = _resolve_item_id(op.get("itemId"), "video")
+                if not iid:
+                    skipped += 1
+                    continue
+                it = items[iid]
+                if "from" in op and isinstance(op["from"], (int, float)) and math.isfinite(op["from"]):
+                    it["from"] = max(0, int(round(op["from"])))
+                if "durationInFrames" in op and isinstance(op["durationInFrames"], (int, float)) and math.isfinite(op["durationInFrames"]):
+                    it["durationInFrames"] = min(max_dur, max(1, int(round(op["durationInFrames"]))))
+                applied += 1
+
+            elif kind == "set_media_start":
+                iid = _resolve_item_id(op.get("itemId"), "video")
+                if not iid:
+                    skipped += 1
+                    continue
+                val = op.get("mediaStartInSeconds")
+                if not isinstance(val, (int, float)) or not math.isfinite(val):
+                    skipped += 1
+                    continue
+                it = items[iid]
+                it["mediaStartInSeconds"] = max(0.0, float(val))
+                applied += 1
+
+            elif kind == "set_opacity":
+                iid = _resolve_item_id(op.get("itemId"), "any")
+                if not iid or not isinstance(op.get("opacity"), (int, float)):
+                    skipped += 1
+                    continue
+                items[iid]["opacity"] = max(0.0, min(1.0, float(op["opacity"])))
+                applied += 1
+
+            elif kind == "set_playback_rate":
+                iid = _resolve_item_id(op.get("itemId"), "video")
+                rate = op.get("playbackRate")
+                if not iid or not isinstance(rate, (int, float)) or rate <= 0:
+                    skipped += 1
+                    continue
+                items[iid]["playbackRate"] = float(rate)
+                applied += 1
+
+            elif kind == "set_volume_db":
+                iid = _resolve_item_id(op.get("itemId"), "any")
+                db = op.get("decibelAdjustment")
+                if not iid or not isinstance(db, (int, float)):
+                    skipped += 1
+                    continue
+                items[iid]["decibelAdjustment"] = float(db)
+                applied += 1
+
+            elif kind == "set_position_size":
+                iid = _resolve_item_id(op.get("itemId"), "any")
+                if not iid:
+                    skipped += 1
+                    continue
+                it = items[iid]
+                for k in ("left", "top", "width", "height"):
+                    if k in op and isinstance(op[k], (int, float)):
+                        it[k] = float(op[k])
+                applied += 1
+
+            elif kind == "set_fade":
+                iid = _resolve_item_id(op.get("itemId"), "any")
+                if not iid:
+                    skipped += 1
+                    continue
+                it = items[iid]
+                if "fadeInDurationInSeconds" in op:
+                    it["fadeInDurationInSeconds"] = max(0.0, float(op["fadeInDurationInSeconds"]))
+                if "fadeOutDurationInSeconds" in op:
+                    it["fadeOutDurationInSeconds"] = max(0.0, float(op["fadeOutDurationInSeconds"]))
+                applied += 1
+
+            elif kind == "set_audio_fade":
+                iid = _resolve_item_id(op.get("itemId"), "any")
+                if not iid:
+                    skipped += 1
+                    continue
+                it = items[iid]
+                if "audioFadeInDurationInSeconds" in op:
+                    it["audioFadeInDurationInSeconds"] = max(0.0, float(op["audioFadeInDurationInSeconds"]))
+                if "audioFadeOutDurationInSeconds" in op:
+                    it["audioFadeOutDurationInSeconds"] = max(0.0, float(op["audioFadeOutDurationInSeconds"]))
+                applied += 1
+
+            elif kind == "set_text_content":
+                iid = _resolve_item_id(op.get("itemId"), "any")
+                text = op.get("text")
+                if not iid or not isinstance(text, str):
+                    skipped += 1
+                    continue
+                items[iid]["text"] = text
+                applied += 1
+
+            elif kind == "add_captions":
+                # Fall through to real Whisper-based captioning.
+                try:
+                    await ctx.core().caption_video(
+                        job_id=job_id,
+                        style=op.get("style") or "hormozi",
+                        placement=op.get("position") or "middle",
+                    )
+                    applied += 1
+                    _note("add_captions → caption_video dispatched")
+                except Exception as e:
+                    skipped += 1
+                    _note(f"add_captions failed: {e}")
+
+            elif kind == "add_music":
+                # Minimal: mark intent in notes. The real music-bed operation
+                # belongs to combine_videos(music_prompt=...) — the system prompt
+                # tells the model to call that instead. But if the model insists,
+                # we at least don't silently drop the op.
+                _note(
+                    f"add_music requested (mood={op.get('mood')!r}, volume={op.get('volume')}); "
+                    f"for a real music bed on a finished combined video call combine_videos again "
+                    f"with music_prompt."
+                )
+                skipped += 1
+
+            elif kind == "add_text":
+                # Minimal: require explicit frames + text; append a text item.
+                text = (op.get("text") or "").strip()
+                if not text:
+                    skipped += 1
+                    continue
+                dur = op.get("durationInFrames")
+                try:
+                    dur = int(round(float(dur))) if dur is not None else 100
+                except Exception:
+                    dur = 100
+                dur = min(max_dur, max(1, dur))
+                frm = op.get("from")
+                try:
+                    frm = max(0, int(round(float(frm)))) if frm is not None else 0
+                except Exception:
+                    frm = 0
+                import time as _time
+                new_id = f"text_{len(items) + 1}_{int(_time.time() * 1000) % 100000}"
+                items[new_id] = {
+                    "id": new_id,
+                    "type": "text",
+                    "from": frm,
+                    "durationInFrames": dur,
+                    "text": text,
+                    "left": (undoable.get("compositionWidth") or 1080) / 2,
+                    "top": (undoable.get("compositionHeight") or 1920) / 2,
+                }
+                applied += 1
+
+            else:
+                skipped += 1
+                _note(f"unsupported op: {kind!r}")
+
+        except Exception as e:
+            skipped += 1
+            _note(f"{kind!r} failed: {e}")
+
+    try:
+        await ctx.core().save_editor_state(job_id, state)
+    except Exception as e:
+        return json.dumps({
+            "status": "error",
+            "error": f"save_editor_state failed: {e}",
+            "ops_applied": applied,
+            "ops_skipped": skipped,
+            "notes": notes,
+        })
+
+    return json.dumps({
+        "status": "success",
+        "ops_applied": applied,
+        "ops_skipped": skipped,
+        "notes": notes,
+    })
 
 
 async def _tool_render_edited_video(ctx: ToolContext, **kwargs: Any) -> str:
@@ -2078,8 +2746,8 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
     from pathlib import Path as _Path
 
     video_urls: list[str] = kwargs.get("video_urls") or []
-    if len(video_urls) < 2:
-        return json.dumps({"error": "At least 2 video_urls are required to combine."})
+    if len(video_urls) < 1:
+        return json.dumps({"error": "At least 1 video_url is required."})
 
     transition = kwargs.get("transition", "dissolve")
     transition_dur = float(kwargs.get("transition_duration", 0.6))
@@ -2223,8 +2891,22 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
 
         print(f"[combine_videos] Clip durations: {durations}")
 
-        # 4. Build ffmpeg xfade chain for N clips
-        if transition == "none" or len(normalized) == 2 and any(d < transition_dur * 2 for d in durations):
+        # 4. Build ffmpeg chain. N=1 is a pass-through (used for "add music to
+        # a single uploaded video" flows); N>=2 uses concat or xfade.
+        if len(normalized) == 1:
+            output_path = os.path.join(work_dir, "combined.mp4")
+            cmd = [
+                FFMPEG, "-y", "-i", normalized[0],
+                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                "-c:a", "aac", "-ar", "44100",
+                output_path,
+            ]
+            result = await asyncio.to_thread(
+                subprocess.run, cmd, capture_output=True, text=True
+            )
+            if result.returncode != 0:
+                return json.dumps({"error": f"FFmpeg single-clip pass failed: {result.stderr[-400:]}"})
+        elif transition == "none" or len(normalized) == 2 and any(d < transition_dur * 2 for d in durations):
             # Simple concat (no transition) for very short clips or explicit none
             concat_list = os.path.join(work_dir, "concat.txt")
             with open(concat_list, "w") as f:
@@ -2394,56 +3076,25 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
 
         total_duration = sum(durations) - transition_dur * (len(durations) - 1) if transition != "none" else sum(durations)
 
-        # Persist as a video_jobs row so the combined clip is a first-class job
-        # with its own job_id — required for schedule_posts, generate_caption,
-        # and any other downstream tool that keys off video_job_id.
-        job_id: Optional[str] = None
-        try:
-            job = await ctx.core().create_job({
-                "influencer_id": "00000000-0000-0000-0000-000000000000",
-                "product_id": None,
-                "product_type": "physical",
-                "model_api": "combined-videos",
-                "length": int(round(total_duration)),
-                "campaign_name": "Creative OS — Combined",
-                "video_language": "en",
-                "subtitles_enabled": False,
-                "music_enabled": False,
-                "hook": f"Combined {len(video_urls)} clips ({transition})",
-            })
-            job_id = job.get("id") or (job.get("job") or {}).get("id")
-            if job_id:
-                try:
-                    supabase_url = os.getenv("SUPABASE_URL")
-                    anon_key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
-                    if supabase_url and anon_key:
-                        import httpx
-                        async with httpx.AsyncClient(timeout=10.0) as http:
-                            await http.patch(
-                                f"{supabase_url}/rest/v1/video_jobs?id=eq.{job_id}",
-                                headers={
-                                    "apikey": anon_key,
-                                    "Authorization": f"Bearer {ctx.user_token}",
-                                    "Content-Type": "application/json",
-                                    "Prefer": "return=minimal",
-                                },
-                                json={
-                                    "status": "success",
-                                    "progress": 100,
-                                    "final_video_url": final_url,
-                                    "metadata": {
-                                        "mode": "combined_videos",
-                                        "source_urls": video_urls,
-                                        "transition": transition,
-                                        "mute_audio_indices": sorted(mute_indices),
-                                        "music_prompt": music_prompt,
-                                    },
-                                },
-                            )
-                except Exception as patch_err:
-                    print(f"[combine_videos] job patch failed: {patch_err}")
-        except Exception as job_err:
-            print(f"[combine_videos] job creation failed: {job_err}")
+        # Persist as a video_jobs row (scoped to user + project) so the combined
+        # clip is a first-class job with its own job_id — required for the
+        # right-panel Videos tab and downstream tools (schedule_posts,
+        # generate_caption, caption_video).
+        job_id = await _insert_agent_video_job(
+            ctx,
+            final_video_url=final_url,
+            model_api="combined-videos",
+            campaign_name="Combined video",
+            duration_seconds=total_duration,
+            hook=f"Combined {len(video_urls)} clips ({transition})",
+            metadata={
+                "mode": "combined_videos",
+                "source_urls": video_urls,
+                "transition": transition,
+                "mute_audio_indices": sorted(mute_indices),
+                "music_prompt": music_prompt,
+            },
+        )
 
         _record_artifact(ctx, {"type": "video", "url": final_url, **({"job_id": job_id} if job_id else {})})
 
@@ -2458,6 +3109,227 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
         })
     except Exception as e:
         return json.dumps({"error": f"combine_videos failed: {e}"})
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+async def _tool_add_voiceover(ctx: ToolContext, **kwargs: Any) -> str:
+    """Mix an ElevenLabs TTS voiceover on top of an existing video.
+
+    Free-form server-mix: downloads the video, synthesizes the script via
+    ElevenLabs, ffmpeg-mixes the audio with the original track per
+    `original_audio` (duck / mute / keep), uploads the final MP4, and
+    returns the URL.
+    """
+    import subprocess
+    import tempfile
+    import shutil
+    import sys as _sys
+    from datetime import datetime as _dt
+    from pathlib import Path as _Path
+
+    video_url = (kwargs.get("video_url") or "").strip()
+    script = (kwargs.get("script") or "").strip()
+    if not video_url:
+        return json.dumps({"error": "video_url is required."})
+    if not script:
+        return json.dumps({"error": "script is required — write the TTS text before calling."})
+
+    original_audio = (kwargs.get("original_audio") or "duck").lower()
+    if original_audio not in {"duck", "mute", "keep"}:
+        original_audio = "duck"
+
+    # Resolve voice_id: explicit voice_id > voice preset > default (Meg).
+    voice_id = (kwargs.get("voice_id") or "").strip() or None
+    voice_key = (kwargs.get("voice") or "meg").strip().lower()
+    if not voice_id:
+        # Import config lazily — repo root must be on sys.path.
+        try:
+            repo_root = str(_Path(__file__).resolve().parents[3])
+            if repo_root not in _sys.path:
+                _sys.path.insert(0, repo_root)
+            import config as _cfg  # type: ignore
+            vmap = getattr(_cfg, "VOICE_MAP", {}) or {}
+            if voice_key == "max":
+                voice_id = vmap.get("Max") or "pNInz6obpgDQGcFmaJgB"
+            else:
+                voice_id = vmap.get("Meg") or "hpp4J3VqNfWAUOO0d1Us"
+        except Exception as e:
+            print(f"[add_voiceover] voice resolution fallback: {e}")
+            voice_id = "hpp4J3VqNfWAUOO0d1Us"  # Meg (Bella)
+
+    work_dir = tempfile.mkdtemp(prefix="voiceover_")
+    try:
+        import httpx
+
+        FFMPEG = _get_ffmpeg_path()
+        print(f"[add_voiceover] Using ffmpeg={FFMPEG}, voice_id={voice_id}, original_audio={original_audio}")
+
+        # 1. Download source video.
+        source_path = os.path.join(work_dir, "source.mp4")
+        async with httpx.AsyncClient(timeout=60) as http:
+            resp = await http.get(video_url, follow_redirects=True)
+            resp.raise_for_status()
+            with open(source_path, "wb") as f:
+                f.write(resp.content)
+        print(f"[add_voiceover] Downloaded source ({len(resp.content)/1024/1024:.1f}MB)")
+
+        # 2. Probe whether the source has an audio stream — matters for the
+        # duck/keep paths (if no audio, we collapse to a simple -map 0:v path).
+        probe = await asyncio.to_thread(
+            subprocess.run,
+            [FFMPEG, "-i", source_path, "-f", "null", "-"],
+            capture_output=True, text=True,
+        )
+        has_source_audio = "Audio:" in (probe.stderr or "")
+        print(f"[add_voiceover] Source has_audio={has_source_audio}")
+
+        # 3. Synthesize TTS via ElevenLabs.
+        try:
+            repo_root = str(_Path(__file__).resolve().parents[3])
+            if repo_root not in _sys.path:
+                _sys.path.insert(0, repo_root)
+            import elevenlabs_client as _el  # type: ignore
+        except Exception as e:
+            return json.dumps({"error": f"ElevenLabs import failed: {e}"})
+
+        tts_filename = f"vo_{_dt.now().strftime('%Y%m%d_%H%M%S')}.mp3"
+        try:
+            tts_path = await asyncio.to_thread(
+                _el.generate_voiceover, script, voice_id, tts_filename,
+            )
+        except Exception as e:
+            return json.dumps({"error": f"ElevenLabs synthesis failed: {e}"})
+        print(f"[add_voiceover] TTS synthesized at {tts_path}")
+
+        # 4. ffmpeg mix. Three paths:
+        #    - mute: VO replaces the source audio entirely.
+        #    - duck: source ducked to ~25% under the VO (dialogue-safe).
+        #    - keep: equal mix. If source has no audio, duck/keep collapse to mute.
+        output_path = os.path.join(work_dir, "voiced.mp4")
+        effective_mode = original_audio if has_source_audio else "mute"
+
+        if effective_mode == "mute":
+            mix_cmd = [
+                FFMPEG, "-y",
+                "-i", source_path,
+                "-i", tts_path,
+                "-map", "0:v", "-map", "1:a",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                "-c:a", "aac", "-ar", "44100", "-b:a", "192k",
+                output_path,
+            ]
+        else:
+            # duck (default) and keep: mix both tracks, duck original on duck.
+            orig_vol = "0.25" if effective_mode == "duck" else "0.9"
+            vo_vol = "1.15" if effective_mode == "duck" else "1.0"
+            mix_cmd = [
+                FFMPEG, "-y",
+                "-i", source_path,
+                "-i", tts_path,
+                "-filter_complex",
+                f"[0:a]volume={orig_vol}[orig];"
+                f"[1:a]volume={vo_vol}[vo];"
+                f"[orig][vo]amix=inputs=2:duration=longest:dropout_transition=2,"
+                f"dynaudnorm=f=150:g=15[a]",
+                "-map", "0:v", "-map", "[a]",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                "-c:a", "aac", "-ar", "44100", "-b:a", "192k",
+                output_path,
+            ]
+
+        mix_result = await asyncio.to_thread(
+            subprocess.run, mix_cmd, capture_output=True, text=True
+        )
+        if mix_result.returncode != 0:
+            return json.dumps({
+                "error": f"ffmpeg voiceover mix failed: {mix_result.stderr[-400:]}",
+            })
+
+        # 5. Upload to Supabase generated-videos bucket. Upload BOTH the final
+        # mp4 and the clean TTS mp3 — caption_video later transcribes the TTS
+        # directly (mixed audio confuses Whisper when source is ducked).
+        output_size = os.path.getsize(output_path)
+        print(f"[add_voiceover] Voiced video: {output_size/1024/1024:.1f}MB")
+
+        timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
+        storage_filename = f"voiced_{timestamp}.mp4"
+        tts_storage_filename = f"vo_audio_{timestamp}.mp3"
+        tts_public_url: Optional[str] = None
+        try:
+            from supabase import create_client
+            sb = create_client(
+                os.getenv("SUPABASE_URL"),
+                os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY"),
+            )
+            with open(output_path, "rb") as f:
+                sb.storage.from_("generated-videos").upload(
+                    storage_filename, f,
+                    file_options={"content-type": "video/mp4"},
+                )
+            final_url = sb.storage.from_("generated-videos").get_public_url(storage_filename)
+            try:
+                with open(tts_path, "rb") as f:
+                    sb.storage.from_("generated-videos").upload(
+                        tts_storage_filename, f,
+                        file_options={"content-type": "audio/mpeg"},
+                    )
+                tts_public_url = sb.storage.from_("generated-videos").get_public_url(tts_storage_filename)
+                print(f"[add_voiceover] Uploaded TTS mp3: {tts_public_url}")
+            except Exception as tts_upload_err:
+                print(f"[add_voiceover] TTS mp3 upload failed (non-fatal): {tts_upload_err}")
+        except Exception as upload_err:
+            return json.dumps({"error": f"Upload failed: {upload_err}"})
+
+        # 6. Probe final duration for the response payload.
+        final_probe = await asyncio.to_thread(
+            subprocess.run,
+            [FFMPEG, "-i", output_path, "-f", "null", "-"],
+            capture_output=True, text=True,
+        )
+        import re as _re
+        dur_match = _re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", final_probe.stderr or "")
+        total_duration = 0.0
+        if dur_match:
+            h, m, s = dur_match.groups()
+            total_duration = int(h) * 3600 + int(m) * 60 + float(s)
+
+        # 7. Persist as a first-class video_jobs row (scoped to user + project)
+        # so it appears in the right-panel Videos tab and downstream tools
+        # (caption_video, schedule_posts, generate_caption) can key off job_id.
+        job_id = await _insert_agent_video_job(
+            ctx,
+            final_video_url=final_url,
+            model_api="voiceover-on-video",
+            campaign_name="Voiceover",
+            duration_seconds=total_duration,
+            hook=(script[:80] + ("…" if len(script) > 80 else "")),
+            metadata={
+                "mode": "voiceover_on_video",
+                "source_video_url": video_url,
+                "voiceover_audio_url": tts_public_url,
+                "voiceover_script": script,
+                "voice_id": voice_id,
+                "voice_key": voice_key,
+                "original_audio": effective_mode,
+                "script_preview": script[:200],
+            },
+        )
+
+        _record_artifact(ctx, {"type": "video", "url": final_url, **({"job_id": job_id} if job_id else {})})
+
+        return json.dumps({
+            "status": "success",
+            "job_id": job_id,
+            "video_url": final_url,
+            "duration_seconds": round(total_duration, 1),
+            "voice_id": voice_id,
+            "voice": voice_key if not kwargs.get("voice_id") else None,
+            "original_audio": effective_mode,
+            "script_preview": script[:120] + ("…" if len(script) > 120 else ""),
+        })
+    except Exception as e:
+        return json.dumps({"error": f"add_voiceover failed: {e}"})
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
 
@@ -2702,11 +3574,15 @@ TOOL_DISPATCH: dict[str, Callable[..., Awaitable[str]]] = {
     "generate_caption": _tool_generate_caption,
     # remotion editor
     "caption_video": _tool_caption_video,
+    "list_caption_styles": _tool_list_caption_styles,
     "load_editor_state": _tool_load_editor_state,
     "save_editor_state": _tool_save_editor_state,
+    "apply_editor_ops": _tool_apply_editor_ops,
     "render_edited_video": _tool_render_edited_video,
     # video combination (gated)
     "combine_videos": _tool_combine_videos,
+    # voiceover mix on existing video (free)
+    "add_voiceover": _tool_add_voiceover,
     # app-clip B-roll splice for digital products (free)
     "splice_app_clip": _tool_splice_app_clip,
 }

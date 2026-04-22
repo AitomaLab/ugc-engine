@@ -97,34 +97,34 @@ const AudioFadeControlsUnmemoized: React.FC<{
 		<div className="space-y-4">
 			<div>
 				<InspectorSubLabel>Fade In</InspectorSubLabel>
-				<div className="flex w-full items-center gap-3">
+				<div className="inspector-slider-row flex w-full min-w-0 items-center gap-2">
 					<Slider
 						value={fadeInDuration}
 						onValueChange={handleFadeInChange}
 						min={0}
 						max={maxFadeInDuration}
 						step={0.1}
-						className="flex-1"
+						className="min-w-0 flex-1"
 						title={`Fade In: ${fadeInDuration.toFixed(1)}s`}
 					/>
-					<div className="min-w-[50px] text-right text-xs text-white/75">
+					<div className="inspector-slider-value shrink-0 text-right text-xs text-white/75 tabular-nums">
 						{fadeInDuration.toFixed(1)}s
 					</div>
 				</div>
 			</div>
 			<div>
 				<InspectorSubLabel>Fade Out</InspectorSubLabel>
-				<div className="flex w-full items-center gap-3">
+				<div className="inspector-slider-row flex w-full min-w-0 items-center gap-2">
 					<Slider
 						value={fadeOutDuration}
 						onValueChange={handleFadeOutChange}
 						min={0}
 						max={maxFadeOutDuration}
 						step={0.1}
-						className="flex-1"
+						className="min-w-0 flex-1"
 						title={`Fade Out: ${fadeOutDuration.toFixed(1)}s`}
 					/>
-					<div className="min-w-[50px] text-right text-xs text-white/75">
+					<div className="inspector-slider-value shrink-0 text-right text-xs text-white/75 tabular-nums">
 						{fadeOutDuration.toFixed(1)}s
 					</div>
 				</div>

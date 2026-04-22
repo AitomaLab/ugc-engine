@@ -107,20 +107,20 @@ const CropControlsUnmemoized: React.FC<{
 	const bottomPercent = Math.max(0, Math.round(crop.cropBottom * 100));
 
 	return (
-		<div className="space-y-2">
+		<div className="space-y-3">
 			<div>
 				<InspectorSubLabel>Left</InspectorSubLabel>
-				<div className="flex w-full items-center gap-3">
+				<div className="inspector-slider-row flex w-full min-w-0 items-center gap-2">
 					<Slider
 						value={leftPercent}
 						onValueChange={handleLeftChange}
 						min={0}
 						max={100}
 						step={1}
-						className="flex-1"
+						className="min-w-0 flex-1"
 						title={`Left: ${leftPercent}%`}
 					/>
-					<div className="min-w-[40px] text-right text-xs text-white/75">
+					<div className="inspector-slider-value shrink-0 text-right text-xs text-white/75 tabular-nums">
 						{Math.max(0, Math.round(crop.cropLeft * item.width))}px
 					</div>
 				</div>
@@ -128,17 +128,17 @@ const CropControlsUnmemoized: React.FC<{
 
 			<div>
 				<InspectorSubLabel>Top</InspectorSubLabel>
-				<div className="flex w-full items-center gap-3">
+				<div className="inspector-slider-row flex w-full min-w-0 items-center gap-2">
 					<Slider
 						value={topPercent}
 						onValueChange={handleTopChange}
 						min={0}
 						max={100}
 						step={1}
-						className="flex-1"
+						className="min-w-0 flex-1"
 						title={`Top: ${topPercent}%`}
 					/>
-					<div className="min-w-[40px] text-right text-xs text-white/75">
+					<div className="inspector-slider-value shrink-0 text-right text-xs text-white/75 tabular-nums">
 						{Math.max(0, Math.round(crop.cropTop * item.height))}px
 					</div>
 				</div>
@@ -146,17 +146,17 @@ const CropControlsUnmemoized: React.FC<{
 
 			<div>
 				<InspectorSubLabel>Right</InspectorSubLabel>
-				<div className="flex w-full items-center gap-3">
+				<div className="inspector-slider-row flex w-full min-w-0 items-center gap-2">
 					<Slider
 						value={rightPercent}
 						onValueChange={handleRightChange}
 						min={0}
 						max={100}
 						step={1}
-						className="flex-1"
+						className="min-w-0 flex-1"
 						title={`Right: ${Math.round(crop.cropRight * item.width)}px`}
 					/>
-					<div className="min-w-[40px] text-right text-xs text-white/75">
+					<div className="inspector-slider-value shrink-0 text-right text-xs text-white/75 tabular-nums">
 						{Math.max(0, Math.round(crop.cropRight * item.width))}px
 					</div>
 				</div>
@@ -164,17 +164,17 @@ const CropControlsUnmemoized: React.FC<{
 
 			<div>
 				<InspectorSubLabel>Bottom</InspectorSubLabel>
-				<div className="flex w-full items-center gap-3">
+				<div className="inspector-slider-row flex w-full min-w-0 items-center gap-2">
 					<Slider
 						value={bottomPercent}
 						onValueChange={handleBottomChange}
 						min={0}
 						max={100}
 						step={1}
-						className="flex-1"
+						className="min-w-0 flex-1"
 						title={`Bottom: ${Math.round(crop.cropBottom * item.height)}px`}
 					/>
-					<div className="min-w-[40px] text-right text-xs text-white/75">
+					<div className="inspector-slider-value shrink-0 text-right text-xs text-white/75 tabular-nums">
 						{Math.max(0, Math.round(crop.cropBottom * item.height))}px
 					</div>
 				</div>

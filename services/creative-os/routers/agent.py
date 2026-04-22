@@ -170,10 +170,77 @@ async def agent_stream(
         "what was used in earlier turns.]"
     )
     engine_marker = seedance_marker if data.use_seedance else default_marker
+
+    # Edit-intent reminder — Claude has a strong pretrained pattern for emitting
+    # `AI_EDIT_OPS` + an ops JSON array when asked to trim/edit/add music. That
+    # format belongs to a DIFFERENT subsystem (the in-editor AI panel) and is
+    # ignored by the dashboard — the user sees technical text and nothing happens.
+    # The system prompt forbids it, but the pretrained pattern is strong enough
+    # that per-turn reinforcement is needed when the brief contains edit verbs.
+    import re as _re
+    _brief_lc = brief.lower()
+    # Regex: verb-near-noun patterns (add/swap/remove music | voiceover | caption)
+    # plus standalone edit verbs (trim / cut / shorten / re-edit).
+    _edit_intent_re = _re.compile(
+        r"\b(?:"
+        # "add / swap / replace / remove / change / insert / put <up to 6 words> music/soundtrack/song/bgm/audio/voice ?over|vo|narration|caption|subtitle"
+        r"(?:add|swap|replace|remove|change|insert|put|mix|layer|overlay|drop|stick|throw)"
+        r"(?:\s+\w+){0,6}?\s+"
+        r"(?:music|soundtrack|song|bgm|audio|voice\s?over|vo|narration|captions?|subtitles?)"
+        r"|"
+        # Standalone edit verbs
+        r"trim|cut|shorten|lengthen|extend|re-?edit|edit\s+(?:the\s+)?(?:video|clip|timeline)"
+        r")\b"
+    )
+    is_edit_intent = bool(_edit_intent_re.search(_brief_lc))
+    edit_reminder = (
+        "[EDIT TURN REMINDER — do NOT respond with `AI_EDIT_OPS` text or any ops-JSON array as chat "
+        "prose. That format is ignored by the dashboard and the edit will not apply. "
+        "Call the actual tools: for trim / fade / speed / opacity / captions / delete / text overlays / "
+        "add music on a single video, call `apply_editor_ops(job_id, ops=[...])` with the same ops you "
+        "would have emitted. For swap/remove/add-music on a finished COMBINED video, call combine_videos "
+        "again with the ORIGINAL per-clip source URLs from earlier in this thread + `music_prompt` "
+        "(and `mute_audio_indices` if needed). Never emit ops text without a matching tool_use block.]"
+    )
+
+    # Ref-sticky: if the current turn is edit-intent and the user did NOT
+    # attach a video this turn (the frontend clears attachments after each
+    # submit), look up the most recent video the user uploaded earlier in
+    # this thread and re-inject it as an implicit ref. That way a follow-up
+    # like "make it louder" / "try a different bed" doesn't make the agent
+    # call list_jobs and report "no videos in project".
+    sticky_video_ref: Optional[AgentRef] = None
+    has_video_ref = any(r.video_url for r in refs)
+    if is_edit_intent and not has_video_ref:
+        try:
+            _prior_thread = await get_thread(user_token, user_id, project_id)
+            _prior_turns_all: list[dict] = list((_prior_thread or {}).get("turns") or [])
+            for _past in reversed(_prior_turns_all):
+                if _past.get("role") != "user":
+                    continue
+                for _pr in (_past.get("refs") or []):
+                    if _pr.get("video_url"):
+                        # Filter to AgentRef's known fields so unknown keys don't break validation.
+                        _allowed = set(AgentRef.model_fields.keys())
+                        sticky_video_ref = AgentRef(**{k: v for k, v in _pr.items() if k in _allowed})
+                        break
+                if sticky_video_ref is not None:
+                    break
+        except Exception as _e:
+            print(f"[agent_stream] ref-sticky lookup failed: {_e}")
+        if sticky_video_ref is not None:
+            refs = list(refs) + [sticky_video_ref]
+
     if not refs:
-        augmented_brief = engine_marker + "\n\n" + augmented_brief
+        prefix_lines = [engine_marker]
+        if is_edit_intent:
+            prefix_lines.append(edit_reminder)
+        augmented_brief = "\n\n".join(prefix_lines + [augmented_brief])
     if refs:
-        lines = [engine_marker, ""]
+        lines = [engine_marker]
+        if is_edit_intent:
+            lines.append(edit_reminder)
+        lines.append("")
         lines.append("[Referenced assets — these are the EXACT items the user is talking about]")
         for r in refs:
             parts = [f"@{r.tag} ({r.type})"]
@@ -193,8 +260,16 @@ async def agent_stream(
                 parts.append(f"app_clip_id={r.app_clip_id}")
             if r.product_type:
                 parts.append(f"product_type={r.product_type}")
+            if sticky_video_ref is not None and r is sticky_video_ref:
+                parts.append("source=sticky_from_prior_turn")
             lines.append("- " + ", ".join(parts))
         lines.append("")
+        if sticky_video_ref is not None:
+            lines.append(
+                "Note: the user did not attach a video this turn, but they uploaded one "
+                "earlier in this thread — it is re-included above as `source=sticky_from_prior_turn`. "
+                "Use that video_url directly for this edit. Do NOT call list_project_assets or list_jobs."
+            )
         lines.append("Use these IDs/URLs directly. Do not call list_project_assets to look them up.")
         lines.append("")
         lines.append("User message: " + brief)

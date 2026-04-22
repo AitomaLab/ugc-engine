@@ -69,6 +69,30 @@ export const CaptionsLayer = ({
 	]);
 
 	const style: React.CSSProperties = useMemo(() => {
+		const mode = item.strokeMode ?? 'solid';
+		const shadowColor = item.shadowColor ?? item.strokeColor;
+		const blur = item.shadowBlur ?? 8;
+		const offsetX = item.shadowOffsetX ?? 0;
+		const offsetY = item.shadowOffsetY ?? 4;
+
+		let textShadow: string | undefined;
+		let webkitTextStroke: string | undefined;
+
+		if (mode === 'shadow') {
+			textShadow = `${offsetX}px ${offsetY}px ${blur}px ${shadowColor}`;
+		} else if (mode === 'glow') {
+			// Stacked symmetric shadows for a soft halo effect around each letter.
+			textShadow = [
+				`0 0 ${blur}px ${shadowColor}`,
+				`0 0 ${blur * 2}px ${shadowColor}`,
+				`0 0 ${blur * 3}px ${shadowColor}`,
+			].join(', ');
+		} else {
+			webkitTextStroke = item.strokeWidth
+				? `${item.strokeWidth}px ${item.strokeColor}`
+				: '0';
+		}
+
 		return {
 			position: 'absolute',
 			left: item.left,
@@ -77,9 +101,8 @@ export const CaptionsLayer = ({
 			height: item.height,
 			opacity: opacity,
 			transform: `rotate(${item.rotation}deg)`,
-			WebkitTextStroke: item.strokeWidth
-				? `${item.strokeWidth}px ${item.strokeColor}`
-				: '0',
+			WebkitTextStroke: webkitTextStroke,
+			textShadow,
 			paintOrder: 'stroke',
 		};
 	}, [item, opacity]);

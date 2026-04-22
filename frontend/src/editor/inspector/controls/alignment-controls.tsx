@@ -144,7 +144,7 @@ const AlignmentControlsUnmemoized: React.FC<{
 	return (
 		<div>
 			<InspectorSubLabel>Alignment</InspectorSubLabel>
-			<div className="flex flex-row gap-2">
+			<div className="flex w-full min-w-0 flex-row gap-2">
 				<div className="editor-starter-field flex flex-1 flex-row hover:border-transparent">
 					<IconButton
 						className="flex flex-1 items-center justify-center"

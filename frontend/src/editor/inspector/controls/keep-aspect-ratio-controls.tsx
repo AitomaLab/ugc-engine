@@ -59,7 +59,7 @@ const KeepAspectRatioControlsUnmemoized = ({
 	return (
 		<div
 			className={clsx(
-				'editor-starter-field hover:border-transparent',
+				'shrink-0 editor-starter-field hover:border-transparent',
 				keepAspectRatio && 'bg-editor-starter-accent/10',
 			)}
 		>

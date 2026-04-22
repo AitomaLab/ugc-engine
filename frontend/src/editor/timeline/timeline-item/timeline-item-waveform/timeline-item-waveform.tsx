@@ -15,7 +15,7 @@ import {FadeCurve} from '../timeline-item-fade-control/fade-curve';
 import {drawPeaks} from './draw-peaks';
 import {loadWaveformPeaks} from './load-waveform-peaks';
 
-export const WAVEFORM_HEIGHT = 20;
+export const WAVEFORM_HEIGHT = 32;
 
 export const getWaveformHeight = ({
 	item,
