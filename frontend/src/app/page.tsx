@@ -837,6 +837,7 @@ export default function StudioPage() {
                 value={prompt}
                 onChange={handlePromptChange}
                 onKeyDown={handleMentionKeyDown}
+                onFocus={() => { if (!mentionsLoaded) loadMentionData(); }}
                 placeholder={t('creativeOs.dashboard.textareaPlaceholder')}
                 rows={1}
                 style={{

@@ -1487,6 +1487,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                 value={brief}
                                 onChange={handleBriefChange}
                                 onKeyDown={handleBriefKeyDown}
+                                onFocus={() => { if (!mentionsLoaded) loadMentionData(); }}
                                 placeholder={t('creativeOs.agent.composerPlaceholder')}
                                 disabled={running}
                                 rows={3}
