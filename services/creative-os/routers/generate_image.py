@@ -1102,6 +1102,8 @@ RULES:
 
 class GenerateIdentityRequest(BaseModel):
     image_url: str
+    project_id: Optional[str] = None
+    influencer_id: Optional[str] = None
 
 
 @router.post("/generate-identity")
@@ -1261,10 +1263,56 @@ async def generate_identity(
             "views": [sheet_url],  # Fallback: just the full sheet
         }
 
+    # ── Step 4: Persist each view as an identity_shot row so the project's
+    # Images gallery picks them up (mirrors generate_product_shots). Also
+    # sync influencers.character_views so the library carousel and the
+    # @-mention shot picker see the fresh views.
+    view_labels = ["closeup", "front_medium", "profile_90", "full_body"]
+    shot_rows: list[dict] = []
+    if data.project_id:
+        client = CoreAPIClient(token=user["token"], project_id=data.project_id)
+        for i, view_url in enumerate(views):
+            label = view_labels[i] if i < len(view_labels) else f"view_{i+1}"
+            analysis: dict = {
+                "mode": "identity_shot",
+                "view": label,
+                "view_index": i,
+                "character_sheet_url": sheet_url,
+            }
+            if data.influencer_id:
+                analysis["influencer_id"] = data.influencer_id
+            shot_data = {
+                "shot_type": "identity_shot",
+                "status": "image_completed",
+                "image_url": view_url,
+                "project_id": data.project_id,
+                "analysis_json": analysis,
+            }
+            try:
+                row = await client.create_standalone_shot(shot_data)
+                shot_rows.append(row)
+            except Exception as e:
+                print(f"[Generate Identity] WARN: failed to persist shot row for view {label}: {e}")
+        print(f"[Generate Identity] Persisted {len(shot_rows)} identity_shot rows")
+
+    if data.influencer_id:
+        try:
+            from supabase import create_client
+            import os as _os
+            sb = create_client(
+                _os.getenv("SUPABASE_URL"),
+                _os.getenv("SUPABASE_SERVICE_KEY") or _os.getenv("SUPABASE_ANON_KEY"),
+            )
+            sb.table("influencers").update({"character_views": views}).eq("id", data.influencer_id).execute()
+            print(f"[Generate Identity] Synced influencers.character_views for {data.influencer_id}")
+        except Exception as e:
+            print(f"[Generate Identity] WARN: failed to sync influencer.character_views: {e}")
+
     return {
         "description": description,
         "character_sheet_url": sheet_url,
         "views": views,
+        "shots": shot_rows,
     }
 
 

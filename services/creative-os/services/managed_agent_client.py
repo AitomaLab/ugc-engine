@@ -3831,22 +3831,54 @@ async def _tool_generate_identity(ctx: ToolContext, **kwargs: Any) -> str:
             echo={k: v for k, v in kwargs.items() if k != "confirmed"},
         )
 
+    image_url = kwargs["image_url"]
+
+    # Resolve influencer_id from the mentioned image_url so the 4 generated
+    # views can be linked back to the influencer (for right-panel enrichment
+    # and for syncing influencers.character_views). Mirrors the product_id
+    # lookup in _tool_generate_product_shots.
+    influencer_id = kwargs.get("influencer_id")
+    if not influencer_id and image_url:
+        try:
+            from supabase import create_client
+            sb = create_client(
+                os.getenv("SUPABASE_URL"),
+                os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY"),
+            )
+            match = sb.table("influencers").select("id").eq("image_url", image_url).limit(1).execute().data or []
+            if match:
+                influencer_id = match[0]["id"]
+        except Exception as e:
+            print(f"[tool_generate_identity] influencer_id lookup failed: {e}")
+
     user = {"token": ctx.user_token, "id": "agent"}
     try:
         result = await generate_identity(
-            data=GenerateIdentityRequest(image_url=kwargs["image_url"]),
+            data=GenerateIdentityRequest(
+                image_url=image_url,
+                project_id=ctx.project_id,
+                influencer_id=influencer_id,
+            ),
             user=user,
         )
     except Exception as e:
-        return json.dumps({"error": f"generate_identity failed: {e}"})
+        import traceback
+        print(f"[tool_generate_identity] FAILED: {type(e).__name__}: {e}")
+        traceback.print_exc()
+        return json.dumps({"error": f"generate_identity failed: {type(e).__name__}: {e}"})
 
     views = result.get("views") or []
     sheet_url = result.get("character_sheet_url")
+    shots = result.get("shots") or []
     # Record the 4 persistent Supabase views, not the transient NanoBanana sheet
     # URL (tempfile.aiquickdraw.com — expires before the chat fetches it).
-    artifact_urls = views if views else ([sheet_url] if sheet_url else [])
-    for url in artifact_urls:
-        _record_artifact(ctx, {"type": "image", "url": url})
+    for i, view_url in enumerate(views):
+        art: dict = {"type": "image", "url": view_url}
+        if i < len(shots) and shots[i].get("id"):
+            art["shot_id"] = shots[i]["id"]
+        _record_artifact(ctx, art)
+    if not views and sheet_url:
+        _record_artifact(ctx, {"type": "image", "url": sheet_url})
     return json.dumps({
         "description": result.get("description"),
         "character_sheet_url": sheet_url,
