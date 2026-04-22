@@ -3840,13 +3840,17 @@ async def _tool_generate_identity(ctx: ToolContext, **kwargs: Any) -> str:
     except Exception as e:
         return json.dumps({"error": f"generate_identity failed: {e}"})
 
+    views = result.get("views") or []
     sheet_url = result.get("character_sheet_url")
-    if sheet_url:
-        _record_artifact(ctx, {"type": "image", "url": sheet_url})
+    # Record the 4 persistent Supabase views, not the transient NanoBanana sheet
+    # URL (tempfile.aiquickdraw.com — expires before the chat fetches it).
+    artifact_urls = views if views else ([sheet_url] if sheet_url else [])
+    for url in artifact_urls:
+        _record_artifact(ctx, {"type": "image", "url": url})
     return json.dumps({
         "description": result.get("description"),
         "character_sheet_url": sheet_url,
-        "views": result.get("views", []),
+        "views": views,
     })
 
 
@@ -3874,12 +3878,16 @@ async def _tool_generate_product_shots(ctx: ToolContext, **kwargs: Any) -> str:
         traceback.print_exc()
         return json.dumps({"error": f"generate_product_shots failed: {type(e).__name__}: {e}"})
 
+    views = result.get("views") or []
     sheet_url = result.get("product_sheet_url")
-    if sheet_url:
-        _record_artifact(ctx, {"type": "image", "url": sheet_url})
+    # Record the 4 persistent Supabase views, not the transient NanoBanana sheet
+    # URL (tempfile.aiquickdraw.com — expires before the chat fetches it).
+    artifact_urls = views if views else ([sheet_url] if sheet_url else [])
+    for url in artifact_urls:
+        _record_artifact(ctx, {"type": "image", "url": url})
     return json.dumps({
         "product_sheet_url": sheet_url,
-        "views": result.get("views", []),
+        "views": views,
     })
 
 

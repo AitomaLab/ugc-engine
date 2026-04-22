@@ -1289,7 +1289,7 @@ All 4 views must maintain absolute 1:1 product identity.
 VISUAL INTEGRITY RULE (CRITICAL):
 The four views must appear complete, fully visible, and without any cropping. No view may be out of frame, partially visible, or cut off by the canvas edges. The canvas must automatically adjust to perfectly contain the four columns. Cropping any part of the product is strictly forbidden. Each view must be centered within its column.
 
-It is strictly forbidden to generate text, letters, logos reinterpretation, typographic marks, labels, captions, watermarks, numbering, or any graphic element not physically present on the original product.
+It is strictly forbidden to invent, add, or redesign any text, letters, logos, typographic marks, captions, watermarks, or numbering that is not physically present on the original product. Preserve all authentic product text, labels, branding, and printed graphics exactly as they appear on the reference — same spelling, same placement, same typography.
 
 PRODUCT FIDELITY MODE (CRITICAL):
 The product must maintain exact visual fidelity across all views: identical shape, proportions, materials, finishes, colors, reflections, engravings, labels, and branding placement. No redesign, no reinterpretation, no simplification.
@@ -1322,7 +1322,7 @@ AESTHETIC TONE:
 High-end commercial product photography. Clean catalog style. Neutral. Clinical. Objective. No artistic direction. No lifestyle context.
 
 GLOBAL NEGATIVE RESTRICTIONS:
-No CGI, no illustration, no 3D render look, no glow, no filters, no dramatic reflections, no cinematic grading, no exaggerated shadows, no stylization. ABSOLUTELY NO TEXT, NO LABELS, NO CAPTIONS, NO TYPOGRAPHY of any kind. The image must contain ONLY the four photographic product views.
+No CGI, no illustration, no 3D render look, no glow, no filters, no dramatic reflections, no cinematic grading, no exaggerated shadows, no stylization. Do NOT add, remove, or redesign text, labels, captions, or typography that is not on the original product — but do preserve the product's own labels, branding, and printed text exactly as shown in the reference.
 
 It must look like a real product photographed in a professional studio.
 
@@ -1336,8 +1336,8 @@ RULES:
 - The nano_banana_prompt must be one continuous paragraph
 - The prompt must reference "Using input image 1 for product identity" and "Keep product appearance exactly consistent with reference"
 - Include the instruction "four views in a single horizontal image" explicitly in the prompt
-- CRITICAL: The nano_banana_prompt must include "no text, no labels, no captions, no typography" in the negative constraints
-- The generated image must contain ONLY the 4 photographic product views — zero text elements"""
+- CRITICAL: The nano_banana_prompt must include an instruction like "preserve the product's original labels, branding, and printed text exactly as shown in the reference image; do not add or invent any new text" in the positive constraints
+- The generated image must contain ONLY the 4 photographic product views — do not add any text elements not present on the original product"""
 
 
 class GenerateProductShotsRequest(BaseModel):
