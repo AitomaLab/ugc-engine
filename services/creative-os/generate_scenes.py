@@ -107,7 +107,6 @@ def generate_video(
         is_multi = bool(multi_prompt and len(multi_prompt) > 0)
         kling_input = {
             "prompt": prompt if not is_multi else "",
-            "image_urls": [reference_image_url] if reference_image_url else [],
             "sound": True,
             "duration": kling_duration,
             "aspectRatio": aspect_ratio,
@@ -116,11 +115,13 @@ def generate_video(
             "multi_shots": is_multi,
             "multi_prompt": multi_prompt if is_multi else [],
         }
-        if is_multi:
-            print(f"      [Kling] Multi-shot mode: {len(multi_prompt)} shot(s), total {sum(s.get('duration', 3) for s in multi_prompt)}s")
         if kling_elements:
             kling_input["kling_elements"] = kling_elements
-            print(f"      [Kling] Payload includes {len(kling_elements)} element(s)")
+            print(f"      [Kling] Payload includes {len(kling_elements)} element(s) (no image_urls)")
+        elif reference_image_url:
+            kling_input["image_urls"] = [reference_image_url]
+        if is_multi:
+            print(f"      [Kling] Multi-shot mode: {len(multi_prompt)} shot(s), total {sum(s.get('duration', 3) for s in multi_prompt)}s")
         payload = {"model": model_api_kie, "input": kling_input}
     elif family == "veo":
         payload = {

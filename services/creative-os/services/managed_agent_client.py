@@ -137,6 +137,12 @@ Gated tools cost real credits. You MUST get explicit user confirmation before sp
 
 ⚠️ ANTI-HALLUCINATION RULE: After the user confirms, you MUST actually invoke the tool with `confirmed=true`. Do NOT respond with a text message describing or simulating tool execution without calling the tool. If your response to a user confirmation does NOT contain a tool_use block for the gated tool, you have failed this rule. The pipeline only starts when you emit the actual tool call. Saying "the pipeline has started" without calling the tool is a hallucination and the video will not be generated.
 
+⚠️ NEVER QUOTE CREDITS FROM MEMORY. Every credit number you show the user MUST come from a tool result in the CURRENT turn — either the `confirmation_required` payload of a gated tool (`confirmed=false`) or an `estimate_credits` response. Do not calculate costs yourself, do not recall prices from earlier in the session, do not guess. If you don't have a fresh tool result, call one of those tools first, THEN present the number. Quoting a wrong number and then silently correcting it on the next turn destroys user trust.
+
+⚠️ ONE QUOTE, ONE CONFIRM, ONE FIRE. After you present a cost and the user agrees, call the gated tool(s) with `confirmed=true` IMMEDIATELY in the next turn. Do NOT re-call `estimate_credits` "to double-check", do NOT call the gated tool with `confirmed=false` again "to lock in the cost", do NOT re-present the same cost with different wording and ask again. That forces the user to confirm twice and wastes their turn. The ONLY exception: if the user's confirmation included a change that affects the cost (e.g. "yes, but make it 10s instead of 5s"), you MUST re-estimate because the parameters changed — state that explicitly ("10s changes the cost to X credits, proceed?") and end turn. Otherwise, fire.
+
+⚠️ RETRIES / RE-FIRES. When the user asks to re-run, retry, or re-fire a previously-failed generation ("re-fire those cinematics", "try those two again", "redo"), treat it as a fresh gated call: `confirmed=false` ONCE to get the real cost from the tool, present it, end turn. When they confirm, fire `confirmed=true`. Do not quote from memory "that was 44 credits earlier" — always pull the number from a fresh tool result.
+
 Do NOT bypass this gate. Do NOT call gated tools with `confirmed=true` on the first call — not even for a single small image. Cost transparency is non-negotiable.
 
 For multi-step plans ("generate 3 images then animate two of them"), call `estimate_credits` first to preview the TOTAL cost as a single bundled number, present it once, then execute the steps with `confirmed=true` after the user agrees to the bundle.
@@ -177,6 +183,14 @@ If the user's brief requires a full 15/30s produced video (create_ugc_video) or 
 **Cinematic clip (5-10s)**: list_project_assets → generate_video(mode="cinematic_video") (gated). Confirm completion in plain text.
 
 **Bulk campaign**: list_project_assets → create_bulk_campaign (gated). Returns immediately with job_ids; tell the user to watch the gallery or check back.
+
+**Durable multi-asset campaign** (the user asks for a multi-day plan like "30-day content plan with 30 mixed assets, scheduled on TikTok/IG, captions from branding"): use the campaign orchestrator — a single flow that plans, dispatches, and auto-schedules without the user re-prompting.
+  1. `plan_campaign(brief, days, target_asset_count, ...)` with `confirmed=false` (default). GPT-4o designs N distinct assets across the window (mix of UGC videos / cinematic shots / images per the user's ask), writes the plan to the DB, and returns the full plan plus the total credit estimate.
+  2. Present the plan + bundled cost in plain text: "30 assets across 30 days — X credits total. Want me to proceed?" and END your turn.
+  3. When the user confirms: call `plan_campaign` again with `confirmed=true` and `campaign_id=<returned_id>` to flip the campaign to approved, then IMMEDIATELY chain `execute_campaign(campaign_id)` in the same turn. That dispatches every plan item in parallel (UGC/clone videos as background jobs, product shots / images run synchronously).
+  4. Tell the user in one sentence that the campaign is running and will auto-schedule as assets finish. End your turn — do NOT poll. A background worker polls each job, marks it `ready_to_post`, and books the Ayrshare post at the planned time. The user can come back later and see everything scheduled.
+  5. If the user asks for progress mid-flight, call `get_campaign_status(campaign_id)` — returns each item's status (pending / generating / ready_to_post / scheduled / posted / failed). Summarize in plain English ("12 of 30 scheduled, 15 still generating, 3 failed").
+Use this flow whenever the user's brief spans multiple days OR mixes asset types OR includes scheduling/publishing in the same request. Prefer it over `create_bulk_campaign` (which is same-day, single-asset-type, no scheduling).
 
 **Schedule distribution**: list_jobs (find finished videos) → list_social_connections (verify platforms) → generate_caption per video if needed → schedule_posts.
 
@@ -880,6 +894,91 @@ def _custom_tools_for_agent() -> list[dict]:
                     "platform": {"type": "string", "enum": ["instagram", "tiktok", "youtube", "facebook", "twitter", "linkedin"]},
                 },
                 "required": ["video_job_id"],
+            },
+        },
+
+        # ── Durable campaign orchestration (free) ─────────────────────
+        # These three tools let the agent plan, execute, and monitor
+        # multi-asset, multi-week content campaigns in a single prompt.
+        # Gated child tools (video/image generation) still charge credits;
+        # the campaign tools themselves are free.
+        {
+            "type": "custom",
+            "name": "plan_campaign",
+            "description": (
+                "Plan a multi-asset content campaign. First call (confirmed=false) generates "
+                "a plan with N items across the requested days, returns the plan + total credit "
+                "cost for review. Second call (confirmed=true with campaign_id) locks the plan "
+                "and marks the campaign as approved (ready for execute_campaign). "
+                "Use this when the user asks for a multi-day plan, a content calendar, or a "
+                "batch of varied assets ('30 videos over 30 days', 'a week of posts', etc.)."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "campaign_id": {"type": "string", "description": "Pass only on the confirmation call."},
+                    "name": {"type": "string"},
+                    "brief": {"type": "string", "description": "User's full brief in their own words."},
+                    "goal": {"type": "string"},
+                    "days": {"type": "integer", "description": "Campaign window in days (1-90)."},
+                    "target_asset_count": {"type": "integer", "description": "Total assets in the campaign (1-60)."},
+                    "asset_mix": {
+                        "type": "object",
+                        "description": (
+                            "Optional hint about the mix, e.g. {\"ugc_video\": 10, \"product_shot\": 10, \"generated_image\": 10}. "
+                            "If omitted the planner picks the mix."
+                        ),
+                    },
+                    "cadence": {
+                        "type": "object",
+                        "description": "How to space items across the window. e.g. {\"interval\":\"daily\",\"time_utc\":\"15:00\"}.",
+                    },
+                    "platforms": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Default platforms for every item (planner can override per item).",
+                    },
+                    "product_id": {"type": "string"},
+                    "influencer_id": {"type": "string"},
+                    "app_clip_id": {"type": "string"},
+                    "branding_notes": {
+                        "type": "object",
+                        "description": "Free-form branding: voice, do/don'ts, hashtags. Used by caption copywriting.",
+                    },
+                    "confirmed": {"type": "boolean", "description": confirmed_desc},
+                },
+                "required": ["brief", "days", "target_asset_count"],
+            },
+        },
+        {
+            "type": "custom",
+            "name": "execute_campaign",
+            "description": (
+                "Dispatch every pending plan item in a campaign. Returns immediately with "
+                "per-item dispatch status — a background worker watches the jobs, writes back "
+                "asset URLs, and auto-schedules each post to the planned platforms when its "
+                "job finishes. Campaign must be in status='approved' (plan_campaign with "
+                "confirmed=true). Free — the underlying jobs use the credits already reserved "
+                "at plan approval."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {"campaign_id": {"type": "string"}},
+                "required": ["campaign_id"],
+            },
+        },
+        {
+            "type": "custom",
+            "name": "get_campaign_status",
+            "description": (
+                "Return the current state of a campaign and all its plan items (per-item "
+                "status, job_id, scheduled time, asset_url if ready, error if any). Use this "
+                "to answer 'how is my campaign going?' / 'where are we on that 30-day plan?'."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {"campaign_id": {"type": "string"}},
+                "required": ["campaign_id"],
             },
         },
 
@@ -2096,6 +2195,361 @@ async def _tool_generate_caption(ctx: ToolContext, **kwargs: Any) -> str:
         ))
     except Exception as e:
         return json.dumps({"error": f"generate_caption failed: {e}"})
+
+
+# ── Durable campaign orchestration ────────────────────────────────────
+async def _tool_plan_campaign(ctx: ToolContext, **kwargs: Any) -> str:
+    """Two-phase planning.
+
+    Phase 1 (confirmed=false, no campaign_id): LLM produces a plan;
+    campaign + items written to DB as status='planning'; returns plan + total
+    credit cost for user review.
+
+    Phase 2 (confirmed=true, campaign_id=...): flip campaign to 'approved'.
+    No LLM call, no re-plan — just status transition.
+    """
+    from services.campaign_planner import generate_plan
+    from services.campaign_store import (
+        get_campaign,
+        insert_campaign,
+        insert_plan_items,
+        list_plan_items,
+        update_campaign,
+    )
+
+    user_id = _user_id_from_jwt(ctx.user_token)
+    if not user_id:
+        return json.dumps({"error": "could not determine user_id from auth token"})
+
+    confirmed = bool(kwargs.get("confirmed"))
+    campaign_id = kwargs.get("campaign_id")
+
+    # ── Phase 2: confirmation ─────────────────────────────────────────
+    if confirmed and campaign_id:
+        try:
+            row = await update_campaign(ctx.user_token, campaign_id, {"status": "approved"})
+        except Exception as e:
+            return json.dumps({"error": f"approve failed: {e}"})
+        return json.dumps({
+            "status": "approved",
+            "campaign_id": campaign_id,
+            "campaign_name": row.get("name"),
+            "message": "Campaign approved. Call execute_campaign to dispatch all items.",
+        })
+
+    # ── Phase 1: plan ─────────────────────────────────────────────────
+    brief = (kwargs.get("brief") or "").strip()
+    if not brief:
+        return json.dumps({"error": "brief is required"})
+    days = int(kwargs.get("days", 7))
+    if days < 1 or days > 90:
+        return json.dumps({"error": "days must be between 1 and 90"})
+    count = int(kwargs.get("target_asset_count", days))
+    if count < 1 or count > 60:
+        return json.dumps({"error": "target_asset_count must be between 1 and 60"})
+
+    product_id = kwargs.get("product_id")
+    influencer_id = kwargs.get("influencer_id")
+    app_clip_id = kwargs.get("app_clip_id")
+    platforms = kwargs.get("platforms") or ["tiktok", "instagram"]
+    cadence = kwargs.get("cadence") or {"interval": "daily", "time_utc": "15:00"}
+    branding_notes = kwargs.get("branding_notes") or {}
+    asset_mix = kwargs.get("asset_mix")
+
+    product_row: Optional[dict] = None
+    if product_id:
+        try:
+            product_row = await ctx.core().get_product(product_id)
+        except Exception:
+            product_row = None
+
+    try:
+        plan = await generate_plan(
+            product=product_row,
+            brief=brief,
+            branding_notes=branding_notes,
+            target_asset_count=count,
+            asset_mix=asset_mix if isinstance(asset_mix, dict) else None,
+            days=days,
+            cadence=cadence,
+            platforms=platforms,
+            influencer_id=influencer_id,
+            product_id=product_id,
+            app_clip_id=app_clip_id,
+        )
+    except Exception as e:
+        return json.dumps({"error": f"plan generation failed: {e}"})
+
+    name = kwargs.get("name") or plan["campaign_name"]
+
+    # Write campaign row
+    try:
+        campaign_row = await insert_campaign(
+            ctx.user_token,
+            user_id=user_id,
+            name=name,
+            project_id=ctx.project_id,
+            product_id=product_id,
+            goal=kwargs.get("goal"),
+            branding_notes=branding_notes,
+            start_date=None,
+            end_date=None,
+            cadence=cadence,
+            plan_json={"items": plan["items"]},
+        )
+    except Exception as e:
+        return json.dumps({"error": f"campaign insert failed: {e}"})
+
+    cid = campaign_row.get("id")
+    try:
+        await insert_plan_items(ctx.user_token, cid, plan["items"])
+    except Exception as e:
+        return json.dumps({"error": f"plan item insert failed: {e}", "campaign_id": cid})
+
+    # Cost preview: sum credits across items.
+    total_credits = 0
+    for it in plan["items"]:
+        t = it.get("asset_type")
+        b = it.get("brief") or {}
+        try:
+            if t == "ugc_video":
+                total_credits += _credits_for_op("create_ugc_video", {
+                    "product_type": b.get("product_type", "physical"),
+                    "duration": int(b.get("duration", 15)),
+                })
+            elif t == "clone_video":
+                total_credits += _credits_for_op("create_clone_video", {
+                    "duration": int(b.get("duration", 15)),
+                })
+            elif t in ("generated_image", "product_shot"):
+                total_credits += _credits_for_op("generate_image", {})
+            elif t == "animated_image":
+                total_credits += _credits_for_op("animate_image", {"duration": int(b.get("duration", 5))})
+        except Exception:
+            continue
+
+    items = await list_plan_items(ctx.user_token, cid)
+    return json.dumps({
+        "action": "confirmation_required",
+        "operation": "plan_campaign",
+        "campaign_id": cid,
+        "campaign_name": name,
+        "total_items": len(items),
+        "credits": total_credits,
+        "summary": f"{len(items)}-asset campaign over {days} days, {total_credits} credits total.",
+        "items_preview": [
+            {
+                "slot_index": it["slot_index"],
+                "asset_type": it["asset_type"],
+                "scheduled_at": it["scheduled_at"],
+                "platforms": it.get("platforms"),
+                "caption": (it.get("caption") or "")[:140],
+            }
+            for it in items[:6]
+        ],
+        "message": (
+            f"Planned {len(items)} assets across {days} days ({total_credits} credits). "
+            f"Present the plan summary to the user. To approve, call plan_campaign with "
+            f"confirmed=true and campaign_id={cid}. Then immediately call "
+            f"execute_campaign(campaign_id={cid}) in the same turn to start generation."
+        ),
+        "next_call": {"campaign_id": cid, "confirmed": True},
+    })
+
+
+async def _dispatch_campaign_item(
+    ctx: ToolContext,
+    item: dict,
+) -> dict:
+    """Kick off a single plan item's generation job.
+
+    Returns a dict of patch fields to write back onto the plan item row
+    (e.g. {"status": "generating", "job_id": "..."} or {"status": "failed", "error": "..."}).
+
+    IMPORTANT: must be non-blocking. UGC videos go through POST /jobs which
+    returns a job_id immediately — the worker completes it in the background.
+    """
+    asset_type = item.get("asset_type")
+    brief = item.get("brief") or {}
+    try:
+        if asset_type == "ugc_video":
+            payload = {
+                "influencer_id": brief.get("influencer_id") or "00000000-0000-0000-0000-000000000000",
+                "product_id": brief.get("product_id"),
+                "product_type": brief.get("product_type", "physical"),
+                "length": int(brief.get("duration", 15)),
+                "campaign_name": None,
+                "video_language": brief.get("video_language", "en"),
+                "subtitles_enabled": brief.get("subtitles_enabled", True),
+                "music_enabled": brief.get("music_enabled", True),
+                "hook": brief.get("hook"),
+            }
+            payload = {k: v for k, v in payload.items() if v is not None}
+            job = await ctx.core().create_ugc_video_job(payload)
+            job_id = job.get("id") or job.get("job_id")
+            if not job_id:
+                return {"status": "failed", "error": "dispatch returned no job_id"}
+            return {"status": "generating", "job_id": job_id}
+
+        if asset_type == "clone_video":
+            payload = {
+                "clone_id": brief.get("clone_id"),
+                "script_text": brief.get("script_text", ""),
+                "duration": int(brief.get("duration", 15)),
+            }
+            if not payload["clone_id"]:
+                return {"status": "failed", "error": "clone_id missing in brief"}
+            job = await ctx.core().create_clone_job(payload)
+            job_id = job.get("id") or job.get("job_id")
+            if not job_id:
+                return {"status": "failed", "error": "clone dispatch returned no job_id"}
+            return {"status": "generating", "job_id": job_id}
+
+        if asset_type in ("product_shot", "generated_image"):
+            # Image generation is synchronous on our pipeline. Call the
+            # internal image route and mark the item ready immediately.
+            from routers.generate_image import ExecuteRequest, execute_image_generation
+
+            if not ctx.project_id:
+                return {"status": "failed", "error": "project_id required for image assets"}
+            req = ExecuteRequest(
+                prompt=brief.get("prompt", ""),
+                mode=brief.get("mode", "ugc" if asset_type == "product_shot" else "cinematic"),
+                product_id=brief.get("product_id"),
+                influencer_id=brief.get("influencer_id"),
+                reference_image_urls=brief.get("reference_image_urls"),
+                project_id=ctx.project_id,
+            )
+            result = await execute_image_generation(req, ctx.user_token)
+            image_url = result.get("image_url") if isinstance(result, dict) else None
+            if not image_url:
+                return {"status": "failed", "error": "image generation returned no URL"}
+            return {
+                "status": "ready_to_post",
+                "asset_url": image_url,
+            }
+
+        if asset_type == "animated_image":
+            # Best-effort: require an image_url in the brief; fire animate.
+            img = brief.get("image_url")
+            if not img:
+                return {"status": "failed", "error": "animated_image brief must include image_url"}
+            job = await ctx.core().animate_shot(brief.get("shot_id") or "")
+            job_id = job.get("id") or job.get("job_id")
+            return {"status": "generating", "job_id": job_id} if job_id else {
+                "status": "failed",
+                "error": "animate dispatch returned no job_id",
+            }
+
+        return {"status": "failed", "error": f"unknown asset_type: {asset_type}"}
+    except Exception as e:
+        return {"status": "failed", "error": f"{type(e).__name__}: {e}"[:400]}
+
+
+async def _tool_execute_campaign(ctx: ToolContext, **kwargs: Any) -> str:
+    """Dispatch every pending plan item in a campaign. Returns immediately."""
+    from services.campaign_store import (
+        get_campaign,
+        list_plan_items,
+        update_campaign,
+        update_plan_item,
+    )
+
+    cid = kwargs.get("campaign_id")
+    if not cid:
+        return json.dumps({"error": "campaign_id is required"})
+    campaign = await get_campaign(ctx.user_token, cid)
+    if not campaign:
+        return json.dumps({"error": "campaign not found"})
+    status = campaign.get("status")
+    if status not in ("approved", "running"):
+        return json.dumps({
+            "error": f"campaign status is '{status}', not approved. "
+                     f"Call plan_campaign(confirmed=true, campaign_id={cid}) first."
+        })
+
+    items = await list_plan_items(ctx.user_token, cid, status="pending")
+    if not items:
+        return json.dumps({
+            "status": "nothing_to_dispatch",
+            "campaign_id": cid,
+            "message": "All plan items are already dispatched or done.",
+        })
+
+    # Mark campaign as running.
+    try:
+        await update_campaign(ctx.user_token, cid, {"status": "running"})
+    except Exception:
+        pass
+
+    async def _do(it: dict) -> tuple[str, dict]:
+        patch = await _dispatch_campaign_item(ctx, it)
+        try:
+            await update_plan_item(ctx.user_token, it["id"], patch)
+        except Exception as e:
+            return it["id"], {"status": "failed", "error": f"DB update failed: {e}"}
+        return it["id"], patch
+
+    results = await asyncio.gather(*[_do(it) for it in items])
+
+    dispatched = sum(1 for _, p in results if p.get("status") == "generating")
+    ready = sum(1 for _, p in results if p.get("status") == "ready_to_post")
+    failed = sum(1 for _, p in results if p.get("status") == "failed")
+
+    return json.dumps({
+        "status": "dispatched",
+        "campaign_id": cid,
+        "total_items": len(items),
+        "generating": dispatched,
+        "ready_to_post": ready,
+        "failed": failed,
+        "message": (
+            f"Dispatched {len(items)} items ({dispatched} generating, {ready} ready, "
+            f"{failed} failed). The background watcher will auto-schedule each post to "
+            f"its planned platforms as assets finish. Poll get_campaign_status for progress."
+        ),
+    })
+
+
+async def _tool_get_campaign_status(ctx: ToolContext, **kwargs: Any) -> str:
+    from services.campaign_store import get_campaign, list_plan_items
+
+    cid = kwargs.get("campaign_id")
+    if not cid:
+        return json.dumps({"error": "campaign_id is required"})
+    campaign = await get_campaign(ctx.user_token, cid)
+    if not campaign:
+        return json.dumps({"error": "campaign not found"})
+    items = await list_plan_items(ctx.user_token, cid)
+
+    def _counts() -> dict[str, int]:
+        out: dict[str, int] = {}
+        for it in items:
+            s = it.get("status", "unknown")
+            out[s] = out.get(s, 0) + 1
+        return out
+
+    return json.dumps({
+        "campaign_id": cid,
+        "name": campaign.get("name"),
+        "status": campaign.get("status"),
+        "cadence": campaign.get("cadence"),
+        "total_items": len(items),
+        "item_status_counts": _counts(),
+        "items": [
+            {
+                "slot_index": it.get("slot_index"),
+                "asset_type": it.get("asset_type"),
+                "status": it.get("status"),
+                "scheduled_at": it.get("scheduled_at"),
+                "job_id": it.get("job_id"),
+                "asset_url": it.get("asset_url"),
+                "platforms": it.get("platforms"),
+                "error": it.get("error"),
+            }
+            for it in items
+        ],
+    })
 
 
 # ── Phase 5: Remotion editor ──────────────────────────────────────────
@@ -3572,6 +4026,10 @@ TOOL_DISPATCH: dict[str, Callable[..., Awaitable[str]]] = {
     "schedule_posts": _tool_schedule_posts,
     "cancel_scheduled_post": _tool_cancel_scheduled_post,
     "generate_caption": _tool_generate_caption,
+    # durable campaign orchestration (free)
+    "plan_campaign": _tool_plan_campaign,
+    "execute_campaign": _tool_execute_campaign,
+    "get_campaign_status": _tool_get_campaign_status,
     # remotion editor
     "caption_video": _tool_caption_video,
     "list_caption_styles": _tool_list_caption_styles,

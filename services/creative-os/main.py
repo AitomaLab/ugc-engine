@@ -48,12 +48,44 @@ from routers.generate_image import router as image_router
 from routers.generate_video import router as video_router
 from routers.animate import router as animate_router
 from routers.agent import router as agent_router
+from routers.campaigns import router as campaigns_router
 
 app.include_router(projects_router, prefix="/creative-os")
 app.include_router(image_router, prefix="/creative-os")
 app.include_router(video_router, prefix="/creative-os")
 app.include_router(animate_router, prefix="/creative-os")
 app.include_router(agent_router, prefix="/creative-os")
+app.include_router(campaigns_router, prefix="/creative-os")
+
+
+# ── Campaign Watcher (background loop) ──────────────────────────────────
+import asyncio as _asyncio
+
+_watcher_stop: _asyncio.Event | None = None
+_watcher_task: _asyncio.Task | None = None
+
+
+@app.on_event("startup")
+async def _start_campaign_watcher() -> None:
+    global _watcher_stop, _watcher_task
+    if os.getenv("CAMPAIGN_WATCHER_ENABLED", "1") != "1":
+        print("[Creative OS] campaign_watcher disabled via env")
+        return
+    from workers.campaign_watcher import watcher_loop
+    _watcher_stop = _asyncio.Event()
+    _watcher_task = _asyncio.create_task(watcher_loop(_watcher_stop))
+    print("[Creative OS] campaign_watcher launched")
+
+
+@app.on_event("shutdown")
+async def _stop_campaign_watcher() -> None:
+    if _watcher_stop is not None:
+        _watcher_stop.set()
+    if _watcher_task is not None:
+        try:
+            await _asyncio.wait_for(_watcher_task, timeout=5.0)
+        except Exception:
+            pass
 
 
 # ── Upload Endpoint (server-side, bypasses RLS) ────────────────────────
@@ -83,6 +115,12 @@ async def upload_image_base64(request: dict, user: dict = Depends(get_current_us
 
     image_bytes = base64.b64decode(b64_data)
     filename = f"upload_{uuid.uuid4().hex[:12]}.{ext}"
+
+    if content_type.startswith("image/"):
+        from services.image_normalize import normalize_image_bytes
+        image_bytes = normalize_image_bytes(image_bytes)
+        content_type = "image/png"
+        filename = filename.rsplit(".", 1)[0] + ".png"
 
     # Upload via service key (no RLS issues)
     try:
@@ -141,6 +179,12 @@ async def upload_file_multipart(
     if not ext:
         ext = content_type.split("/")[-1].replace("jpeg", "jpg")
     filename = f"agent_uploads/upload_{uuid.uuid4().hex[:12]}.{ext}"
+
+    if kind == "image":
+        from services.image_normalize import normalize_image_bytes
+        contents = normalize_image_bytes(contents)
+        content_type = "image/png"
+        filename = filename.rsplit(".", 1)[0] + ".png"
 
     try:
         from ugc_db.db_manager import get_supabase

@@ -33,20 +33,15 @@ export function ProductUpload({ onUploadSuccess }: { onUploadSuccess: () => void
             setUploading(true);
             const file = fileInputRef.current.files[0];
 
-            // 1. Get signed URL
-            const { signed_url, public_url, path } = await apiFetch<{ signed_url: string, public_url: string, path: string }>('/api/products/upload', {
+            // 1. Upload file server-side (server normalizes format to PNG)
+            const formData = new FormData();
+            formData.append('file', file);
+            const { public_url } = await apiFetch<{ public_url: string, path: string }>('/api/products/upload', {
                 method: 'POST',
-                body: JSON.stringify({ bucket: "product-images", file_name: file.name })
+                body: formData,
             });
 
-            // 2. Upload file
-            await fetch(signed_url, {
-                method: 'PUT',
-                body: file,
-                headers: { 'Content-Type': file.type }
-            });
-
-            // 3. Create database record
+            // 2. Create database record
             console.log('Creating product in DB:', { name, image_url: public_url });
             try {
                 const product = await apiFetch('/api/products', {

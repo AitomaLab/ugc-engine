@@ -1365,6 +1365,9 @@ async def generate_product_shots(
     from env_loader import load_env
     load_env(Path(__file__))
 
+    from services.kling_image import ensure_kling_compatible
+    data.image_url = await ensure_kling_compatible(data.image_url)
+
     # ── Step 1: GPT-4o Vision → NanoBanana prompt ──
     print(f"[Generate Product Shots] Step 1/3: Analyzing product via GPT-4o Vision...")
     print(f"[Generate Product Shots] Image URL: {data.image_url[:100]}...")
@@ -1399,10 +1402,13 @@ async def generate_product_shots(
             print("[Generate Product Shots] Retrying WITHOUT response_format...")
             import asyncio as _aio
             await _aio.sleep(2)
+            _retry_messages = _product_messages + [
+                {"role": "user", "content": "Return ONLY a valid JSON object with the key 'nano_banana_prompt' (and any other keys from the schema). No prose, no markdown fences, no leading or trailing text."}
+            ]
             resp = client.chat.completions.create(
                 model="gpt-4o",
                 temperature=0.4,
-                messages=_product_messages,
+                messages=_retry_messages,
                 max_tokens=1500,
             )
             raw = resp.choices[0].message.content
@@ -1411,15 +1417,31 @@ async def generate_product_shots(
             if not raw:
                 raise ValueError(f"GPT returned empty response twice (finish_reason={finish_reason})")
 
-        # Extract JSON (may be wrapped in markdown fences)
+        # Extract JSON (may be wrapped in markdown fences or embedded in prose)
         cleaned = raw.strip()
         if cleaned.startswith("```"):
             lines = cleaned.split("\n")
             cleaned = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-        result = json.loads(cleaned)
+
+        result = None
+        try:
+            result = json.loads(cleaned)
+        except json.JSONDecodeError:
+            import re as _re
+            match = _re.search(r"\{[\s\S]*\}", cleaned)
+            if match:
+                try:
+                    result = json.loads(match.group(0))
+                except json.JSONDecodeError:
+                    pass
+
+        if result is None:
+            print(f"[Generate Product Shots] Unparseable GPT response ({len(raw)} chars): {raw!r}")
+            raise ValueError(f"GPT returned non-JSON content: {raw[:200]!r}")
 
         nano_prompt = result.get("nano_banana_prompt", "")
         if not nano_prompt:
+            print(f"[Generate Product Shots] Parsed JSON had no nano_banana_prompt. Full response: {raw!r}")
             raise ValueError("GPT returned empty nano_banana_prompt")
 
         print(f"[Generate Product Shots] Prompt: {nano_prompt[:120]}...")

@@ -181,6 +181,12 @@ async def _run_animation_pipeline(job_id: str, data: AnimateRequest, token: str)
         await update_job({"status_message": "Animating image (Kling 3.0)...", "progress": 30})
         duration = max(3, min(15, data.duration))
 
+        # Kling 3.0 only accepts jpeg/jpg/png — convert anything else once + cache.
+        from services.kling_image import ensure_kling_compatible
+        data.image_url = await ensure_kling_compatible(data.image_url)
+        data.product_image_url = await ensure_kling_compatible(data.product_image_url)
+        data.influencer_image_url = await ensure_kling_compatible(data.influencer_image_url)
+
         # Build element references from available images
         kling_elements = []
         element_tags = ""

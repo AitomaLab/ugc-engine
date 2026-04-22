@@ -1126,6 +1126,7 @@ async def _run_cinematic_clip_pipeline(
     import httpx
     import generate_scenes
     from services.prompt_enhancer import enhance_prompt
+    from services.kling_image import ensure_kling_compatible
 
     try:
         # ── Step 0: Update status ──
@@ -1140,6 +1141,14 @@ async def _run_cinematic_clip_pipeline(
             "status_message": "Building element references...",
             "progress": 10,
         })
+
+        # Kling 3.0 only accepts jpeg/jpg/png — convert anything else (webp,
+        # etc.) once and cache the result. No-op for already-compatible URLs.
+        product_image_url = await ensure_kling_compatible(product_image_url)
+        influencer_image_url = await ensure_kling_compatible(influencer_image_url)
+        data.reference_image_url = await ensure_kling_compatible(data.reference_image_url)
+        for ref in (data.element_refs or []):
+            ref.image_url = await ensure_kling_compatible(ref.image_url)
 
         # Determine the first-frame image (image_urls[0] for Kling)
         first_frame_url = data.reference_image_url or influencer_image_url or product_image_url

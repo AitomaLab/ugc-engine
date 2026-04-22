@@ -820,38 +820,43 @@ def api_delete_product(product_id: str):
         print(f"ERROR in api_delete_product: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+from fastapi import UploadFile, File
+
+
 @app.post("/api/products/upload")
-def api_product_upload_url(data: SignedUrlRequest):
+async def api_product_upload(file: UploadFile = File(...)):
     try:
-        # Generate unique filename to avoid 409 Duplicate
         import uuid
-        name_parts = data.file_name.rsplit('.', 1)
-        ext = f".{name_parts[1]}" if len(name_parts) > 1 else ""
-        unique_name = f"{uuid.uuid4()}{ext}"
-        
-        print(f"DEBUG: api_product_upload_url processing {data.file_name} -> {unique_name}")
-        
+        contents = await file.read()
+        max_bytes = 50 * 1024 * 1024
+        if len(contents) > max_bytes:
+            raise HTTPException(status_code=413, detail="File too large (max 50 MB).")
+
+        content_type = (file.content_type or "").lower()
+        if not content_type.startswith("image/"):
+            raise HTTPException(status_code=400, detail=f"Expected image upload, got {content_type!r}")
+
+        from ugc_db.image_normalize import normalize_image_bytes
+        png_bytes = normalize_image_bytes(contents)
+        unique_name = f"{uuid.uuid4()}.png"
+
         sb = get_supabase()
         bucket = "product-images"
-        
-        try:
-            result = sb.storage.from_(bucket).create_signed_upload_url(unique_name)
-            # Construct public URL with the new unique name
-            public_url = sb.storage.from_(bucket).get_public_url(unique_name)
-            return {
-                "signed_url": result.get("signedURL") or result.get("signed_url"), 
-                "public_url": public_url, 
-                "path": unique_name
-            }
-        except Exception as e:
-            print(f"ERROR inside api_product_upload_url inner block: {e}")
-            raise HTTPException(status_code=500, detail=f"Failed to create signed URL: {str(e)}")
-            
+        sb.storage.from_(bucket).upload(
+            unique_name, png_bytes,
+            file_options={"content-type": "image/png", "upsert": "true"},
+        )
+        public_url = sb.storage.from_(bucket).get_public_url(unique_name)
+        print(f"[Product Upload] {file.filename!r} ({len(contents)} B) -> {unique_name} ({len(png_bytes)} B PNG)")
+        return {"public_url": public_url, "path": unique_name}
+
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"ERROR in api_product_upload_url: {e}")
+        print(f"ERROR in api_product_upload: {e}")
         import traceback
         traceback.print_exc()
-        raise
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)[:200]}")
 
 
 class ProductAnalyzeRequest(BaseModel):

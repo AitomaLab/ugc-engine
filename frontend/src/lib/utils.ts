@@ -39,8 +39,11 @@ export async function apiFetch<T = unknown>(
     const method = options?.method?.toUpperCase() || 'GET';
     const headers: Record<string, string> = {};
 
-    // Only add Content-Type for requests that have a body (POST, PUT, PATCH)
-    if (method !== 'GET' && method !== 'DELETE') {
+    // Only add Content-Type for requests that have a body (POST, PUT, PATCH).
+    // Skip when body is FormData — the browser sets multipart/form-data with
+    // the correct boundary, and overriding it breaks the upload.
+    const isFormData = typeof FormData !== 'undefined' && options?.body instanceof FormData;
+    if (method !== 'GET' && method !== 'DELETE' && !isFormData) {
         headers['Content-Type'] = 'application/json';
     }
 
