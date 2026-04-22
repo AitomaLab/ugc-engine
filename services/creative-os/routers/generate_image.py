@@ -1342,6 +1342,8 @@ RULES:
 
 class GenerateProductShotsRequest(BaseModel):
     image_url: str
+    project_id: Optional[str] = None
+    product_id: Optional[str] = None
 
 
 @router.post("/generate-product-shots")
@@ -1497,7 +1499,38 @@ async def generate_product_shots(
             "views": [sheet_url],
         }
 
+    # ── Step 4: Persist each view as a product_shots row so the project's
+    # Images gallery picks them up. Without this step the files exist in
+    # Supabase Storage but no DB row exists, so _fetch_project_images can't
+    # find them and the right-panel gallery renders zero images.
+    view_labels = ["hero_front", "open_functional", "detail_macro", "alt_angle"]
+    shot_rows: list[dict] = []
+    if data.project_id:
+        client = CoreAPIClient(token=user["token"], project_id=data.project_id)
+        for i, view_url in enumerate(views):
+            label = view_labels[i] if i < len(view_labels) else f"view_{i+1}"
+            shot_data = {
+                "shot_type": "product_shot",
+                "status": "image_completed",
+                "image_url": view_url,
+                "project_id": data.project_id,
+                "analysis_json": {
+                    "mode": "product_shot",
+                    "view": label,
+                    "view_index": i,
+                    "product_sheet_url": sheet_url,
+                },
+            }
+            if data.product_id:
+                shot_data["product_id"] = data.product_id
+            try:
+                row = await client.create_standalone_shot(shot_data)
+                shot_rows.append(row)
+            except Exception as e:
+                print(f"[Generate Product Shots] WARN: failed to persist shot row for view {label}: {e}")
+
     return {
         "product_sheet_url": sheet_url,
         "views": views,
+        "shots": shot_rows,
     }

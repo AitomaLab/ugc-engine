@@ -3866,10 +3866,34 @@ async def _tool_generate_product_shots(ctx: ToolContext, **kwargs: Any) -> str:
             echo={k: v for k, v in kwargs.items() if k != "confirmed"},
         )
 
+    image_url = kwargs["image_url"]
+
+    # Resolve the product_id from the image_url when the user @-mentioned an
+    # existing DB product. Without this, the 4 generated shots end up as
+    # standalone project rows instead of being linked to the product, and
+    # won't appear when the user filters the gallery by product.
+    product_id = kwargs.get("product_id")
+    if not product_id and image_url:
+        try:
+            from supabase import create_client
+            sb = create_client(
+                os.getenv("SUPABASE_URL"),
+                os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY"),
+            )
+            match = sb.table("products").select("id").eq("image_url", image_url).limit(1).execute().data or []
+            if match:
+                product_id = match[0]["id"]
+        except Exception as e:
+            print(f"[tool_generate_product_shots] product_id lookup failed: {e}")
+
     user = {"token": ctx.user_token, "id": "agent"}
     try:
         result = await generate_product_shots(
-            data=GenerateProductShotsRequest(image_url=kwargs["image_url"]),
+            data=GenerateProductShotsRequest(
+                image_url=image_url,
+                project_id=ctx.project_id,
+                product_id=product_id,
+            ),
             user=user,
         )
     except Exception as e:
@@ -3880,11 +3904,18 @@ async def _tool_generate_product_shots(ctx: ToolContext, **kwargs: Any) -> str:
 
     views = result.get("views") or []
     sheet_url = result.get("product_sheet_url")
+    shots = result.get("shots") or []
     # Record the 4 persistent Supabase views, not the transient NanoBanana sheet
     # URL (tempfile.aiquickdraw.com — expires before the chat fetches it).
-    artifact_urls = views if views else ([sheet_url] if sheet_url else [])
-    for url in artifact_urls:
-        _record_artifact(ctx, {"type": "image", "url": url})
+    # Include shot_id so the frontend chat bubble can link to / delete the
+    # matching row in the right-panel gallery.
+    for i, view_url in enumerate(views):
+        art: dict = {"type": "image", "url": view_url}
+        if i < len(shots) and shots[i].get("id"):
+            art["shot_id"] = shots[i]["id"]
+        _record_artifact(ctx, art)
+    if not views and sheet_url:
+        _record_artifact(ctx, {"type": "image", "url": sheet_url})
     return json.dumps({
         "product_sheet_url": sheet_url,
         "views": views,
