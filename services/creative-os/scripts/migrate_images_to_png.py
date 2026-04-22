@@ -29,7 +29,7 @@ from ugc_db.image_normalize import normalize_image_bytes
 
 TRIPLES = [
     ("products", "image_url", "product-images"),
-    ("influencers", "reference_image_url", "influencer-images"),
+    ("influencers", "image_url", "influencer-images"),
     ("product_shots", "image_url", "product-images"),
 ]
 
