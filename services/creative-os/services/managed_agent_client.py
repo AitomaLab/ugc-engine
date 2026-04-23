@@ -55,6 +55,23 @@ SYSTEM_PROMPT = """You are Aitoma — the creative director embedded in Aitoma S
 
 When given a brief, plan briefly then act. Prefer chaining tools end-to-end rather than describing what you would do.
 
+## Persistent memory (works across ALL projects and sessions)
+
+You have a `memory` tool backed by a per-user store at `/memories/`. It persists across every project and every chat session for this user. Use it to remember anything durable the user teaches you — preferred caption style, music taste, default aspect ratio, brand voice, recurring directions like "never use emojis", pronunciation of their brand name, names of their regular influencers, products they always shoot in the same way, etc.
+
+AT THE START of every session, silently call `memory` with `command="view"` and `path="/memories"` to load what you already know about this user. Do NOT announce this to the user. If the listing returns files, read the ones that are relevant to the current brief (use `view` with the file path). Apply what you learn BEFORE asking clarifying questions — if memory says the user always wants 9:16, do not ask for aspect ratio.
+
+WRITE to memory when the user teaches you something durable. Organize by topic, one small file per preference:
+- "I always want 9:16 vertical" → `create` `/memories/preferences/aspect_ratio.md`
+- "My caption style is punchy, lowercase, no hashtags" → `/memories/preferences/caption_style.md`
+- "Our brand voice is premium and understated" → `/memories/brand/voice.md`
+- "Never use emojis" → `/memories/preferences/do_not_use.md`
+- "My product is always called 'the Oura Ring', never just 'the ring'" → `/memories/brand/naming.md`
+
+DO NOT write ephemeral state to memory — current job IDs, today's plan, project-specific assets, credit balances, confirmation tokens. Those belong in the project or in-session context, not in cross-project memory.
+
+When a preference changes ("actually I prefer 16:9 now"), use `str_replace` or `delete` + `create` to keep memory accurate. Stale memory is worse than no memory.
+
 ## Speech hygiene — how you talk to the user (HARD RULES)
 Users do NOT see your tool catalogue or the internal architecture. Treat every user-facing message as studio copy, not engineering notes.
 
@@ -278,6 +295,43 @@ def _custom_tools_for_agent() -> list[dict]:
     )
 
     return [
+        # ── Persistent memory (per-user, cross-project) ───────────────
+        {
+            "type": "custom",
+            "name": "memory",
+            "description": (
+                "Persistent per-user memory store under /memories. Use this to remember user "
+                "preferences that should follow them across every project and every session "
+                "(preferred caption styles, music taste, default aspect ratio, brand voice, "
+                "do-not-use words, recurring creative directions, etc.). Do NOT use it for "
+                "ephemeral project state — that lives in the project itself. Always `view /memories` "
+                "at the start of a session to load what you already know about this user."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "enum": ["view", "create", "str_replace", "insert", "delete", "rename"],
+                        "description": "Which memory operation to perform.",
+                    },
+                    "path": {"type": "string", "description": "Memory path under /memories/... Required for view, create, str_replace, insert, delete."},
+                    "file_text": {"type": "string", "description": "Full file content. Used by `create`."},
+                    "old_str": {"type": "string", "description": "Exact substring to replace. Used by `str_replace` (must occur exactly once)."},
+                    "new_str": {"type": "string", "description": "Replacement text. Used by `str_replace`."},
+                    "insert_line": {"type": "integer", "description": "0-indexed line number to insert at. Used by `insert`."},
+                    "insert_text": {"type": "string", "description": "Text to insert. Used by `insert`."},
+                    "old_path": {"type": "string", "description": "Source path. Used by `rename`."},
+                    "new_path": {"type": "string", "description": "Destination path. Used by `rename`."},
+                    "view_range": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "Optional [start, end] 1-indexed line range for `view` on a file.",
+                    },
+                },
+                "required": ["command"],
+            },
+        },
         # ── Discovery (read-only, free) ───────────────────────────────
         {
             "type": "custom",
@@ -4057,7 +4111,55 @@ async def _tool_delete_assets(ctx: ToolContext, **kwargs: Any) -> str:
     return json.dumps({"deleted": deleted, "failed": failed, "total": len(image_ids) + len(video_ids), "errors": errors or None})
 
 
+async def _tool_memory(ctx: ToolContext, **kwargs: Any) -> str:
+    from services import agent_memory as _mem
+
+    user_id = _user_id_from_jwt(ctx.user_token)
+    if not user_id:
+        return json.dumps({"error": "unable to resolve user_id from JWT"})
+    cmd = kwargs.get("command")
+    try:
+        if cmd == "view":
+            return await _mem.view(
+                ctx.user_token, user_id,
+                path=kwargs["path"], view_range=kwargs.get("view_range"),
+            )
+        if cmd == "create":
+            return await _mem.create(
+                ctx.user_token, user_id,
+                path=kwargs["path"], file_text=kwargs.get("file_text", ""),
+            )
+        if cmd == "str_replace":
+            return await _mem.str_replace(
+                ctx.user_token, user_id,
+                path=kwargs["path"],
+                old_str=kwargs.get("old_str", ""),
+                new_str=kwargs.get("new_str", ""),
+            )
+        if cmd == "insert":
+            return await _mem.insert(
+                ctx.user_token, user_id,
+                path=kwargs["path"],
+                insert_line=int(kwargs.get("insert_line", 0)),
+                insert_text=kwargs.get("insert_text", ""),
+            )
+        if cmd == "delete":
+            return await _mem.delete(ctx.user_token, user_id, path=kwargs["path"])
+        if cmd == "rename":
+            return await _mem.rename(
+                ctx.user_token, user_id,
+                old_path=kwargs["old_path"], new_path=kwargs["new_path"],
+            )
+        return f"Error: unknown memory command `{cmd}`"
+    except KeyError as e:
+        return f"Error: missing required parameter for {cmd}: {e}"
+    except Exception as e:
+        return f"Error: {e}"
+
+
 TOOL_DISPATCH: dict[str, Callable[..., Awaitable[str]]] = {
+    # persistent per-user memory
+    "memory": _tool_memory,
     # discovery
     "list_project_assets": _tool_list_project_assets,
     "list_projects": _tool_list_projects,
