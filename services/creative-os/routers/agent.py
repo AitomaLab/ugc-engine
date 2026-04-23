@@ -279,6 +279,7 @@ async def agent_stream(
         async with lock:
             thread = await get_thread(user_token, user_id, project_id)
             session_id: Optional[str] = thread.get("anthropic_session_id") if thread else None
+            stored_agent_id: Optional[str] = thread.get("anthropic_agent_id") if thread else None
             turns: list[dict] = list((thread or {}).get("turns") or [])
 
             # Append user turn immediately so a refresh during the run shows it.
@@ -355,6 +356,7 @@ async def agent_stream(
                     user_token=user_token,
                     project_id=project_id,
                     session_id=session_id,
+                    stored_agent_id=stored_agent_id,
                     prior_turns=prior_turns,
                     lang=data.lang,
                     image_urls=image_urls or None,
@@ -362,10 +364,12 @@ async def agent_stream(
                     t = ev.get("type")
                     if t == "session":
                         session_id = ev["session_id"]
-                        # Persist new/refreshed session id immediately.
+                        stored_agent_id = ev.get("agent_id") or stored_agent_id
+                        # Persist new/refreshed session id + agent binding immediately.
                         await upsert_thread(
                             user_token, user_id, project_id,
                             anthropic_session_id=session_id,
+                            anthropic_agent_id=stored_agent_id,
                         )
                     elif t == "agent_message":
                         current = _ensure_agent_turn()

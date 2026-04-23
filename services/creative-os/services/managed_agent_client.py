@@ -4338,6 +4338,7 @@ class ManagedAgentClient:
         user_token: str,
         project_id: Optional[str],
         session_id: Optional[str] = None,
+        stored_agent_id: Optional[str] = None,
         max_tool_calls: int = 24,
         prior_turns: Optional[list[dict]] = None,
         lang: Optional[str] = None,
@@ -4363,6 +4364,7 @@ class ManagedAgentClient:
                     user_token=user_token,
                     project_id=project_id,
                     session_id=session_id,
+                    stored_agent_id=stored_agent_id,
                     max_tool_calls=max_tool_calls,
                     prior_turns=prior_turns,
                     lang=lang,
@@ -4406,6 +4408,7 @@ class ManagedAgentClient:
         user_token: str,
         project_id: Optional[str],
         session_id: Optional[str] = None,
+        stored_agent_id: Optional[str] = None,
         max_tool_calls: int = 24,
         prior_turns: Optional[list[dict]] = None,
         lang: Optional[str] = None,
@@ -4432,6 +4435,20 @@ class ManagedAgentClient:
                 "conversacionales al usuario son en español.]\n\n" + brief
             )
 
+        # Resolve the current agent_id up front. Sessions on Anthropic's side
+        # are bound to an agent_id at creation — once tied, the session keeps
+        # using that agent's tool list + system prompt. If the stored session
+        # was created under a different agent (we re-created the agent to add
+        # a tool), invalidate the session so we rebind to the current agent.
+        current_agent_id = await self._ensure_agent()
+        if session_id and stored_agent_id and stored_agent_id != current_agent_id:
+            print(
+                f"[ManagedAgent] session {session_id} bound to stale agent "
+                f"{stored_agent_id}; current agent is {current_agent_id}. "
+                f"Invalidating so a fresh session picks up the new tool list / prompt."
+            )
+            session_id = None
+
         # Resolve / create session, with transparent fallback for stale ids.
         # Single events.list(limit=50) does double duty: if it raises NotFound
         # the session is gone (create fresh); otherwise we reuse the response
@@ -4457,7 +4474,7 @@ class ManagedAgentClient:
                 seen_event_ids.clear()
         if not session_id:
             session_id = await self._create_session(brief, project_id)
-        yield {"type": "session", "session_id": session_id}
+        yield {"type": "session", "session_id": session_id, "agent_id": current_agent_id}
 
         ctx = ToolContext(user_token=user_token, project_id=project_id)
         tool_calls_made = 0
@@ -4556,7 +4573,7 @@ class ManagedAgentClient:
             )
             if should_reset:
                 session_id = await _reset_and_send()
-                yield {"type": "session", "session_id": session_id}
+                yield {"type": "session", "session_id": session_id, "agent_id": current_agent_id}
             else:
                 raise
 

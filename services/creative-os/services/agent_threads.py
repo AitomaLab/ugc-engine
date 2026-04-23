@@ -52,7 +52,7 @@ async def get_thread(user_token: str, user_id: str, project_id: str) -> Optional
             params={
                 "user_id": f"eq.{user_id}",
                 "project_id": f"eq.{project_id}",
-                "select": "id,anthropic_session_id,title,turns,created_at,updated_at",
+                "select": "id,anthropic_session_id,anthropic_agent_id,title,turns,created_at,updated_at",
                 "limit": 1,
             },
         )
@@ -69,6 +69,7 @@ async def upsert_thread(
     project_id: str,
     *,
     anthropic_session_id: Optional[str] = None,
+    anthropic_agent_id: Optional[str] = None,
     turns: Optional[list[dict]] = None,
     title: Optional[str] = None,
 ) -> Optional[dict]:
@@ -81,6 +82,8 @@ async def upsert_thread(
     }
     if anthropic_session_id is not None:
         payload["anthropic_session_id"] = anthropic_session_id
+    if anthropic_agent_id is not None:
+        payload["anthropic_agent_id"] = anthropic_agent_id
     if title is not None:
         payload["title"] = title
     if turns is not None:
