@@ -124,8 +124,11 @@ async def upload_image_base64(request: dict, user: dict = Depends(get_current_us
 
     # Upload via service key (no RLS issues)
     try:
-        from ugc_db.db_manager import get_supabase
-        sb = get_supabase()
+        from supabase import create_client
+        sb = create_client(
+            os.getenv("SUPABASE_URL"),
+            os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY"),
+        )
         sb.storage.from_("user-uploads").upload(
             filename, image_bytes,
             file_options={"content-type": content_type, "upsert": "true"},
@@ -187,8 +190,11 @@ async def upload_file_multipart(
         filename = filename.rsplit(".", 1)[0] + ".png"
 
     try:
-        from ugc_db.db_manager import get_supabase
-        sb = get_supabase()
+        from supabase import create_client
+        sb = create_client(
+            os.getenv("SUPABASE_URL"),
+            os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY"),
+        )
         sb.storage.from_("user-uploads").upload(
             filename, contents,
             file_options={"content-type": content_type, "upsert": "true"},
