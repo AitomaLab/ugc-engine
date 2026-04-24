@@ -215,16 +215,25 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
         if (!editPrompt.trim()) return;
         setGenerating(true);
         try {
+            const origAspect = (asset.analysis_json?.aspect_ratio as string) || '9:16';
+            const origQuality = (asset.analysis_json?.quality as string) || '4k';
+            const origPrompt = asset.prompt || '';
+            const isEdit = origPrompt && editPrompt.trim() !== origPrompt.trim();
+            const promptPayload = isEdit
+                ? `Edit the reference image as described below. Preserve all subjects, composition, style, lighting, color grade, aspect ratio, and framing from the reference image. Only change what is explicitly requested.\n\nEdit instruction: ${editPrompt}`
+                : editPrompt;
             await creativeFetch('/creative-os/generate/image/execute', {
                 method: 'POST',
                 body: JSON.stringify({
-                    prompt: editPrompt,
+                    prompt: promptPayload,
                     mode: (asset.analysis_json?.mode as string) || asset.shot_type || 'cinematic',
                     project_id: projectId,
                     product_id: asset.product_id,
                     influencer_id: influencerId,
-                    aspect_ratio: '9:16',
-                    quality: '4k',
+                    reference_image_url: imageUrl || undefined,
+                    aspect_ratio: origAspect,
+                    quality: origQuality,
+                    quick_action: true,
                 }),
             });
             onGenerated?.();
@@ -236,7 +245,7 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
         } finally {
             setGenerating(false);
         }
-    }, [editPrompt, asset.analysis_json, asset.shot_type, asset.product_id, influencerId, projectId, onGenerated, onClose, t]);
+    }, [editPrompt, asset.analysis_json, asset.shot_type, asset.product_id, asset.prompt, influencerId, projectId, imageUrl, onGenerated, onClose, t]);
 
     const handleQuickAction = useCallback(async (action: typeof QUICK_ACTIONS[0]) => {
         setActionLoading(action.id);
@@ -270,7 +279,9 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
     const handleDownload = async () => {
         if (!imageUrl) return;
         try {
-            const resp = await fetch(imageUrl);
+            const proxied = `/api/download-image?url=${encodeURIComponent(imageUrl)}`;
+            const resp = await fetch(proxied);
+            if (!resp.ok) throw new Error(`Download proxy returned ${resp.status}`);
             const blob = await resp.blob();
             const blobUrl = URL.createObjectURL(blob);
             // Detect extension from URL or content-type
