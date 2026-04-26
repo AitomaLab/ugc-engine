@@ -5,6 +5,7 @@ import { apiFetch } from '@/lib/utils';
 import { useProgressiveList } from '@/hooks/useProgressiveList';
 import { useTranslation } from '@/lib/i18n';
 import type { VideoJob, Influencer, SocialConnection } from '@/lib/types';
+import { MODAL_HEIGHT_SHORT } from '@/lib/modal-sizing';
 
 /* ── Platform config ────────────────────────────────────────────────────── */
 const PLATFORM_META: Record<string, { label: string; color: string; maxCaption: number }> = {
@@ -267,7 +268,7 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
         }} onClick={onClose}>
             <div style={{
                 background: '#fafbfd', borderRadius: '20px',
-                width: '92vw', maxWidth: '1100px', maxHeight: '88vh',
+                width: 'min(94vw, 1100px)', maxWidth: 'min(94vw, 1100px)', height: MODAL_HEIGHT_SHORT, maxHeight: MODAL_HEIGHT_SHORT,
                 display: 'flex', flexDirection: 'column', overflow: 'hidden',
                 boxShadow: '0 24px 80px rgba(0,0,0,0.18)',
             }} onClick={e => e.stopPropagation()}>

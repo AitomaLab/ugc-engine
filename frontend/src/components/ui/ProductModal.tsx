@@ -8,6 +8,7 @@ import MediaPreviewModal from '@/components/ui/MediaPreviewModal';
 import { apiFetch } from '@/lib/utils';
 import { creativeFetch } from '@/lib/creative-os-api';
 import { useTranslation } from '@/lib/i18n';
+import { MODAL_HEIGHT_SHORT, MODAL_WIDTH_NARROW } from '@/lib/modal-sizing';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 
@@ -308,7 +309,7 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
             <div style={{
                 position: 'fixed', top: '50%', left: '50%',
                 transform: 'translate(-50%, -50%)',
-                width: '94vw', maxWidth: '900px', height: '90vh', maxHeight: '720px',
+                width: MODAL_WIDTH_NARROW, maxWidth: MODAL_WIDTH_NARROW, height: MODAL_HEIGHT_SHORT, maxHeight: MODAL_HEIGHT_SHORT,
                 background: '#FFF', borderRadius: '20px',
                 boxShadow: '0 32px 80px rgba(0,0,0,0.25)', zIndex: 10000,
                 display: 'flex', overflow: 'hidden',

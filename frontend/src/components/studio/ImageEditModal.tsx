@@ -1,8 +1,10 @@
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { creativeFetch } from '@/lib/creative-os-api';
 import { useTranslation } from '@/lib/i18n';
+import { MODAL_HEIGHT, MODAL_WIDTH } from '@/lib/modal-sizing';
 
 /* Renders the animation preview clip; falls back to a large emoji tile on load error.
    The container is a fixed 9:16 box to match Kling's output aspect ratio. */
@@ -124,6 +126,8 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
     const [actionLoading, setActionLoading] = useState<string | null>(null);
     const [copied, setCopied] = useState(false);
     const [showAnimateModal, setShowAnimateModal] = useState(false);
+    const [mounted, setMounted] = useState(false);
+    useEffect(() => { setMounted(true); }, []);
 
     // ── Editable title ──────────────────────────────────────────────
     const displayName = asset.product_name || t('creativeOs.imageModal.imageFallback');
@@ -305,7 +309,9 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
         }
     };
 
-    return (
+    if (!mounted) return null;
+
+    return createPortal(
         <>
             {/* Backdrop */}
             <div
@@ -326,10 +332,10 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                 top: '50%',
                 left: '50%',
                 transform: 'translate(-50%, -50%)',
-                width: '94vw',
-                maxWidth: '1080px',
-                height: '92vh',
-                maxHeight: '820px',
+                width: MODAL_WIDTH,
+                maxWidth: MODAL_WIDTH,
+                height: MODAL_HEIGHT,
+                maxHeight: MODAL_HEIGHT,
                 background: '#FFF',
                 borderRadius: '20px',
                 boxShadow: '0 32px 80px rgba(0,0,0,0.25)',
@@ -340,7 +346,7 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
             }}>
                 {/* ── Left: Image Preview ── */}
                 <div style={{
-                    flex: '0 0 50%',
+                    flex: '0 0 44%',
                     background: '#0D1117',
                     display: 'flex',
                     alignItems: 'center',
@@ -374,10 +380,10 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                 {/* ── Right: Config Panel ─────────────────────── */}
                 <div style={{
                     flex: '1 1 auto',
-                    padding: '20px 20px 16px',
+                    minWidth: '380px',
+                    minHeight: 0,
                     display: 'flex',
                     flexDirection: 'column',
-                    overflowY: 'auto',
                     position: 'relative',
                 }}>
                     {/* ─ Top: Product info + Download/Publish links + close ─ */}
@@ -385,9 +391,9 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
-                        paddingBottom: '16px',
+                        padding: '20px 20px 16px',
                         borderBottom: '1px solid rgba(0,0,0,0.06)',
-                        marginBottom: '16px',
+                        flexShrink: 0,
                     }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
                             <div style={{
@@ -523,6 +529,13 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                         </div>
                     </div>
 
+                    {/* ─ Scrollable body (Prompt + Information) ─ */}
+                    <div style={{
+                        flex: 1,
+                        minHeight: 0,
+                        overflowY: 'auto',
+                        padding: '16px 20px 0',
+                    }}>
                     {/* ─ Prompt Section ─ */}
                     <div style={{ marginBottom: '20px' }}>
                         <div style={{
@@ -642,11 +655,15 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                         </div>
                     </div>
 
-                    {/* ─ Spacer ─ */}
-                    <div style={{ height: '8px' }} />
-
-                    {/* ─ Create Video CTA ─ */}
-                    <div style={{ marginBottom: '20px' }}>
+                    </div>
+                    {/* ─ Pinned Footer (Create Video + Quick Actions) ─ */}
+                    <div style={{
+                        flexShrink: 0,
+                        padding: '12px 20px 16px',
+                        borderTop: '1px solid rgba(0,0,0,0.06)',
+                        background: '#FFF',
+                    }}>
+                        {/* ─ Create Video CTA ─ */}
                         <button
                             onClick={() => {
                                 onCreateVideo?.(asset);
@@ -664,18 +681,17 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                                 cursor: 'pointer',
                                 transition: 'all 0.2s',
                                 letterSpacing: '0.3px',
+                                marginBottom: '12px',
                             }}
                         >
                             {t('creativeOs.imageModal.createVideo')}
                         </button>
-                    </div>
 
-                    {/* ─ Quick Actions ─ */}
-                    <div>
+                        {/* ─ Quick Actions ─ */}
                         <span style={{
                             fontSize: '11px', fontWeight: 700, color: '#8A93B0',
                             letterSpacing: '0.5px', textTransform: 'uppercase',
-                            display: 'block', marginBottom: '14px',
+                            display: 'block', marginBottom: '8px',
                         }}>{t('creativeOs.imageModal.quickActions')}</span>
                         <div style={{
                             display: 'grid',
@@ -719,9 +735,9 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                         top: '50%',
                         left: '50%',
                         transform: 'translate(-50%, -50%)',
-                        width: '880px',
-                        maxWidth: '96vw',
-                        maxHeight: '92vh',
+                        width: 'min(96vw, 880px)',
+                        maxWidth: 'min(96vw, 880px)',
+                        maxHeight: 'min(88vh, 760px)',
                         overflowY: 'auto',
                         background: '#FFF',
                         borderRadius: '20px',
@@ -915,7 +931,8 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                     to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
                 }
             `}</style>
-        </>
+        </>,
+        document.body
     );
 }
 

@@ -1,9 +1,11 @@
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { creativeFetch } from '@/lib/creative-os-api';
 import { useTranslation } from '@/lib/i18n';
+import { MODAL_HEIGHT, MODAL_WIDTH } from '@/lib/modal-sizing';
 
 /* ── Types ─────────────────────────────────────────────────────── */
 
@@ -82,10 +84,12 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
     const videoRef = useRef<HTMLVideoElement>(null);
     const [isPlaying, setIsPlaying] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
-    const [duration, setDuration] = useState(0);
+    const [duration, setDuration] = useState(asset.length || 0);
     const [rePrompt, setRePrompt] = useState(asset.prompt || asset.script_text || '');
     const [generating, setGenerating] = useState(false);
     const [copied, setCopied] = useState(false);
+    const [mounted, setMounted] = useState(false);
+    useEffect(() => { setMounted(true); }, []);
 
     // ── Editable title ──────────────────────────────────────────────
     const displayName = asset.campaign_name || asset.influencer_name || t('creativeOs.videoModal.videoFallback');
@@ -147,14 +151,20 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
         const v = videoRef.current;
         if (!v) return;
         const onTime = () => setCurrentTime(v.currentTime);
-        const onMeta = () => setDuration(v.duration);
+        const onMeta = () => {
+            if (Number.isFinite(v.duration) && v.duration > 0) setDuration(v.duration);
+        };
         const onEnd = () => setIsPlaying(false);
+        // If metadata already loaded before the listener attached (e.g. cached), pick it up now.
+        onMeta();
         v.addEventListener('timeupdate', onTime);
         v.addEventListener('loadedmetadata', onMeta);
+        v.addEventListener('durationchange', onMeta);
         v.addEventListener('ended', onEnd);
         return () => {
             v.removeEventListener('timeupdate', onTime);
             v.removeEventListener('loadedmetadata', onMeta);
+            v.removeEventListener('durationchange', onMeta);
             v.removeEventListener('ended', onEnd);
         };
     }, []);
@@ -236,7 +246,9 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
 
     /* ── Render ─────────────────────────────────────────────────── */
 
-    return (
+    if (!mounted) return null;
+
+    return createPortal(
         <>
             {/* Backdrop */}
             <div
@@ -257,10 +269,10 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                 top: '50%',
                 left: '50%',
                 transform: 'translate(-50%, -50%)',
-                width: '94vw',
-                maxWidth: '1080px',
-                height: '92vh',
-                maxHeight: '820px',
+                width: MODAL_WIDTH,
+                maxWidth: MODAL_WIDTH,
+                height: MODAL_HEIGHT,
+                maxHeight: MODAL_HEIGHT,
                 background: '#FFF',
                 borderRadius: '20px',
                 boxShadow: '0 32px 80px rgba(0,0,0,0.25)',
@@ -271,7 +283,7 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
             }}>
                 {/* ── Left: Video Preview ── */}
                 <div style={{
-                    flex: '0 0 55%',
+                    flex: '0 0 48%',
                     background: '#0A0A0F',
                     display: 'flex',
                     flexDirection: 'column',
@@ -377,20 +389,20 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                 {/* ── Right: Info Panel ── */}
                 <div style={{
                     flex: '1 1 auto',
-                    padding: '20px 20px 16px',
                     display: 'flex',
                     flexDirection: 'column',
-                    overflowY: 'auto',
+                    minWidth: '380px',
+                    minHeight: 0,
                     position: 'relative',
                 }}>
                     {/* Header: Name + Close */}
                     <div style={{
+                        flexShrink: 0,
+                        padding: '20px 20px 16px',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
-                        paddingBottom: '16px',
                         borderBottom: '1px solid rgba(0,0,0,0.06)',
-                        marginBottom: '16px',
                     }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                             <div style={{
@@ -491,6 +503,14 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                             </svg>
                         </button>
                     </div>
+
+                    {/* Scroll body */}
+                    <div style={{
+                        flex: 1,
+                        minHeight: 0,
+                        overflowY: 'auto',
+                        padding: '16px 20px 0',
+                    }}>
 
                     {/* Script / Prompt */}
                     {(asset.prompt || asset.script_text) && (
@@ -626,11 +646,14 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                         </div>
                     </div>
 
-                    {/* Spacer */}
-                    <div style={{ flex: 1 }} />
+                    </div>
 
-                    {/* Action Buttons */}
+                    {/* Pinned footer */}
                     <div style={{
+                        flexShrink: 0,
+                        padding: '12px 20px 16px',
+                        borderTop: '1px solid rgba(0,0,0,0.06)',
+                        background: '#FFF',
                         display: 'grid',
                         gridTemplateColumns: '1fr 1fr',
                         gap: '8px',
@@ -684,7 +707,8 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                     to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
                 }
             `}</style>
-        </>
+        </>,
+        document.body
     );
 }
 
