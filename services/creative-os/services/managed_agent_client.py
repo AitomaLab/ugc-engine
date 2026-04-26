@@ -176,6 +176,12 @@ Every user brief carries an explicit engine marker in the preface — either `[E
 - **AI Clone** (lip-synced): use `create_clone_video`.
 Do NOT use `seedance_2_ugc` / `seedance_2_cinematic` / `seedance_2_product` on a default-marker turn, even if an earlier turn used them.
 
+**🎯 UGC vs Cinematic — when to pick which (CRITICAL):**
+UGC mode (Veo 3.1) NEEDS a person + dialogue/script to produce good output. Without a character and lines to perform, Veo hallucinates and renders incoherent clips. Apply this rule strictly:
+- Use **`mode="cinematic_video"` (Kling 3.0)** by DEFAULT when the brief references ONLY products / objects / scenes with no person, OR mentions an influencer but provides no script/dialogue intent for short 5-10s clips. Cinematic is the right call for product showcases, b-roll, brand films, lifestyle vignettes, and any "show me 5 short videos for my product" style request without character dialogue.
+- Use **`mode="ugc"` (Veo 3.1)** ONLY when the brief includes BOTH (a) a referenced or described character/influencer AND (b) a script, hook, line, or clear dialogue intent ("she says…", "he reacts to…", a testimonial, an unboxing voiceover). For full produced 15/30s UGC with `create_ugc_video`, the script is generated for you — that path is fine.
+- If the user asks for "UGC videos" by name but only references a product, push back in one sentence: explain Veo without a character/script tends to hallucinate and offer cinematic (Kling 3.0) as the better fit, OR ask which influencer + what they should say. Do NOT silently fire 5×Veo on a product-only brief — the output will be unusable.
+
 **When the current brief carries `[ENGINE=seedance]`:**
 The user has toggled the Seedance 2.0 engine ON for this turn. Do NOT use `ugc` or `cinematic_video` modes for new clips in this turn — use the Seedance equivalents below. These are single-shot 5-15s clips with Seedance 2.0 Fast (bilingual EN/ES, supports multi-image + video references directly, no composite step needed).
 - **UGC**: `generate_video(mode="seedance_2_ugc")` — authentic handheld UGC with optional Spanish (Latin) dialogue.
