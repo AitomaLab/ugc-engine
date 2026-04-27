@@ -13,6 +13,7 @@ Functions:
 """
 import json
 import os
+import re
 import time
 import requests
 from pathlib import Path
@@ -117,7 +118,17 @@ def generate_video(
         }
         if kling_elements:
             kling_input["kling_elements"] = kling_elements
-            print(f"      [Kling] Payload includes {len(kling_elements)} element(s) (no image_urls)")
+            # KIE requires image_urls alongside kling_elements when prompt uses @role refs.
+            element_image_urls: list[str] = []
+            for el in kling_elements:
+                urls = el.get("element_input_urls") or []
+                if urls:
+                    element_image_urls.append(urls[0])
+            if reference_image_url and reference_image_url not in element_image_urls:
+                element_image_urls.insert(0, reference_image_url)
+            if element_image_urls:
+                kling_input["image_urls"] = element_image_urls
+            print(f"      [Kling] Payload includes {len(kling_elements)} element(s), image_urls={len(element_image_urls)}")
         elif reference_image_url:
             kling_input["image_urls"] = [reference_image_url]
         if is_multi:
@@ -292,6 +303,18 @@ RETRIABLE_PATTERNS = (
 )
 
 
+def _wavespeed_primary_enabled() -> bool:
+    """True iff WaveSpeed should be tried before the legacy KIE chain.
+
+    Off by default (USE_WAVESPEED_PRIMARY=false) — preserves byte-for-byte
+    today's behaviour at deploy time. Operator flips to true after smoke-test.
+    Also requires WAVESPEED_API_KEY; if missing, control routes to KIE on
+    the very first try (no wasted try/except round-trip).
+    """
+    flag = os.getenv("USE_WAVESPEED_PRIMARY", "false").strip().lower() == "true"
+    return flag and bool(os.getenv("WAVESPEED_API_KEY"))
+
+
 def _wavespeed_headers() -> dict:
     return {
         "Authorization": f"Bearer {os.getenv('WAVESPEED_API_KEY', '')}",
@@ -420,6 +443,85 @@ def generate_video_wavespeed(prompt, reference_image_url=None, duration=8, famil
     return _wavespeed_submit_and_poll(WAVESPEED_VEO_T2V_ENDPOINT, payload, "Veo t2v")
 
 
+def _wavespeed_primary_video_attempt(
+    *, prompt, reference_image_url, family, duration, aspect_ratio, multi_prompt,
+    element_ids=None, reference_image_urls=None, reference_video_urls=None,
+):
+    """Try video generation via WaveSpeed first using the new wavespeed_client.
+
+    Returns the same dict shape as `generate_video` ({taskId, videoUrl, lastFrameUrl?})
+    on success, or raises so the caller can fall through to the KIE chain.
+
+    Skips kling_elements cases — those need element_id resolution which only
+    the router has the context for. Routers that need element_ids will run
+    their own WS-primary attempt before calling this function.
+    """
+    from services import wavespeed_client as ws
+
+    if family == "veo":
+        if not reference_image_url:
+            # WaveSpeed has no Veo t2v — let the legacy KIE path handle text-only Veo.
+            raise ws.WaveSpeedError("WS Veo t2v not supported — falling through to KIE", transient=True)
+        ws_dur = min((4, 6, 8), key=lambda d: abs(d - int(duration)))
+        data = ws.veo31_fast_i2v(
+            image=reference_image_url,
+            prompt=prompt or "",
+            duration=ws_dur,
+            aspect_ratio=aspect_ratio,
+        )
+    elif family == "seedance":
+        sd_dur = max(4, min(15, int(duration)))
+        ref_imgs = [u for u in (reference_image_urls or []) if u]
+        ref_vids = [u for u in (reference_video_urls or []) if u]
+        # Replace KIE-specific @ImageN / @VideoN placeholders with descriptive
+        # noun phrases. WaveSpeed Seedance has no concept of named refs; if we
+        # leave the literal tokens the model can render them as on-screen text,
+        # but if we delete them outright the surrounding sentence becomes a
+        # fragment ("@Image1 captures Alexa" → " captures Alexa"). The noun
+        # phrase keeps the prompt grammatical without leaking a token.
+        ws_prompt = re.sub(r"@Image\d+", "the reference image", prompt or "")
+        ws_prompt = re.sub(r"@Video\d+", "the reference video", ws_prompt).strip()
+        # Multi-image or video-ref → t2v. WaveSpeed i2v is single-image only;
+        # routing >1 image through i2v silently drops everything past the first,
+        # which loses product/secondary-ref fidelity. KIE's unified Seedance
+        # endpoint accepts a reference_image_urls array, so to match KIE quality
+        # on WaveSpeed we use t2v for any multi-ref case.
+        if ref_vids or len(ref_imgs) > 1:
+            data = ws.seedance2_fast_t2v(
+                prompt=ws_prompt,
+                reference_images=ref_imgs or None,
+                reference_videos=ref_vids or None,
+                duration=sd_dur,
+                aspect_ratio=aspect_ratio or "9:16",
+            )
+        else:
+            primary_img = reference_image_url or (ref_imgs[0] if ref_imgs else None)
+            if not primary_img:
+                raise ws.WaveSpeedError("WS Seedance i2v requires reference image", transient=True)
+            data = ws.seedance2_fast_i2v(
+                image=primary_img,
+                prompt=ws_prompt,
+                duration=sd_dur,
+                aspect_ratio=aspect_ratio,
+            )
+    else:  # kling
+        if not reference_image_url:
+            raise ws.WaveSpeedError("WS Kling i2v requires reference image", transient=True)
+        kling_dur = max(3, min(15, int(duration)))
+        data = ws.kling_v3_std_i2v(
+            image=reference_image_url,
+            prompt=prompt or "",
+            duration=kling_dur,
+            multi_prompt=multi_prompt,
+            element_ids=list(element_ids) if element_ids else None,
+        )
+
+    pred_id = data["id"]
+    result = ws.poll_until_done(pred_id, label=f"WS {family}", max_poll_seconds=1200)
+    video_url = ws.first_output_url(result)
+    return {"taskId": pred_id, "videoUrl": video_url, "lastFrameUrl": None}
+
+
 def generate_video_with_retry(
     prompt,
     reference_image_url=None,
@@ -431,9 +533,48 @@ def generate_video_with_retry(
     kling_elements=None,
     multi_prompt=None,
     aspect_ratio="9:16",
+    element_ids=None,
+    reference_image_urls=None,
+    reference_video_urls=None,
 ):
-    """Try KIE (with short retries) then fall back to WaveSpeed for the same family."""
+    """Try KIE (with short retries) then fall back to WaveSpeed for the same family.
+
+    When USE_WAVESPEED_PRIMARY=true, attempt WaveSpeed first for non-element
+    cases. Any exception falls through to the legacy KIE chain unchanged.
+    """
     family = _get_model_family(model_api or "")
+
+    # ── WaveSpeed-primary outer layer (additive; no behaviour change when flag off) ──
+    # Skip WS-primary when kling_elements are present without pre-resolved element_ids
+    # (the router has the context to resolve element_ids and will pass them in).
+    # Also skip for the seedance family: KIE is materially faster than WaveSpeed
+    # for Seedance 2.0 Fast multi-ref jobs (~150s vs ~360-450s on identical
+    # payloads). KIE is the better primary for Seedance; WaveSpeed remains the
+    # tail-end fallback at the bottom of this function.
+    can_attempt_ws = (
+        _wavespeed_primary_enabled()
+        and family != "seedance"
+        and (not kling_elements or element_ids)
+    )
+    if can_attempt_ws:
+        try:
+            print(f"      [WaveSpeed primary] Attempt for family={family} element_ids={element_ids or '-'}")
+            return _wavespeed_primary_video_attempt(
+                prompt=prompt,
+                reference_image_url=reference_image_url,
+                family=family,
+                duration=duration,
+                aspect_ratio=aspect_ratio,
+                multi_prompt=multi_prompt,
+                element_ids=element_ids,
+                reference_image_urls=reference_image_urls,
+                reference_video_urls=reference_video_urls,
+            )
+        except Exception as ws_primary_err:
+            print(f"      [WaveSpeed primary failed: {ws_primary_err}] — falling through to KIE chain")
+            # Fall through to the unchanged legacy chain below.
+
+    # ── Legacy KIE-then-WS-secondary chain (unchanged) ─────────────────
     # Veo: 5-min fast-fail. Kling/Seedance: 10 min (they're inherently slower).
     kie_max_poll = 300 if family == "veo" else 600
     last_error: Exception | None = None
@@ -447,6 +588,8 @@ def generate_video_with_retry(
                 multi_prompt=multi_prompt,
                 max_poll_seconds=kie_max_poll,
                 aspect_ratio=aspect_ratio,
+                reference_image_urls=reference_image_urls,
+                reference_video_urls=reference_video_urls,
             )
         except RuntimeError as e:
             last_error = e
@@ -632,6 +775,44 @@ def generate_composite_image_wavespeed(scene: dict) -> str:
     raise RuntimeError("WaveSpeed NanoBanana timed out")
 
 
+def _wavespeed_primary_composite_attempt(scene: dict, *, aspect_ratio: str = "9:16") -> str:
+    """Composite-image attempt via WaveSpeed nanobanana_edit with full images[] array.
+
+    Sends ALL reference URLs (up to 14) per the WaveSpeed schema, fixing the
+    legacy single-`image` hack used in `generate_composite_image_wavespeed`.
+    Falls back to nanobanana_t2i when no inputs are present.
+    """
+    from services import wavespeed_client as ws
+
+    images: list[str] = []
+    for key in ("reference_image_url", "product_image_url"):
+        val = scene.get(key)
+        if val and val not in images:
+            images.append(val)
+    for url in scene.get("image_input") or []:
+        if url and url not in images:
+            images.append(url)
+
+    prompt = scene.get("nano_banana_prompt") or scene.get("prompt") or ""
+
+    if images:
+        data = ws.nanobanana_edit(
+            images=images[:14],
+            prompt=prompt,
+            aspect_ratio=aspect_ratio,
+            resolution="2k",
+        )
+    else:
+        data = ws.nanobanana_t2i(
+            prompt=prompt,
+            aspect_ratio=aspect_ratio,
+            resolution="2k",
+        )
+    pred_id = data["id"]
+    result = ws.poll_until_done(pred_id, label="WS NanoBanana", max_poll_seconds=600)
+    return ws.first_output_url(result)
+
+
 def generate_composite_image_with_retry(
     scene: dict, influencer: dict, product: dict, seed: int = None, max_retries: int = 5,
     aspect_ratio: str = "9:16",
@@ -640,7 +821,19 @@ def generate_composite_image_with_retry(
 
     `aspect_ratio` forwards to the NanoBanana input so the composite matches
     the downstream video orientation ("9:16" or "16:9").
+
+    When USE_WAVESPEED_PRIMARY=true, attempt WaveSpeed first with the full
+    `images[]` array; any error falls through to the legacy KIE chain.
     """
+    # ── WaveSpeed-primary outer layer (additive) ─────────────────────────
+    if _wavespeed_primary_enabled():
+        try:
+            print("      [WaveSpeed primary] NanoBanana composite attempt")
+            return _wavespeed_primary_composite_attempt(scene, aspect_ratio=aspect_ratio)
+        except Exception as ws_primary_err:
+            print(f"      [WaveSpeed primary failed: {ws_primary_err}] — falling through to KIE chain")
+
+    # ── Legacy KIE-then-WS-secondary chain (unchanged) ───────────────────
     last_error: Exception | None = None
     for attempt in range(max_retries):
         try:

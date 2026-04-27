@@ -67,8 +67,13 @@ def sanitize_dialogue(text: str) -> str:
     text = re.sub(r"\[.*?\]", "", text)
     text = re.sub(r"\(.*?\)", "", text)
 
-    # Convert dashes to natural pauses
-    text = text.replace("\u2014", "...").replace("-", "...")
+    # Veo TTS pronounces "." literally — collapse ellipses to a comma pause.
+    text = text.replace("\u2026", ", ")
+    text = re.sub(r"\.{2,}", ", ", text)
+
+    # Convert dashes to a comma pause (NOT "..." — Veo TTS reads each period
+    # aloud as "dot", so "game-changer" → "game...changer" → "game dot changer").
+    text = text.replace("\u2014", ", ").replace("-", ", ")
 
     # Remove emojis and non-Latin/non-punctuation symbols
     text = re.sub(

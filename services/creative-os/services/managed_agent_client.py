@@ -59,7 +59,7 @@ When given a brief, plan briefly then act. Prefer chaining tools end-to-end rath
 
 You have a `memory` tool backed by a per-user store at `/memories/`. It persists across every project and every chat session for this user. Use it to remember anything durable the user teaches you — preferred caption style, music taste, default aspect ratio, brand voice, recurring directions like "never use emojis", pronunciation of their brand name, names of their regular influencers, products they always shoot in the same way, etc.
 
-AT THE START of every session, silently call `memory` with `command="view"` and `path="/memories"` to load what you already know about this user. Do NOT announce this to the user. If the listing returns files, read the ones that are relevant to the current brief (use `view` with the file path). Apply what you learn BEFORE asking clarifying questions — if memory says the user always wants 9:16, do not ask for aspect ratio.
+A `[Memory snapshot]` block is injected into the brief on the first turn of every session — it contains a flat dump of every memory file you have for this user. Read it once at the top of the conversation and apply what's relevant to the brief. DO NOT call the `memory` tool just to read what you already know — the snapshot is already in your context. Apply what you learn BEFORE asking clarifying questions — if memory says the user always wants 9:16, do not ask for aspect ratio. Only call the `memory` tool when you need to WRITE / UPDATE / DELETE / RENAME (e.g. the user just taught you a new preference, or asked you to forget something). Reading a specific file with `view` is fine if you need its full contents and the snapshot was truncated, but don't do a blanket `view /memories` at session start.
 
 WRITE to memory when the user teaches you something durable. Organize by topic, one small file per preference:
 - "I always want 9:16 vertical" → `create` `/memories/preferences/aspect_ratio.md`
@@ -160,9 +160,21 @@ Gated tools cost real credits. You MUST get explicit user confirmation before sp
 
 ⚠️ RETRIES / RE-FIRES. When the user asks to re-run, retry, or re-fire a previously-failed generation ("re-fire those cinematics", "try those two again", "redo"), treat it as a fresh gated call: `confirmed=false` ONCE to get the real cost from the tool, present it, end turn. When they confirm, fire `confirmed=true`. Do not quote from memory "that was 44 credits earlier" — always pull the number from a fresh tool result.
 
-Do NOT bypass this gate. Do NOT call gated tools with `confirmed=true` on the first call — not even for a single small image. Cost transparency is non-negotiable.
+Do NOT bypass this gate. Do NOT call gated tools with `confirmed=true` on the first call — except for the explicitly-whitelisted fast-path below. Cost transparency is non-negotiable.
 
-For multi-step plans ("generate 3 images then animate two of them"), call `estimate_credits` first to preview the TOTAL cost as a single bundled number, present it once, then execute the steps with `confirmed=true` after the user agrees to the bundle.
+⚡ FAST-PATH for cheap ops (≤ 5 credits — image-only, no references). The following calls are pre-authorized and may be fired with `confirmed=true` on the FIRST call, skipping the preview-then-confirm round-trip:
+  • `generate_image_text_only` — pure text-to-image, no product / influencer / reference images. Cost: 5 credits.
+  • `generate_image` when called with NO `product_id`, NO `influencer_id`, and NO `reference_image_urls` (effectively prompt-only). Cost: 5 credits.
+When you use the fast-path, you MUST end the response in which the result lands with the line: "Done — 5 credits charged." so the user sees the debit. Every OTHER gated tool (videos, full UGC, alt-versions, identity sheets, product shots, animation, render, generate_image when references / product / influencer are involved) MUST follow the standard preview-then-confirm gate. The fast-path is ONLY for prompt-only image generation; do not extend it to anything else.
+
+For multi-step plans ("generate 3 images then animate two of them", "give me 3 alternatives"), call `estimate_credits` ALONE first to preview the TOTAL cost as a single bundled number, present it once, then execute the steps with `confirmed=true` after the user agrees to the bundle.
+
+⚠️ DO NOT mix `estimate_credits` with gated-tool `confirmed=false` calls in the same turn. Either:
+  (a) Call `estimate_credits` only — to bundle a multi-step total — and present that number. Do NOT also call any gated tool with `confirmed=false` in the same turn. OR
+  (b) Call ONE gated tool with `confirmed=false` to get its `confirmation_required` payload — and present that number. Do NOT also call `estimate_credits` in the same turn.
+Mixing the two produces TWO competing "present this cost, wait" instructions and confuses the turn. Pick one path, present one number, end turn.
+
+After ANY cost-preview tool result (confirmation_required OR estimate_credits), you MUST emit a user-facing text message in the SAME turn quoting the credit number and asking for confirmation. Never end a turn that contained a confirmation_required tool result without writing that user-facing text — the user will see nothing and assume the agent froze.
 
 The gated tools are exactly: generate_image, generate_influencer, generate_identity, generate_product_shots, animate_image, generate_video, create_ugc_video, create_clone_video, create_bulk_campaign, render_edited_video. Everything else (including combine_videos) is free of the confirmation gate and can be called immediately.
 
@@ -200,6 +212,18 @@ If the user's brief requires a full 15/30s produced video (create_ugc_video) or 
 **Product shot sheet**: list_project_assets → pick product → generate_product_shots(image_url) (gated). Returns 4 professional product views.
 
 **Single UGC clip (5-10s)**: list_project_assets → generate_video(mode="ugc", clip_length=8) (gated). Confirm completion in plain text — the panel renders the video thumbnail automatically.
+
+**Extend an existing clip ("extend / continue / lengthen / make it longer")**: when the user refers to a clip you already produced (this turn or earlier) and asks for more time / to continue the action / to keep going, you MUST call `extend_video(video_url=<that clip's URL>, continuation_prompt=<their script direction or empty>)`. Do NOT call `generate_video` to start a fresh clip — that ignores the existing footage and burns credits. Do NOT call `apply_editor_ops` — extend is a Veo-side render, not an editor op.
+
+⚠️ DO NOT INTERROGATE THE USER before calling extend_video. The backend automatically recovers character (influencer), product, original scene description, and dialogue language from the source clip's database row and rebuilds the full Veo prompt. You do NOT need to re-ask:
+  – which product the clip is about (looked up from product_id)
+  – who the character is or what they look like (looked up from influencer_id; "alexa" / "alex" / etc. in a chip label is the INFLUENCER NAME, NEVER an Amazon Alexa device or unrelated brand)
+  – what language the dialogue is in (stored on the job)
+  – what the original scene/script was (stored in metadata.hook)
+  – how long to extend (fixed ~8s — see tool description)
+The ONLY thing you might ask is the user's script direction for the continuation, and ONLY if they gave you nothing at all. If they said anything like "extend it", "make it longer", "have her keep talking about the benefits", that IS the script direction — pass it through as continuation_prompt and fire the gate. If they gave no direction at all, you may pass an empty/omitted continuation_prompt and let Veo continue the original action naturally — DO NOT block on a clarifying question.
+
+The video_url the user is referring to should already be in the conversation context (latest video_url from a generate_video / create_ugc_video result, or the URL the user pasted/@-mentioned). Only Veo outputs are extendable; if the last clip was Kling (cinematic_video) or Seedance, tell the user extend isn't available for that engine and offer to generate a fresh clip instead.
 
 **Full UGC video (15-30s)**: list_project_assets → if the user supplied their own script/hook text, use it as the `hook` argument. Otherwise you MUST call `generate_scripts(product_id, duration, influencer_id, context=<user's brief>)` FIRST to produce a length-appropriate structured script, then pass the generated hook concatenated with each scene's dialogue (newline-joined) as the `hook` argument to create_ugc_video. Never skip this step when the user didn't give you script text — the job pipeline will otherwise pick a random library script unrelated to the brief. Do not write scripts from memory — always invoke the tool. Then call create_ugc_video (gated). Wait for completion, then confirm in plain text.
 
@@ -600,6 +624,86 @@ def _custom_tools_for_agent() -> list[dict]:
                     "confirmed": {"type": "boolean", "description": confirmed_desc},
                 },
                 "required": ["prompt", "mode"],
+            },
+        },
+
+        # ── WaveSpeed-only additive tools ─────────────────────────────
+        {
+            "type": "custom",
+            "name": "extend_video",
+            "description": (
+                "Append a fixed ~8s continuation to a Veo clip (Veo 3.1 Fast extend; duration is NOT "
+                "tunable — do NOT ask the user how long). For longer extensions, call this tool multiple "
+                "times on each new output. Only Veo outputs (default-engine ugc / cinematic_video) can be "
+                "extended; Kling and Seedance cannot. `continuation_prompt` carries the user's SCRIPT "
+                "DIRECTION for the extended portion: what the character says/does, dialogue, action, mood. "
+                "ANY user guidance about extension content belongs there — NEVER call apply_editor_ops or "
+                "emit text-overlay ops for an extend request. Example: 'have alexa keep promoting the "
+                "drink's benefits'. Omit only if the user gave no direction. FIRST call returns a credit "
+                "estimate; after user confirms, call again with confirmed=true."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "video_url": {"type": "string", "description": "Public URL of the Veo clip to extend."},
+                    "continuation_prompt": {
+                        "type": "string",
+                        "description": "Optional description of the action to continue. Omit to let the model continue naturally.",
+                    },
+                    "resolution": {"type": "string", "enum": ["720p", "1080p"], "description": "Output resolution (default 1080p)."},
+                    "confirmed": {"type": "boolean", "description": confirmed_desc},
+                },
+                "required": ["video_url"],
+            },
+        },
+        {
+            "type": "custom",
+            "name": "generate_image_text_only",
+            "description": (
+                "Generate a still image from text alone (no reference images). Use this ONLY when the user "
+                "wants a pure prompt-driven image with no product, influencer, or upload reference. "
+                "Prefer the regular generate_image tool whenever a product/influencer/upload is in play — "
+                "those references should compose into the output. "
+                "FIRST call returns a credit cost estimate. After user confirms, call again with confirmed=true."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string"},
+                    "aspect_ratio": {"type": "string", "enum": ["9:16", "16:9", "1:1"], "description": "Default 9:16 vertical."},
+                    "quality": {"type": "string", "enum": ["1k", "2k", "4k"], "description": "Output resolution. Default 2k."},
+                    "confirmed": {"type": "boolean", "description": confirmed_desc},
+                },
+                "required": ["prompt"],
+            },
+        },
+        {
+            "type": "custom",
+            "name": "generate_image_alt_versions",
+            "description": (
+                "Produce 2 alternative variations of an image edit using NanoBanana Pro edit-multi. Use when "
+                "the user asks for 'alternatives', 'variations', or 'show me other options' AFTER a first "
+                "composite has already been generated. Pass the original input images (the same ones used "
+                "for the prior generate_image call). Returns 2 distinct alternative outputs in one call. "
+                "FIRST call returns a credit cost estimate. After user confirms, call again with confirmed=true."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string"},
+                    "images": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Reference image URLs (1-14). Same set as the original generate_image call.",
+                    },
+                    "aspect_ratio": {
+                        "type": "string",
+                        "enum": ["3:2", "2:3", "3:4", "4:3"],
+                        "description": "Edit-multi supports only 3:2 / 2:3 / 3:4 / 4:3. Default 3:2.",
+                    },
+                    "confirmed": {"type": "boolean", "description": confirmed_desc},
+                },
+                "required": ["prompt", "images"],
             },
         },
 
@@ -1768,6 +1872,116 @@ async def _tool_generate_video(ctx: ToolContext, **kwargs: Any) -> str:
 
 
 # ── Polling helper for long-running jobs ──────────────────────────────
+async def _tool_extend_video(ctx: ToolContext, **kwargs: Any) -> str:
+    from routers.generate_video import ExtendVideoRequest, extend_video
+
+    if not kwargs.get("video_url"):
+        return json.dumps({"error": "video_url is required"})
+
+    if not kwargs.get("confirmed"):
+        credits = _credits_for_op("extend_video", {})
+        return _confirmation_payload(
+            operation="extend_video",
+            credits=credits,
+            summary="Extend Veo clip by ~4-8 seconds of continuous motion",
+            echo={k: v for k, v in kwargs.items() if k != "confirmed"},
+        )
+
+    req = ExtendVideoRequest(
+        video_url=kwargs["video_url"],
+        prompt=kwargs.get("continuation_prompt"),
+        resolution=kwargs.get("resolution") or "1080p",
+        project_id=ctx.project_id,
+    )
+    user = {"token": ctx.user_token, "id": "agent"}
+    try:
+        result = await extend_video(req, user=user)  # type: ignore[arg-type]
+    except Exception as e:
+        return json.dumps({"error": f"extend_video failed: {e}"})
+
+    video_url = result.get("video_url") if isinstance(result, dict) else None
+    if video_url:
+        _record_artifact(ctx, {"type": "video", "url": video_url})
+    return json.dumps({
+        "status": "success",
+        "video_url": video_url,
+        "source_video_url": kwargs["video_url"],
+    })
+
+
+async def _tool_generate_image_text_only(ctx: ToolContext, **kwargs: Any) -> str:
+    from routers.generate_image import TextToImageRequest, text_to_image
+
+    if not kwargs.get("prompt"):
+        return json.dumps({"error": "prompt is required"})
+
+    if not kwargs.get("confirmed"):
+        credits = _credits_for_op("generate_image", {})
+        return _confirmation_payload(
+            operation="generate_image_text_only",
+            credits=credits,
+            summary="Generate 1 still image from text only (no references)",
+            echo={k: v for k, v in kwargs.items() if k != "confirmed"},
+        )
+
+    req = TextToImageRequest(
+        prompt=kwargs["prompt"],
+        aspect_ratio=kwargs.get("aspect_ratio") or "9:16",
+        quality=kwargs.get("quality") or "2k",
+        project_id=ctx.project_id,
+    )
+    user = {"token": ctx.user_token, "id": "agent"}
+    try:
+        result = await text_to_image(req, user=user)  # type: ignore[arg-type]
+    except Exception as e:
+        return json.dumps({"error": f"generate_image_text_only failed: {e}"})
+
+    image_url = result.get("image_url") if isinstance(result, dict) else None
+    shot_id = result.get("shot_id") if isinstance(result, dict) else None
+    if image_url:
+        _record_artifact(ctx, {"type": "image", "url": image_url, "shot_id": shot_id})
+    return json.dumps({"status": "success", "image_url": image_url, "shot_id": shot_id})
+
+
+async def _tool_generate_image_alt_versions(ctx: ToolContext, **kwargs: Any) -> str:
+    from routers.generate_image import AltVersionsRequest, alt_versions
+
+    images = kwargs.get("images") or []
+    if not kwargs.get("prompt"):
+        return json.dumps({"error": "prompt is required"})
+    if not images:
+        return json.dumps({"error": "images is required (at least one URL)"})
+
+    if not kwargs.get("confirmed"):
+        # Two outputs returned in one call — preview as 2 image generations.
+        credits = _credits_for_op("generate_image", {}) * 2
+        return _confirmation_payload(
+            operation="generate_image_alt_versions",
+            credits=credits,
+            summary="Generate 2 alternative image variations from the same references",
+            echo={k: v for k, v in kwargs.items() if k != "confirmed"},
+        )
+
+    req = AltVersionsRequest(
+        prompt=kwargs["prompt"],
+        images=list(images),
+        aspect_ratio=kwargs.get("aspect_ratio") or "3:2",
+        project_id=ctx.project_id,
+    )
+    user = {"token": ctx.user_token, "id": "agent"}
+    try:
+        result = await alt_versions(req, user=user)  # type: ignore[arg-type]
+    except Exception as e:
+        return json.dumps({"error": f"generate_image_alt_versions failed: {e}"})
+
+    image_urls = result.get("image_urls") or []
+    shot_ids = result.get("shot_ids") or []
+    for i, url in enumerate(image_urls):
+        sid = shot_ids[i] if i < len(shot_ids) else None
+        _record_artifact(ctx, {"type": "image", "url": url, "shot_id": sid})
+    return json.dumps({"status": "success", "image_urls": image_urls, "shot_ids": shot_ids})
+
+
 async def _poll_job_until_terminal(
     ctx: ToolContext,
     job_id: str,
@@ -4183,6 +4397,10 @@ TOOL_DISPATCH: dict[str, Callable[..., Awaitable[str]]] = {
     "generate_image": _tool_generate_image,
     "animate_image": _tool_animate_image,
     "generate_video": _tool_generate_video,
+    # WaveSpeed-only additive tools
+    "extend_video": _tool_extend_video,
+    "generate_image_text_only": _tool_generate_image_text_only,
+    "generate_image_alt_versions": _tool_generate_image_alt_versions,
     # image generation & identity (gated)
     "generate_influencer": _tool_generate_influencer,
     "generate_identity": _tool_generate_identity,
@@ -4235,6 +4453,20 @@ def _summarize_input(tool_input: dict, max_len: int = 80) -> str:
     except Exception:
         s = str(tool_input)
     return s if len(s) <= max_len else s[: max_len - 1] + "…"
+
+
+# Strip leaked `AI_EDIT_OPS [...]` text from agent chat messages. This is the
+# old in-editor side-panel format — it does nothing in the dashboard chat and
+# just exposes JSON to the user. The agent is told repeatedly (system prompt
+# + per-turn reminder) to call `apply_editor_ops` instead, but the pretrained
+# pattern still leaks occasionally. Server-side scrub guarantees the user
+# never sees it.
+import re as _re_module
+_AI_EDIT_OPS_LEAK_RE = _re_module.compile(r"AI_EDIT_OPS[\s\S]*", _re_module.MULTILINE)
+
+
+def _strip_ai_edit_ops_leak(text: str) -> str:
+    return _AI_EDIT_OPS_LEAK_RE.sub("", text).rstrip()
 
 
 def _summarize_result(result_text: str, max_len: int = 120) -> str:
@@ -4325,6 +4557,12 @@ class ManagedAgentClient:
         )
         print(f"[ManagedAgent] created session {session.id}")
         return session.id
+
+    async def prewarm_session(self, project_id: Optional[str]) -> str:
+        """Eagerly create an Anthropic session before the user sends their first
+        message, so the send path skips the ~1-2s session-create round-trip.
+        """
+        return await self._create_session(brief="prewarm", project_id=project_id)
 
     async def interrupt_session(self, session_id: str) -> None:
         """Best-effort: tell Anthropic to abort whatever the agent is doing."""
@@ -4584,6 +4822,10 @@ class ManagedAgentClient:
                 raise
 
         try:
+            # Carries cost-preview info from one pass to the next, so if the
+            # agent ends a turn after a confirmation_required result without
+            # writing user-facing text, we can synthesize a fallback message.
+            pending_confirmation: dict | None = None
             while True:
                 stream = await self._client.beta.sessions.events.stream(session_id)
                 went_idle = False
@@ -4592,6 +4834,7 @@ class ManagedAgentClient:
                 # and results are batched back in one send.
                 pending_tool_calls: list[Any] = []
                 hit_limit = False
+                emitted_text_this_pass = False
 
                 async for ev in stream:
                     ev_type = getattr(ev, "type", None)
@@ -4610,6 +4853,12 @@ class ManagedAgentClient:
                             # renders as its own bubble in the UI.
                             paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
                             for p in paragraphs:
+                                # Scrub leaked AI_EDIT_OPS chat text — old
+                                # in-editor format that the dashboard ignores.
+                                p = _strip_ai_edit_ops_leak(p)
+                                if not p:
+                                    continue
+                                emitted_text_this_pass = True
                                 yield {"type": "agent_message", "text": p}
 
                     elif ev_type == "agent.custom_tool_use":
@@ -4690,7 +4939,11 @@ class ManagedAgentClient:
                             results.append(("", json.dumps({"error": str(e)}), True))
 
                     # Emit tool_result events for the UI activity log and build the batched send payload.
+                    # Also collect cost-preview totals so we can synthesize a fallback message
+                    # if the agent fails to write user-facing text on the next stream pass.
                     tool_result_events: list[dict] = []
+                    confirm_total_credits = 0
+                    confirm_summaries: list[str] = []
                     for tool_use_id, result_text, is_error in results:
                         yield {
                             "type": "tool_result",
@@ -4704,6 +4957,29 @@ class ManagedAgentClient:
                             "content": [{"type": "text", "text": result_text}],
                             "is_error": is_error,
                         })
+                        if not is_error:
+                            try:
+                                parsed = json.loads(result_text)
+                            except Exception:
+                                parsed = None
+                            if isinstance(parsed, dict):
+                                if parsed.get("action") == "confirmation_required":
+                                    c = parsed.get("credits")
+                                    s = parsed.get("summary") or parsed.get("operation")
+                                    if isinstance(c, (int, float)):
+                                        confirm_total_credits += int(c)
+                                    if s:
+                                        confirm_summaries.append(str(s))
+                                elif "total_credits" in parsed and "line_items" in parsed:
+                                    c = parsed.get("total_credits")
+                                    if isinstance(c, (int, float)):
+                                        confirm_total_credits += int(c)
+                                    confirm_summaries.append("estimated bundle")
+                    pending_confirmation = (
+                        {"credits": confirm_total_credits, "summaries": confirm_summaries}
+                        if confirm_total_credits > 0
+                        else None
+                    )
 
                     # Drain new artifacts produced by all tools in this batch.
                     if ctx.new_artifacts:
@@ -4739,6 +5015,21 @@ class ManagedAgentClient:
                     continue
 
                 # No tool calls dispatched this pass.
+                # Safety net: agent ended a turn after a confirmation_required
+                # tool result without writing any user-facing text. Synthesize
+                # a fallback so the user sees the cost prompt instead of silence.
+                if pending_confirmation and not emitted_text_this_pass:
+                    credits = pending_confirmation.get("credits") or 0
+                    summaries = pending_confirmation.get("summaries") or []
+                    label = summaries[0] if len(summaries) == 1 else "this batch"
+                    fallback = (
+                        f"This will cost {credits} credits ({label}). Want me to proceed?"
+                        if credits
+                        else "Ready when you are — confirm to proceed?"
+                    )
+                    print(f"[ManagedAgent] synthesized fallback confirmation message ({credits} credits)")
+                    yield {"type": "agent_message", "text": fallback}
+                pending_confirmation = None
                 if went_idle:
                     break
                 # Stream ended without idle and without any tool calls — nothing left

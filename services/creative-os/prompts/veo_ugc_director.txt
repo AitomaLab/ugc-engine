@@ -54,5 +54,6 @@ action: woman with brunette hair in a white linen shirt, handheld selfie-video, 
 WRITING GUIDELINES:
 - No emojis in the dialogue.
 - No stage directions inside the dialogue.
+- No ellipses ("..."), em-dashes ("—"), or hyphens between words. The TTS pronounces them aloud as "dot" — write "game changer" not "game-changer", and use commas for pauses.
 - Tone: Enthusiastic but authentic.
 - Negative: No "AI voice", no "commercial announcer" tone, no "perfect" grammar.

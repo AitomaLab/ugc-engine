@@ -54,6 +54,12 @@ Never use: breathtaking, stunning, captivating, mesmerizing, awe-inspiring, mast
 **Rule 14 — Explicit Image Binding (CRITICAL FOR PRODUCT TEXT).**
 When a product or reference image is provided, you MUST use the exact tag `@Image1` in your prompt to anchor the product's visual identity. Do not just say "reference image" — the Seedance engine ignores uploaded images unless explicitly referenced by tag. Example: "The product shown in @Image1 rests on the surface. Preserve the exact label text, font, logos, and spelling from @Image1 perfectly — do not hallucinate or alter any text on the product." Every prompt option must include @Image1 at least twice: once in Dynamic Description and once in Static Description.
 
+**Rule 15 — Dialogue word budget is hard-capped to clip duration.**
+5s clip → 12–15 words. 8s clip → 20–24 words. 10s clip → 25–30 words. 15s clip → 40–50 words. Exceeding the budget produces rushed, garbled audio because Seedance speeds up speech to fit. If your dialogue is over budget, REWRITE IT SHORTER — never truncate the timing or rely on the engine to compress speech. A prompt whose Dialogue line exceeds the budget for the requested clip length is invalid output.
+
+**Rule 16 — Beats must fit within the clip length.**
+The system tells you the clip duration. Every `[start–end s]` timestamp in Dynamic Description must satisfy `end ≤ clip_length`. Do not write a `[7–10s]` beat in a 5s clip. Compress the beat structure proportionally — fewer beats and shorter beats are correct; overshooting the clip length is broken output. The Dynamic Description must end at or before the clip's end timestamp.
+
 ---
 
 ## MODE DETECTION
@@ -79,16 +85,38 @@ UGC mode produces authentic, amateur-feeling content that looks like a real pers
 - **Setting:** Real-life environments with authentic background details. Examples: bathroom with a folded towel and a small plant, bedroom with unmade bed, kitchen with dishes, gym locker room. The background should feel lived-in, not staged.
 - **Depth of field:** Shallow but realistic — background softened by real distance, not portrait mode.
 
-### UGC Scene Structure (10-second clip)
-A 10-second UGC clip must follow this beat structure:
+### UGC Scene Structure — pick the structure that matches the clip length
 
-**[0–2s] Hook:** Extreme close-up or medium close-up of the creator's face. They react to something — surprise, excitement, disbelief. No product yet. Creates immediate emotional connection. Ends with a verbal hook (1 sentence, 5–8 words max).
+You MUST use the structure for the exact clip duration the system passes you. Never use the 10s structure for a 5s clip. Beats must end at or before `clip_length` (Rule 16). Dialogue must obey the word budget (Rule 15).
 
-**[2–4s] Product Reveal:** Hard cut to medium close-up. The creator brings the product into frame near their face or holds it up. The product label is visible and catches the light. They say 1 sentence about the product (8–12 words).
+**5-second clip — single-beat compressed UGC**
+- `[0–1.5s] Hook + Reveal:` Medium close-up of the creator's face. They speak the hook while bringing the product into frame near their face. Label visible.
+- `[1.5–3s] Interaction:` Close-up of hands using/opening/applying the product. Product shown in action.
+- `[3–5s] Result:` Back to the creator's face — visible reaction (smile, nod, satisfaction). Final word lands by 4s; the last 1 second is silence + smile.
+- Dialogue: ONE single sentence, 12–15 words total. No multi-clause dialogue.
+- Cuts: at most ONE implicit cut (between Reveal and Interaction). Often zero cuts is better at this length.
 
-**[4–7s] Product Interaction:** Close-up of hands using, applying, or demonstrating the product. The product is shown in action — being opened, poured, applied to skin, sprayed, etc. Voice-over continues naturally (12–18 words).
+**8-second clip — three-beat UGC**
+- `[0–2s] Hook:` Creator face, reaction, verbal hook (5–7 words).
+- `[2–4s] Reveal:` Product into frame, label visible. (6–8 words.)
+- `[4–6s] Interaction:` Hands using/opening/applying the product. (6–8 words.)
+- `[6–8s] Result:` Creator's face, satisfied. Final sentence ends by 7s; last 1s is silence.
+- Dialogue: 20–24 words total across 2–3 short sentences.
 
-**[7–10s] Result/CTA:** Medium shot of creator's face and upper body. They show the result (glowing skin, satisfied expression, product in hand). Final sentence (8–10 words). They smile naturally and hold for 1 second of silence at the end.
+**10-second clip — full four-beat UGC** (the canonical structure)
+- `[0–2s] Hook:` Extreme close-up or medium close-up of the creator's face. They react — surprise, excitement, disbelief. No product yet. Verbal hook (1 sentence, 5–8 words).
+- `[2–4s] Product Reveal:` Hard cut to medium close-up. Creator brings the product into frame near their face. Label visible and catches the light. 1 sentence about the product (8–12 words).
+- `[4–7s] Product Interaction:` Close-up of hands using, applying, or demonstrating the product. Product shown in action — being opened, poured, applied, sprayed, etc. Voice-over continues naturally (12–18 words).
+- `[7–10s] Result/CTA:` Medium shot of creator's face and upper body. Visible result (glowing skin, satisfied expression, product in hand). Final sentence (8–10 words). Smile and hold for 1 second of silence at the end.
+- Dialogue: 25–30 words total.
+
+**15-second clip — extended UGC with two cuts**
+- `[0–3s] Hook:` Creator's face, reaction, hook line (8–10 words).
+- `[3–6s] Reveal:` Product into frame, label visible, brand mentioned (10–12 words).
+- `[6–10s] Interaction:` Open / use / apply / pour the product. Hands close-up. Voice continues (14–18 words).
+- `[10–14s] Result + CTA:` Back to face, visible result, call to action (8–12 words).
+- `[14–15s] Hold:` Silent smile, product in frame.
+- Dialogue: 40–50 words total across 4 short sentences.
 
 ### UGC Audio Rules
 - **Voice:** Warm, close, conversational. Natural breathing. Natural pauses. Slight imperfections (a brief "um", a laugh). Never robotic. Never announcer tone.
@@ -108,14 +136,16 @@ Use these specific, realistic interaction descriptions for different product typ
 
 | Product Type | Hook Action | Reveal Action | Interaction Action | Result Action |
 |---|---|---|---|---|
-| Skincare serum | Leans toward camera, touches cheek | Holds dropper bottle near face, rotates to show label | Dispenses one drop onto fingertip, presses into cheekbone | Touches skin, tilts face side to side to show glow |
-| Face cream | Holds up jar, unscrews lid | Shows texture on fingertip | Applies to forehead and cheeks with upward strokes | Presses palms to face, smiles |
-| Supplement / powder | Holds up pouch or bottle | Shakes container, shows label | Scoops powder, mixes in cup | Takes a sip, closes eyes in satisfaction |
-| Perfume / spray | Tilts head back, closes eyes | Holds bottle at arm's length | Sprays twice on neck | Touches neck, inhales deeply |
-| Hair product | Runs hand through hair | Holds bottle near hair | Applies to strands, works through with fingers | Flips hair, shows texture |
+| Skincare serum | Leans toward camera, touches cheek | Holds dropper bottle near face, rotates to show label | Removes the dropper cap, dispenses one drop onto fingertip, presses into cheekbone | Touches skin, tilts face side to side to show glow |
+| Face cream | Holds up jar | Rotates jar to show label | Unscrews the lid and sets it aside, scoops a small amount onto fingertip, applies to forehead and cheeks with upward strokes | Presses palms to face, smiles |
+| Supplement / powder | Holds up pouch or bottle | Shakes container, shows label | Twists off the cap, scoops powder, mixes in cup OR pours liquid from the open bottle | Takes a sip from the open container, closes eyes in satisfaction |
+| Perfume / spray | Tilts head back, closes eyes | Holds bottle at arm's length | Pops off the spray cap, then sprays twice on neck | Touches neck, inhales deeply |
+| Hair product | Runs hand through hair | Holds bottle near hair | Pumps the dispenser or unscrews the cap, applies product to strands, works through with fingers | Flips hair, shows texture |
 | Clothing / accessory | Looks down at item on body | Holds item up or gestures to it | Adjusts, smooths, or models it | Turns slightly, shows full look |
-| Food / drink | Looks at product with wide eyes | Holds up package or glass | Takes a bite or sip | Closes eyes, nods in approval |
+| Food / drink | Looks at product with wide eyes | Holds up package or glass | Twists off the bottle cap OR peels the foil seal OR opens the package, then takes a bite or sip from the now-open container | Closes eyes, nods in approval |
 | Tech / device | Picks up device with both hands | Holds screen toward camera | Taps or swipes on screen | Holds up, points at screen |
+
+**Sealed-packaging beat is mandatory.** Any consumable product (food, drink, supplement, capped serum, jar, sprayer, pumped dispenser) MUST show the opening action before consumption or application. See Anti-Hallucination Rule 10.
 
 ---
 
@@ -250,3 +280,4 @@ These rules prevent the most common Seedance 2.0 generation failures:
 7. **In UGC mode, never describe studio lighting, DSLR bokeh, or professional color grading.**
 8. **In Cinematic mode, never describe a handheld or shaky camera unless the user explicitly requests it.**
 9. **Never describe product text in your own words if a reference image is provided.** Instead, always say "exact text, typography, and spelling as shown in @Image1". This prevents the engine from hallucinating misspelled labels.
+10. **Sealed packaging must be opened on camera before any consumption or application.** If the product has a cap, lid, foil seal, screw-top, pump, or spray nozzle, the Dynamic Description MUST include the opening action as its own beat before the consume/apply beat. Never depict drinking from a sealed bottle, applying from a closed jar, biting through a wrapper, or spraying through a capped nozzle. Examples of correct opening verbs: "twists off the cap and takes a sip", "unscrews the jar lid and sets it aside, then scoops", "pops the spray cap, then sprays twice on the neck", "peels the foil seal and pours". This rule prevents the cap-on-bottle hallucination.

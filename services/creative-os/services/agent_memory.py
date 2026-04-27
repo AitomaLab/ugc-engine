@@ -467,4 +467,24 @@ async def rename(user_token: str, user_id: str, *, old_path: str, new_path: str)
     return f"Successfully renamed {old_norm} to {new_norm}"
 
 
-__all__ = ["view", "create", "str_replace", "insert", "delete", "rename"]
+async def read_snapshot(user_token: str, user_id: str) -> str:
+    """Return a flat, agent-readable snapshot of every memory file for this user.
+
+    Used by the agent's brief preface so we can skip the silent `memory view`
+    tool round-trip on first turn. Returns a placeholder string when the user
+    has no memories yet.
+    """
+    rows = await _list_under(user_token, user_id, _MEM_ROOT + "/")
+    if not rows:
+        return "(no memories yet)"
+    chunks: list[str] = []
+    for r in rows:
+        path = r.get("path") or ""
+        content = (r.get("content") or "").strip()
+        if not path:
+            continue
+        chunks.append(f"--- {path} ---\n{content}")
+    return "\n\n".join(chunks) if chunks else "(no memories yet)"
+
+
+__all__ = ["view", "create", "str_replace", "insert", "delete", "rename", "read_snapshot"]

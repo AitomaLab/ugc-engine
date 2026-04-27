@@ -64,6 +64,10 @@ class AgentStopRequest(BaseModel):
     project_id: str
 
 
+class AgentPrewarmRequest(BaseModel):
+    project_id: str
+
+
 def _now_ms() -> int:
     return int(time() * 1000)
 
@@ -120,6 +124,48 @@ async def stop_agent(
     except Exception as e:
         return {"ok": True, "lock_cleared": True, "session_interrupted": False, "interrupt_error": str(e)}
     return {"ok": True, "lock_cleared": True, "session_interrupted": True}
+
+
+# ── POST /agent/session/prewarm ────────────────────────────────────────
+@router.post("/session/prewarm")
+async def prewarm_agent_session(
+    data: AgentPrewarmRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Eagerly create an Anthropic session before the user sends their first
+    message. Idempotent at the frontend level: the panel only calls this when
+    its hydrated thread has no `session_id`.
+    """
+    # If a thread already has a stored session, return it — no waste.
+    thread = await get_thread(user["token"], user["id"], data.project_id)
+    existing = (thread or {}).get("anthropic_session_id")
+    if existing:
+        return {"session_id": existing, "created": False}
+
+    try:
+        client = get_managed_agent_client()
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    try:
+        session_id = await client.prewarm_session(data.project_id)
+    except Exception as e:
+        # Non-fatal — the send path will fall back to creating a session on
+        # demand. We just return a 200 with no id so the frontend doesn't
+        # surface an error toast.
+        print(f"[agent_prewarm] failed: {e}")
+        return {"session_id": None, "created": False, "error": str(e)}
+
+    try:
+        await upsert_thread(
+            user["token"], user["id"], data.project_id,
+            anthropic_session_id=session_id,
+            turns=(thread or {}).get("turns") or [],
+        )
+    except Exception as e:
+        print(f"[agent_prewarm] upsert failed: {e}")
+
+    return {"session_id": session_id, "created": True}
 
 
 # ── POST /agent/stream (SSE) ───────────────────────────────────────────
@@ -188,8 +234,9 @@ async def agent_stream(
         r"(?:\s+\w+){0,6}?\s+"
         r"(?:music|soundtrack|song|bgm|audio|voice\s?over|vo|narration|captions?|subtitles?)"
         r"|"
-        # Standalone edit verbs
-        r"trim|cut|shorten|lengthen|extend|re-?edit|edit\s+(?:the\s+)?(?:video|clip|timeline)"
+        # Standalone edit verbs (note: 'extend' is intentionally excluded —
+        # it routes to the extend_video tool, not editor ops).
+        r"trim|cut|shorten|re-?edit|edit\s+(?:the\s+)?(?:video|clip|timeline)"
         r")\b"
     )
     is_edit_intent = bool(_edit_intent_re.search(_brief_lc))
@@ -276,6 +323,7 @@ async def agent_stream(
         augmented_brief = "\n".join(lines)
 
     async def gen():
+        nonlocal augmented_brief
         async with lock:
             thread = await get_thread(user_token, user_id, project_id)
             session_id: Optional[str] = thread.get("anthropic_session_id") if thread else None
@@ -349,6 +397,25 @@ async def agent_stream(
                         last_persist = now
                     except Exception as e:
                         print(f"[agent_stream] mid-run upsert failed: {e}")
+
+                # On the FIRST turn of a session, inject a `[Memory snapshot]`
+                # preface so the agent can read user preferences without a
+                # blocking `memory view` tool round-trip. Saves ~500ms-2s on
+                # the first message of every chat.
+                if not prior_turns:
+                    try:
+                        from services import agent_memory as _mem
+                        from services.managed_agent_client import _user_id_from_jwt
+                        _uid = _user_id_from_jwt(user_token)
+                        if _uid:
+                            _snap = await _mem.read_snapshot(user_token, _uid)
+                            augmented_brief = (
+                                "[Memory snapshot — your persistent notes about this user. "
+                                "Apply what's relevant; do NOT call the `memory` tool just to read.]\n"
+                                f"{_snap}\n\n" + augmented_brief
+                            )
+                    except Exception as _e:
+                        print(f"[agent_stream] memory preface failed: {_e}")
 
                 image_urls = [r.image_url for r in refs if r.image_url]
                 async for ev in client.run_stream(

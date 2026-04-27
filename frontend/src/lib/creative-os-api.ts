@@ -272,6 +272,26 @@ export async function resetAgentThread(projectId: string): Promise<void> {
     if (!res.ok) throw new Error(`Failed to reset agent thread: ${res.status}`);
 }
 
+/**
+ * Eagerly create the Anthropic session for this project so the user's first
+ * `streamAgent` call doesn't pay for `_create_session`. Fire-and-forget — any
+ * failure falls back to the on-demand session creation in the send path.
+ */
+export async function prewarmAgentSession(projectId: string): Promise<void> {
+    const token = await getAuthToken();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    try {
+        await fetch(`${CREATIVE_OS_URL}/creative-os/agent/session/prewarm`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ project_id: projectId }),
+        });
+    } catch {
+        // best effort — the send path has its own session-create fallback.
+    }
+}
+
 /** Best-effort: tell backend to interrupt the active session for this project. */
 export async function stopAgent(projectId: string): Promise<void> {
     const token = await getAuthToken();

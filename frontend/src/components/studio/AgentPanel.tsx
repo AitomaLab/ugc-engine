@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback, useMemo, forwardRef, useImper
 import {
     creativeFetch,
     getAgentThread,
+    prewarmAgentSession,
     resetAgentThread,
     stopAgent,
     streamAgent,
@@ -186,6 +187,14 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
     const [lastHeartbeatAt, setLastHeartbeatAt] = useState(0);
     const [artifactsReadyCount, setArtifactsReadyCount] = useState(0);
     const [artifactFlashTick, setArtifactFlashTick] = useState(0);
+    // The activity pill is suppressed until the agent fires its first
+    // `tool_call` event. During the pre-tool synthesis window the placeholder
+    // bubble's breathing dots are the single source of "I'm thinking" feedback
+    // — so we don't compete with a static "Processing…" pill that reads dead.
+    const [sawToolCall, setSawToolCall] = useState(false);
+    // Cycles every 4s while the pill is showing a generic label, so the user
+    // sees motion in the copy itself instead of a static "Processing…".
+    const [pillTick, setPillTick] = useState(0);
     // Start `true` when initialBrief is provided so the auto-submit Phase 2
     // effect waits for hydration to complete (otherwise setTurns on hydrate
     // wipes the user turn appended by the auto-fired handleRun).
@@ -222,6 +231,33 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         }, 1000);
         return () => clearInterval(id);
     }, [running, activityStartedAt]);
+
+    // Cycle the pill rotation every 4s while a run is active. Strictly
+    // cosmetic — only the *generic* "Processing…" label is replaced by the
+    // rotation; specific tool labels (e.g. "Generating image…") are left as-is.
+    useEffect(() => {
+        if (!running) {
+            setPillTick(0);
+            return;
+        }
+        const id = setInterval(() => setPillTick((n) => n + 1), 4000);
+        return () => clearInterval(id);
+    }, [running]);
+
+    // The label actually rendered in the pill. Only swap when the activity is
+    // the generic "Processing…" / "Thinking…" string — everything else is a
+    // specific tool label we want to keep verbatim.
+    const genericProcessing = t('creativeOs.agent.activityProcessing');
+    const genericThinking = t('creativeOs.agent.activityThinking');
+    const isGenericActivity = activity === genericProcessing || activity === genericThinking;
+    const rotationLabels = [
+        t('creativeOs.agent.activityWorkingOnIt'),
+        t('creativeOs.agent.activityGeneratingShort'),
+        t('creativeOs.agent.activityAlmostThere'),
+    ];
+    const displayActivity = isGenericActivity
+        ? rotationLabels[pillTick % rotationLabels.length]
+        : activity;
 
     const handleFilesPicked = useCallback(async (files: FileList | null) => {
         if (!files || files.length === 0) return;
@@ -476,6 +512,13 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                 if (cancelled) return;
                 setTurns(thread.turns || []);
                 setSessionId(thread.session_id);
+                // Eagerly create the Anthropic session in the background so
+                // the user's first send doesn't pay the ~1-2s session-create
+                // round-trip. Skip when a session already exists (returning
+                // user) or no project context.
+                if (!thread.session_id && projectId) {
+                    void prewarmAgentSession(projectId);
+                }
             })
             .catch((err) => {
                 if (cancelled) return;
@@ -603,6 +646,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         setArtifactsReadyCount(0);
         setArtifactFlashTick(0);
         setLastHeartbeatAt(Date.now());
+        setSawToolCall(false);
 
         // Submit intercept: parent handles the prompt (e.g. home page creates a project)
         if (onSubmitOverride) {
@@ -712,6 +756,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     break;
                 case 'tool_call': {
                     setActivity(toolActivityLabel(e.name, e.mode, e.input_summary, t));
+                    setSawToolCall(true);
                     // Reset elapsed anchor + per-tool artifact counter so the
                     // mm:ss heartbeat restarts from 0 for this new tool.
                     setActivityStartedAt(Date.now());
@@ -734,7 +779,9 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                         'render_edited_video',
                     ]);
                     const imageTools = new Set([
-                        'generate_image', 'generate_influencer',
+                        'generate_image', 'generate_image_text_only',
+                        'generate_image_alt_versions',
+                        'generate_influencer',
                         'generate_identity', 'generate_product_shots',
                     ]);
                     if (videoTools.has(e.name)) {
@@ -1370,7 +1417,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                             });
                         })()}
 
-                        {running && activity && (
+                        {running && activity && sawToolCall && (
                             <div
                                 style={{
                                     fontSize: '11px',
@@ -1393,7 +1440,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                         animation: 'pulse 1.2s ease-in-out infinite',
                                     }}
                                 />
-                                <span>{activity}</span>
+                                <span>{displayActivity}</span>
                                 {activityStartedAt !== null && (
                                     <span style={{ opacity: 0.65, fontVariantNumeric: 'tabular-nums' }}>
                                         · {formatElapsed(elapsedSec)}
@@ -1826,18 +1873,34 @@ function renderMessageContent(
                             margin: '0 1px',
                         }}
                     >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                            src={ref.image_url || ref.video_url}
-                            alt={ref.name || tag}
-                            style={{
-                                width: '20px',
-                                height: '20px',
-                                borderRadius: '4px',
-                                objectFit: 'cover',
-                                flexShrink: 0,
-                            }}
-                        />
+                        {ref.image_url ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                                src={ref.image_url}
+                                alt={ref.name || tag}
+                                style={{
+                                    width: '20px',
+                                    height: '20px',
+                                    borderRadius: '4px',
+                                    objectFit: 'cover',
+                                    flexShrink: 0,
+                                }}
+                            />
+                        ) : ref.video_url ? (
+                            <video
+                                src={ref.video_url}
+                                muted
+                                playsInline
+                                preload="metadata"
+                                style={{
+                                    width: '20px',
+                                    height: '20px',
+                                    borderRadius: '4px',
+                                    objectFit: 'cover',
+                                    flexShrink: 0,
+                                }}
+                            />
+                        ) : null}
                         <span
                             style={{
                                 fontSize: '11px',
@@ -2678,6 +2741,14 @@ function MentionDropdown({ groups, ordered, activeIndex, onPick, onHover, shotPi
                                                 <img
                                                     src={item.image_url}
                                                     alt={item.name}
+                                                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                                />
+                                            ) : item.type === 'video' && item.ref.video_url ? (
+                                                <video
+                                                    src={item.ref.video_url}
+                                                    muted
+                                                    playsInline
+                                                    preload="metadata"
                                                     style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                                                 />
                                             ) : (

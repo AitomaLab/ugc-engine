@@ -49,6 +49,7 @@ from routers.generate_video import router as video_router
 from routers.animate import router as animate_router
 from routers.agent import router as agent_router
 from routers.campaigns import router as campaigns_router
+from routers.wavespeed_webhook import router as wavespeed_webhook_router
 
 app.include_router(projects_router, prefix="/creative-os")
 app.include_router(image_router, prefix="/creative-os")
@@ -56,6 +57,7 @@ app.include_router(video_router, prefix="/creative-os")
 app.include_router(animate_router, prefix="/creative-os")
 app.include_router(agent_router, prefix="/creative-os")
 app.include_router(campaigns_router, prefix="/creative-os")
+app.include_router(wavespeed_webhook_router, prefix="/creative-os")
 
 
 # ── Campaign Watcher (background loop) ──────────────────────────────────

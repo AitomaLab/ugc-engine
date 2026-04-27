@@ -337,24 +337,91 @@ async def _run_animation_pipeline(job_id: str, data: AnimateRequest, token: str)
                         raise RuntimeError(f"WaveSpeed Kling failed: {pinner.get('error', 'unknown')}")
                 raise RuntimeError("WaveSpeed Kling timed out after 20 minutes")
 
+            async def _ws_primary_animate() -> str:
+                """WaveSpeed-primary attempt using the new wavespeed_client.
+
+                Resolves element_ids for kling_elements (best-effort) and
+                calls Kling v3 std i2v. Any failure here is caught by the
+                outer try and falls through to the legacy KIE chain.
+                """
+                from services import wavespeed_client as ws
+                element_ids: list[str] = []
+                if kling_elements:
+                    try:
+                        from services.kling_elements import ensure_element_id
+                        for el in kling_elements:
+                            urls = el.get("element_input_urls") or []
+                            primary = urls[0] if urls else None
+                            if not primary:
+                                continue
+                            owner_kwargs: dict = {}
+                            if el["name"] == "element_product" and getattr(data, "product_id", None):
+                                owner_kwargs["product_id"] = data.product_id
+                            elif el["name"] == "element_character" and getattr(data, "influencer_id", None):
+                                owner_kwargs["influencer_id"] = data.influencer_id
+                            eid = await ensure_element_id(
+                                name=el["name"],
+                                description=el.get("description") or el["name"],
+                                image_url=primary,
+                                refer_urls=urls,
+                                **owner_kwargs,
+                            )
+                            element_ids.append(eid)
+                        if len(element_ids) != len(kling_elements):
+                            raise RuntimeError(f"element_id resolution incomplete ({len(element_ids)}/{len(kling_elements)})")
+                    except Exception as el_err:
+                        raise RuntimeError(f"element_id resolution failed: {el_err}")
+
+                submit_data = await asyncio.to_thread(
+                    ws.kling_v3_std_i2v,
+                    image=data.image_url,
+                    prompt=prompt,
+                    duration=max(3, min(15, duration)),
+                    element_ids=element_ids or None,
+                )
+                pred_id = submit_data["id"]
+                result = await asyncio.to_thread(
+                    ws.poll_until_done, pred_id, label="WS animate Kling", max_poll_seconds=1200,
+                )
+                return ws.first_output_url(result)
+
             SKIP_PATTERNS = ("internal error", "high demand", "429", "503", "rate limit", "service is currently unavailable", "e003")
             RETRY_PATTERNS = ("500", "unknown generation error", "timed out", "timeout", "generation failed")
 
             video_url: Optional[str] = None
-            try:
-                video_url = await _kie_animate()
-            except Exception as kie_err:
-                err = str(kie_err).lower()
-                should_fallback = (
-                    any(p in err for p in SKIP_PATTERNS)
-                    or any(p in err for p in RETRY_PATTERNS)
-                )
-                if should_fallback and os.getenv("WAVESPEED_API_KEY"):
-                    print(f"[Animate] KIE failed ({kie_err}) — falling back to WaveSpeed Kling")
-                    await update_job({"status_message": "KIE failed — retrying on WaveSpeed...", "progress": 55})
-                    video_url = await _wavespeed_animate()
-                else:
-                    raise
+
+            # ── WaveSpeed-primary outer layer (additive) ─────────────
+            ws_primary_on = (
+                os.getenv("USE_WAVESPEED_PRIMARY", "false").strip().lower() == "true"
+                and bool(os.getenv("WAVESPEED_API_KEY"))
+            )
+            if ws_primary_on:
+                try:
+                    print("[Animate] [WaveSpeed primary] attempt")
+                    video_url = await _ws_primary_animate()
+                    print(f"[Animate] [WaveSpeed primary] complete: {video_url[:80]}...")
+                except Exception as ws_primary_err:
+                    print(f"[Animate] [WaveSpeed primary failed: {ws_primary_err}] — falling through to KIE chain")
+                    video_url = None
+
+            if video_url:
+                # WaveSpeed primary succeeded — skip the legacy KIE chain entirely.
+                pass
+            else:
+                try:
+                    video_url = await _kie_animate()
+                except Exception as kie_err:
+                    err = str(kie_err).lower()
+                    should_fallback = (
+                        any(p in err for p in SKIP_PATTERNS)
+                        or any(p in err for p in RETRY_PATTERNS)
+                    )
+                    if should_fallback and os.getenv("WAVESPEED_API_KEY"):
+                        print(f"[Animate] KIE failed ({kie_err}) — falling back to WaveSpeed Kling")
+                        await update_job({"status_message": "KIE failed — retrying on WaveSpeed...", "progress": 55})
+                        video_url = await _wavespeed_animate()
+                    else:
+                        raise
 
             if not video_url:
                 raise RuntimeError("Animation produced no video URL")

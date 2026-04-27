@@ -8,6 +8,7 @@ Handles video generation with mode-aware routing:
 """
 import os
 import re
+import sys
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel
@@ -15,6 +16,33 @@ from typing import Optional
 from auth import get_current_user
 from core_api_client import CoreAPIClient
 from services.model_router import get_video_mode, get_clip_lengths
+
+
+def _load_creative_os_generate_scenes():
+    """Load the creative-os local generate_scenes.py by absolute file path.
+
+    There are two `generate_scenes.py` files on disk with diverging APIs:
+    - repo-root version owns `generate_music` (legacy music pipeline)
+    - creative-os local version owns `generate_video_with_retry(element_ids=...)`
+      and `_wavespeed_primary_enabled()` (new element-aware Kling path).
+
+    A bare `import generate_scenes` returns whichever one wins the sys.path
+    race — and `managed_agent_client.py` prepends the repo root at import
+    time, so the wrong one wins for video pipelines. This helper bypasses
+    sys.path entirely by loading the creative-os file under a distinct
+    sys.modules key.
+    """
+    import importlib.util
+    from pathlib import Path
+    cached = sys.modules.get("creative_os_generate_scenes")
+    if cached is not None:
+        return cached
+    path = Path(__file__).resolve().parent.parent / "generate_scenes.py"
+    spec = importlib.util.spec_from_file_location("creative_os_generate_scenes", path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["creative_os_generate_scenes"] = mod
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def _refund_on_failure(user_id: Optional[str], credit_cost: Optional[int], job_id: str, reason: str) -> None:
@@ -715,7 +743,7 @@ async def _run_seedance_clip_pipeline(
     import asyncio
     import tempfile
     from datetime import datetime as _dt
-    import generate_scenes
+    generate_scenes = _load_creative_os_generate_scenes()
 
     client_sync = CoreAPIClient(token=token, project_id=project_id)
 
@@ -797,7 +825,7 @@ async def _run_seedance_clip_pipeline(
         )
 
         def _submit():
-            return generate_scenes.generate_video(
+            return generate_scenes.generate_video_with_retry(
                 prompt=structured_prompt,
                 model_api="seedance-2.0-fast",
                 duration=data.clip_length,
@@ -1120,11 +1148,13 @@ async def _run_cinematic_clip_pipeline(
     from env_loader import load_env
     _root = load_env(Path(__file__))
     if _root and str(_root) not in sys.path:
-        sys.path.insert(0, str(_root))
+        # Append (not insert) so creative-os local modules (e.g. generate_scenes.py)
+        # always shadow any same-named files at the repo root.
+        sys.path.append(str(_root))
 
     import asyncio
     import httpx
-    import generate_scenes
+    generate_scenes = _load_creative_os_generate_scenes()
     from services.prompt_enhancer import enhance_prompt
     from services.kling_image import ensure_kling_compatible
 
@@ -1390,6 +1420,40 @@ async def _run_cinematic_clip_pipeline(
             "progress": 50,
         })
 
+        # ── WaveSpeed-primary element-id resolution (best-effort) ──
+        # If WS-primary is on and we have kling_elements, mint element_ids first
+        # so generate_video_with_retry can try the WaveSpeed Kling path. Any
+        # failure here just leaves element_ids empty → falls through to legacy
+        # KIE chain unchanged. No clip generation depends on this path.
+        resolved_element_ids: list[str] = []
+        if generate_scenes._wavespeed_primary_enabled() and kling_elements:
+            try:
+                from services.kling_elements import ensure_element_id
+                for el in kling_elements:
+                    refer_urls = el.get("element_input_urls") or []
+                    primary = refer_urls[0] if refer_urls else None
+                    if not primary:
+                        continue
+                    owner_kwargs: dict = {}
+                    if el["name"] == "element_product" and data.product_id:
+                        owner_kwargs["product_id"] = data.product_id
+                    elif el["name"] == "element_character" and influencer_id and influencer_id != "00000000-0000-0000-0000-000000000000":
+                        owner_kwargs["influencer_id"] = influencer_id
+                    eid = await ensure_element_id(
+                        name=el["name"],
+                        description=el.get("description") or el["name"],
+                        image_url=primary,
+                        refer_urls=refer_urls,
+                        **owner_kwargs,
+                    )
+                    resolved_element_ids.append(eid)
+                if len(resolved_element_ids) != len(kling_elements):
+                    print(f"[Cinematic] element_id resolution incomplete ({len(resolved_element_ids)}/{len(kling_elements)}) — skipping WS-primary")
+                    resolved_element_ids = []
+            except Exception as ws_el_err:
+                print(f"[Cinematic] element_id resolution failed: {ws_el_err} — falling through to KIE chain")
+                resolved_element_ids = []
+
         try:
             result = await asyncio.to_thread(
                 generate_scenes.generate_video_with_retry,
@@ -1400,6 +1464,7 @@ async def _run_cinematic_clip_pipeline(
                 kling_elements=kling_elements if kling_elements else None,
                 multi_prompt=multi_prompt_payload,
                 aspect_ratio=data.aspect_ratio or "9:16",
+                element_ids=resolved_element_ids or None,
             )
             video_url = result["videoUrl"]
             print(f"[Cinematic] Kling animation complete: {video_url[:80]}...")
@@ -1745,10 +1810,12 @@ async def _run_ugc_clip_pipeline(
     from env_loader import load_env
     _root = load_env(Path(__file__))
     if _root and str(_root) not in sys.path:
-        sys.path.insert(0, str(_root))
+        # Append (not insert) so creative-os local modules (e.g. generate_scenes.py)
+        # always shadow any same-named files at the repo root.
+        sys.path.append(str(_root))
 
     import asyncio
-    import generate_scenes
+    generate_scenes = _load_creative_os_generate_scenes()
     from prompts import sanitize_dialogue
 
     client_sync = CoreAPIClient(token=token, project_id=project_id)
@@ -2236,4 +2303,318 @@ async def _run_ugc_clip_pipeline(
             "error_message": f"UGC clip generation failed: {str(e)[:400]}",
         })
         _refund_on_failure(user_id, credit_cost, job_id, "ugc_generation_failed")
+
+
+# ── WaveSpeed-only additions: video extend ─────────────────────────────
+
+class ExtendVideoRequest(BaseModel):
+    video_url: str
+    prompt: Optional[str] = None
+    resolution: str = "1080p"  # 720p | 1080p
+    project_id: Optional[str] = None
+
+
+async def _lookup_source_context(video_url: str, token: str) -> dict:
+    """Recover the source clip's context for an extend job.
+
+    Lookup strategy: match by `final_video_url`, OR by the WaveSpeed CloudFront
+    URL we stash in `metadata.wavespeed_cloudfront_url` on prior extensions
+    (so re-extending an already-extended clip still finds the chain).
+
+    Returns a dict of:
+      row, influencer, product, language, original_hook, project_id
+
+    Empty dict if nothing was found or any lookup failed.
+    """
+    row: Optional[dict] = None
+    try:
+        from ugc_db.db_manager import get_supabase
+        sb = get_supabase()
+        rows = (
+            sb.table("video_jobs")
+            .select("metadata,video_language,influencer_id,product_id,project_id,app_clip_id")
+            .eq("final_video_url", video_url)
+            .limit(1)
+            .execute()
+        )
+        if rows.data:
+            row = rows.data[0]
+        else:
+            # Fall back to matching by the CloudFront URL we stash on extension rows.
+            rows = (
+                sb.table("video_jobs")
+                .select("metadata,video_language,influencer_id,product_id,project_id,app_clip_id")
+                .filter("metadata->>wavespeed_cloudfront_url", "eq", video_url)
+                .limit(1)
+                .execute()
+            )
+            if rows.data:
+                row = rows.data[0]
+    except Exception as e:
+        print(f"[Extend] source-job lookup failed ({e})")
+        return {}
+
+    if not row:
+        return {}
+
+    language = (row.get("video_language") or "en").lower()
+    metadata = row.get("metadata") or {}
+    original_hook = metadata.get("hook", "") if isinstance(metadata, dict) else ""
+    project_id = row.get("project_id")
+
+    influencer = None
+    product = None
+    try:
+        client = CoreAPIClient(token=token, project_id=project_id)
+        if row.get("influencer_id"):
+            influencer = await client.get_influencer(row["influencer_id"])
+        if row.get("product_id"):
+            product = await client.get_product(row["product_id"])
+    except Exception as e:
+        print(f"[Extend] influencer/product lookup failed ({e})")
+
+    return {
+        "row": row,
+        "influencer": influencer,
+        "product": product,
+        "language": language,
+        "original_hook": original_hook,
+        "project_id": project_id,
+    }
+
+
+def _build_extend_prompt(ctx: dict, user_continuation: Optional[str]) -> str:
+    """Build the structured Veo-extend prompt from a recovered source context.
+
+    Always returns a non-empty prompt — even when ctx is empty (no DB match),
+    we still emit a "continue the scene" skeleton so WaveSpeed/Veo never
+    receives a bare video with no instruction (which causes hallucinated
+    speech and minutes-long generations).
+    """
+    from prompts import sanitize_dialogue
+
+    influencer = ctx.get("influencer") or {}
+    product = ctx.get("product") or {}
+    language = ctx.get("language") or "en"
+    original_hook = ctx.get("original_hook") or ""
+
+    inf_name = influencer.get("name", "the character")
+    inf_visuals = _sanitize_influencer_description(
+        (influencer.get("description", "") or "")[:200], inf_name
+    ) if influencer else ""
+
+    product_name = product.get("name", "") if product else ""
+    product_desc = ""
+    if product:
+        vd = product.get("visual_description") or {}
+        if isinstance(vd, dict):
+            product_desc = vd.get("visual_description", "")
+        elif isinstance(vd, str):
+            product_desc = vd
+    product_str = f"{product_name} ({product_desc[:120]})" if product_desc else product_name
+
+    dialogue = sanitize_dialogue(user_continuation) if user_continuation else ""
+
+    accent_line = (
+        "native Spanish accent, speaking entirely in Spanish"
+        if language == "es" else "neutral English accent, speaking entirely in English"
+    )
+
+    parts: list[str] = []
+    if dialogue:
+        parts.append(f"dialogue: {dialogue}")
+    parts.append(
+        "action: continue the previous scene seamlessly. "
+        f"{inf_name} stays in the SAME setting, wardrobe, and lighting"
+        + (f", still holding the {product_str}" if product_str else "")
+        + ". Natural continuation of the original handheld UGC selfie shot."
+    )
+    if inf_visuals:
+        parts.append(f"character: {inf_name}, {inf_visuals}. Same person as the previous scene, do NOT change identity, face, hair, or clothing.")
+    if product_str:
+        parts.append(f"product: {product_str}. Do NOT swap the product. The same item must remain visible and unchanged.")
+    if original_hook:
+        parts.append(f"original_scene_context: {original_hook[:400]}")
+    parts.append("camera: amateur iPhone selfie video, slightly uneven framing, handheld")
+    parts.append("style: raw UGC, candid, photorealistic, identical look to the original scene")
+    parts.append(f"voice_type: clear confident pronunciation, casual, conversational, {accent_line}, consistent medium-fast pacing")
+    if dialogue:
+        parts.append(
+            "speech_constraint: speak ONLY the exact dialogue words above, "
+            "crystal-clear pronunciation, no stuttering, zero auditory hallucinations, "
+            "MUST finish speaking 1 second before the end of the video"
+        )
+    parts.append(
+        "negative: no auditory hallucinations, no filler words, no stuttering, "
+        "do NOT change the character, do NOT swap the product, do NOT change the language"
+    )
+
+    prompt = "\n".join(parts)
+    print(f"[Extend] built prompt ({len(prompt)} chars) for {inf_name} + {product_name or 'no-product'}, lang={language}")
+    return prompt
+
+
+async def _persist_extended_clip(
+    *,
+    cloudfront_url: str,
+    source_url: str,
+    structured_prompt: str,
+    source_ctx: dict,
+    token: str,
+) -> str:
+    """Download the extension from CloudFront, upload to Supabase storage,
+    and create a video_jobs row mirroring the source clip's context.
+
+    Returns the Supabase public URL on success, or the original CloudFront URL
+    on any failure (best-effort — never blocks the user response).
+    """
+    import asyncio
+    import tempfile
+    from datetime import datetime as _dt
+
+    final_url = cloudfront_url
+    row = source_ctx.get("row") or {}
+    project_id = source_ctx.get("project_id") or row.get("project_id")
+
+    # 1. Download CloudFront → upload to Supabase storage
+    try:
+        generate_scenes = _load_creative_os_generate_scenes()
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+            tmp_path = tmp.name
+        await asyncio.to_thread(generate_scenes.download_video, cloudfront_url, tmp_path)
+        try:
+            from ugc_db.db_manager import get_supabase
+            sb = get_supabase()
+            timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
+            storage_filename = f"veo_extend_{timestamp}.mp4"
+            with open(tmp_path, "rb") as f:
+                sb.storage.from_("generated-videos").upload(
+                    storage_filename, f,
+                    file_options={"content-type": "video/mp4"},
+                )
+            final_url = sb.storage.from_("generated-videos").get_public_url(storage_filename)
+            print(f"[Extend] uploaded to Supabase: {final_url[:80]}...")
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"[Extend] Supabase upload failed ({e}), keeping CloudFront URL")
+
+    # 2. Create a video_jobs row so the next re-extend can recover context
+    if not row:
+        return final_url
+    try:
+        client = CoreAPIClient(token=token, project_id=project_id)
+        product_type = "physical"
+        if row.get("app_clip_id"):
+            product_type = "digital"
+        elif row.get("product_id"):
+            try:
+                p = await client.get_product(row["product_id"])
+                if p and p.get("type") in ("physical", "digital"):
+                    product_type = p["type"]
+            except Exception:
+                pass
+
+        job_payload: dict = {
+            "influencer_id": row.get("influencer_id") or "00000000-0000-0000-0000-000000000000",
+            "product_id": row.get("product_id"),
+            "product_type": product_type,
+            "model_api": "veo3.1-fast-extend",
+            "length": 8,
+            "campaign_name": "Creative OS",
+            "video_language": row.get("video_language") or "en",
+            "subtitles_enabled": False,
+            "music_enabled": False,
+            "hook": (structured_prompt or "")[:500],
+        }
+        if row.get("app_clip_id"):
+            job_payload["app_clip_id"] = row["app_clip_id"]
+
+        job = await client.create_job(job_payload)
+        job_id = job.get("id") or job.get("job", {}).get("id")
+        if job_id:
+            await _update_video_job_via_api(token, project_id, job_id, {
+                "status": "success",
+                "progress": 100,
+                "final_video_url": final_url,
+                "metadata": {
+                    "engine": "veo3.1-fast-extend",
+                    "hook": (structured_prompt or "")[:1000],
+                    "parent_video_url": source_url,
+                    "wavespeed_cloudfront_url": cloudfront_url,
+                },
+            })
+            print(f"[Extend] persisted video_jobs row {job_id}")
+    except Exception as e:
+        print(f"[Extend] failed to persist video_jobs row: {e}")
+
+    return final_url
+
+
+@router.post("/extend")
+async def extend_video(data: ExtendVideoRequest, user: dict = Depends(get_current_user)):
+    """Extend a Veo-generated clip by ~8 seconds using Veo 3.1 Fast video-extend.
+
+    WaveSpeed-only capability — KIE does not expose video extend. Returns the
+    final extended video URL after polling to completion. Caller-side credit
+    debit happens via existing pipelines; this endpoint is a thin proxy.
+    """
+    import asyncio
+    from services import wavespeed_client as ws
+
+    if not os.getenv("WAVESPEED_API_KEY"):
+        raise HTTPException(status_code=503, detail="WaveSpeed not configured")
+
+    if not data.video_url:
+        raise HTTPException(status_code=400, detail="video_url is required")
+
+    source_ctx = await _lookup_source_context(data.video_url, user["token"])
+    structured_prompt = _build_extend_prompt(source_ctx, data.prompt)
+    if not source_ctx:
+        print("[Extend] no source-job match — using fallback structured prompt (no character/product context)")
+
+    async def _submit_and_poll() -> str:
+        submitted = await asyncio.to_thread(
+            ws.veo31_fast_extend,
+            video=data.video_url,
+            prompt=structured_prompt,
+            resolution=data.resolution if data.resolution in ("720p", "1080p") else "1080p",
+        )
+        result = await asyncio.to_thread(
+            ws.poll_until_done, submitted["id"], label="Veo extend", max_poll_seconds=900
+        )
+        return ws.first_output_url(result)
+
+    try:
+        cloudfront_url = await _submit_and_poll()
+    except ws.WaveSpeedError as e:
+        if getattr(e, "transient", False):
+            print(f"[Extend] transient WaveSpeed failure, retrying once: {e}")
+            await asyncio.sleep(10)
+            try:
+                cloudfront_url = await _submit_and_poll()
+            except Exception as e2:
+                raise HTTPException(status_code=502, detail=f"video extend failed (after retry): {str(e2)[:300]}")
+        else:
+            raise HTTPException(status_code=502, detail=f"video extend failed: {str(e)[:300]}")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"video extend failed: {str(e)[:300]}")
+
+    final_url = await _persist_extended_clip(
+        cloudfront_url=cloudfront_url,
+        source_url=data.video_url,
+        structured_prompt=structured_prompt,
+        source_ctx=source_ctx,
+        token=user["token"],
+    )
+
+    return {
+        "status": "success",
+        "video_url": final_url,
+        "source_video_url": data.video_url,
+        "provider_model": "wavespeed/veo3.1-fast/extend",
+    }
 

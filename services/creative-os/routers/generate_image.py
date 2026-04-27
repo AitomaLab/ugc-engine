@@ -98,14 +98,28 @@ async def execute_image_generation(data: ExecuteRequest, user: dict = Depends(ge
     client = CoreAPIClient(token=user["token"], project_id=data.project_id)
 
     try:
-        # Look up influencer image if a model/influencer is selected
+        # Look up influencer image if a model/influencer is selected.
+        # Use get_influencer (direct id lookup) instead of list_influencers,
+        # because the latter is project-scoped and silently drops influencers
+        # owned by another project the agent might be referencing.
         influencer_image_url = None
         influencer = None
         if data.influencer_id:
-            influencers = await client.list_influencers()
-            influencer = next((i for i in influencers if i["id"] == data.influencer_id), None)
+            try:
+                influencer = await client.get_influencer(data.influencer_id)
+            except Exception as e:
+                print(f"[Image Gen] WARN: get_influencer({data.influencer_id}) failed: {e}")
+                influencer = None
+            if not influencer:
+                # Fallback: scan the project-scoped list (legacy path).
+                try:
+                    influencers = await client.list_influencers()
+                    influencer = next((i for i in influencers if i.get("id") == data.influencer_id), None)
+                except Exception as e:
+                    print(f"[Image Gen] WARN: list_influencers fallback failed: {e}")
             if influencer:
                 influencer_image_url = influencer.get("image_url")
+            print(f"[Image Gen] Influencer lookup: id={data.influencer_id} resolved_url={influencer_image_url!r}")
 
         # ── Path UGC: Build composite prompt from template builders ──
         if data.mode == "ugc":
@@ -409,37 +423,81 @@ async def execute_image_generation(data: ExecuteRequest, user: dict = Depends(ge
                 "mode": data.mode,
             }
 
-        # ── Path A: Product is present → use core API shotgeneration ──
+        # ── Path A: Product is present → WaveSpeed-primary + KIE-fallback locally ──
+        # Previously delegated to core API (KIE-only). Now uses _generate_image_with_fallback
+        # so WaveSpeed is tried first and KIE is the fallback.
         if data.product_id:
-            # Core API only recognises "cinematic" or "iphone_look" as worker types,
-            # but we preserve the real mode (e.g. "luxury") in analysis_json for filtering.
-            shot_type = "cinematic" if data.mode == "cinematic" else "iphone_look"
+            product = await client.get_product(data.product_id)
+            product_image = product.get("image_url") if product else None
 
-            result = await client.generate_product_shot(
-                product_id=data.product_id,
-                shot_type=shot_type,
-                variations=1,
-                prompt=data.prompt,
-                influencer_image_url=influencer_image_url,
-            )
+            image_input = []
+            if influencer_image_url:
+                image_input.append(influencer_image_url)
+            if product_image and product_image not in image_input:
+                image_input.append(product_image)
+            if data.reference_image_url and data.reference_image_url not in image_input:
+                image_input.append(data.reference_image_url)
+            for url in (data.reference_image_urls or []):
+                if url and url not in image_input:
+                    image_input.append(url)
 
-            # Always enrich analysis_json with real mode + influencer_id
-            if result:
-                for shot in result:
-                    shot_id = shot.get("id")
+            shot_data = {
+                "shot_type": data.mode,
+                "status": "processing",
+                "prompt": data.prompt,
+                "project_id": data.project_id,
+                "product_id": data.product_id,
+                "analysis_json": {
+                    "mode": data.mode,
+                    "quality": data.quality,
+                    "aspect_ratio": data.aspect_ratio,
+                    "product_id": data.product_id,
+                },
+            }
+            if data.influencer_id:
+                shot_data["analysis_json"]["influencer_id"] = data.influencer_id
+            if influencer_image_url:
+                shot_data["analysis_json"]["influencer_image_url"] = influencer_image_url
+
+            try:
+                shot = await client.create_standalone_shot(shot_data)
+                shot_id = shot.get("id")
+                print(f"[Image Gen] Product shot record created: {shot_id}")
+            except Exception as e:
+                print(f"[Image Gen] WARN: Could not create product shot record: {e}")
+                shot = {"id": None}
+                shot_id = None
+
+            import asyncio
+
+            async def _product_background(shot_id, prompt, image_input, has_inf, ar, q, token, pid):
+                try:
+                    image_url = await _generate_image_with_fallback(
+                        prompt=prompt, image_input=image_input,
+                        has_influencer=has_inf, aspect_ratio=ar, quality=q,
+                    )
+                    if shot_id:
+                        c = CoreAPIClient(token=token, project_id=pid)
+                        await c.update_shot(shot_id, {"status": "image_completed", "image_url": image_url})
+                        print(f"[Image Gen] Product shot {shot_id} completed")
+                except Exception as e:
+                    print(f"[Image Gen] Product background failed: {e}")
                     if shot_id:
                         try:
-                            existing_json = shot.get("analysis_json") or {}
-                            existing_json["mode"] = data.mode
-                            if data.influencer_id:
-                                existing_json["influencer_id"] = data.influencer_id
-                            await client.update_shot(shot_id, {"analysis_json": existing_json})
-                        except Exception as e:
-                            print(f"[WARN] Could not store metadata on shot {shot_id}: {e}")
+                            c = CoreAPIClient(token=token, project_id=pid)
+                            await c.update_shot(shot_id, {"status": "failed"})
+                        except Exception:
+                            pass
+
+            asyncio.create_task(_product_background(
+                shot_id=shot_id, prompt=data.prompt, image_input=image_input,
+                has_inf=bool(influencer_image_url), ar=data.aspect_ratio, q=data.quality,
+                token=user["token"], pid=data.project_id,
+            ))
 
             return {
                 "status": "generating",
-                "shots": result,
+                "shots": [shot],
                 "prompt": data.prompt,
                 "mode": data.mode,
             }
@@ -732,6 +790,37 @@ async def _generate_nanobanana_wavespeed(
     raise RuntimeError("WaveSpeed NanoBanana timed out after 5 minutes")
 
 
+async def _wavespeed_primary_image_attempt(
+    *, prompt: str, image_input: list, aspect_ratio: str, quality: str,
+) -> str:
+    """WaveSpeed-primary attempt using the new wavespeed_client with full images[]."""
+    import asyncio
+    from services import wavespeed_client as ws
+
+    images = [u for u in (image_input or []) if u]
+    res_map = {"4k": "4k", "2k": "2k", "1k": "1k"}
+    resolution = res_map.get((quality or "").lower(), "2k")
+
+    if images:
+        data = await asyncio.to_thread(
+            ws.nanobanana_edit,
+            images=images[:14],
+            prompt=prompt,
+            aspect_ratio=aspect_ratio,
+            resolution=resolution,
+        )
+    else:
+        data = await asyncio.to_thread(
+            ws.nanobanana_t2i,
+            prompt=prompt,
+            aspect_ratio=aspect_ratio,
+            resolution=resolution,
+        )
+    pred_id = data["id"]
+    result = await asyncio.to_thread(ws.poll_until_done, pred_id, label="WS NanoBanana", max_poll_seconds=600)
+    return ws.first_output_url(result)
+
+
 async def _generate_image_with_fallback(
     prompt: str,
     image_input: list,
@@ -739,8 +828,27 @@ async def _generate_image_with_fallback(
     aspect_ratio: str = "9:16",
     quality: str = "4k",
 ) -> str:
-    """Generate image via KIE NanoBanana Pro, falling back to WaveSpeed on unavailability."""
+    """Generate image via KIE NanoBanana Pro, falling back to WaveSpeed on unavailability.
+
+    When USE_WAVESPEED_PRIMARY=true, attempt WaveSpeed first with the full
+    `images[]` array. Any error falls through to the legacy KIE+single-image
+    chain unchanged.
+    """
     import os
+
+    # ── WaveSpeed-primary outer layer (additive) ─────────────────────────
+    flag = os.getenv("USE_WAVESPEED_PRIMARY", "false").strip().lower() == "true"
+    if flag and os.getenv("WAVESPEED_API_KEY"):
+        try:
+            print(f"[WaveSpeed primary] NanoBanana attempt images={len(image_input or [])}")
+            return await _wavespeed_primary_image_attempt(
+                prompt=prompt,
+                image_input=image_input,
+                aspect_ratio=aspect_ratio,
+                quality=quality,
+            )
+        except Exception as ws_primary_err:
+            print(f"[WaveSpeed primary failed: {ws_primary_err}] — falling through to KIE chain")
 
     try:
         return await _generate_nanobanana_direct(
@@ -1581,4 +1689,206 @@ async def generate_product_shots(
         "product_sheet_url": sheet_url,
         "views": views,
         "shots": shot_rows,
+    }
+
+
+# ── WaveSpeed-only additions: text-to-image, alt versions ──────────────
+
+class TextToImageRequest(BaseModel):
+    prompt: str
+    aspect_ratio: str = "9:16"
+    quality: str = "2k"  # 1k | 2k | 4k
+    project_id: Optional[str] = None
+
+
+@router.post("/text-to-image")
+async def text_to_image(data: TextToImageRequest, user: dict = Depends(get_current_user)):
+    """Generate a still image from a prompt only (no reference images).
+
+    WaveSpeed NanoBanana Pro text-to-image. Returns the generated image URL
+    plus an optional shot row when project_id is provided.
+    """
+    import os as _os
+    import asyncio
+    from services import wavespeed_client as ws
+
+    if not _os.getenv("WAVESPEED_API_KEY"):
+        raise HTTPException(status_code=503, detail="WaveSpeed not configured")
+    if not data.prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+
+    quality = (data.quality or "").lower()
+    resolution = quality if quality in ("1k", "2k", "4k") else "2k"
+
+    try:
+        submitted = await asyncio.to_thread(
+            ws.nanobanana_t2i,
+            prompt=data.prompt,
+            aspect_ratio=data.aspect_ratio,
+            resolution=resolution,
+        )
+        result = await asyncio.to_thread(
+            ws.poll_until_done, submitted["id"], label="WS NanoBanana t2i", max_poll_seconds=600
+        )
+        image_url = ws.first_output_url(result)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"text-to-image failed: {str(e)[:300]}")
+
+    shot_id: Optional[str] = None
+    if data.project_id:
+        try:
+            client = CoreAPIClient(token=user["token"], project_id=data.project_id)
+            shot = await client.create_standalone_shot({
+                "shot_type": "ai_generated",
+                "status": "image_completed",
+                "prompt": data.prompt,
+                "image_url": image_url,
+                "project_id": data.project_id,
+                "analysis_json": {
+                    "mode": "text_to_image",
+                    "aspect_ratio": data.aspect_ratio,
+                    "quality": resolution,
+                    "provider": "wavespeed",
+                },
+            })
+            shot_id = shot.get("id")
+        except Exception as e:
+            print(f"[t2i] WARN: could not persist shot: {e}")
+
+    return {
+        "status": "success",
+        "image_url": image_url,
+        "shot_id": shot_id,
+        "provider_model": "wavespeed/nano-banana-pro/text-to-image",
+    }
+
+
+class AltVersionsRequest(BaseModel):
+    prompt: str
+    images: List[str]
+    aspect_ratio: Optional[str] = "3:2"  # edit-multi only allows 3:2/2:3/3:4/4:3
+    project_id: Optional[str] = None
+
+
+@router.post("/alt-versions")
+async def alt_versions(data: AltVersionsRequest, user: dict = Depends(get_current_user)):
+    """Generate 2 alternative variations of an image edit using NanoBanana Pro edit-multi.
+
+    WaveSpeed-only. Useful when the user asks for 'alternatives' or 'variations'
+    after a first composite. Returns 2 image URLs.
+    """
+    import os as _os
+    import asyncio
+    from services import wavespeed_client as ws
+
+    if not _os.getenv("WAVESPEED_API_KEY"):
+        raise HTTPException(status_code=503, detail="WaveSpeed not configured")
+    if not data.prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+    if not data.images:
+        raise HTTPException(status_code=400, detail="at least one image is required")
+
+    # Create 2 processing shot records BEFORE calling WaveSpeed so the gallery
+    # shows progress cards during the 1-2 min wait — same UX as normal generate_image.
+    placeholder_shot_ids: List[str] = []
+    client: Optional[CoreAPIClient] = None
+    if data.project_id:
+        try:
+            client = CoreAPIClient(token=user["token"], project_id=data.project_id)
+            for _ in range(2):
+                try:
+                    shot = await client.create_standalone_shot({
+                        "shot_type": "ai_generated",
+                        "status": "processing",
+                        "prompt": data.prompt,
+                        "project_id": data.project_id,
+                        "analysis_json": {
+                            "mode": "alt_version",
+                            "provider": "wavespeed",
+                            "aspect_ratio": data.aspect_ratio,
+                        },
+                    })
+                    sid = shot.get("id")
+                    if sid:
+                        placeholder_shot_ids.append(sid)
+                except Exception as e:
+                    print(f"[alt-versions] WARN: placeholder create failed: {e}")
+        except Exception as e:
+            print(f"[alt-versions] WARN: client init failed: {e}")
+            client = None
+
+    async def _mark_failed():
+        if client and placeholder_shot_ids:
+            for sid in placeholder_shot_ids:
+                try:
+                    await client.update_shot(sid, {"status": "failed"})
+                except Exception:
+                    pass
+
+    try:
+        submitted = await asyncio.to_thread(
+            ws.nanobanana_edit_multi,
+            images=data.images,
+            prompt=data.prompt,
+            aspect_ratio=data.aspect_ratio,
+        )
+        result = await asyncio.to_thread(
+            ws.poll_until_done, submitted["id"], label="WS NanoBanana edit-multi", max_poll_seconds=600
+        )
+    except Exception as e:
+        await _mark_failed()
+        raise HTTPException(status_code=502, detail=f"alt-versions failed: {str(e)[:300]}")
+
+    outputs = result.get("outputs") or []
+    image_urls: List[str] = []
+    for entry in outputs[:2]:
+        if isinstance(entry, str) and entry:
+            image_urls.append(entry)
+        elif isinstance(entry, dict):
+            url = entry.get("url") or entry.get("image_url")
+            if isinstance(url, str) and url:
+                image_urls.append(url)
+    if not image_urls:
+        await _mark_failed()
+        raise HTTPException(status_code=502, detail="alt-versions returned no outputs")
+
+    # Pair URLs with placeholder shots: update existing rows where possible,
+    # create new ones for any URLs beyond the 2 placeholders, mark unused
+    # placeholders as failed.
+    shot_ids: List[str] = []
+    if client:
+        for i, url in enumerate(image_urls):
+            if i < len(placeholder_shot_ids):
+                sid = placeholder_shot_ids[i]
+                try:
+                    await client.update_shot(sid, {"status": "image_completed", "image_url": url})
+                    shot_ids.append(sid)
+                except Exception as e:
+                    print(f"[alt-versions] WARN: update {sid} failed: {e}")
+            else:
+                try:
+                    shot = await client.create_standalone_shot({
+                        "shot_type": "ai_generated",
+                        "status": "image_completed",
+                        "prompt": data.prompt,
+                        "image_url": url,
+                        "project_id": data.project_id,
+                        "analysis_json": {"mode": "alt_version", "provider": "wavespeed"},
+                    })
+                    if shot.get("id"):
+                        shot_ids.append(shot["id"])
+                except Exception as e:
+                    print(f"[alt-versions] WARN: persist failed: {e}")
+        # Mark any leftover placeholders (fewer outputs than expected) as failed.
+        for sid in placeholder_shot_ids[len(image_urls):]:
+            try:
+                await client.update_shot(sid, {"status": "failed"})
+            except Exception:
+                pass
+
+    return {
+        "status": "success",
+        "image_urls": image_urls,
+        "shot_ids": shot_ids,
+        "provider_model": "wavespeed/nano-banana-pro/edit-multi",
     }
