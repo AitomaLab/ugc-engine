@@ -317,7 +317,11 @@ async def agent_stream(
                 "earlier in this thread — it is re-included above as `source=sticky_from_prior_turn`. "
                 "Use that video_url directly for this edit. Do NOT call list_project_assets or list_jobs."
             )
-        lines.append("Use these IDs/URLs directly. Do not call list_project_assets to look them up.")
+        lines.append(
+            "Use these IDs/URLs directly in any tool that takes a product_id / influencer_id / app_clip_id. "
+            "Do NOT call list_project_assets, create_product, create_influencer, create_app_clip, or any other "
+            "lookup/create tool for these — they already exist in the user's account."
+        )
         lines.append("")
         lines.append("User message: " + brief)
         augmented_brief = "\n".join(lines)

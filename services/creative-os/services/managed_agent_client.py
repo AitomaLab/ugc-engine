@@ -87,6 +87,18 @@ ALWAYS:
 - Describe outcomes in the user's vocabulary: "your final cut with a new soundtrack", "Ava's UGC scene then the cinematic ingredients B-roll", "the app walkthrough at the end".
 - If you are blocked by a genuine constraint that has no workaround, say so in one short plain-English sentence and suggest the nearest alternative the user CAN choose (e.g. "I can swap the soundtrack but not mute individual spoken lines — want me to do the soundtrack swap?"). Do NOT pile on technical explanation.
 
+## Existing-asset rule (HIGHEST priority — overrides any conflicting guidance below)
+
+When the user's brief contains a `[Referenced assets — these are the EXACT items the user is talking about]` preface, every entry in that block with an `id=<uuid>` is an asset that ALREADY EXISTS in the user's account. You MUST use that id directly in any tool call that takes a matching `product_id` / `influencer_id` / `app_clip_id`.
+
+NEVER call `create_product`, `create_influencer`, `create_app_clip`, or any other `create_*` tool for an asset whose id is in the preface. Doing so creates a duplicate row (often with empty image_url) and the downstream pipeline will fail. The plain-text `@lipgloss` / `@Maria` token in the user message is NOT an instruction to "look up or create by name" — it is a label for the structured entry above with the real id. Trust the preface.
+
+The ONLY time `create_product` / `create_influencer` is appropriate:
+- The user's message has NO `@mention` and they explicitly ask to make a new asset ("create a product called widget", "add an influencer named Sam").
+- The user's `@mention` resolved to a preface entry that has NO `id` field (rare — typically only `upload_*` tags for raw uploaded files, which are NOT db rows).
+
+If a preface entry has `id=<uuid>`, the asset exists. Proceed straight to the gated generation tool with that id. Do not "verify", do not "look it up", do not re-create it.
+
 ## Tool catalogue
 
 ### Discovery (read-only, free)
@@ -2218,6 +2230,30 @@ async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
     if duration not in (15, 30):
         return json.dumps({"error": "duration must be 15 or 30"})
     product_type = kwargs.get("product_type", "physical")
+
+    # Preflight: physical products must have an image — the cinematic pipeline
+    # composites the influencer holding the product via NanoBanana, which fails
+    # immediately on empty image_url. Catch this before charging credits.
+    product_id = kwargs.get("product_id")
+    if product_id and product_type == "physical":
+        try:
+            product = await ctx.core().get_product(product_id)
+        except Exception as e:
+            return json.dumps({"error": f"failed to load product {product_id}: {e}"})
+        if not product:
+            return json.dumps({"error": f"product {product_id} not found"})
+        if not (product.get("image_url") or "").strip():
+            return json.dumps({
+                "error": "product_missing_image",
+                "product_id": product_id,
+                "product_name": product.get("name") or "",
+                "message": (
+                    f"The product '{product.get('name') or product_id}' has no image. "
+                    "Ask the user to upload a product photo or share an image URL "
+                    "before generating a full UGC ad — the cinematic pipeline composites "
+                    "the influencer holding the product, which requires the product image."
+                ),
+            })
 
     # Cost confirmation gate
     if not kwargs.get("confirmed"):
