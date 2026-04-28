@@ -14,13 +14,25 @@ const GENERATION_KEYWORDS = [
 	'write a script',
 	'make a video',
 	'make me a',
+	// Re-generation intents — these require a fresh render via the managed
+	// agent (create_ugc_video / extend_video / generate_video), NOT a
+	// timeline-ops edit. Without this, "redo / regenerate" got routed to the
+	// editor-AI module and confused users with a 503.
+	'redo',
+	're-do',
+	'regenerate',
+	're-generate',
+	'remake',
+	're-make',
+	'rerun',
+	're-run',
+	'do it again',
+	'try again',
 ];
 
 const EDIT_KEYWORDS = [
 	'trim',
-	'cut',
 	'shorten',
-	'extend',
 	'edit this',
 	'edit the',
 	'adjust',

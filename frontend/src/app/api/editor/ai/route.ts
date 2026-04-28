@@ -92,10 +92,10 @@ function isLikelyEditIntent(input: string): boolean {
 export async function POST(request: NextRequest) {
   const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
   if (!apiKey) {
+    console.error('[editor/ai] ANTHROPIC_API_KEY missing — frontend env not configured');
     return NextResponse.json(
       {
-        error:
-          'ANTHROPIC_API_KEY is not set. Add it to frontend/.env.local and restart the dev server.',
+        error: 'The editing assistant is temporarily unavailable. Please try again in a moment.',
       },
       { status: 503 },
     );
