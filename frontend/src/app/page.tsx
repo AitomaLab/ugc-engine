@@ -851,7 +851,7 @@ export default function StudioPage() {
                   color: '#0D1B3E',
                   background: 'transparent',
                   lineHeight: 1.5,
-                  overflow: 'hidden',
+                  overflow: 'auto',
                 }}
               />
 
