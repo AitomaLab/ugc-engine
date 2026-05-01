@@ -54,6 +54,7 @@ class AgentRunRequest(BaseModel):
     refs: Optional[list[AgentRef]] = None
     use_seedance: bool = False
     lang: Optional[str] = None  # 'en' | 'es' — steers conversational reply language
+    quick_mode: bool = False
 
 
 class AgentResetRequest(BaseModel):
@@ -216,6 +217,9 @@ async def agent_stream(
         "what was used in earlier turns.]"
     )
     engine_marker = seedance_marker if data.use_seedance else default_marker
+    quick_mode_marker = (
+        "[QUICK_MODE=on]" if data.quick_mode else "[QUICK_MODE=off]"
+    )
 
     # Edit-intent reminder — Claude has a strong pretrained pattern for emitting
     # `AI_EDIT_OPS` + an ops JSON array when asked to trim/edit/add music. That
@@ -279,12 +283,12 @@ async def agent_stream(
             refs = list(refs) + [sticky_video_ref]
 
     if not refs:
-        prefix_lines = [engine_marker]
+        prefix_lines = [engine_marker, quick_mode_marker]
         if is_edit_intent:
             prefix_lines.append(edit_reminder)
         augmented_brief = "\n\n".join(prefix_lines + [augmented_brief])
     if refs:
-        lines = [engine_marker]
+        lines = [engine_marker, quick_mode_marker]
         if is_edit_intent:
             lines.append(edit_reminder)
         lines.append("")
@@ -325,6 +329,27 @@ async def agent_stream(
         lines.append("")
         lines.append("User message: " + brief)
         augmented_brief = "\n".join(lines)
+
+    # ── Onboarding first video: special handling ──────────────────────────
+    is_onboarding = "ONBOARDING_FIRST_VIDEO" in brief
+    if is_onboarding:
+        onboarding_instructions = (
+            "\n\n[ONBOARDING INSTRUCTIONS — CRITICAL]\n"
+            "This is the user's very first video from onboarding. Follow these rules EXACTLY:\n"
+            "1. DURATION: Use 5 seconds (duration=5). Do NOT use 10s.\n"
+            "2. PRODUCT IMAGE: You MUST include the product's image_url in the `reference_image_urls` "
+            "array when calling seedance_2_ugc. The product must be VISIBLE in the video. "
+            "Include BOTH the influencer image AND the product image as reference images.\n"
+            "3. FREE VIDEO: This video costs 0 credits — it is a free welcome gift. "
+            "In your confirmation message to the user, explicitly say this video is FREE "
+            "and mention they still have all 100 credits to use afterwards. "
+            "Do NOT mention any credit cost number.\n"
+            "4. SKIP QUESTIONS: Do NOT ask the user about aspect ratio, duration, or any preferences. "
+            "Just start generating immediately with 9:16 vertical, 5s, Seedance 2.0.\n"
+            "5. CONFIRMATION: Start your response with a brief, enthusiastic confirmation and "
+            "immediately call the generation tool. Keep your message short and action-oriented."
+        )
+        augmented_brief += onboarding_instructions
 
     async def gen():
         nonlocal augmented_brief

@@ -209,6 +209,20 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
     const [attachments, setAttachments] = useState<AttachedFile[]>([]);
     const [useSeedance, setUseSeedance] = useState(initialUseSeedance ?? false);
 
+    // ── Quick Mode ──────────────────────────────────────────────────────
+    const [quickMode, setQuickMode] = useState(() => {
+        if (typeof window === 'undefined') return true;
+        const stored = localStorage.getItem('aitoma_quick_mode');
+        return stored === null ? true : stored === 'true'; // ON by default for new users
+    });
+    const toggleQuickMode = () => {
+        setQuickMode(prev => {
+            const next = !prev;
+            try { localStorage.setItem('aitoma_quick_mode', String(next)); } catch { /* ignore */ }
+            return next;
+        });
+    };
+
     // Sync state locally to parent for reactive header elements
     useEffect(() => {
         if (onStateChange) {
@@ -394,7 +408,10 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
 
     const mentionItems = useMemo<MentionItem[]>(() => {
         const items: MentionItem[] = [];
+        const seenProductIds = new Set<string>();
         for (const p of products) {
+            if (p.id && seenProductIds.has(p.id)) continue;
+            if (p.id) seenProductIds.add(p.id);
             const name = p.name || p.product_name || 'product';
             const isDigital = p.type === 'digital';
             const appClips = Array.isArray(p.app_clips) ? p.app_clips.filter((c: any) => c.first_frame_url) : [];
@@ -432,7 +449,11 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                 },
             });
         }
+        const seenInfluencerIds = new Set<string>();
         for (const inf of influencers) {
+            // Deduplicate: same influencer may appear in multiple projects
+            if (inf.id && seenInfluencerIds.has(inf.id)) continue;
+            if (inf.id) seenInfluencerIds.add(inf.id);
             const name = inf.name || 'model';
             const extraViews = Array.isArray(inf.character_views) ? inf.character_views.filter(Boolean) : [];
             const views = inf.image_url ? [inf.image_url, ...extraViews.filter((v: string) => v !== inf.image_url)] : extraViews;
@@ -538,6 +559,8 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
     // Tags seeded from initialRefs (dashboard uploads / pre-populated mentions) —
     // always forwarded regardless of whether @tag appears in the brief text.
     const initialRefTagsRef = useRef<Set<string>>(new Set());
+    // Store the actual ref objects from initialRefs so they survive stale closures
+    const initialRefsArrayRef = useRef<AgentRef[]>([]);
 
     // Phase 1: store the brief and pre-fill textarea (runs early)
     useEffect(() => {
@@ -558,6 +581,8 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             }
             setActiveRefs(refMap);
             initialRefTagsRef.current = seedTags;
+            // Store refs in a ref so they survive stale closures in handleRun
+            initialRefsArrayRef.current = [...initialRefs];
         }
         console.log('[AgentPanel] Auto-submit: stored pending brief', initialBrief.slice(0, 50), 'refs:', initialRefs?.length ?? 0);
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -593,9 +618,18 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         // Build refs payload from active mentions that are still present in
         // the final text (user may have deleted a tag manually).
         const refsForRequest: AgentRef[] = [];
+        const seenIds = new Set<string>();
         for (const [tag, ref] of activeRefs.entries()) {
             if (text.includes(`@${tag}`) || initialRefTagsRef.current.has(tag)) {
                 refsForRequest.push(ref);
+                if (ref.id) seenIds.add(ref.id);
+            }
+        }
+        // Always include initialRefs (survives stale activeRefs closures)
+        for (const ref of initialRefsArrayRef.current) {
+            if (ref.id && !seenIds.has(ref.id)) {
+                refsForRequest.push(ref);
+                seenIds.add(ref.id);
             }
         }
         // Include uploaded attachments as refs (always sent — user explicitly attached them).
@@ -615,9 +649,13 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             ? `(uploaded ${readyAttachments.length} file${readyAttachments.length === 1 ? '' : 's'})`
             : '');
 
+        // Strip hidden instruction markers from the displayed text
+        // (e.g. [9:16 vertical], [5s clip duration], [ONBOARDING_FIRST_VIDEO ...])
+        const displayText = finalText.replace(/\s*\[[^\]]*\]\s*/g, ' ').trim();
+
         const userTurn: AgentTurn = {
             role: 'user',
-            text: finalText,
+            text: displayText,
             ts: Date.now(),
             refs: refsForRequest.length > 0 ? refsForRequest : undefined,
         };
@@ -631,6 +669,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         setTurns((prev) => [...prev, userTurn, placeholder]);
         setBrief('');
         setActiveRefs(new Map());
+        initialRefsArrayRef.current = [];
         // Clear attachments (revoke object URLs first)
         setAttachments((prev) => {
             for (const a of prev) {
@@ -894,7 +933,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         }
 
         try {
-            await streamAgent(text, projectId, onEvent, controller.signal, refsForRequest, useSeedance, lang);
+            await streamAgent(text, projectId, onEvent, controller.signal, refsForRequest, useSeedance, lang, quickMode);
         } catch (err) {
             if ((err as Error).name === 'AbortError') {
                 updateLastAgentTurn((t) => ({ ...t, interrupted: true }));
@@ -923,7 +962,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             setActivityStartedAt(null);
             abortRef.current = null;
         }
-    }, [brief, running, projectId, onArtifact, activeRefs, attachments, onSubmitOverride, useSeedance, jobId]);
+    }, [brief, running, projectId, onArtifact, activeRefs, attachments, onSubmitOverride, useSeedance, jobId, quickMode]);
 
     // Phase 2: fire handleRun AFTER hydration completes (hydrating: true → false)
     // This ensures the panel is fully initialized before auto-submitting.
@@ -1582,6 +1621,33 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                 <svg viewBox="0 0 24 24" style={{ width: '16px', height: '16px', fill: 'none', stroke: 'currentColor', strokeWidth: '2.2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
                                     <line x1="12" y1="5" x2="12" y2="19" />
                                     <line x1="5" y1="12" x2="19" y2="12" />
+                                </svg>
+                            </button>
+                            {/* ⚡ Quick Mode Toggle */}
+                            <button
+                                onClick={toggleQuickMode}
+                                disabled={running}
+                                title={quickMode ? t('quickMode.on') : t('quickMode.off')}
+                                style={{
+                                    position: 'absolute',
+                                    left: '44px',
+                                    bottom: '8px',
+                                    width: '30px',
+                                    height: '30px',
+                                    borderRadius: '8px',
+                                    border: `1px solid ${quickMode ? 'rgba(51,122,255,0.3)' : 'rgba(13,27,62,0.12)'}`,
+                                    background: quickMode ? 'rgba(51,122,255,0.08)' : running ? 'rgba(13,27,62,0.03)' : 'white',
+                                    cursor: running ? 'not-allowed' : 'pointer',
+                                    color: quickMode ? '#337AFF' : '#8A93B0',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    padding: 0,
+                                    transition: 'all 0.2s',
+                                }}
+                            >
+                                <svg viewBox="0 0 24 24" style={{ width: '15px', height: '15px', fill: 'none', stroke: 'currentColor', strokeWidth: '2.2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
+                                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
                                 </svg>
                             </button>
                             {!running && (
@@ -2694,12 +2760,12 @@ function MentionDropdown({ groups, ordered, activeIndex, onPick, onHover, shotPi
                                 gap: '6px',
                             }}
                         >
-                            {items.map((item) => {
+                            {items.map((item, itemIdx) => {
                                 const idx = ordered.indexOf(item);
                                 const active = idx === activeIndex;
                                 return (
                                     <button
-                                        key={`${item.type}-${item.tag}`}
+                                        key={`${item.type}-${item.ref?.id || item.tag}-${itemIdx}`}
                                         type="button"
                                         onMouseDown={(e) => {
                                             e.preventDefault();

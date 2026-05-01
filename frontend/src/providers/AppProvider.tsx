@@ -86,7 +86,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
       authFetch<CreditWallet>('/api/wallet', token),
     ]);
 
-    if (profileData) setProfile(profileData);
+    // Race condition guard: on signup the Supabase auth session is ready
+    // before the handle_new_user DB trigger finishes creating the profile
+    // and wallet rows. Retry a few times with a delay to let the trigger
+    // complete rather than rendering a ghost "User" state.
+    let resolvedProfile = profileData;
+    let resolvedWallet = walletData;
+    if (!resolvedProfile && token) {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        await new Promise(r => setTimeout(r, 1000));
+        const [retryProfile, retryWallet] = await Promise.all([
+          authFetch<UserProfile>('/api/profile', token),
+          authFetch<CreditWallet>('/api/wallet', token),
+        ]);
+        if (retryProfile) {
+          resolvedProfile = retryProfile;
+          resolvedWallet = retryWallet || resolvedWallet;
+          break;
+        }
+      }
+    }
+
+    if (resolvedProfile) setProfile(resolvedProfile);
     if (projectsData) {
       setProjects(projectsData);
       // Restore active project from localStorage
@@ -98,7 +119,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setActiveProjectState(restored);
     }
     if (subData) setSubscription(subData);
-    if (walletData) setWallet(walletData);
+    if (resolvedWallet) setWallet(resolvedWallet);
   }, [token]);
 
   useEffect(() => {

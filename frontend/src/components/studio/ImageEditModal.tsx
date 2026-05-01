@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { creativeFetch } from '@/lib/creative-os-api';
 import { useTranslation } from '@/lib/i18n';
 import { MODAL_HEIGHT, MODAL_WIDTH } from '@/lib/modal-sizing';
+import { SharePopover } from './SharePopover';
 
 /* Renders the animation preview clip; falls back to a large emoji tile on load error.
    The container is a fixed 9:16 box to match Kling's output aspect ratio. */
@@ -126,11 +127,16 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
     const [actionLoading, setActionLoading] = useState<string | null>(null);
     const [copied, setCopied] = useState(false);
     const [showAnimateModal, setShowAnimateModal] = useState(false);
+    const [shareOpen, setShareOpen] = useState(false);
     const [mounted, setMounted] = useState(false);
     useEffect(() => { setMounted(true); }, []);
 
     // ── Editable title ──────────────────────────────────────────────
-    const displayName = asset.product_name || t('creativeOs.imageModal.imageFallback');
+    const _rawName = asset.product_name || t('creativeOs.imageModal.imageFallback');
+    const displayName = (() => {
+        const words = _rawName.split(/\s+/);
+        return words.length <= 4 ? _rawName : words.slice(0, 4).join(' ') + '…';
+    })();
     const [title, setTitle] = useState(displayName);
     const [editingTitle, setEditingTitle] = useState(false);
     const [savingTitle, setSavingTitle] = useState(false);
@@ -410,7 +416,7 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                             }}>
                                 {title.charAt(0).toUpperCase()}
                             </div>
-                            <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
                                 {editingTitle ? (
                                     <input
                                         ref={titleInputRef}
@@ -451,11 +457,11 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                                             cursor: 'pointer',
                                             display: 'flex',
                                             alignItems: 'center',
-                                            gap: '5px',
+                                            gap: '6px',
                                         }}
                                         title={t('creativeOs.imageModal.clickRename')}
                                     >
-                                        {title}
+                                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>
                                         <svg viewBox="0 0 24 24" style={{
                                             width: '12px', height: '12px',
                                             fill: 'none', stroke: '#8A93B0',
@@ -466,7 +472,7 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                                         </svg>
                                     </div>
                                 )}
-                                <div style={{ fontSize: '12px', color: '#8A93B0', marginTop: '1px' }}>
+                                <div style={{ fontSize: '12px', color: '#8A93B0', marginTop: '1px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                     {createdAgo || t('creativeOs.imageModal.imageFallback')}
                                 </div>
                             </div>
@@ -487,6 +493,30 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                                 onMouseEnter={e => (e.currentTarget.style.color = '#337AFF')}
                                 onMouseLeave={e => (e.currentTarget.style.color = '#5A6178')}
                             >{t('creativeOs.imageModal.download')}</button>
+                            <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                                <button
+                                    onClick={() => setShareOpen(v => !v)}
+                                    style={{
+                                        fontSize: '13px',
+                                        fontWeight: 600,
+                                        color: shareOpen ? '#337AFF' : '#5A6178',
+                                        background: 'none',
+                                        border: 'none',
+                                        cursor: 'pointer',
+                                        padding: '2px 0',
+                                        transition: 'color 0.15s',
+                                    }}
+                                    onMouseEnter={e => { if (!shareOpen) e.currentTarget.style.color = '#337AFF'; }}
+                                    onMouseLeave={e => { if (!shareOpen) e.currentTarget.style.color = '#5A6178'; }}
+                                >{t('share.share')}</button>
+                                {shareOpen && (
+                                    <SharePopover
+                                        url={imageUrl}
+                                        assetType="image"
+                                        onClose={() => setShareOpen(false)}
+                                    />
+                                )}
+                            </div>
                             <button
                                 onClick={() => alert(t('creativeOs.imageModal.publishComingSoon'))}
                                 style={{

@@ -93,7 +93,27 @@ def _sanitize_influencer_description(description: str, actual_name: str) -> str:
     return description
 
 
+def _derive_asset_name(prompt: str, fallback: str = "Video") -> str:
+    """Derive a short, human-readable asset name from the generation prompt.
+
+    Used as `campaign_name` in job records, which surfaces in notifications
+    and the asset library. Keeps at most 4 words.
+    """
+    if not prompt or not prompt.strip():
+        return fallback
+    # Strip markdown-style formatting, system tags, and excessive whitespace
+    clean = re.sub(r'\[.*?\]', '', prompt).strip()
+    clean = re.sub(r'\s+', ' ', clean)
+    if not clean:
+        return fallback
+    words = clean.split()
+    if len(words) <= 4:
+        return clean
+    return ' '.join(words[:4]) + '…'
+
+
 router = APIRouter(prefix="/generate/video", tags=["video-generation"])
+
 
 
 class ElementRef(BaseModel):
@@ -172,7 +192,7 @@ async def _create_video_job_record(
             "product_type": product_type,
             "model_api": model_api,
             "length": duration,
-            "campaign_name": "Creative OS",
+            "campaign_name": _derive_asset_name(prompt),
             "video_language": data.language,
             "subtitles_enabled": data.captions,
             "music_enabled": data.background_music,
@@ -633,7 +653,7 @@ async def _generate_seedance_video(
             "product_type": product_type,
             "model_api": "seedance-2.0-fast",
             "length": data.clip_length,
-            "campaign_name": "Creative OS",
+            "campaign_name": _derive_asset_name(data.prompt),
             "video_language": data.language,
             "subtitles_enabled": False,
             "music_enabled": False,
@@ -645,6 +665,21 @@ async def _generate_seedance_video(
     except Exception as e:
         import traceback; traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to create job: {str(e)[:200]}")
+
+    # ── Onboarding free video: refund credits for the user's first video ──
+    # Check if this is the first-ever job in this project. If so, it's the
+    # onboarding welcome video and should be free.
+    if credit_cost > 0 and data.project_id and user.get("id"):
+        try:
+            existing_jobs = await client.list_jobs()
+            # Only the job we just created should exist
+            if len(existing_jobs or []) <= 1:
+                from ugc_db.db_manager import refund_credits
+                refund_credits(user["id"], credit_cost, {"reason": "onboarding_free_video", "job_id": job_id})
+                print(f"[Seedance] Onboarding free video — refunded {credit_cost} credits to {user['id']}")
+                credit_cost = 0
+        except Exception as e:
+            print(f"[Seedance] WARNING: onboarding refund check failed: {e}")
 
     if not job_id:
         raise HTTPException(status_code=500, detail="Failed to create job record")
@@ -940,7 +975,7 @@ async def _generate_kling_video(
             "product_type": product_type,
             "model_api": "kling-3.0/video",
             "length": data.clip_length,
-            "campaign_name": "Creative OS",
+            "campaign_name": _derive_asset_name(data.prompt),
             "video_language": data.language,
             "subtitles_enabled": False,
             "music_enabled": False,
@@ -1674,7 +1709,7 @@ async def _generate_full_video(
         "product_type": product_type,
         "model_api": "veo-3.1-fast",
         "length": data.video_length,
-        "campaign_name": "Creative OS",
+        "campaign_name": _derive_asset_name(hook or data.prompt),
         "video_language": data.language,
         "subtitles_enabled": data.captions,
         "music_enabled": data.background_music,
@@ -1741,7 +1776,7 @@ async def _generate_ugc_clip(
             "product_type": product_type,
             "model_api": "veo-3.1-fast",
             "length": data.clip_length,
-            "campaign_name": "Creative OS",
+            "campaign_name": _derive_asset_name(data.prompt),
             "video_language": data.language,
             "subtitles_enabled": False,
             "music_enabled": False,
@@ -2524,7 +2559,7 @@ async def _persist_extended_clip(
             "product_type": product_type,
             "model_api": "veo3.1-fast-extend",
             "length": 8,
-            "campaign_name": "Creative OS",
+            "campaign_name": _derive_asset_name(structured_prompt),
             "video_language": row.get("video_language") or "en",
             "subtitles_enabled": False,
             "music_enabled": False,

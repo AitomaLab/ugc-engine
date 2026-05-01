@@ -248,7 +248,7 @@ class CoreAPIClient:
             "product_type": "physical",
             "model_api": data.get("model_api", "kling-3.0"),
             "length": data.get("length", 5),
-            "campaign_name": data.get("campaign_name", "Creative OS"),
+            "campaign_name": data.get("campaign_name", "Video"),
             "video_language": data.get("language", "en"),
             "subtitles_enabled": data.get("captions", True),
             "music_enabled": data.get("background_music", True),

@@ -30,6 +30,10 @@ export default function SignupPage() {
       setError(error.message);
       setLoading(false);
     } else {
+      // Sign out the auto-created session so the user can't access the app
+      // before confirming their email. They must sign in explicitly after
+      // clicking the confirmation link.
+      await supabase.auth.signOut();
       setSuccess(true);
       setLoading(false);
     }

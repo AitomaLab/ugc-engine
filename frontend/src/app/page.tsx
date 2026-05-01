@@ -8,6 +8,7 @@ import { useTranslation } from "@/lib/i18n";
 import Link from "next/link";
 import { createProject } from "@/lib/supabaseData";
 import { creativeFetch, transcribeAudio, uploadAgentFile } from "@/lib/creative-os-api";
+import { OnboardingModal } from "@/components/studio/OnboardingModal";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -136,6 +137,16 @@ export default function StudioPage() {
   const [activeBottomTab, setActiveBottomTab] = useState<'projects' | 'videos' | 'images' | 'campaigns'>('projects');
   const { profile } = useApp();
   const userName = profile?.name || profile?.email?.split('@')[0] || 'Creator';
+
+  // Onboarding — show for first-time users (per-user localStorage flag)
+  const onboardingKey = profile?.id ? `aitoma_onboarding_done_${profile.id}` : '';
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  useEffect(() => {
+    if (!loading && onboardingKey) {
+      const dismissed = localStorage.getItem(onboardingKey);
+      if (!dismissed) setShowOnboarding(true);
+    }
+  }, [loading, onboardingKey]);
 
   // Composer state
   const [prompt, setPrompt] = useState('');
@@ -570,6 +581,42 @@ export default function StudioPage() {
       backgroundAttachment: 'fixed'
     }}>
 
+      {/* Onboarding modal for first-time users */}
+      {showOnboarding && (
+        <OnboardingModal
+          onComplete={async ({ productId, productName, productImageUrl, influencerId, influencerName, influencerImageUrl, prompt: selectedPrompt }) => {
+            try {
+              if (onboardingKey) localStorage.setItem(onboardingKey, '1');
+              setShowOnboarding(false);
+              // Create a new project and navigate to it with the prompt pre-filled
+              const name = `${productName} × ${influencerName}`;
+              const newProject = await creativeFetch<{ id: string }>('/creative-os/projects/', {
+                method: 'POST',
+                body: JSON.stringify({ name }),
+              });
+              if (newProject?.id) {
+                // Build proper @ references so the agent can resolve the product & influencer
+                const refs = [
+                  { type: 'product', tag: productName, name: productName, id: productId, image_url: productImageUrl || undefined },
+                  { type: 'influencer', tag: influencerName, name: influencerName, id: influencerId, image_url: influencerImageUrl || undefined },
+                ];
+                const refsParam = encodeURIComponent(JSON.stringify(refs));
+                router.push(
+                  `/projects/${newProject.id}?brief=${encodeURIComponent(selectedPrompt)}&refs=${refsParam}&seedance=1`
+                );
+              }
+            } catch (err) {
+              console.error('Onboarding project creation failed:', err);
+              setShowOnboarding(false);
+            }
+          }}
+          onSkip={() => {
+            // Onboarding is mandatory — skip just marks it done
+            if (onboardingKey) localStorage.setItem(onboardingKey, '1');
+            setShowOnboarding(false);
+          }}
+        />
+      )}
       {/* ── HERO SECTION ─────────────────────────────────────────────── */}
       <div style={{
         flex: 1,

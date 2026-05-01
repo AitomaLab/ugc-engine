@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { creativeFetch } from '@/lib/creative-os-api';
 import { useTranslation } from '@/lib/i18n';
 import { MODAL_HEIGHT, MODAL_WIDTH } from '@/lib/modal-sizing';
+import { SharePopover } from './SharePopover';
 
 /* ── Types ─────────────────────────────────────────────────────── */
 
@@ -89,10 +90,15 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
     const [generating, setGenerating] = useState(false);
     const [copied, setCopied] = useState(false);
     const [mounted, setMounted] = useState(false);
+    const [shareOpen, setShareOpen] = useState(false);
     useEffect(() => { setMounted(true); }, []);
 
     // ── Editable title ──────────────────────────────────────────────
-    const displayName = asset.campaign_name || asset.influencer_name || t('creativeOs.videoModal.videoFallback');
+    const _rawName = asset.campaign_name || asset.influencer_name || t('creativeOs.videoModal.videoFallback');
+    const displayName = (() => {
+        const words = _rawName.split(/\s+/);
+        return words.length <= 4 ? _rawName : words.slice(0, 4).join(' ') + '…';
+    })();
     const [title, setTitle] = useState(displayName);
     const [editingTitle, setEditingTitle] = useState(false);
     const [savingTitle, setSavingTitle] = useState(false);
@@ -154,20 +160,28 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
         const onMeta = () => {
             if (Number.isFinite(v.duration) && v.duration > 0) setDuration(v.duration);
         };
+        const onPlay = () => setIsPlaying(true);
+        const onPause = () => setIsPlaying(false);
         const onEnd = () => setIsPlaying(false);
         // If metadata already loaded before the listener attached (e.g. cached), pick it up now.
         onMeta();
         v.addEventListener('timeupdate', onTime);
         v.addEventListener('loadedmetadata', onMeta);
         v.addEventListener('durationchange', onMeta);
+        v.addEventListener('canplay', onMeta);
+        v.addEventListener('playing', onPlay);
+        v.addEventListener('pause', onPause);
         v.addEventListener('ended', onEnd);
         return () => {
             v.removeEventListener('timeupdate', onTime);
             v.removeEventListener('loadedmetadata', onMeta);
             v.removeEventListener('durationchange', onMeta);
+            v.removeEventListener('canplay', onMeta);
+            v.removeEventListener('playing', onPlay);
+            v.removeEventListener('pause', onPause);
             v.removeEventListener('ended', onEnd);
         };
-    }, []);
+    }, [mounted]); // re-run after mounted flips to true so videoRef is available
 
     const seekTo = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
         const v = videoRef.current;
@@ -307,7 +321,7 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                                 ref={videoRef}
                                 src={videoUrl}
                                 playsInline
-                                preload="metadata"
+                                preload="auto"
                                 style={{
                                     maxWidth: '100%',
                                     maxHeight: '100%',
@@ -404,7 +418,7 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                         justifyContent: 'space-between',
                         borderBottom: '1px solid rgba(0,0,0,0.06)',
                     }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1, overflow: 'hidden' }}>
                             <div style={{
                                 width: '36px', height: '36px',
                                 borderRadius: '50%',
@@ -415,10 +429,11 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                                 fontSize: '14px',
                                 color: 'white',
                                 fontWeight: 700,
+                                flexShrink: 0,
                             }}>
                                 {title.charAt(0).toUpperCase()}
                             </div>
-                            <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
                                 {editingTitle ? (
                                     <input
                                         ref={titleInputRef}
@@ -459,11 +474,11 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                                             cursor: 'pointer',
                                             display: 'flex',
                                             alignItems: 'center',
-                                            gap: '5px',
+                                            gap: '6px',
                                         }}
                                         title={t('creativeOs.videoModal.clickRename')}
                                     >
-                                        {title}
+                                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>
                                         <svg viewBox="0 0 24 24" style={{
                                             width: '12px', height: '12px',
                                             fill: 'none', stroke: '#8A93B0',
@@ -474,34 +489,75 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                                         </svg>
                                     </div>
                                 )}
-                                <div style={{ fontSize: '12px', color: '#8A93B0', marginTop: '1px' }}>
+                                <div style={{ fontSize: '12px', color: '#8A93B0', marginTop: '1px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                     {createdAgo || t('creativeOs.videoModal.videoFallback')}
                                 </div>
                             </div>
                         </div>
-                        <button
-                            onClick={onClose}
-                            style={{
-                                width: '30px', height: '30px',
-                                borderRadius: '50%',
-                                border: 'none',
-                                background: 'rgba(0,0,0,0.05)',
-                                cursor: 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                padding: 0,
-                                transition: 'background 0.15s',
-                                flexShrink: 0,
-                            }}
-                            onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,0,0,0.1)')}
-                            onMouseLeave={e => (e.currentTarget.style.background = 'rgba(0,0,0,0.05)')}
-                        >
-                            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#666" strokeWidth="2" strokeLinecap="round">
-                                <line x1="1" y1="1" x2="11" y2="11" />
-                                <line x1="11" y1="1" x2="1" y2="11" />
-                            </svg>
-                        </button>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                            <button
+                                onClick={handleDownload}
+                                style={{
+                                    fontSize: '13px',
+                                    fontWeight: 600,
+                                    color: '#5A6178',
+                                    background: 'none',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    padding: '2px 0',
+                                    transition: 'color 0.15s',
+                                }}
+                                onMouseEnter={e => (e.currentTarget.style.color = '#337AFF')}
+                                onMouseLeave={e => (e.currentTarget.style.color = '#5A6178')}
+                            >{t('creativeOs.videoModal.download')}</button>
+                            <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                                <button
+                                    onClick={() => setShareOpen(v => !v)}
+                                    style={{
+                                        fontSize: '13px',
+                                        fontWeight: 600,
+                                        color: shareOpen ? '#337AFF' : '#5A6178',
+                                        background: 'none',
+                                        border: 'none',
+                                        cursor: 'pointer',
+                                        padding: '2px 0',
+                                        transition: 'color 0.15s',
+                                    }}
+                                    onMouseEnter={e => { if (!shareOpen) e.currentTarget.style.color = '#337AFF'; }}
+                                    onMouseLeave={e => { if (!shareOpen) e.currentTarget.style.color = '#5A6178'; }}
+                                >{t('share.share')}</button>
+                                {shareOpen && (
+                                    <SharePopover
+                                        url={videoUrl}
+                                        assetType="video"
+                                        onClose={() => setShareOpen(false)}
+                                    />
+                                )}
+                            </div>
+                            <button
+                                onClick={onClose}
+                                style={{
+                                    width: '30px', height: '30px',
+                                    borderRadius: '50%',
+                                    border: 'none',
+                                    background: 'rgba(0,0,0,0.05)',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    padding: 0,
+                                    transition: 'background 0.15s',
+                                    flexShrink: 0,
+                                }}
+                                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,0,0,0.1)')}
+                                onMouseLeave={e => (e.currentTarget.style.background = 'rgba(0,0,0,0.05)')}
+                            >
+                                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#666" strokeWidth="2" strokeLinecap="round">
+                                    <line x1="1" y1="1" x2="11" y2="11" />
+                                    <line x1="11" y1="1" x2="1" y2="11" />
+                                </svg>
+                            </button>
+                        </div>
                     </div>
 
                     {/* Scroll body */}

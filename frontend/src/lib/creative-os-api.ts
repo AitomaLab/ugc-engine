@@ -324,6 +324,7 @@ export async function streamAgent(
     refs?: AgentRef[],
     useSeedance?: boolean,
     lang?: 'en' | 'es',
+    quickMode?: boolean,
 ): Promise<void> {
     const token = await getAuthToken();
     const headers: Record<string, string> = {
@@ -341,6 +342,7 @@ export async function streamAgent(
             refs: refs ?? undefined,
             use_seedance: useSeedance ?? false,
             lang: lang ?? undefined,
+            quick_mode: quickMode ?? false,
         }),
         signal,
     });

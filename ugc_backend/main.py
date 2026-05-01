@@ -731,7 +731,12 @@ def api_list_products(request: Request, category: Optional[str] = None, user: di
             if pid:
                 products = list_products_scoped(user["id"], pid, category)
             else:
-                products = []
+                # Skip-scope: list products across ALL of the user's projects
+                sb = get_supabase()
+                q = sb.table("products").select("*").eq("user_id", user["id"])
+                if category:
+                    q = q.eq("category", category)
+                products = q.execute().data or []
         else:
             products = list_products(category)
 
@@ -1503,7 +1508,9 @@ def api_list_influencers(request: Request, user: dict = Depends(get_optional_use
         pid = _resolve_project_id(request, user)
         if pid:
             return list_influencers_scoped(user["id"], pid)
-        return []
+        # Skip-scope: list influencers across ALL of the user's projects
+        sb = get_supabase()
+        return sb.table("influencers").select("*").eq("user_id", user["id"]).execute().data or []
     return list_influencers()
 
 @app.get("/influencers/{influencer_id}")

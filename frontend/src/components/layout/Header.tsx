@@ -176,6 +176,17 @@ function NotificationDropdown() {
     const [loading, setLoading] = useState(false);
     const ref = useRef<HTMLDivElement>(null);
 
+    // ── Toast notification system ─────────────────────────────────────
+    interface ToastItem {
+        id: string;
+        message: string;
+        type: 'success' | 'error';
+        projectId?: string;
+    }
+    const [toasts, setToasts] = useState<ToastItem[]>([]);
+    const seenIdsRef = useRef<Set<string>>(new Set());
+    const firstLoadDoneRef = useRef(false);
+
     // Load read IDs from localStorage on mount
     useEffect(() => {
         try {
@@ -216,6 +227,99 @@ function NotificationDropdown() {
         return () => clearInterval(interval);
     }, [open]);
 
+    // ── Always-on background poll (10s) — powers toasts ──────────────
+    // Keep `t` in a ref so the effect closure always gets the latest
+    // translator without re-running (which would tear down the interval).
+    const tRef = useRef(t);
+    useEffect(() => { tRef.current = t; }, [t]);
+
+    useEffect(() => {
+        // Request browser notification permission on mount
+        if (typeof window !== 'undefined' && 'Notification' in window && window.Notification.permission === 'default') {
+            window.Notification.requestPermission().catch(() => {});
+        }
+
+        const poll = () => {
+            apiFetch<Notification[]>('/api/notifications?limit=5')
+                .then(data => {
+                    // Use composite key "id:type" so status transitions
+                    // (e.g. job_processing → job_success) are detected as new events.
+                    const compositeKey = (n: Notification) => `${n.id}:${n.type}`;
+
+                    if (!firstLoadDoneRef.current) {
+                        // Seed on first load — don't toast for existing notifications
+                        data.forEach(n => seenIdsRef.current.add(compositeKey(n)));
+                        firstLoadDoneRef.current = true;
+                        setNotifications(prev => prev.length === 0 ? data : prev);
+                        return;
+                    }
+
+                    const newItems = data.filter(n => !seenIdsRef.current.has(compositeKey(n)));
+                    newItems.forEach(n => seenIdsRef.current.add(compositeKey(n)));
+
+                    const tr = tRef.current;
+                    for (const n of newItems) {
+                        if (n.type === 'job_success' || n.type === 'job_failed') {
+                            const isSuccess = n.type === 'job_success';
+                            const toastMsg = isSuccess
+                                ? (n.message?.includes('image') ? tr('toast.imageReady') : tr('toast.videoReady'))
+                                : tr('toast.generationFailed');
+
+                            const toast: ToastItem = {
+                                id: n.id,
+                                message: toastMsg,
+                                type: isSuccess ? 'success' : 'error',
+                                projectId: (n as unknown as Record<string, unknown>).project_id as string | undefined,
+                            };
+
+                            setToasts(prev => {
+                                // Dedupe: don't show if a toast for this job is already visible
+                                if (prev.some(t => t.id === toast.id)) return prev;
+                                return [...prev, toast].slice(-3);
+                            });
+
+                            // Auto-dismiss after 5s
+                            setTimeout(() => {
+                                setToasts(prev => prev.filter(t => t.id !== toast.id));
+                            }, 5000);
+
+                            // Browser notification if tab is not focused
+                            if (document.hidden && 'Notification' in window && window.Notification.permission === 'granted') {
+                                try {
+                                    new window.Notification('Aitoma Studio', {
+                                        body: toastMsg,
+                                        icon: '/StudioLogo_Black.svg',
+                                    });
+                                } catch { /* ignore */ }
+                            }
+                        }
+                    }
+
+                    // Merge new items into the main notifications list
+                    if (newItems.length > 0) {
+                        setNotifications(prev => {
+                            const merged = [...newItems, ...prev];
+                            const seen = new Set<string>();
+                            return merged.filter(n => {
+                                if (seen.has(n.id)) return false;
+                                seen.add(n.id);
+                                return true;
+                            }).slice(0, 20);
+                        });
+                    }
+                })
+                .catch(() => {});
+        };
+
+        poll(); // initial fetch
+        const interval = setInterval(poll, 10000);
+        return () => clearInterval(interval);
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const dismissToast = (id: string) => {
+        setToasts(prev => prev.filter(t => t.id !== id));
+    };
+
     const hasUnread = notifications.some(n => !readIds.has(n.id));
 
     const markAllRead = () => {
@@ -245,6 +349,94 @@ function NotificationDropdown() {
                 <IconBell />
                 {hasUnread && <span className="notif-dot" />}
             </button>
+
+            {/* ── Toast notifications ── */}
+            {toasts.length > 0 && (
+                <div style={{
+                    position: 'absolute',
+                    top: 'calc(100% + 8px)',
+                    right: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '6px',
+                    zIndex: 10001,
+                    width: '280px',
+                }}>
+                    {toasts.map((toast, idx) => (
+                        <div
+                            key={toast.id}
+                            style={{
+                                background: 'white',
+                                borderRadius: '12px',
+                                boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
+                                border: `1px solid ${toast.type === 'success' ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`,
+                                padding: '12px 14px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '10px',
+                                animation: 'toastSlideIn 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                                animationDelay: `${idx * 50}ms`,
+                                animationFillMode: 'both',
+                                cursor: 'pointer',
+                            }}
+                            onClick={() => {
+                                dismissToast(toast.id);
+                                if (toast.projectId) {
+                                    window.location.href = `/projects/${toast.projectId}`;
+                                } else {
+                                    window.location.href = '/videos';
+                                }
+                            }}
+                        >
+                            {/* Status icon */}
+                            <div style={{
+                                width: '28px',
+                                height: '28px',
+                                borderRadius: '50%',
+                                background: toast.type === 'success'
+                                    ? 'rgba(34,197,94,0.12)'
+                                    : 'rgba(239,68,68,0.12)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                flexShrink: 0,
+                            }}>
+                                {toast.type === 'success' ? (
+                                    <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: '#22C55E', strokeWidth: '2.5', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
+                                        <polyline points="20 6 9 17 4 12" />
+                                    </svg>
+                                ) : (
+                                    <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: '#EF4444', strokeWidth: '2.5', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
+                                        <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                                    </svg>
+                                )}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: '13px', fontWeight: 600, color: '#0D1B3E', lineHeight: 1.3 }}>
+                                    {toast.message}
+                                </div>
+                                <div style={{ fontSize: '11px', color: '#337AFF', fontWeight: 600, marginTop: '2px' }}>
+                                    {t('toast.view')} →
+                                </div>
+                            </div>
+                            {/* Close button */}
+                            <button
+                                onClick={(e) => { e.stopPropagation(); dismissToast(toast.id); }}
+                                style={{
+                                    width: '20px', height: '20px',
+                                    borderRadius: '50%', border: 'none',
+                                    background: 'transparent', cursor: 'pointer',
+                                    color: '#8A93B0', display: 'flex',
+                                    alignItems: 'center', justifyContent: 'center',
+                                    padding: 0, flexShrink: 0,
+                                    fontSize: '14px', lineHeight: 1,
+                                }}
+                            >×</button>
+                        </div>
+                    ))}
+                </div>
+            )}
+
             {open && (
                 <div className="notif-dropdown" onClick={e => e.stopPropagation()}>
                     <div className="notif-header">
@@ -323,6 +515,14 @@ function NotificationDropdown() {
                     </div>
                 </div>
             )}
+
+            {/* Toast animation */}
+            <style>{`
+                @keyframes toastSlideIn {
+                    from { opacity: 0; transform: translateY(-8px) scale(0.96); }
+                    to { opacity: 1; transform: translateY(0) scale(1); }
+                }
+            `}</style>
         </div>
     );
 }
