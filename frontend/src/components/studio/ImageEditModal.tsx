@@ -777,20 +777,23 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                         width: 'min(96vw, 880px)',
                         maxWidth: 'min(96vw, 880px)',
                         maxHeight: 'min(88vh, 760px)',
-                        overflowY: 'auto',
                         background: '#FFF',
                         borderRadius: '20px',
-                        padding: '28px',
                         boxShadow: '0 24px 60px rgba(0,0,0,0.25)',
                         zIndex: 10002,
                         animation: 'scaleIn 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        overflow: 'hidden',
                     }}>
                         {/* Header */}
                         <div style={{
+                            flexShrink: 0,
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'space-between',
-                            marginBottom: '16px',
+                            padding: '20px 28px 16px',
+                            borderBottom: '1px solid rgba(0,0,0,0.06)',
                         }}>
                             <div>
                                 <h3 style={{
@@ -832,107 +835,94 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                             </button>
                         </div>
 
-                        {/* 12-Style Grid (4 columns × 3 rows) */}
+                        {/* Scrollable grid body */}
                         <div style={{
-                            display: 'grid',
-                            gridTemplateColumns: 'repeat(4, 1fr)',
-                            gap: '14px',
-                            marginBottom: '20px',
+                            flex: 1,
+                            minHeight: 0,
+                            overflowY: 'auto',
+                            padding: '20px 28px',
                         }}>
-                            {ANIMATION_STYLES.map(style => {
-                                const isSelected = selectedAnimStyle === style.id;
-                                return (
-                                    <button
-                                        key={style.id}
-                                        onClick={() => setSelectedAnimStyle(style.id)}
-                                        style={{
-                                            padding: '0',
-                                            borderRadius: '14px',
-                                            border: isSelected ? '2px solid #337AFF' : '1.5px solid rgba(0,0,0,0.08)',
-                                            background: isSelected ? 'rgba(51,122,255,0.04)' : 'white',
-                                            cursor: 'pointer',
-                                            textAlign: 'center',
-                                            transition: 'all 0.15s',
-                                            overflow: 'hidden',
-                                            display: 'flex',
-                                            flexDirection: 'column',
-                                        }}
-                                    >
-                                        <AnimationPreview style={style} />
-                                        <div style={{
-                                            padding: '10px 8px 12px',
-                                        }}>
+                            <div style={{
+                                display: 'grid',
+                                gridTemplateColumns: 'repeat(4, 1fr)',
+                                gap: '14px',
+                            }}>
+                                {ANIMATION_STYLES.map(style => {
+                                    const isSelected = selectedAnimStyle === style.id;
+                                    return (
+                                        <button
+                                            key={style.id}
+                                            onClick={() => setSelectedAnimStyle(style.id)}
+                                            style={{
+                                                padding: '0',
+                                                borderRadius: '14px',
+                                                border: isSelected ? '2px solid #337AFF' : '1.5px solid rgba(0,0,0,0.08)',
+                                                background: isSelected ? 'rgba(51,122,255,0.04)' : 'white',
+                                                cursor: 'pointer',
+                                                textAlign: 'center',
+                                                transition: 'all 0.15s',
+                                                overflow: 'hidden',
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                            }}
+                                        >
+                                            <AnimationPreview style={style} />
                                             <div style={{
-                                                fontSize: '13px',
-                                                fontWeight: 700,
-                                                color: isSelected ? '#337AFF' : '#0D1B3E',
-                                                marginBottom: '3px',
-                                            }}>{t(style.labelKey)}</div>
-                                            <div style={{
-                                                fontSize: '11px',
-                                                color: '#8A93B0',
-                                                lineHeight: 1.3,
-                                            }}>{t(style.descKey)}</div>
-                                        </div>
-                                    </button>
-                                );
-                            })}
+                                                padding: '10px 8px 12px',
+                                            }}>
+                                                <div style={{
+                                                    fontSize: '13px',
+                                                    fontWeight: 700,
+                                                    color: isSelected ? '#337AFF' : '#0D1B3E',
+                                                    marginBottom: '3px',
+                                                }}>{t(style.labelKey)}</div>
+                                                <div style={{
+                                                    fontSize: '11px',
+                                                    color: '#8A93B0',
+                                                    lineHeight: 1.3,
+                                                }}>{t(style.descKey)}</div>
+                                            </div>
+                                        </button>
+                                    );
+                                })}
+                            </div>
                         </div>
 
-                        {/* Duration Selector */}
+                        {/* Pinned footer: Duration + Animate on same row */}
                         <div style={{
+                            flexShrink: 0,
+                            padding: '14px 28px 20px',
+                            borderTop: '1px solid rgba(0,0,0,0.06)',
+                            background: '#FFF',
                             display: 'flex',
                             alignItems: 'center',
-                            gap: '8px',
-                            marginBottom: '16px',
-                            padding: '10px 14px',
-                            borderRadius: '12px',
-                            background: 'rgba(51,122,255,0.03)',
-                            border: '1px solid rgba(51,122,255,0.08)',
+                            gap: '12px',
                         }}>
                             <span style={{
-                                fontSize: '12px',
+                                fontSize: '13px',
                                 fontWeight: 600,
                                 color: '#4A5578',
-                                marginRight: 'auto',
+                                flexShrink: 0,
                             }}>{t('creativeOs.imageModal.durationLabel')}</span>
                             {[5, 10].map(d => (
                                 <button
                                     key={d}
                                     onClick={() => setAnimDuration(d)}
                                     style={{
-                                        padding: '5px 14px',
+                                        padding: '6px 16px',
                                         borderRadius: '8px',
                                         border: animDuration === d ? '1.5px solid #337AFF' : '1px solid rgba(0,0,0,0.08)',
                                         background: animDuration === d ? 'rgba(51,122,255,0.08)' : 'white',
                                         color: animDuration === d ? '#337AFF' : '#4A5578',
-                                        fontSize: '12px',
+                                        fontSize: '13px',
                                         fontWeight: 600,
                                         cursor: 'pointer',
                                         transition: 'all 0.15s',
+                                        flexShrink: 0,
                                     }}
                                 >{t('creativeOs.imageModal.durationSeconds').replace('{n}', String(d))}</button>
                             ))}
-                        </div>
-
-                        {/* Selected style info + CTA */}
-                        <div style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            gap: '12px',
-                        }}>
-                            <span style={{
-                                fontSize: '12px',
-                                color: '#8A93B0',
-                                fontWeight: 500,
-                            }}>
-                                {(() => {
-                                    const sel = ANIMATION_STYLES.find(s => s.id === selectedAnimStyle);
-                                    const label = sel ? t(sel.labelKey) : t('creativeOs.imageModal.styleSelect');
-                                    return t('creativeOs.imageModal.styleSummary').replace('{label}', label).replace('{n}', String(animDuration));
-                                })()}
-                            </span>
+                            <div style={{ flex: 1 }} />
                             <button
                                 onClick={() => {
                                     setShowAnimateModal(false);
@@ -940,7 +930,7 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                                 }}
                                 disabled={isAnimating}
                                 style={{
-                                    padding: '10px 24px',
+                                    padding: '10px 28px',
                                     borderRadius: '12px',
                                     border: 'none',
                                     background: 'linear-gradient(135deg, #337AFF, #6C5CE7)',
@@ -951,6 +941,7 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                                     opacity: isAnimating ? 0.7 : 1,
                                     transition: 'all 0.2s',
                                     whiteSpace: 'nowrap',
+                                    flexShrink: 0,
                                 }}
                             >
                                 {isAnimating ? t('creativeOs.imageModal.animateGenerating') : t('creativeOs.imageModal.animate')}
