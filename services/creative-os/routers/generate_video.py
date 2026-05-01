@@ -441,7 +441,7 @@ async def generate_ai_script(data: AIScriptRequest, user: dict = Depends(get_cur
             from services.prompt_enhancer import enhance_prompt
 
             # Build context for the prompt enhancer
-            enhance_ctx = {}
+            enhance_ctx = {"duration": data.clip_length}
             if data.reference_image_url:
                 enhance_ctx["image_url"] = data.reference_image_url
 
@@ -1362,7 +1362,7 @@ async def _run_cinematic_clip_pipeline(
         prompt = data.prompt
         raw_enhanced_text = ""
         try:
-            enhance_context = {}
+            enhance_context = {"duration": data.clip_length}
             if first_frame_url:
                 enhance_context["image_url"] = first_frame_url
             if element_context:
@@ -1931,7 +1931,7 @@ async def _run_ugc_clip_pipeline(
         action_direction = ""
 
         # Build context for enhancement
-        enhance_ctx = {"image_url": data.reference_image_url}
+        enhance_ctx = {"image_url": data.reference_image_url, "duration": data.clip_length}
         if product:
             enhance_ctx["product_name"] = product.get("name")
             desc = product.get("visual_description") or {}

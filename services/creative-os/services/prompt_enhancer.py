@@ -62,6 +62,22 @@ def _build_user_message(user_prompt: str, language: str = "en", context: dict | 
         parts.append(f"[Language: {seedance_lang}]")
     parts.append(f"Language for introductions and non-prompt text: {lang_name}")
 
+    # ── Clip duration (CRITICAL for script pacing) ──
+    # GPT-4o must know the exact clip length to apply the dialogue word
+    # budget (Rule 15) and beat-timestamp constraints (Rule 16).
+    if context and context.get("duration"):
+        dur = int(context["duration"])
+        word_budgets = {5: "12–15", 8: "20–24", 10: "25–30", 15: "40–50"}
+        budget = word_budgets.get(dur, f"~{int(dur * 2.5)}–{int(dur * 3)}")
+        parts.append(
+            f"\n[CLIP DURATION: {dur} seconds] "
+            f"ALL timestamps in Dynamic Description must end at or before {dur}s. "
+            f"Dialogue word budget: {budget} words MAXIMUM. "
+            f"Script must end 1 second before the clip ends ({dur - 1}s). "
+            f"Use the {dur}-second beat structure from the mode specification. "
+            f"Do NOT write beats or dialogue for a longer clip."
+        )
+
     if context:
         if context.get("product_name"):
             parts.append(f"Product: {context['product_name']}")
