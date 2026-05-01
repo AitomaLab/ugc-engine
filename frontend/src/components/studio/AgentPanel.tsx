@@ -2668,7 +2668,14 @@ function MentionDropdown({ groups, ordered, activeIndex, onPick, onHover, shotPi
         image: t('creativeOs.mention.images'),
         video: t('creativeOs.mention.videos'),
     };
-    const groupOrder: MentionItem['type'][] = ['product', 'influencer', 'image', 'video'];
+    const groupOrder: MentionItem['type'][] = ['influencer', 'product', 'image', 'video'];
+    const availableGroups = groupOrder.filter((g) => (groups[g]?.length || 0) > 0);
+    const [activeTab, setActiveTab] = useState<MentionItem['type']>(availableGroups[0] || 'influencer');
+
+    // If the active tab has no items (e.g. filter changed), auto-switch to first available
+    const effectiveTab = availableGroups.includes(activeTab) ? activeTab : (availableGroups[0] || 'influencer');
+    const tabItems = groups[effectiveTab] || [];
+
     const containerStyle: React.CSSProperties = {
         position: 'absolute',
         left: '14px',
@@ -2679,14 +2686,15 @@ function MentionDropdown({ groups, ordered, activeIndex, onPick, onHover, shotPi
         borderRadius: '12px',
         boxShadow: '0 12px 32px rgba(13,27,62,0.16)',
         maxHeight: '320px',
-        overflowY: 'auto',
-        padding: '8px',
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
         zIndex: 10,
     };
     if (shotPickerItem && shotPickerItem.views && onPickShot) {
         return (
             <div style={containerStyle}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 6px 8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 12px 8px' }}>
                     <button
                         type="button"
                         onMouseDown={(e) => { e.preventDefault(); onBackFromShotPicker?.(); }}
@@ -2706,157 +2714,191 @@ function MentionDropdown({ groups, ordered, activeIndex, onPick, onHover, shotPi
                         {t('creativeOs.mention.pickShotFor').replace('{name}', shotPickerItem.name)}
                     </span>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
-                    {shotPickerItem.views.map((url, i) => (
-                        <button
-                            key={`${url}-${i}`}
-                            type="button"
-                            onMouseDown={(e) => { e.preventDefault(); onPickShot(url); }}
-                            title={i === 0 ? t('creativeOs.mention.profileImage') : t('creativeOs.mention.shot').replace('{n}', String(i + 1))}
-                            style={{
-                                display: 'flex',
-                                flexDirection: 'column',
-                                alignItems: 'center',
-                                gap: '4px',
-                                padding: '6px 4px',
-                                border: '1px solid transparent',
-                                background: 'transparent',
-                                borderRadius: '8px',
-                                cursor: 'pointer',
-                                minWidth: 0,
-                            }}
-                            onMouseEnter={(e) => {
-                                (e.currentTarget as HTMLButtonElement).style.background = 'rgba(51,122,255,0.08)';
-                                (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(51,122,255,0.5)';
-                            }}
-                            onMouseLeave={(e) => {
-                                (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
-                                (e.currentTarget as HTMLButtonElement).style.borderColor = 'transparent';
-                            }}
-                        >
-                            <div style={{ width: '100%', aspectRatio: '1 / 1', borderRadius: '6px', background: '#F4F6FA', overflow: 'hidden' }}>
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                            </div>
-                            <span style={{ fontSize: '10px', color: '#0D1B3E', fontWeight: 500, textAlign: 'center' }}>
-                                {i === 0 ? t('creativeOs.mention.profile') : t('creativeOs.mention.shot').replace('{n}', String(i + 1))}
-                            </span>
-                        </button>
-                    ))}
+                <div style={{ overflowY: 'auto', padding: '0 8px 8px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
+                        {shotPickerItem.views.map((url, i) => (
+                            <button
+                                key={`${url}-${i}`}
+                                type="button"
+                                onMouseDown={(e) => { e.preventDefault(); onPickShot(url); }}
+                                title={i === 0 ? t('creativeOs.mention.profileImage') : t('creativeOs.mention.shot').replace('{n}', String(i + 1))}
+                                style={{
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    padding: '6px 4px',
+                                    border: '1px solid transparent',
+                                    background: 'transparent',
+                                    borderRadius: '8px',
+                                    cursor: 'pointer',
+                                    minWidth: 0,
+                                }}
+                                onMouseEnter={(e) => {
+                                    (e.currentTarget as HTMLButtonElement).style.background = 'rgba(51,122,255,0.08)';
+                                    (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(51,122,255,0.5)';
+                                }}
+                                onMouseLeave={(e) => {
+                                    (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+                                    (e.currentTarget as HTMLButtonElement).style.borderColor = 'transparent';
+                                }}
+                            >
+                                <div style={{ width: '100%', aspectRatio: '1 / 1', borderRadius: '6px', background: '#F4F6FA', overflow: 'hidden' }}>
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                </div>
+                                <span style={{ fontSize: '10px', color: '#0D1B3E', fontWeight: 500, textAlign: 'center' }}>
+                                    {i === 0 ? t('creativeOs.mention.profile') : t('creativeOs.mention.shot').replace('{n}', String(i + 1))}
+                                </span>
+                            </button>
+                        ))}
+                    </div>
                 </div>
             </div>
         );
     }
     return (
         <div style={containerStyle}>
-            {groupOrder.map((g) => {
-                const items = groups[g];
-                if (!items || items.length === 0) return null;
-                return (
-                    <div key={g} style={{ marginBottom: '6px' }}>
-                        <div
-                            style={{
-                                fontSize: '10px',
-                                fontWeight: 700,
-                                color: '#8A93B0',
-                                textTransform: 'uppercase',
-                                letterSpacing: '0.5px',
-                                padding: '4px 6px',
-                            }}
-                        >
-                            {GROUP_LABELS_T[g]}
-                        </div>
-                        <div
-                            style={{
-                                display: 'grid',
-                                gridTemplateColumns: 'repeat(4, 1fr)',
-                                gap: '6px',
-                            }}
-                        >
-                            {items.map((item, itemIdx) => {
-                                const idx = ordered.indexOf(item);
-                                const active = idx === activeIndex;
-                                return (
-                                    <button
-                                        key={`${item.type}-${item.ref?.id || item.tag}-${itemIdx}`}
-                                        type="button"
-                                        onMouseDown={(e) => {
-                                            e.preventDefault();
-                                            onPick(item);
-                                        }}
-                                        onMouseEnter={() => onHover(idx)}
-                                        title={item.name}
-                                        style={{
-                                            display: 'flex',
-                                            flexDirection: 'column',
-                                            alignItems: 'center',
-                                            gap: '4px',
-                                            padding: '6px 4px',
-                                            border: active
-                                                ? '1px solid rgba(51,122,255,0.5)'
-                                                : '1px solid transparent',
-                                            background: active
-                                                ? 'rgba(51,122,255,0.08)'
-                                                : 'transparent',
-                                            borderRadius: '8px',
-                                            cursor: 'pointer',
-                                            minWidth: 0,
-                                        }}
-                                    >
-                                        <div
-                                            style={{
-                                                width: '100%',
-                                                aspectRatio: '1 / 1',
-                                                borderRadius: '6px',
-                                                background: '#F4F6FA',
-                                                overflow: 'hidden',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                justifyContent: 'center',
-                                            }}
-                                        >
-                                            {item.image_url ? (
-                                                // eslint-disable-next-line @next/next/no-img-element
-                                                <img
-                                                    src={item.image_url}
-                                                    alt={item.name}
-                                                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                                                />
-                                            ) : item.type === 'video' && item.ref.video_url ? (
-                                                <video
-                                                    src={item.ref.video_url}
-                                                    muted
-                                                    playsInline
-                                                    preload="metadata"
-                                                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                                                />
-                                            ) : (
-                                                <span style={{ fontSize: '14px', color: '#8A93B0' }}>
-                                                    {item.type === 'video' ? '▶' : '·'}
-                                                </span>
-                                            )}
-                                        </div>
-                                        <span
-                                            style={{
-                                                fontSize: '10px',
-                                                color: '#0D1B3E',
-                                                fontWeight: 500,
-                                                textOverflow: 'ellipsis',
-                                                overflow: 'hidden',
-                                                whiteSpace: 'nowrap',
-                                                width: '100%',
-                                                textAlign: 'center',
-                                            }}
-                                        >
-                                            {item.name}
+            {/* ── Tabs ── */}
+            {availableGroups.length > 1 && (
+                <div
+                    style={{
+                        display: 'flex',
+                        gap: '0',
+                        borderBottom: '1px solid rgba(13,27,62,0.08)',
+                        padding: '0 8px',
+                        flexShrink: 0,
+                    }}
+                >
+                    {availableGroups.map((g) => {
+                        const isActive = g === effectiveTab;
+                        return (
+                            <button
+                                key={g}
+                                type="button"
+                                onMouseDown={(e) => { e.preventDefault(); setActiveTab(g); }}
+                                style={{
+                                    flex: 1,
+                                    padding: '9px 0 7px',
+                                    border: 'none',
+                                    borderBottom: isActive ? '2px solid #337AFF' : '2px solid transparent',
+                                    background: 'transparent',
+                                    cursor: 'pointer',
+                                    fontSize: '11px',
+                                    fontWeight: isActive ? 700 : 500,
+                                    color: isActive ? '#337AFF' : '#8A93B0',
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.4px',
+                                    transition: 'color 0.15s, border-color 0.15s',
+                                }}
+                            >
+                                {GROUP_LABELS_T[g]}
+                                <span
+                                    style={{
+                                        marginLeft: '4px',
+                                        fontSize: '10px',
+                                        fontWeight: 600,
+                                        color: isActive ? '#337AFF' : '#B0B8CC',
+                                    }}
+                                >
+                                    {groups[g]?.length || 0}
+                                </span>
+                            </button>
+                        );
+                    })}
+                </div>
+            )}
+            {/* ── Tab content ── */}
+            <div style={{ overflowY: 'auto', padding: '8px' }}>
+                <div
+                    style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(4, 1fr)',
+                        gap: '6px',
+                    }}
+                >
+                    {tabItems.map((item, itemIdx) => {
+                        const idx = ordered.indexOf(item);
+                        const active = idx === activeIndex;
+                        return (
+                            <button
+                                key={`${item.type}-${item.ref?.id || item.tag}-${itemIdx}`}
+                                type="button"
+                                onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    onPick(item);
+                                }}
+                                onMouseEnter={() => onHover(idx)}
+                                title={item.name}
+                                style={{
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    padding: '6px 4px',
+                                    border: active
+                                        ? '1px solid rgba(51,122,255,0.5)'
+                                        : '1px solid transparent',
+                                    background: active
+                                        ? 'rgba(51,122,255,0.08)'
+                                        : 'transparent',
+                                    borderRadius: '8px',
+                                    cursor: 'pointer',
+                                    minWidth: 0,
+                                }}
+                            >
+                                <div
+                                    style={{
+                                        width: '100%',
+                                        aspectRatio: '1 / 1',
+                                        borderRadius: '6px',
+                                        background: '#F4F6FA',
+                                        overflow: 'hidden',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                    }}
+                                >
+                                    {item.image_url ? (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img
+                                            src={item.image_url}
+                                            alt={item.name}
+                                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                        />
+                                    ) : item.type === 'video' && item.ref.video_url ? (
+                                        <video
+                                            src={item.ref.video_url}
+                                            muted
+                                            playsInline
+                                            preload="metadata"
+                                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                        />
+                                    ) : (
+                                        <span style={{ fontSize: '14px', color: '#8A93B0' }}>
+                                            {item.type === 'video' ? '▶' : '·'}
                                         </span>
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    </div>
-                );
-            })}
+                                    )}
+                                </div>
+                                <span
+                                    style={{
+                                        fontSize: '10px',
+                                        color: '#0D1B3E',
+                                        fontWeight: 500,
+                                        textOverflow: 'ellipsis',
+                                        overflow: 'hidden',
+                                        whiteSpace: 'nowrap',
+                                        width: '100%',
+                                        textAlign: 'center',
+                                    }}
+                                >
+                                    {item.name}
+                                </span>
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
         </div>
     );
 }
