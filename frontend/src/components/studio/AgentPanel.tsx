@@ -2563,6 +2563,27 @@ function AttachmentChip({ att, onRemove }: { att: AttachedFile; onRemove: () => 
                         />
                     )
                 ) : null}
+                {isVideo && att.status === 'ready' && (
+                    <div
+                        style={{
+                            position: 'absolute',
+                            bottom: '3px',
+                            left: '3px',
+                            width: '18px',
+                            height: '18px',
+                            borderRadius: '50%',
+                            background: 'rgba(0,0,0,0.55)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            pointerEvents: 'none',
+                        }}
+                    >
+                        <svg viewBox="0 0 24 24" style={{ width: '10px', height: '10px', fill: 'white', marginLeft: '1px' }}>
+                            <polygon points="6,3 20,12 6,21" />
+                        </svg>
+                    </div>
+                )}
                 {att.status === 'uploading' && (
                     <div
                         style={{
