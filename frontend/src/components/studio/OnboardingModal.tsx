@@ -64,7 +64,7 @@ function getSuggestedPrompts(product: string, influencer: string): string[] {
     return [
         `Create a UGC ad with @${influencer} showing @${product} and explaining why it's a must-have this summer`,
         `Generate a cinematic product shot of @${product} with dramatic lighting`,
-        `Make a 15s UGC video of @${influencer} unboxing @${product} and reacting with genuine excitement`,
+        `Make a UGC video of @${influencer} unboxing @${product} and reacting with genuine excitement`,
     ];
 }
 
