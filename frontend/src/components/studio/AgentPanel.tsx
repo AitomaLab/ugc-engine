@@ -2530,28 +2530,19 @@ function AttachmentChip({ att, onRemove }: { att: AttachedFile; onRemove: () => 
         <div
             style={{
                 position: 'relative',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '4px 10px 4px 4px',
-                borderRadius: '8px',
-                background: att.status === 'error'
-                    ? 'rgba(255,82,82,0.08)'
-                    : 'rgba(51,122,255,0.06)',
+                display: 'inline-block',
+                borderRadius: '10px',
+                overflow: 'hidden',
                 border: att.status === 'error'
-                    ? '1px solid rgba(255,82,82,0.25)'
-                    : '1px solid rgba(51,122,255,0.18)',
-                maxWidth: '180px',
+                    ? '1.5px solid rgba(255,82,82,0.4)'
+                    : '1.5px solid rgba(51,122,255,0.18)',
             }}
         >
             <div
                 style={{
-                    width: '32px',
-                    height: '32px',
-                    borderRadius: '6px',
-                    overflow: 'hidden',
+                    width: '56px',
+                    height: '56px',
                     background: '#F4F6FA',
-                    flexShrink: 0,
                     position: 'relative',
                 }}
             >
@@ -2561,14 +2552,14 @@ function AttachmentChip({ att, onRemove }: { att: AttachedFile; onRemove: () => 
                             src={thumb}
                             muted
                             playsInline
-                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                         />
                     ) : (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
                             src={thumb}
                             alt={att.name}
-                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                         />
                     )
                 ) : null}
@@ -2589,57 +2580,46 @@ function AttachmentChip({ att, onRemove }: { att: AttachedFile; onRemove: () => 
                         …
                     </div>
                 )}
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                <span
-                    style={{
-                        fontSize: '11px',
-                        fontWeight: 600,
-                        color: '#0D1B3E',
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        maxWidth: '110px',
-                    }}
-                    title={att.name}
-                >
-                    {att.name}
-                </span>
-                <span
-                    style={{
-                        fontSize: '9px',
-                        color: att.status === 'error' ? '#C53030' : '#8A93B0',
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.4px',
-                        fontWeight: 600,
-                    }}
-                >
-                    {att.status === 'uploading'
-                        ? t('creativeOs.agent.uploadingChip')
-                        : att.status === 'error'
-                            ? t('creativeOs.agent.failedChip')
-                            : att.type}
-                </span>
+                {att.status === 'error' && (
+                    <div
+                        style={{
+                            position: 'absolute',
+                            inset: 0,
+                            background: 'rgba(255,82,82,0.15)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: '#C53030',
+                            fontSize: '8px',
+                            fontWeight: 700,
+                            textTransform: 'uppercase',
+                        }}
+                    >
+                        {t('creativeOs.agent.failedChip')}
+                    </div>
+                )}
             </div>
             <button
                 type="button"
                 onClick={onRemove}
                 title={t('creativeOs.agent.remove')}
                 style={{
-                    width: '18px',
-                    height: '18px',
+                    position: 'absolute',
+                    top: '3px',
+                    right: '3px',
+                    width: '16px',
+                    height: '16px',
                     borderRadius: '50%',
                     border: 'none',
-                    background: 'rgba(13,27,62,0.12)',
+                    background: 'rgba(0,0,0,0.5)',
                     color: 'white',
                     cursor: 'pointer',
-                    fontSize: '12px',
+                    fontSize: '11px',
                     lineHeight: 1,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    flexShrink: 0,
-                    marginLeft: '2px',
+                    padding: 0,
                 }}
             >
                 ×
