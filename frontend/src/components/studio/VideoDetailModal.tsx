@@ -496,45 +496,6 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
                             <button
-                                onClick={handleDownload}
-                                style={{
-                                    fontSize: '13px',
-                                    fontWeight: 600,
-                                    color: '#5A6178',
-                                    background: 'none',
-                                    border: 'none',
-                                    cursor: 'pointer',
-                                    padding: '2px 0',
-                                    transition: 'color 0.15s',
-                                }}
-                                onMouseEnter={e => (e.currentTarget.style.color = '#337AFF')}
-                                onMouseLeave={e => (e.currentTarget.style.color = '#5A6178')}
-                            >{t('creativeOs.videoModal.download')}</button>
-                            <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-                                <button
-                                    onClick={() => setShareOpen(v => !v)}
-                                    style={{
-                                        fontSize: '13px',
-                                        fontWeight: 600,
-                                        color: shareOpen ? '#337AFF' : '#5A6178',
-                                        background: 'none',
-                                        border: 'none',
-                                        cursor: 'pointer',
-                                        padding: '2px 0',
-                                        transition: 'color 0.15s',
-                                    }}
-                                    onMouseEnter={e => { if (!shareOpen) e.currentTarget.style.color = '#337AFF'; }}
-                                    onMouseLeave={e => { if (!shareOpen) e.currentTarget.style.color = '#5A6178'; }}
-                                >{t('share.share')}</button>
-                                {shareOpen && (
-                                    <SharePopover
-                                        url={videoUrl}
-                                        assetType="video"
-                                        onClose={() => setShareOpen(false)}
-                                    />
-                                )}
-                            </div>
-                            <button
                                 onClick={onClose}
                                 style={{
                                     width: '30px', height: '30px',
@@ -737,18 +698,25 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                                 </svg>
                             }
                         />
-                        <ActionButton
-                            label={t('creativeOs.videoModal.actionExtend')}
-                            onClick={() => alert(t('creativeOs.videoModal.extendComingSoon'))}
-                            icon={
-                                <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: '2' }}>
-                                    <path d="M17 1l4 4-4 4" />
-                                    <path d="M3 11V9a4 4 0 0 1 4-4h14" />
-                                    <path d="M7 23l-4-4 4-4" />
-                                    <path d="M21 13v2a4 4 0 0 1-4 4H3" />
-                                </svg>
-                            }
-                        />
+                        <div style={{ position: 'relative' }}>
+                            <ActionButton
+                                label={t('share.share')}
+                                onClick={() => setShareOpen(v => !v)}
+                                icon={
+                                    <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
+                                        <line x1="22" y1="2" x2="11" y2="13" />
+                                        <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                                    </svg>
+                                }
+                            />
+                            {shareOpen && (
+                                <SharePopover
+                                    url={videoUrl}
+                                    assetType="video"
+                                    onClose={() => setShareOpen(false)}
+                                />
+                            )}
+                        </div>
                     </div>
                 </div>
             </div>
