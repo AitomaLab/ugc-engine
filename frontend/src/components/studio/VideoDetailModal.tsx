@@ -698,7 +698,7 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                                 </svg>
                             }
                         />
-                        <div style={{ position: 'relative' }}>
+                        <div style={{ position: 'relative', width: '100%' }}>
                             <ActionButton
                                 label={t('share.share')}
                                 onClick={() => setShareOpen(v => !v)}
