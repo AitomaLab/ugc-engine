@@ -123,14 +123,14 @@ If a preface entry has `id=<uuid>`, the asset exists. Proceed straight to the ga
 - generate_ai_script(product_id?, influencer_id?, clip_length?, context?, full_video_mode?) — Generate an AI script adapted to clip length, product, and influencer context. Two modes: single-clip (5-10s) or full multi-scene (15/30s).
 
 ### Image generation & identity (gated by confirmed=true)
-- generate_image(prompt, mode, ...) — Single still image (cinematic, iphone_look, luxury, or ugc mode).
+- generate_image(prompt, mode, aspect_ratio?, quality?, ...) — Single still image (cinematic, iphone_look, luxury, or ugc mode). Supports 9:16, 16:9, and 1:1 aspect ratios. Quality: 2k or 4k.
 - generate_influencer() — Generate a random AI persona (name, gender, age, description) + NanoBanana Pro profile photo in one step. No inputs needed.
 - generate_identity(image_url) — Generate a 4-view character identity sheet from a profile photo (closeup, front medium, profile 90, full body). Returns 4 individual view URLs.
 - generate_product_shots(image_url) — Generate a 4-view professional product shot sheet from a product image (hero front, functional, macro detail, alternate angle). Returns 4 individual view URLs.
 
 ### Animation & video clips (gated by confirmed=true)
 - animate_image(image_url, style, duration?) — Image → 5s or 10s Kling 3.0 clip with chosen camera move.
-- generate_video(prompt, mode, clip_length?, reference_image_url?) — Text-to-video clip. mode: ugc | cinematic_video | ai_clone | seedance_2_ugc | seedance_2_cinematic | seedance_2_product.
+- generate_video(prompt, mode, clip_length?, language?, multi_shot_mode?, reference_image_url?) — Text-to-video clip. mode: ugc | cinematic_video | ai_clone | seedance_2_ugc | seedance_2_cinematic | seedance_2_product. Clip lengths: 5/7/8/10/15s (mode-dependent). Language: en/es. multi_shot_mode for Kling 3.0 cinematic auto-split.
 
 ### Full UGC pipelines (gated by confirmed=true)
 - create_ugc_video(influencer_id, duration, product_id?, script_id?, ...) — Full 15s/30s UGC video. Takes 5-12 min; the tool blocks until done.
@@ -234,8 +234,8 @@ Follow the standard confirmation flow exactly as described in the "Cost confirma
 Do NOT default clip lengths to 5s. Reason about the appropriate length based on the video model and content type:
 
 - **Veo 3.1 (UGC)**: Always use **8s** for single UGC clips. Veo 3.1 outputs are 8s fixed.
-- **Kling 3.0 (Cinematic)**: Default to **5s** for single-shot cinematic clips. For multi-shot mode, propose **10s** per shot. Range: 5–10s per clip.
-- **Seedance 2.0**: Pick based on the brief complexity. Short action/showcase → **5s**. Dialogue or narrative → **8–10s**. Complex multi-beat scene → **12–15s**. Range: 5–15s.
+- **Kling 3.0 (Cinematic)**: Default to **5s** for single-shot cinematic clips. For multi-shot mode (`multi_shot_mode=true`), set `clip_length` to the desired total duration (3–15s) — the backend auto-splits into scenes. Range: 5–10s per clip.
+- **Seedance 2.0**: Pick based on the brief complexity. Short action/showcase → **5s**. Dialogue or narrative → **8–10s**. Complex multi-beat scene → **12–15s**. Range: 5–15s. Use `clip_length=7` for punchy cinematic shots, `clip_length=15` for narrative scenes.
 - **create_ugc_video (full pipeline)**: Duration is 15s or 30s — set by the `duration` param, not clip_length. Ask the user if they want 15s or 30s only if they didn't specify.
 
 If the user explicitly states a desired length, always use their number. If the content type makes the ideal length ambiguous and the user didn't specify, ask in one short sentence: "How long — 5s quick showcase or 10s extended scene?" Do NOT silently pick 5s for everything.
@@ -346,7 +346,8 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
    Only fall back to `product_id` / `influencer_id` when the user @-mentioned an existing DB asset; for raw uploads (upload_* tags) those IDs do not exist.
    IMPORTANT: `reference_image_urls` / `reference_video_urls` are ONLY for `upload_*` tags. For @-mentioned DB entities (products / influencers / app clips), forward the IDs (`product_id`, `influencer_id`, `app_clip_id`) and NOTHING else — the pipeline resolves every image / video URL server-side. Mixing IDs with explicit URLs causes duplicate references and face-swap artifacts.
 9. UGC mode does NOT require a registered product. If the user provides uploaded images (upload_* refs), call `generate_image(mode="ugc", reference_image_urls=[...])` directly — the pipeline treats the first upload as the product and any additional upload as the character/influencer. Do not suggest switching to iPhone look or ask the user to create a product first when uploads are already present. Only create or request a registered product when the user explicitly asks to save the asset for future reuse.
-10. ASPECT RATIO — MANDATORY before gated generation. Before calling `generate_image` or `generate_video` with `confirmed=true`, you MUST know the aspect ratio. If the user's brief already specifies it ("vertical", "9:16", "horizontal", "16:9", "for TikTok", "for YouTube", "landscape", "portrait"), use it directly. Otherwise you MUST ask the user BEFORE presenting the cost confirmation: ask the question in one short sentence, then append the literal marker `[[ASPECT_BUTTONS]]` on the last line of your message. The frontend detects this marker and renders clickable Vertical / Horizontal buttons for the user. When the user replies with their choice, THEN show the cost confirmation, THEN call the tool with `confirmed=true` and `aspect_ratio="9:16"` or `"16:9"`. Never skip this step for gated generation. Do NOT include the marker when the aspect is already known.
+10. ASPECT RATIO — MANDATORY before gated generation. Before calling `generate_image` or `generate_video` with `confirmed=true`, you MUST know the aspect ratio. If the user's brief already specifies it ("vertical", "9:16", "horizontal", "16:9", "square", "1:1", "for TikTok", "for YouTube", "for Instagram feed", "landscape", "portrait"), use it directly. For images, '1:1' is available for Instagram feed posts. Otherwise you MUST ask the user BEFORE presenting the cost confirmation: ask the question in one short sentence, then append the literal marker `[[ASPECT_BUTTONS]]` on the last line of your message. The frontend detects this marker and renders clickable Vertical / Horizontal buttons for the user. When the user replies with their choice, THEN show the cost confirmation, THEN call the tool with `confirmed=true` and `aspect_ratio="9:16"` or `"16:9"` (or `"1:1"` for images). Never skip this step for gated generation. Do NOT include the marker when the aspect is already known.
+10b. LANGUAGE — for video clips (`generate_video`), pass `language="es"` when the user requests Spanish / Latin dialogue. Default is English. Seedance 2.0 modes have full bilingual EN/ES support.
 11. NO RANDOM INFLUENCER / PRODUCT — for cinematic / scene / b-roll prompts that do not mention a specific person or product (e.g. "rooftop chase", "sunset over a city", "close-up of a coffee cup"), you MUST call `generate_video` WITHOUT `influencer_id` and WITHOUT `product_id`. Never auto-attach an influencer or product "to be safe" — the pipeline will generate the scene from the prompt alone, which is what the user wants. Only pass `influencer_id` / `product_id` when the user @-mentioned that asset or explicitly named them in the brief.
 12. DIGITAL PRODUCTS — when the user @-mentions a digital product (app / SaaS / software), the `[Referenced assets]` preface includes both `product_id=...` AND `app_clip_id=...` (the specific clip the user picked from the shot modal). You MUST forward BOTH to `generate_video` along with `product_type='digital'`. The pipeline renders the generated clip (composited inside a phone for 9:16 / a computer for 16:9). Then — **in the SAME turn, immediately after `generate_video` returns status=success** — you MUST chain `splice_app_clip(job_id=<returned_job_id>, app_clip_id=<same_app_clip_id>)` to append the app clip walkthrough as B-roll with a dissolve transition. Present the splice step in natural language ("Your cinematic is ready — now splicing the app clip as B-roll...") so the user knows what's happening during the ~1-2 min splice. This two-step flow applies to ALL modes (ugc, cinematic_video, seedance_2_ugc, seedance_2_cinematic, seedance_2_product). Do NOT call `combine_videos` for the app-clip splice — that's what `splice_app_clip` is for. `combine_videos` is only for stitching two *independently generated* videos the user explicitly asked to combine. Never call `list_app_clips` to pick a clip manually — the preface already tells you which one. NEVER pass the app clip's first_frame_url (or any URL derived from the clip) as `reference_image_url` / `reference_image_urls` / `reference_video_urls` — the Seedance pipeline uses the clip's VIDEO as a reference server-side. Forwarding a URL in addition to `app_clip_id` causes duplicate references."""
 
@@ -544,12 +545,18 @@ def _custom_tools_for_agent() -> list[dict]:
                     },
                     "aspect_ratio": {
                         "type": "string",
-                        "enum": ["9:16", "16:9"],
+                        "enum": ["9:16", "16:9", "1:1"],
                         "description": (
-                            "Image aspect ratio. '9:16' = vertical, '16:9' = horizontal. REQUIRED: you must "
-                            "ask the user which ratio they want before calling this tool with confirmed=true, "
-                            "unless the user already specified it in their brief."
+                            "Image aspect ratio. '9:16' = vertical, '16:9' = horizontal, '1:1' = square "
+                            "(Instagram feed). REQUIRED: you must ask the user which ratio they want before "
+                            "calling this tool with confirmed=true, unless the user already specified it in "
+                            "their brief."
                         ),
+                    },
+                    "quality": {
+                        "type": "string",
+                        "enum": ["2k", "4k"],
+                        "description": "Image resolution quality. Default '4k'. Use '2k' for faster generation when speed matters more than resolution.",
                     },
                     "confirmed": {"type": "boolean", "description": confirmed_desc},
                 },
@@ -631,7 +638,29 @@ def _custom_tools_for_agent() -> list[dict]:
                             "'[Referenced assets]' preface. Not used by Veo/Kling modes."
                         ),
                     },
-                    "clip_length": {"type": "integer", "enum": [5, 8, 10]},
+                    "clip_length": {
+                        "type": "integer",
+                        "enum": [5, 7, 8, 10, 15],
+                        "description": (
+                            "Clip duration in seconds. Available lengths depend on mode: "
+                            "ugc → 8s (Veo fixed), cinematic_video → 5/10s, "
+                            "seedance_2_ugc → 5/8/10/15s, seedance_2_cinematic → 5/7/10/15s, "
+                            "seedance_2_product → 5/7/10s."
+                        ),
+                    },
+                    "language": {
+                        "type": "string",
+                        "enum": ["en", "es"],
+                        "description": "Language for dialogue/script generation. Default 'en'. Use 'es' for Spanish.",
+                    },
+                    "multi_shot_mode": {
+                        "type": "boolean",
+                        "description": (
+                            "Enable Kling 3.0 multi-shot mode (cinematic_video only). When true, the backend "
+                            "auto-splits the prompt into multiple shots and stitches them into a single clip. "
+                            "Set clip_length to the desired total duration (3-15s)."
+                        ),
+                    },
                     "aspect_ratio": {
                         "type": "string",
                         "enum": ["9:16", "16:9"],
@@ -1704,6 +1733,8 @@ async def _tool_generate_image(ctx: ToolContext, **kwargs: Any) -> str:
     )
     if kwargs.get("aspect_ratio"):
         exec_kwargs["aspect_ratio"] = kwargs["aspect_ratio"]
+    if kwargs.get("quality"):
+        exec_kwargs["quality"] = kwargs["quality"]
     req = ExecuteRequest(**exec_kwargs)
     user = {"token": ctx.user_token, "id": "agent"}
     try:
@@ -1836,6 +1867,8 @@ async def _tool_generate_video(ctx: ToolContext, **kwargs: Any) -> str:
         reference_image_urls=kwargs.get("reference_image_urls") or None,
         reference_video_urls=kwargs.get("reference_video_urls") or None,
         clip_length=kwargs.get("clip_length", 5),
+        language=kwargs.get("language", "en"),
+        multi_shot_mode=bool(kwargs.get("multi_shot_mode", False)),
         aspect_ratio=kwargs.get("aspect_ratio") or None,
         product_type=kwargs.get("product_type") or None,
         app_clip_id=kwargs.get("app_clip_id") or None,
