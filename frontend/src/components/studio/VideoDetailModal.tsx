@@ -771,6 +771,7 @@ function ActionButton({
             onClick={onClick}
             disabled={disabled}
             style={{
+                width: '100%',
                 padding: '10px 12px',
                 borderRadius: '10px',
                 border: primary ? 'none' : '1px solid rgba(0,0,0,0.08)',
