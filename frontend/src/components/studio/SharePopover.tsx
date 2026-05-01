@@ -47,9 +47,9 @@ export function SharePopover({ url, assetType = 'video', onClose }: SharePopover
             onClick={(e) => e.stopPropagation()}
             style={{
                 position: 'absolute',
-                top: '100%',
+                bottom: '100%',
                 right: 0,
-                marginTop: '8px',
+                marginBottom: '8px',
                 width: '300px',
                 background: '#FFF',
                 borderRadius: '14px',
@@ -189,7 +189,7 @@ export function SharePopover({ url, assetType = 'video', onClose }: SharePopover
 
             <style>{`
                 @keyframes sharePopIn {
-                    from { opacity: 0; transform: translateY(-4px) scale(0.97); }
+                    from { opacity: 0; transform: translateY(4px) scale(0.97); }
                     to { opacity: 1; transform: translateY(0) scale(1); }
                 }
             `}</style>
