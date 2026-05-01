@@ -740,6 +740,7 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                                             }
                                         }}
                                         disabled={actionLoading !== null && actionLoading !== action.id}
+                                        icon={action.icon}
                                     />
                                     {(action as any).isShare && shareOpen && (
                                         <SharePopover
@@ -996,12 +997,13 @@ function InfoRow({ label, value, highlight }: { label: string; value: string; hi
     );
 }
 
-function ActionButton({ label, onClick, disabled }: { label: string; onClick: () => void; disabled?: boolean }) {
+function ActionButton({ label, onClick, disabled, icon }: { label: string; onClick: () => void; disabled?: boolean; icon?: string }) {
     return (
         <button
             onClick={onClick}
             disabled={disabled}
             style={{
+                width: '100%',
                 padding: '9px 12px',
                 borderRadius: '10px',
                 border: '1px solid rgba(0,0,0,0.08)',
@@ -1012,10 +1014,19 @@ function ActionButton({ label, onClick, disabled }: { label: string; onClick: ()
                 cursor: disabled ? 'wait' : 'pointer',
                 transition: 'all 0.15s',
                 opacity: disabled ? 0.5 : 1,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
             }}
             onMouseEnter={e => { if (!disabled) e.currentTarget.style.background = 'rgba(51,122,255,0.04)'; }}
             onMouseLeave={e => (e.currentTarget.style.background = 'white')}
         >
+            {icon && (
+                <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round', flexShrink: 0 }}>
+                    <path d={icon} />
+                </svg>
+            )}
             {label}
         </button>
     );
