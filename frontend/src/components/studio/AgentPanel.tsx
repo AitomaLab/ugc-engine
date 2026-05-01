@@ -520,6 +520,18 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         [groupedMentions],
     );
 
+    // Strip hidden instruction markers from user turns loaded from thread history
+    // (e.g. [9:16 vertical], [5s clip duration], [ONBOARDING_FIRST_VIDEO ...])
+    const sanitizeTurns = useCallback((turns: AgentTurn[]): AgentTurn[] => {
+        return turns.map((t) => {
+            if (t.role === 'user' && t.text) {
+                const clean = t.text.replace(/\s*\[[^\]]*\]\s*/g, ' ').trim();
+                if (clean !== t.text) return { ...t, text: clean };
+            }
+            return t;
+        });
+    }, []);
+
     // Hydrate when panel opens or project changes
     useEffect(() => {
         // In embedded mode, hydrate immediately on mount (no `open` gate).
@@ -531,7 +543,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         getAgentThread(projectId)
             .then((thread) => {
                 if (cancelled) return;
-                setTurns(thread.turns || []);
+                setTurns(sanitizeTurns(thread.turns || []));
                 setSessionId(thread.session_id);
                 // Eagerly create the Anthropic session in the background so
                 // the user's first send doesn't pay the ~1-2s session-create
@@ -721,7 +733,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             const tick = async () => {
                 try {
                     const thread = await getAgentThread(projectId);
-                    const nextTurns = thread.turns || [];
+                    const nextTurns = sanitizeTurns(thread.turns || []);
                     const hash = JSON.stringify(nextTurns.map((t: AgentTurn) => [
                         t.role, t.text, (t.artifacts || []).length, (t.tool_calls || []).length,
                     ]));
