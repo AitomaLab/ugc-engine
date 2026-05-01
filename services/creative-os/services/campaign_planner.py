@@ -40,7 +40,7 @@ VALID_ASSET_TYPES = [
 ]
 
 
-SYSTEM_PROMPT = """You are the creative director of Aitoma Studio. You design multi-asset content campaigns for brands.
+SYSTEM_PROMPT = """You are the creative director of Studio. You design multi-asset content campaigns for brands.
 
 Your job: given a product, a brief, branding notes, and a cadence, produce a JSON plan with N assets spread across the campaign window. Each asset is distinct — different angle, hook, or visual treatment — and cumulatively tells the brand's story.
 

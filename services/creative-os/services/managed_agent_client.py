@@ -51,7 +51,7 @@ DEFAULT_MODEL = "claude-sonnet-4-6"
 AGENT_NAME = "aitoma-creative-director"
 ENV_NAME = "aitoma-creative-os"
 
-SYSTEM_PROMPT = """You are Aitoma — the creative director embedded in Aitoma Studio. You think in campaigns, not tasks. When a user describes a product or a goal, you immediately see the content potential: the angles, the moods, the hooks, the distribution strategy. You ask one sharp clarifying question only if genuinely necessary, then you execute without further prompting. You are direct, creative, and efficient. You never describe what you are about to do — you do it, then tell the user what you made. You operate the ENTIRE Aitoma UGC SaaS on behalf of the user via natural language. Users talk to you the way they would talk to OpenClaw: a single chat that can stand up an account, generate assets, produce full UGC videos, run bulk campaigns, schedule them to social platforms, and even re-edit finished videos. You chain tools end-to-end to deliver finished campaigns in a single turn.
+SYSTEM_PROMPT = """You are Studio — the creative director embedded in Studio. You think in campaigns, not tasks. When a user describes a product or a goal, you immediately see the content potential: the angles, the moods, the hooks, the distribution strategy. You ask one sharp clarifying question only if genuinely necessary, then you execute without further prompting. You are direct, creative, and efficient. You never describe what you are about to do — you do it, then tell the user what you made. You operate the ENTIRE Studio UGC SaaS on behalf of the user via natural language. Users talk to you the way they would talk to OpenClaw: a single chat that can stand up an account, generate assets, produce full UGC videos, run bulk campaigns, schedule them to social platforms, and even re-edit finished videos. You chain tools end-to-end to deliver finished campaigns in a single turn.
 
 When given a brief, plan briefly then act. Prefer chaining tools end-to-end rather than describing what you would do.
 
@@ -405,13 +405,13 @@ def _custom_tools_for_agent() -> list[dict]:
         {
             "type": "custom",
             "name": "list_project_assets",
-            "description": "List the products, influencers, and recent shots available in the current Aitoma project. Call once at the start of a fresh session.",
+            "description": "List the products, influencers, and recent shots available in the current Studio project. Call once at the start of a fresh session.",
             "input_schema": {"type": "object", "properties": {}, "required": []},
         },
         {
             "type": "custom",
             "name": "list_projects",
-            "description": "List all of the user's Aitoma projects.",
+            "description": "List all of the user's Studio projects.",
             "input_schema": {"type": "object", "properties": {}, "required": []},
         },
         {
@@ -872,7 +872,7 @@ def _custom_tools_for_agent() -> list[dict]:
         {
             "type": "custom",
             "name": "create_project",
-            "description": "Create a new Aitoma project (workspace for grouping assets and videos).",
+            "description": "Create a new Studio project (workspace for grouping assets and videos).",
             "input_schema": {
                 "type": "object",
                 "properties": {"name": {"type": "string"}},
@@ -4574,7 +4574,7 @@ class ManagedAgentClient:
             agent = await self._client.beta.agents.create(
                 model=DEFAULT_MODEL,
                 name=AGENT_NAME,
-                description="Aitoma Studio creative director — drives Creative OS image/animation/video tools.",
+                description="Studio creative director — drives Creative OS image/animation/video tools.",
                 system=SYSTEM_PROMPT,
                 tools=[
                     {"type": "agent_toolset_20260401"},
@@ -4612,7 +4612,7 @@ class ManagedAgentClient:
         session = await self._client.beta.sessions.create(
             agent={"type": "agent", "id": agent_id},
             environment_id=environment_id,
-            title=_clean_title or "Aitoma session",
+            title=_clean_title or "Studio session",
             metadata={
                 "project_id": project_id or "",
                 "source": "creative-os-agent-router",
