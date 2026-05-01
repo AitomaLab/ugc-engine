@@ -91,11 +91,10 @@ const ANIMATION_STYLES = [
 /* ── Quick action system prompts for NanoBanana Pro enhancements ── */
 const QUICK_ACTIONS = [
     {
-        id: 'animate',
-        labelKey: 'creativeOs.imageModal.quickAnimate',
-        icon: 'M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653z',
-        systemPrompt: '',
-        isAnimate: true,
+        id: 'relight',
+        labelKey: 'creativeOs.imageModal.quickRelight',
+        icon: 'M12 18v-5.25m0 0a6.01 6.01 0 0 0 1.5-.189m-1.5.189a6.01 6.01 0 0 1-1.5-.189m3.75 7.478a12.06 12.06 0 0 1-4.5 0m3.75 2.383a14.406 14.406 0 0 1-3 0M14.25 18v-.192c0-.983.658-1.823 1.508-2.316a7.5 7.5 0 1 0-7.517 0c.85.493 1.509 1.333 1.509 2.316V18',
+        systemPrompt: 'Relight this image with golden hour natural lighting. Add warm, soft directional light from the upper left. Create gentle shadows for depth. Add a subtle rim light on the subject. Make the lighting look like a professional studio setup.',
     },
     {
         id: 'upscale',
@@ -104,16 +103,31 @@ const QUICK_ACTIONS = [
         systemPrompt: 'Upscale this image to ultra-high resolution. Enhance fine details, textures, skin pores, fabric patterns, and text sharpness. Maintain exact composition, colors, and lighting.',
     },
     {
-        id: 'relight',
-        labelKey: 'creativeOs.imageModal.quickRelight',
-        icon: 'M12 18v-5.25m0 0a6.01 6.01 0 0 0 1.5-.189m-1.5.189a6.01 6.01 0 0 1-1.5-.189m3.75 7.478a12.06 12.06 0 0 1-4.5 0m3.75 2.383a14.406 14.406 0 0 1-3 0M14.25 18v-.192c0-.983.658-1.823 1.508-2.316a7.5 7.5 0 1 0-7.517 0c.85.493 1.509 1.333 1.509 2.316V18',
-        systemPrompt: 'Relight this image with golden hour natural lighting. Add warm, soft directional light from the upper left. Create gentle shadows for depth. Add a subtle rim light on the subject. Make the lighting look like a professional studio setup.',
-    },
-    {
         id: 'angles',
         labelKey: 'creativeOs.imageModal.quickNewAngle',
         icon: 'M6.827 6.175A2.31 2.31 0 0 1 5.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 0 0-1.134-.175 2.31 2.31 0 0 1-1.64-1.055l-.822-1.316a2.192 2.192 0 0 0-1.736-1.039 48.774 48.774 0 0 0-5.232 0 2.192 2.192 0 0 0-1.736 1.039l-.821 1.316z M16.5 12.75a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0z',
         systemPrompt: 'Generate a new angle of this same subject. Keep the same person, product, and styling, but change the camera angle to a different perspective. Try a 3/4 view, slightly from below, or an over-the-shoulder angle. Maintain identical lighting and color grade.',
+    },
+    {
+        id: 'download',
+        labelKey: 'creativeOs.imageModal.download',
+        icon: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3',
+        systemPrompt: '',
+        isDownload: true,
+    },
+    {
+        id: 'publish',
+        labelKey: 'creativeOs.imageModal.publish',
+        icon: 'M3 3h18v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3zm0 4h18M8 21h8m-4-4v4',
+        systemPrompt: '',
+        isPublish: true,
+    },
+    {
+        id: 'share',
+        labelKey: 'share.share',
+        icon: 'M22 2L11 13M22 2l-7 20-4-9-9-4 20-7',
+        systemPrompt: '',
+        isShare: true,
     },
 ];
 
@@ -477,62 +491,7 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                                 </div>
                             </div>
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                            <button
-                                onClick={handleDownload}
-                                style={{
-                                    fontSize: '13px',
-                                    fontWeight: 600,
-                                    color: '#5A6178',
-                                    background: 'none',
-                                    border: 'none',
-                                    cursor: 'pointer',
-                                    padding: '2px 0',
-                                    transition: 'color 0.15s',
-                                }}
-                                onMouseEnter={e => (e.currentTarget.style.color = '#337AFF')}
-                                onMouseLeave={e => (e.currentTarget.style.color = '#5A6178')}
-                            >{t('creativeOs.imageModal.download')}</button>
-                            <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-                                <button
-                                    onClick={() => setShareOpen(v => !v)}
-                                    style={{
-                                        fontSize: '13px',
-                                        fontWeight: 600,
-                                        color: shareOpen ? '#337AFF' : '#5A6178',
-                                        background: 'none',
-                                        border: 'none',
-                                        cursor: 'pointer',
-                                        padding: '2px 0',
-                                        transition: 'color 0.15s',
-                                    }}
-                                    onMouseEnter={e => { if (!shareOpen) e.currentTarget.style.color = '#337AFF'; }}
-                                    onMouseLeave={e => { if (!shareOpen) e.currentTarget.style.color = '#5A6178'; }}
-                                >{t('share.share')}</button>
-                                {shareOpen && (
-                                    <SharePopover
-                                        url={imageUrl}
-                                        assetType="image"
-                                        onClose={() => setShareOpen(false)}
-                                    />
-                                )}
-                            </div>
-                            <button
-                                onClick={() => alert(t('creativeOs.imageModal.publishComingSoon'))}
-                                style={{
-                                    fontSize: '13px',
-                                    fontWeight: 600,
-                                    color: '#5A6178',
-                                    background: 'none',
-                                    border: 'none',
-                                    cursor: 'pointer',
-                                    padding: '2px 0',
-                                    transition: 'color 0.15s',
-                                }}
-                                onMouseEnter={e => (e.currentTarget.style.color = '#337AFF')}
-                                onMouseLeave={e => (e.currentTarget.style.color = '#5A6178')}
-                            >{t('creativeOs.imageModal.publish')}</button>
-                            <button
+                        <button
                                 onClick={onClose}
                                 style={{
                                     width: '30px',
@@ -556,7 +515,6 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                                     <line x1="11" y1="1" x2="1" y2="11" />
                                 </svg>
                             </button>
-                        </div>
                     </div>
 
                     {/* ─ Scrollable body (Prompt + Information) ─ */}
@@ -693,29 +651,67 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                         borderTop: '1px solid rgba(0,0,0,0.06)',
                         background: '#FFF',
                     }}>
-                        {/* ─ Create Video CTA ─ */}
-                        <button
-                            onClick={() => {
-                                onCreateVideo?.(asset);
-                                onClose();
-                            }}
-                            style={{
-                                width: '100%',
-                                padding: '12px',
-                                borderRadius: '12px',
-                                border: 'none',
-                                background: 'linear-gradient(135deg, #337AFF, #6C5CE7)',
-                                color: 'white',
-                                fontSize: '14px',
-                                fontWeight: 700,
-                                cursor: 'pointer',
-                                transition: 'all 0.2s',
-                                letterSpacing: '0.3px',
-                                marginBottom: '12px',
-                            }}
-                        >
-                            {t('creativeOs.imageModal.createVideo')}
-                        </button>
+                        {/* ─ Create Video + Animate (2-col) ─ */}
+                        <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: '1fr 1fr',
+                            gap: '8px',
+                            marginBottom: '12px',
+                        }}>
+                            <button
+                                onClick={() => {
+                                    onCreateVideo?.(asset);
+                                    onClose();
+                                }}
+                                style={{
+                                    width: '100%',
+                                    padding: '10px 12px',
+                                    borderRadius: '10px',
+                                    border: 'none',
+                                    background: 'linear-gradient(135deg, #337AFF, #6C5CE7)',
+                                    color: 'white',
+                                    fontSize: '13px',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: '6px',
+                                }}
+                            >
+                                <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: '2' }}>
+                                    <polygon points="5,3 19,12 5,21" />
+                                </svg>
+                                {t('creativeOs.imageModal.createVideo')}
+                            </button>
+                            <button
+                                onClick={() => setShowAnimateModal(true)}
+                                style={{
+                                    width: '100%',
+                                    padding: '10px 12px',
+                                    borderRadius: '10px',
+                                    border: '1px solid rgba(0,0,0,0.08)',
+                                    background: 'white',
+                                    color: '#5A6178',
+                                    fontSize: '13px',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    transition: 'all 0.15s',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: '6px',
+                                }}
+                                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(51,122,255,0.04)')}
+                                onMouseLeave={e => (e.currentTarget.style.background = 'white')}
+                            >
+                                <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: '2' }}>
+                                    <path d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653z" />
+                                </svg>
+                                {t('creativeOs.imageModal.quickAnimate')}
+                            </button>
+                        </div>
 
                         {/* ─ Quick Actions ─ */}
                         <span style={{
@@ -729,18 +725,30 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                             gap: '6px',
                         }}>
                             {QUICK_ACTIONS.map(action => (
-                                <ActionButton
-                                    key={action.id}
-                                    label={actionLoading === action.id ? '...' : t(action.labelKey)}
-                                    onClick={() => {
-                                        if ((action as any).isAnimate) {
-                                            setShowAnimateModal(true);
-                                        } else {
-                                            handleQuickAction(action);
-                                        }
-                                    }}
-                                    disabled={actionLoading !== null && actionLoading !== action.id}
-                                />
+                                <div key={action.id} style={{ position: 'relative', width: '100%' }}>
+                                    <ActionButton
+                                        label={actionLoading === action.id ? '...' : t(action.labelKey)}
+                                        onClick={() => {
+                                            if ((action as any).isDownload) {
+                                                handleDownload();
+                                            } else if ((action as any).isPublish) {
+                                                alert(t('creativeOs.imageModal.publishComingSoon'));
+                                            } else if ((action as any).isShare) {
+                                                setShareOpen(v => !v);
+                                            } else {
+                                                handleQuickAction(action);
+                                            }
+                                        }}
+                                        disabled={actionLoading !== null && actionLoading !== action.id}
+                                    />
+                                    {(action as any).isShare && shareOpen && (
+                                        <SharePopover
+                                            url={imageUrl}
+                                            assetType="image"
+                                            onClose={() => setShareOpen(false)}
+                                        />
+                                    )}
+                                </div>
                             ))}
                         </div>
                     </div>
