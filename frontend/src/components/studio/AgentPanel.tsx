@@ -167,6 +167,32 @@ function toolActivityLabel(
     return t('creativeOs.agent.activityWorking');
 }
 
+// ── Pro Strip constants ──────────────────────────────────────────────
+const PRO_IMAGE_MODES = [
+    { id: 'cinematic', label: 'Cinematic' },
+    { id: 'iphone_look', label: 'iPhone Look' },
+    { id: 'luxury', label: 'Luxury' },
+    { id: 'ugc', label: 'UGC' },
+];
+const PRO_VIDEO_MODES_STANDARD = [
+    { id: 'ugc', label: 'UGC (Veo)' },
+    { id: 'cinematic_video', label: 'Cinematic (Kling)' },
+    { id: 'ai_clone', label: 'AI Clone' },
+];
+const PRO_VIDEO_MODES_SEEDANCE = [
+    { id: 'seedance_2_ugc', label: 'UGC' },
+    { id: 'seedance_2_cinematic', label: 'Cinematic' },
+    { id: 'seedance_2_product', label: 'Product Scene' },
+];
+const PRO_CLIP_LENGTHS: Record<string, number[]> = {
+    ugc: [8], cinematic_video: [5, 10], ai_clone: [15, 30],
+    seedance_2_ugc: [5, 8, 10, 15], seedance_2_cinematic: [5, 7, 10, 15], seedance_2_product: [5, 7, 10],
+};
+const PRO_ASPECT_RATIOS_IMG = ['9:16', '16:9', '1:1'];
+const PRO_ASPECT_RATIOS_VID = ['9:16', '16:9'];
+const PRO_QUALITIES = ['2K', '4K'];
+const PRO_LANGUAGES = ['EN', 'ES'];
+
 export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse, hideHeader = false, onStateChange, onSubmitOverride, initialBrief, initialRefs, initialUseSeedance, onJobStart, jobId }: AgentPanelProps, ref: React.Ref<AgentPanelHandle>) {
     const { lang, t } = useTranslation();
     const [open, setOpen] = useState(false);
@@ -222,6 +248,51 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             return next;
         });
     };
+
+    // ── Pro Strip state ─────────────────────────────────────────────────
+    const [proStripOpen, setProStripOpen] = useState(() => {
+        if (typeof window === 'undefined') return false;
+        return localStorage.getItem('aitoma_pro_strip') === 'true';
+    });
+    const [proType, setProType] = useState<'image' | 'video'>('video');
+    const [proMode, setProMode] = useState('cinematic_video');
+    const [proAspectRatio, setProAspectRatio] = useState('9:16');
+    const [proQuality, setProQuality] = useState('4K');
+    const [proLanguage, setProLanguage] = useState('EN');
+    const [proClipLength, setProClipLength] = useState(5);
+    const [proMultiShot, setProMultiShot] = useState(false);
+    const [proMultiShotLength, setProMultiShotLength] = useState(10);
+    const [proVideoLength, setProVideoLength] = useState(15);
+    const [proDropdown, setProDropdown] = useState<string | null>(null);
+
+    const toggleProStrip = () => {
+        setProStripOpen(prev => {
+            const next = !prev;
+            try { localStorage.setItem('aitoma_pro_strip', String(next)); } catch { /* ignore */ }
+            return next;
+        });
+        setProDropdown(null);
+    };
+
+    // Keep clip length valid when mode changes
+    useEffect(() => {
+        if (proType === 'video') {
+            const valid = PRO_CLIP_LENGTHS[proMode] || [5];
+            if (!valid.includes(proClipLength)) setProClipLength(valid[0]);
+        }
+    }, [proMode, proType, proClipLength]);
+
+    // Keep mode valid when seedance or type toggles
+    useEffect(() => {
+        if (proType === 'image') {
+            const validIds = PRO_IMAGE_MODES.map(m => m.id);
+            if (!validIds.includes(proMode)) setProMode(validIds[0]);
+        } else {
+            const modes = useSeedance ? PRO_VIDEO_MODES_SEEDANCE : PRO_VIDEO_MODES_STANDARD;
+            const validIds = modes.map(m => m.id);
+            if (!validIds.includes(proMode)) setProMode(validIds[0]);
+        }
+    }, [proType, useSeedance, proMode]);
 
     // Sync state locally to parent for reactive header elements
     useEffect(() => {
@@ -657,9 +728,30 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             refsForRequest.push(ref);
         }
 
-        const finalText = text || (readyAttachments.length > 0
+        // ── Pro Strip: inject user-configured settings as a hidden preface ──
+        let settingsPreface = '';
+        if (proStripOpen) {
+            const parts = [`mode=${proMode}`, `aspect_ratio=${proAspectRatio}`];
+            if (proType === 'image') {
+                parts.push(`quality=${proQuality.toLowerCase()}`);
+            } else {
+                parts.push(`language=${proLanguage.toLowerCase()}`);
+                if (proMultiShot && proMode === 'cinematic_video') {
+                    parts.push('multi_shot_mode=true');
+                    parts.push(`clip_length=${proMultiShotLength}`);
+                } else if (proMultiShot && proMode === 'ugc') {
+                    parts.push('full_video_mode=true');
+                    parts.push(`clip_length=${proVideoLength}`);
+                } else {
+                    parts.push(`clip_length=${proClipLength}`);
+                }
+            }
+            settingsPreface = `[User settings] ${parts.join(', ')}\n`;
+        }
+
+        const finalText = (settingsPreface + (text || (readyAttachments.length > 0
             ? `(uploaded ${readyAttachments.length} file${readyAttachments.length === 1 ? '' : 's'})`
-            : '');
+            : ''))).trim();
 
         // Strip hidden instruction markers from the displayed text
         // (e.g. [9:16 vertical], [5s clip duration], [ONBOARDING_FIRST_VIDEO ...])
@@ -974,7 +1066,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             setActivityStartedAt(null);
             abortRef.current = null;
         }
-    }, [brief, running, projectId, onArtifact, activeRefs, attachments, onSubmitOverride, useSeedance, jobId, quickMode]);
+    }, [brief, running, projectId, onArtifact, activeRefs, attachments, onSubmitOverride, useSeedance, jobId, quickMode, proStripOpen, proMode, proAspectRatio, proQuality, proLanguage, proClipLength, proMultiShot, proMultiShotLength, proVideoLength, proType]);
 
     // Phase 2: fire handleRun AFTER hydration completes (hydrating: true → false)
     // This ensures the panel is fully initialized before auto-submitting.
@@ -1287,54 +1379,6 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                             <span style={{ fontSize: '10px', fontWeight: 600, color: '#337AFF', background: 'rgba(51,122,255,0.12)', padding: '2px 6px', borderRadius: '4px' }}>{t('creativeOs.agent.beta')}</span>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <div
-                                onClick={() => { if (!running) setUseSeedance((v) => !v); }}
-                                title={useSeedance ? t('creativeOs.agent.seedanceOn') : t('creativeOs.agent.seedanceOff')}
-                                style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '6px',
-                                    marginRight: '6px',
-                                    padding: '0 6px',
-                                    cursor: running ? 'not-allowed' : 'pointer',
-                                    opacity: running ? 0.5 : 1,
-                                    userSelect: 'none',
-                                }}
-                            >
-                                <span style={{
-                                    fontSize: '11px',
-                                    fontWeight: 600,
-                                    color: useSeedance ? '#337AFF' : '#5B6585',
-                                    letterSpacing: '0.2px',
-                                }}>
-                                    Seedance 2.0
-                                </span>
-                                <div
-                                    style={{
-                                        width: '32px',
-                                        height: '18px',
-                                        borderRadius: '9px',
-                                        position: 'relative',
-                                        background: useSeedance
-                                            ? 'linear-gradient(135deg, #5B7BFF, #337AFF)'
-                                            : 'rgba(138,147,176,0.25)',
-                                        transition: 'background 0.2s',
-                                        flexShrink: 0,
-                                    }}
-                                >
-                                    <div style={{
-                                        width: '14px',
-                                        height: '14px',
-                                        borderRadius: '50%',
-                                        background: 'white',
-                                        position: 'absolute',
-                                        top: '2px',
-                                        left: useSeedance ? '16px' : '2px',
-                                        transition: 'left 0.2s',
-                                        boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
-                                    }} />
-                                </div>
-                            </div>
                             <button
                                 onClick={handleReset}
                                 title={t('creativeOs.agent.clearChat')}
@@ -1579,6 +1623,82 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                 e.target.value = '';
                             }}
                         />
+                        {/* ── Pro Strip ── */}
+                        {proStripOpen && (() => {
+                            const ddTrigger = (isOpen: boolean, primary?: boolean): React.CSSProperties => ({ padding: '5px 10px', borderRadius: '8px', border: `1px solid ${primary ? 'rgba(51,122,255,0.18)' : 'rgba(51,122,255,0.12)'}`, background: primary ? 'rgba(51,122,255,0.08)' : 'rgba(51,122,255,0.04)', color: primary ? '#337AFF' : '#4A5578', fontSize: '12px', fontWeight: primary ? 600 : 500, cursor: 'pointer', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '4px', transition: 'all 0.15s' });
+                            const ddMenu: React.CSSProperties = { position: 'absolute', bottom: 'calc(100% + 4px)', left: 0, minWidth: 'max-content', borderRadius: '10px', background: 'white', border: '1px solid rgba(51,122,255,0.10)', boxShadow: '0 8px 24px rgba(0,0,0,0.12)', overflow: 'hidden', zIndex: 1001 };
+                            const ddItem = (active: boolean): React.CSSProperties => ({ display: 'block', width: '100%', padding: '8px 14px', border: 'none', background: active ? 'rgba(51,122,255,0.06)' : 'transparent', cursor: 'pointer', textAlign: 'left', fontSize: '12px', color: active ? '#337AFF' : '#4A5578', fontWeight: active ? 600 : 400, whiteSpace: 'nowrap', transition: 'background 0.1s' });
+                            const Chev = ({ open }: { open?: boolean }) => <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ transition: 'transform 0.15s', transform: open ? 'rotate(180deg)' : 'none' }}><polyline points="6 9 12 15 18 9"/></svg>;
+                            const modes = proType === 'image' ? PRO_IMAGE_MODES : (useSeedance ? PRO_VIDEO_MODES_SEEDANCE : PRO_VIDEO_MODES_STANDARD);
+                            const currentMode = modes.find(m => m.id === proMode) || modes[0];
+                            const ratios = proType === 'image' ? PRO_ASPECT_RATIOS_IMG : PRO_ASPECT_RATIOS_VID;
+                            return (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px', alignItems: 'center' }} onMouseDown={(e) => e.preventDefault()}>
+                                {/* Type toggle */}
+                                <div style={{ display: 'flex', borderRadius: '8px', overflow: 'hidden', border: '1px solid rgba(51,122,255,0.12)', flexShrink: 0 }}>
+                                    {(['image', 'video'] as const).map((tp) => (
+                                        <button key={tp} type="button" onMouseDown={(e) => { e.preventDefault(); setProType(tp); setProDropdown(null); }}
+                                            style={{ padding: '5px 12px', border: 'none', fontSize: '12px', fontWeight: 600, cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.3px', background: proType === tp ? 'rgba(51,122,255,0.08)' : 'rgba(51,122,255,0.02)', color: proType === tp ? '#337AFF' : '#4A5578', transition: 'all 0.15s' }}
+                                        >{tp === 'image' ? 'Image' : 'Video'}</button>
+                                    ))}
+                                </div>
+                                {/* Mode */}
+                                <div style={{ position: 'relative', userSelect: 'none' }}>
+                                    <button type="button" onMouseDown={(e) => { e.preventDefault(); setProDropdown(proDropdown === 'mode' ? null : 'mode'); }} style={ddTrigger(proDropdown === 'mode', true)}>{currentMode.label} <Chev open={proDropdown === 'mode'} /></button>
+                                    {proDropdown === 'mode' && <div style={ddMenu}>{modes.map(m => (<button key={m.id} type="button" onMouseDown={(e) => { e.preventDefault(); setProMode(m.id); setProDropdown(null); }} style={ddItem(proMode === m.id)}>{m.label}</button>))}</div>}
+                                </div>
+                                {/* Aspect ratio */}
+                                <div style={{ position: 'relative', userSelect: 'none' }}>
+                                    <button type="button" onMouseDown={(e) => { e.preventDefault(); setProDropdown(proDropdown === 'ar' ? null : 'ar'); }} style={ddTrigger(proDropdown === 'ar')}>{proAspectRatio} <Chev open={proDropdown === 'ar'} /></button>
+                                    {proDropdown === 'ar' && <div style={ddMenu}>{ratios.map(ar => (<button key={ar} type="button" onMouseDown={(e) => { e.preventDefault(); setProAspectRatio(ar); setProDropdown(null); }} style={ddItem(proAspectRatio === ar)}>{ar}</button>))}</div>}
+                                </div>
+                                {/* Quality (image) */}
+                                {proType === 'image' && (
+                                    <div style={{ position: 'relative', userSelect: 'none' }}>
+                                        <button type="button" onMouseDown={(e) => { e.preventDefault(); setProDropdown(proDropdown === 'qual' ? null : 'qual'); }} style={ddTrigger(proDropdown === 'qual')}>{proQuality} <Chev open={proDropdown === 'qual'} /></button>
+                                        {proDropdown === 'qual' && <div style={ddMenu}>{PRO_QUALITIES.map(q => (<button key={q} type="button" onMouseDown={(e) => { e.preventDefault(); setProQuality(q); setProDropdown(null); }} style={ddItem(proQuality === q)}>{q}</button>))}</div>}
+                                    </div>
+                                )}
+                                {/* Language (video) */}
+                                {proType === 'video' && (
+                                    <div style={{ position: 'relative', userSelect: 'none' }}>
+                                        <button type="button" onMouseDown={(e) => { e.preventDefault(); setProDropdown(proDropdown === 'lang' ? null : 'lang'); }} style={ddTrigger(proDropdown === 'lang')}>{proLanguage} <Chev open={proDropdown === 'lang'} /></button>
+                                        {proDropdown === 'lang' && <div style={ddMenu}>{PRO_LANGUAGES.map(l => (<button key={l} type="button" onMouseDown={(e) => { e.preventDefault(); setProLanguage(l); setProDropdown(null); }} style={ddItem(proLanguage === l)}>{l}</button>))}</div>}
+                                    </div>
+                                )}
+                                {/* Clip length (video, only when multi-shot OFF) */}
+                                {proType === 'video' && !proMultiShot && (
+                                    <div style={{ position: 'relative', userSelect: 'none' }}>
+                                        <button type="button" onMouseDown={(e) => { e.preventDefault(); setProDropdown(proDropdown === 'clip' ? null : 'clip'); }} style={ddTrigger(proDropdown === 'clip')}>{proClipLength}s <Chev open={proDropdown === 'clip'} /></button>
+                                        {proDropdown === 'clip' && <div style={ddMenu}>{(PRO_CLIP_LENGTHS[proMode] || [5]).map(cl => (<button key={cl} type="button" onMouseDown={(e) => { e.preventDefault(); setProClipLength(cl); setProDropdown(null); }} style={ddItem(proClipLength === cl)}>{cl}s</button>))}</div>}
+                                    </div>
+                                )}
+                                {/* Multi-shot toggle (cinematic + UGC) */}
+                                {proType === 'video' && (proMode === 'cinematic_video' || proMode === 'ugc') && (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <div onClick={() => setProMultiShot(v => !v)} style={{ width: '32px', height: '18px', borderRadius: '9px', position: 'relative', cursor: 'pointer', transition: 'background 0.2s', flexShrink: 0, background: proMultiShot ? 'linear-gradient(135deg, #5B7BFF, #337AFF)' : 'rgba(138,147,176,0.25)' }}>
+                                            <div style={{ width: '14px', height: '14px', borderRadius: '50%', background: 'white', position: 'absolute', top: '2px', left: proMultiShot ? '16px' : '2px', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.15)' }} />
+                                        </div>
+                                        <span style={{ fontSize: '12px', color: '#4A5578', fontWeight: 500, whiteSpace: 'nowrap' }}>Multi-Shot{proMultiShot ? <span style={{ display: 'inline-block', marginLeft: '4px', padding: '1px 6px', borderRadius: '4px', background: 'rgba(51,122,255,0.1)', color: '#337AFF', fontSize: '10px', fontWeight: 700, letterSpacing: '0.3px' }}>ON</span> : ''}</span>
+                                        {/* Cinematic multi-shot: slider 3-15s */}
+                                        {proMultiShot && proMode === 'cinematic_video' && (
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '2px 8px 2px 4px', borderRadius: '8px', background: 'rgba(51,122,255,0.04)', border: '1px solid rgba(51,122,255,0.12)' }}>
+                                                <input type="range" min={3} max={15} step={1} value={proMultiShotLength} onMouseDown={(e) => e.stopPropagation()} onChange={(e) => setProMultiShotLength(Number(e.target.value))} style={{ WebkitAppearance: 'none', appearance: 'none' as any, width: '80px', height: '4px', borderRadius: '2px', background: `linear-gradient(90deg, #337AFF ${((proMultiShotLength - 3) / 12) * 100}%, #A0A8C4 ${((proMultiShotLength - 3) / 12) * 100}%)`, outline: 'none', cursor: 'pointer' }} />
+                                                <span style={{ fontSize: '12px', fontWeight: 700, color: '#337AFF', minWidth: '24px', textAlign: 'center' }}>{proMultiShotLength}s</span>
+                                            </div>
+                                        )}
+                                        {/* UGC multi-shot: 15s / 30s dropdown */}
+                                        {proMultiShot && proMode === 'ugc' && (
+                                            <div style={{ position: 'relative', userSelect: 'none' }}>
+                                                <button type="button" onMouseDown={(e) => { e.preventDefault(); setProDropdown(proDropdown === 'vl' ? null : 'vl'); }} style={ddTrigger(proDropdown === 'vl')}>{proVideoLength}s <Chev open={proDropdown === 'vl'} /></button>
+                                                {proDropdown === 'vl' && <div style={ddMenu}>{[15, 30].map(vl => (<button key={vl} type="button" onMouseDown={(e) => { e.preventDefault(); setProVideoLength(vl); setProDropdown(null); }} style={ddItem(proVideoLength === vl)}>{vl}s</button>))}</div>}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                            );
+                        })()}
                         <div style={{ position: 'relative' }}>
                             <textarea
                                 ref={textareaRef}
@@ -1661,6 +1781,74 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                 <svg viewBox="0 0 24 24" style={{ width: '15px', height: '15px', fill: 'none', stroke: 'currentColor', strokeWidth: '2.2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
                                     <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
                                 </svg>
+                            </button>
+                            {/* ≡ Pro Strip Toggle */}
+                            <button
+                                onClick={toggleProStrip}
+                                disabled={running}
+                                title={proStripOpen ? 'Hide settings' : 'Show settings'}
+                                style={{
+                                    position: 'absolute',
+                                    left: '80px',
+                                    bottom: '8px',
+                                    width: '30px',
+                                    height: '30px',
+                                    borderRadius: '8px',
+                                    border: `1px solid ${proStripOpen ? 'rgba(51,122,255,0.3)' : 'rgba(13,27,62,0.12)'}`,
+                                    background: proStripOpen ? 'rgba(51,122,255,0.08)' : running ? 'rgba(13,27,62,0.03)' : 'white',
+                                    cursor: running ? 'not-allowed' : 'pointer',
+                                    color: proStripOpen ? '#337AFF' : '#8A93B0',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    padding: 0,
+                                    transition: 'all 0.2s',
+                                }}
+                            >
+                                <svg viewBox="0 0 24 24" style={{ width: '15px', height: '15px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round' }}>
+                                    <line x1="4" y1="6" x2="20" y2="6" />
+                                    <line x1="4" y1="12" x2="20" y2="12" />
+                                    <line x1="4" y1="18" x2="20" y2="18" />
+                                    <circle cx="9" cy="6" r="2" fill="currentColor" stroke="none" />
+                                    <circle cx="15" cy="12" r="2" fill="currentColor" stroke="none" />
+                                    <circle cx="9" cy="18" r="2" fill="currentColor" stroke="none" />
+                                </svg>
+                            </button>
+                            {/* Seedance 2.0 toggle (moved from header) */}
+                            <button
+                                type="button"
+                                onClick={() => { if (!running) setUseSeedance((v) => !v); }}
+                                title={useSeedance ? t('creativeOs.agent.seedanceOn') : t('creativeOs.agent.seedanceOff')}
+                                style={{
+                                    position: 'absolute',
+                                    left: '116px',
+                                    bottom: '8px',
+                                    height: '30px',
+                                    borderRadius: '8px',
+                                    border: `1px solid ${useSeedance ? 'rgba(51,122,255,0.3)' : 'rgba(13,27,62,0.12)'}`,
+                                    background: useSeedance ? 'rgba(51,122,255,0.08)' : running ? 'rgba(13,27,62,0.03)' : 'white',
+                                    cursor: running ? 'not-allowed' : 'pointer',
+                                    opacity: running ? 0.5 : 1,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    padding: '0 8px',
+                                    transition: 'all 0.2s',
+                                }}
+                            >
+                                <div style={{
+                                    width: '28px', height: '16px', borderRadius: '8px', position: 'relative',
+                                    background: useSeedance ? 'linear-gradient(135deg, #5B7BFF, #337AFF)' : 'rgba(138,147,176,0.25)',
+                                    transition: 'background 0.2s', flexShrink: 0,
+                                }}>
+                                    <div style={{
+                                        width: '12px', height: '12px', borderRadius: '50%', background: 'white',
+                                        position: 'absolute', top: '2px',
+                                        left: useSeedance ? '14px' : '2px',
+                                        transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+                                    }} />
+                                </div>
+                                <span style={{ fontSize: '11px', fontWeight: 600, color: useSeedance ? '#337AFF' : '#8A93B0', whiteSpace: 'nowrap', letterSpacing: '0.1px' }}>Seedance 2.0</span>
                             </button>
                             {!running && (
                                 <button
