@@ -420,9 +420,9 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                                                             img.dataset.fallback = '1';
                                                                             const vid = document.createElement('video');
                                                                             vid.muted = true;
-                                                                            vid.preload = 'metadata';
+                                                                            vid.preload = 'auto';
                                                                             vid.playsInline = true;
-                                                                            vid.src = job.final_video_url + '#t=0.5';
+                                                                            vid.src = job.final_video_url;
                                                                             vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover';
                                                                             img.parentElement?.appendChild(vid);
                                                                             img.style.display = 'none';
@@ -433,10 +433,10 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                                                 />
                                                             ) : job.final_video_url ? (
                                                                 <video
-                                                                    src={`${job.final_video_url}#t=0.5`}
+                                                                    src={job.final_video_url}
                                                                     muted
                                                                     playsInline
-                                                                    preload="metadata"
+                                                                    preload="auto"
                                                                     style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
                                                                 />
                                                             ) : null}
