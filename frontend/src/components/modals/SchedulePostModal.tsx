@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import VideoThumbnail from '@/components/ui/VideoThumbnail';
 import { apiFetch } from '@/lib/utils';
+import { creativeFetch } from '@/lib/creative-os-api';
 import { useProgressiveList } from '@/hooks/useProgressiveList';
 import { useTranslation } from '@/lib/i18n';
 import type { VideoJob, Influencer, SocialConnection } from '@/lib/types';
@@ -114,7 +115,7 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
         // Call backend to generate FFmpeg thumbnails (non-blocking)
         (async () => {
             try {
-                const result = await apiFetch<{ thumbnails: Record<string, string> }>(
+                const result = await creativeFetch<{ thumbnails: Record<string, string> }>(
                     '/creative-os/projects/video-thumbnails',
                     {
                         method: 'POST',
