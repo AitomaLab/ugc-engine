@@ -71,6 +71,7 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
     const [toast, setToast] = useState('');
     const [search, setSearch] = useState('');
     const [loadingData, setLoadingData] = useState(true);
+    const [thumbMap, setThumbMap] = useState<Record<string, string>>({});
 
     // ── fetch data ─────────────────────────────────────────────────────
     useEffect(() => {
@@ -99,6 +100,38 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
             setLoadingData(false);
         })();
     }, [isOpen]);
+
+    // ── generate thumbnails for videos without image previews ──────────
+    useEffect(() => {
+        if (!jobs.length) return;
+        const VIDEO_EXT_RE = /\.(mp4|webm|mov|avi|mkv)(\?.*)?$/i;
+        // Find jobs that don't have a usable image thumbnail
+        const needsThumbnail = jobs.filter(j => {
+            const preview = (j as any).preview_url || (j as any).reference_image_url || (j as any).thumbnail_url;
+            return !preview || VIDEO_EXT_RE.test(preview);
+        });
+        if (!needsThumbnail.length) return;
+        // Call backend to generate FFmpeg thumbnails (non-blocking)
+        (async () => {
+            try {
+                const result = await apiFetch<{ thumbnails: Record<string, string> }>(
+                    '/creative-os/projects/video-thumbnails',
+                    {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            jobs: needsThumbnail.map(j => ({ id: j.id, video_url: j.final_video_url })),
+                        }),
+                    }
+                );
+                if (result?.thumbnails && Object.keys(result.thumbnails).length > 0) {
+                    setThumbMap(prev => ({ ...prev, ...result.thumbnails }));
+                }
+            } catch (err) {
+                console.error('[ScheduleModal] Thumbnail generation failed:', err);
+            }
+        })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [jobs]);
 
     // ── pre-select from videos page ────────────────────────────────────
     useEffect(() => {
@@ -410,7 +443,7 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                                             background: 'linear-gradient(135deg, #f0f0f5 0%, #e8e8ee 100%)',
                                                         }}>
                                                             <VideoThumbnail
-                                                                previewUrl={(job as any).preview_url || (job as any).reference_image_url}
+                                                                previewUrl={thumbMap[job.id] || (job as any).preview_url || (job as any).reference_image_url || (job as any).thumbnail_url}
                                                                 videoUrl={job.final_video_url}
                                                                 alt={getJobLabel(job)}
                                                             />
@@ -740,7 +773,7 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                             background: 'linear-gradient(135deg, #f0f0f5 0%, #e8e8ee 100%)',
                                         }}>
                                             <VideoThumbnail
-                                                previewUrl={(job as any)?.preview_url || (job as any)?.reference_image_url}
+                                                previewUrl={job ? (thumbMap[job.id] || (job as any).preview_url || (job as any).reference_image_url || (job as any).thumbnail_url) : undefined}
                                                 videoUrl={job?.final_video_url}
                                                 alt={job ? getJobLabel(job) : 'Video'}
                                             />

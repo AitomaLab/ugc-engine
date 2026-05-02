@@ -740,3 +740,100 @@ async def rename_project_video(project_id: str, job_id: str, data: dict, user: d
     )
     result = sb.table("video_jobs").update({"campaign_name": name}).eq("id", job_id).execute()
     return result.data[0] if result.data else {"id": job_id, "campaign_name": name}
+
+
+@router.post("/video-thumbnails")
+async def generate_video_thumbnails(data: dict, user: dict = Depends(get_current_user)):
+    """Generate thumbnail images for videos that don't have image previews.
+
+    Body: { "jobs": [{"id": "...", "video_url": "..."}] }
+    Returns: { "thumbnails": {"job_id": "thumb_url", ...} }
+
+    Uses FFmpeg to extract the first frame, uploads to Supabase Storage,
+    and updates the video_jobs.thumbnail_url field for caching. Subsequent
+    calls for the same job_id will return the cached thumbnail instantly.
+    """
+    from pathlib import Path
+    from env_loader import load_env
+    load_env(Path(__file__))
+
+    jobs = data.get("jobs", [])
+    if not jobs:
+        return {"thumbnails": {}}
+
+    supabase_url = os.getenv("SUPABASE_URL")
+    anon_key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+
+    # First, check which jobs already have thumbnail_url cached in the DB
+    thumbnails: dict[str, str] = {}
+    jobs_needing_gen: list[dict] = []
+
+    if supabase_url and anon_key:
+        import httpx
+        job_ids = [j["id"] for j in jobs if j.get("id")]
+        if job_ids:
+            headers = {
+                "apikey": anon_key,
+                "Authorization": f"Bearer {user['token']}",
+                "Content-Type": "application/json",
+            }
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as http:
+                    resp = await http.get(
+                        f"{supabase_url}/rest/v1/video_jobs",
+                        headers=headers,
+                        params={
+                            "id": f"in.({','.join(job_ids)})",
+                            "select": "id,thumbnail_url",
+                        },
+                    )
+                    if resp.status_code == 200:
+                        for row in resp.json() or []:
+                            if row.get("thumbnail_url"):
+                                thumbnails[row["id"]] = row["thumbnail_url"]
+            except Exception as e:
+                print(f"[Thumbnails] DB check failed: {e}")
+
+    # Filter to only jobs that need generation
+    for job in jobs:
+        jid = job.get("id", "")
+        if jid not in thumbnails and job.get("video_url"):
+            jobs_needing_gen.append(job)
+
+    if not jobs_needing_gen:
+        return {"thumbnails": thumbnails}
+
+    # Generate thumbnails concurrently (max 3 at a time)
+    from utils.thumbnail import generate_thumbnail
+    sem = asyncio.Semaphore(3)
+
+    async def _gen(job: dict):
+        async with sem:
+            jid = job["id"]
+            url = job["video_url"]
+            thumb = await generate_thumbnail(url, jid)
+            if thumb:
+                thumbnails[jid] = thumb
+                # Cache in DB for future requests
+                if supabase_url and anon_key:
+                    try:
+                        import httpx
+                        # Use service role key if available for reliable writes
+                        service_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+                        auth_token = service_key if service_key else user["token"]
+                        async with httpx.AsyncClient(timeout=10.0) as http:
+                            await http.patch(
+                                f"{supabase_url}/rest/v1/video_jobs?id=eq.{jid}",
+                                headers={
+                                    "apikey": anon_key,
+                                    "Authorization": f"Bearer {auth_token}",
+                                    "Content-Type": "application/json",
+                                    "Prefer": "return=minimal",
+                                },
+                                json={"thumbnail_url": thumb},
+                            )
+                    except Exception as e:
+                        print(f"[Thumbnails] DB cache write failed for {jid}: {e}")
+
+    await asyncio.gather(*[_gen(j) for j in jobs_needing_gen], return_exceptions=True)
+    return {"thumbnails": thumbnails}
