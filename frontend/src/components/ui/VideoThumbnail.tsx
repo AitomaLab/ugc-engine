@@ -7,13 +7,23 @@ import { useState, useRef, useEffect, useCallback } from 'react';
  *
  * Strategy:
  * 1. If `previewUrl` (image) is provided → render <img> instantly (fastest).
- * 2. Otherwise, load the video in a hidden <video> element, wait for the first
- *    frame to render, then show it. Uses a global sequential queue so we never
- *    saturate the network with concurrent video downloads.
+ *    - Skips URLs ending in .mp4/.webm/.mov (those are video URLs, not images).
+ * 2. Otherwise, load the video in a <video> element. Uses a global sequential
+ *    queue so we never saturate the network with concurrent video downloads.
  * 3. Shows a shimmer loading animation while waiting.
+ * 4. If the image fails to load, falls back to the video path.
  */
 
-/* ── Global sequential queue ────────────────────────────────────────────── */
+/* ── Helpers ────────────────────────────────────────────────────────── */
+const VIDEO_EXTENSIONS = /\.(mp4|webm|mov|avi|mkv)(\?.*)?$/i;
+
+function isImageUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  // If the URL ends with a video extension (ignoring query params), it's not an image
+  return !VIDEO_EXTENSIONS.test(url);
+}
+
+/* ── Global sequential queue ────────────────────────────────────────── */
 // Only load MAX_CONCURRENT videos at a time to prevent network saturation.
 const MAX_CONCURRENT = 2;
 let activeLoads = 0;
@@ -37,7 +47,7 @@ function dequeue() {
   }
 }
 
-/* ── Component ──────────────────────────────────────────────────────────── */
+/* ── Component ──────────────────────────────────────────────────────── */
 interface Props {
   videoUrl?: string;
   previewUrl?: string;
@@ -46,11 +56,22 @@ interface Props {
 }
 
 export default function VideoThumbnail({ videoUrl, previewUrl, alt = '', style }: Props) {
+  // Determine if we have a valid image preview (not a video URL)
+  const imagePreviewUrl = isImageUrl(previewUrl) ? previewUrl : undefined;
+
   const [loaded, setLoaded] = useState(false);
+  const [imgFailed, setImgFailed] = useState(false);
+  const [shouldLoadVideo, setShouldLoadVideo] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
-  const [shouldLoad, setShouldLoad] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const enqueuedRef = useRef(false);
+
+  // The effective video URL: use the videoUrl prop, or fall back to previewUrl
+  // if it's a video URL (e.g. .mp4)
+  const effectiveVideoUrl = videoUrl || (!isImageUrl(previewUrl) && previewUrl ? previewUrl : undefined);
+
+  // Whether we need to load a video (no image preview, or image failed)
+  const needsVideo = (!imagePreviewUrl || imgFailed) && !!effectiveVideoUrl;
 
   // Intersection Observer — only start loading when visible
   useEffect(() => {
@@ -63,25 +84,18 @@ export default function VideoThumbnail({ videoUrl, previewUrl, alt = '', style }
           observer.disconnect();
         }
       },
-      { rootMargin: '100px' } // Start loading slightly before visible
+      { rootMargin: '100px' }
     );
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
 
-  // If we have a previewUrl (image), skip the queue entirely
-  const hasImagePreview = !!previewUrl;
-
-  // Enqueue video loading when visible and no image preview
+  // Enqueue video loading when visible and needed
   useEffect(() => {
-    if (!isVisible || hasImagePreview || !videoUrl || shouldLoad) return;
-    enqueue(() => setShouldLoad(true));
-    return () => {
-      // If unmounted before loaded, free the queue slot
-      if (!loaded) dequeue();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isVisible, hasImagePreview, videoUrl]);
+    if (!isVisible || !needsVideo || shouldLoadVideo || enqueuedRef.current) return;
+    enqueuedRef.current = true;
+    enqueue(() => setShouldLoadVideo(true));
+  }, [isVisible, needsVideo, shouldLoadVideo]);
 
   const handleVideoLoaded = useCallback(() => {
     setLoaded(true);
@@ -89,9 +103,17 @@ export default function VideoThumbnail({ videoUrl, previewUrl, alt = '', style }
   }, []);
 
   const handleVideoError = useCallback(() => {
-    // Free queue slot on error too
     setLoaded(true); // stop shimmer
     dequeue();
+  }, []);
+
+  const handleImgLoad = useCallback(() => {
+    setLoaded(true);
+  }, []);
+
+  const handleImgError = useCallback(() => {
+    // Image failed — fall back to video path
+    setImgFailed(true);
   }, []);
 
   const baseStyle: React.CSSProperties = {
@@ -99,7 +121,7 @@ export default function VideoThumbnail({ videoUrl, previewUrl, alt = '', style }
     inset: 0,
     width: '100%',
     height: '100%',
-    objectFit: 'cover',
+    objectFit: 'cover' as const,
     ...style,
   };
 
@@ -121,30 +143,29 @@ export default function VideoThumbnail({ videoUrl, previewUrl, alt = '', style }
               inset: 0,
               background:
                 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.4) 50%, transparent 100%)',
-              animation: 'shimmer 1.5s ease-in-out infinite',
+              animation: 'vthumb-shimmer 1.5s ease-in-out infinite',
             }}
           />
         </div>
       )}
 
-      {/* Image preview (instant) */}
-      {hasImagePreview && (
+      {/* Image preview (instant — only if URL is actually an image) */}
+      {imagePreviewUrl && !imgFailed && (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={previewUrl}
+          src={imagePreviewUrl}
           alt={alt}
           loading="lazy"
-          onLoad={() => setLoaded(true)}
-          onError={() => setLoaded(true)}
+          onLoad={handleImgLoad}
+          onError={handleImgError}
           style={{ ...baseStyle, opacity: loaded ? 1 : 0, transition: 'opacity 0.2s ease' }}
         />
       )}
 
-      {/* Video preview (sequential queue) */}
-      {!hasImagePreview && shouldLoad && videoUrl && (
+      {/* Video preview (sequential queue) — used when no image or image failed */}
+      {needsVideo && shouldLoadVideo && (
         <video
-          ref={videoRef}
-          src={videoUrl}
+          src={effectiveVideoUrl}
           muted
           playsInline
           preload="auto"
@@ -156,7 +177,7 @@ export default function VideoThumbnail({ videoUrl, previewUrl, alt = '', style }
 
       {/* Inject shimmer keyframes */}
       <style>{`
-        @keyframes shimmer {
+        @keyframes vthumb-shimmer {
           0% { transform: translateX(-100%); }
           100% { transform: translateX(100%); }
         }
