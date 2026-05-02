@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import VideoThumbnail from '@/components/ui/VideoThumbnail';
 import { apiFetch } from '@/lib/utils';
 import { useProgressiveList } from '@/hooks/useProgressiveList';
 import { useTranslation } from '@/lib/i18n';
@@ -403,43 +404,16 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                                         background: 'white', transition: 'all 0.15s ease',
                                                         boxShadow: isSelected ? '0 0 0 3px rgba(51,122,255,0.12)' : '0 1px 4px rgba(0,0,0,0.06)',
                                                     }}>
-                                                        {/* Thumbnail — uses preview_url or video preload=metadata */}
+                                                        {/* Thumbnail — uses VideoThumbnail with sequential loading */}
                                                         <div style={{
                                                             position: 'relative', paddingTop: '125%',
                                                             background: 'linear-gradient(135deg, #f0f0f5 0%, #e8e8ee 100%)',
                                                         }}>
-                                                            {(job as any).preview_url ? (
-                                                                // eslint-disable-next-line @next/next/no-img-element
-                                                                <img
-                                                                    src={(job as any).preview_url}
-                                                                    loading="lazy"
-                                                                    onError={(e) => {
-                                                                        // If preview_url fails, replace with video element
-                                                                        const img = e.currentTarget;
-                                                                        if (job.final_video_url && !img.dataset.fallback) {
-                                                                            img.dataset.fallback = '1';
-                                                                            const vid = document.createElement('video');
-                                                                            vid.muted = true;
-                                                                            vid.preload = 'auto';
-                                                                            vid.playsInline = true;
-                                                                            vid.src = job.final_video_url;
-                                                                            vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover';
-                                                                            img.parentElement?.appendChild(vid);
-                                                                            img.style.display = 'none';
-                                                                        }
-                                                                    }}
-                                                                    style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
-                                                                    alt=""
-                                                                />
-                                                            ) : job.final_video_url ? (
-                                                                <video
-                                                                    src={job.final_video_url}
-                                                                    muted
-                                                                    playsInline
-                                                                    preload="auto"
-                                                                    style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
-                                                                />
-                                                            ) : null}
+                                                            <VideoThumbnail
+                                                                previewUrl={(job as any).preview_url || (job as any).reference_image_url}
+                                                                videoUrl={job.final_video_url}
+                                                                alt={getJobLabel(job)}
+                                                            />
                                                             {/* Selection badge */}
                                                             {isSelected && (
                                                                 <div style={{
@@ -765,13 +739,11 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                             position: 'relative', paddingTop: '177.78%',
                                             background: 'linear-gradient(135deg, #f0f0f5 0%, #e8e8ee 100%)',
                                         }}>
-                                            {job?.final_video_url && (
-                                                <video
-                                                    src={`${job.final_video_url}#t=0.1`}
-                                                    muted preload="metadata"
-                                                    style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
-                                                />
-                                            )}
+                                            <VideoThumbnail
+                                                previewUrl={(job as any)?.preview_url || (job as any)?.reference_image_url}
+                                                videoUrl={job?.final_video_url}
+                                                alt={job ? getJobLabel(job) : 'Video'}
+                                            />
                                         </div>
                                         {/* Card info */}
                                         <div style={{ padding: '12px 14px', flex: 1, display: 'flex', flexDirection: 'column' }}>
