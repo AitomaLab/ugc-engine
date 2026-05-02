@@ -1,53 +1,25 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect } from 'react';
 
 /**
- * VideoThumbnail — lightweight video preview that avoids loading full video files.
+ * VideoThumbnail — lightweight video preview using server-generated JPEG thumbnails.
  *
  * Strategy:
- * 1. If `previewUrl` (image) is provided → render <img> instantly (fastest).
+ * 1. If `previewUrl` (image) is provided → render <img> (instant).
  *    - Skips URLs ending in .mp4/.webm/.mov (those are video URLs, not images).
- * 2. Otherwise, load the video in a <video> element. Uses a global sequential
- *    queue so we never saturate the network with concurrent video downloads.
- * 3. Shows a shimmer loading animation while waiting.
- * 4. If the image fails to load, falls back to the video path.
+ * 2. If no image is available → show a styled placeholder with a play icon.
+ *    (We do NOT try <video preload> — it's unreliable for CDN-hosted videos.)
+ * 3. Shows a shimmer loading animation while the image loads.
  */
 
-/* ── Helpers ────────────────────────────────────────────────────────── */
 const VIDEO_EXTENSIONS = /\.(mp4|webm|mov|avi|mkv)(\?.*)?$/i;
 
 function isImageUrl(url: string | undefined): boolean {
   if (!url) return false;
-  // If the URL ends with a video extension (ignoring query params), it's not an image
   return !VIDEO_EXTENSIONS.test(url);
 }
 
-/* ── Global sequential queue ────────────────────────────────────────── */
-// Only load MAX_CONCURRENT videos at a time to prevent network saturation.
-const MAX_CONCURRENT = 2;
-let activeLoads = 0;
-const queue: Array<() => void> = [];
-
-function enqueue(fn: () => void) {
-  if (activeLoads < MAX_CONCURRENT) {
-    activeLoads++;
-    fn();
-  } else {
-    queue.push(fn);
-  }
-}
-
-function dequeue() {
-  activeLoads--;
-  if (queue.length > 0 && activeLoads < MAX_CONCURRENT) {
-    activeLoads++;
-    const next = queue.shift()!;
-    next();
-  }
-}
-
-/* ── Component ──────────────────────────────────────────────────────── */
 interface Props {
   videoUrl?: string;
   previewUrl?: string;
@@ -55,66 +27,23 @@ interface Props {
   style?: React.CSSProperties;
 }
 
-export default function VideoThumbnail({ videoUrl, previewUrl, alt = '', style }: Props) {
-  // Determine if we have a valid image preview (not a video URL)
-  const imagePreviewUrl = isImageUrl(previewUrl) ? previewUrl : undefined;
+export default function VideoThumbnail({ previewUrl, alt = '', style }: Props) {
+  const imageUrl = isImageUrl(previewUrl) ? previewUrl : undefined;
+  const [imgLoaded, setImgLoaded] = useState(false);
+  const [imgError, setImgError] = useState(false);
+  const prevUrlRef = useRef(imageUrl);
 
-  const [loaded, setLoaded] = useState(false);
-  const [imgFailed, setImgFailed] = useState(false);
-  const [shouldLoadVideo, setShouldLoadVideo] = useState(false);
-  const [isVisible, setIsVisible] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const enqueuedRef = useRef(false);
-
-  // The effective video URL: use the videoUrl prop, or fall back to previewUrl
-  // if it's a video URL (e.g. .mp4)
-  const effectiveVideoUrl = videoUrl || (!isImageUrl(previewUrl) && previewUrl ? previewUrl : undefined);
-
-  // Whether we need to load a video (no image preview, or image failed)
-  const needsVideo = (!imagePreviewUrl || imgFailed) && !!effectiveVideoUrl;
-
-  // Intersection Observer — only start loading when visible
+  // Reset loading state when imageUrl changes (e.g. thumbMap populates async)
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setIsVisible(true);
-          observer.disconnect();
-        }
-      },
-      { rootMargin: '100px' }
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
+    if (prevUrlRef.current !== imageUrl) {
+      prevUrlRef.current = imageUrl;
+      setImgLoaded(false);
+      setImgError(false);
+    }
+  }, [imageUrl]);
 
-  // Enqueue video loading when visible and needed
-  useEffect(() => {
-    if (!isVisible || !needsVideo || shouldLoadVideo || enqueuedRef.current) return;
-    enqueuedRef.current = true;
-    enqueue(() => setShouldLoadVideo(true));
-  }, [isVisible, needsVideo, shouldLoadVideo]);
-
-  const handleVideoLoaded = useCallback(() => {
-    setLoaded(true);
-    dequeue();
-  }, []);
-
-  const handleVideoError = useCallback(() => {
-    setLoaded(true); // stop shimmer
-    dequeue();
-  }, []);
-
-  const handleImgLoad = useCallback(() => {
-    setLoaded(true);
-  }, []);
-
-  const handleImgError = useCallback(() => {
-    // Image failed — fall back to video path
-    setImgFailed(true);
-  }, []);
+  const showImage = imageUrl && !imgError;
+  const showPlaceholder = !showImage || !imgLoaded;
 
   const baseStyle: React.CSSProperties = {
     position: 'absolute',
@@ -126,56 +55,54 @@ export default function VideoThumbnail({ videoUrl, previewUrl, alt = '', style }
   };
 
   return (
-    <div ref={containerRef} style={{ position: 'absolute', inset: 0 }}>
-      {/* Shimmer loading state */}
-      {!loaded && (
+    <div style={{ position: 'absolute', inset: 0 }}>
+      {/* Shimmer / placeholder — shown until image loads or as permanent fallback */}
+      {showPlaceholder && (
         <div
           style={{
             position: 'absolute',
             inset: 0,
-            background: 'linear-gradient(135deg, #f0f0f5 0%, #e8e8ee 100%)',
+            background: 'linear-gradient(135deg, #e8e8f0 0%, #d8d8e4 100%)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
             overflow: 'hidden',
           }}
         >
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              background:
-                'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.4) 50%, transparent 100%)',
-              animation: 'vthumb-shimmer 1.5s ease-in-out infinite',
-            }}
-          />
+          {/* Shimmer animation while image is loading */}
+          {showImage && (
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                background:
+                  'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.3) 50%, transparent 100%)',
+                animation: 'vthumb-shimmer 1.5s ease-in-out infinite',
+              }}
+            />
+          )}
+          {/* Play icon fallback when no image available */}
+          {!showImage && (
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" style={{ opacity: 0.25 }}>
+              <path d="M8 5.14v13.72a1 1 0 001.5.86l11.24-6.86a1 1 0 000-1.72L9.5 4.28A1 1 0 008 5.14z" fill="currentColor"/>
+            </svg>
+          )}
         </div>
       )}
 
-      {/* Image preview (instant — only if URL is actually an image) */}
-      {imagePreviewUrl && !imgFailed && (
+      {/* Image thumbnail */}
+      {showImage && (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={imagePreviewUrl}
+          src={imageUrl}
           alt={alt}
           loading="lazy"
-          onLoad={handleImgLoad}
-          onError={handleImgError}
-          style={{ ...baseStyle, opacity: loaded ? 1 : 0, transition: 'opacity 0.2s ease' }}
+          onLoad={() => setImgLoaded(true)}
+          onError={() => setImgError(true)}
+          style={{ ...baseStyle, opacity: imgLoaded ? 1 : 0, transition: 'opacity 0.2s ease' }}
         />
       )}
 
-      {/* Video preview (sequential queue) — used when no image or image failed */}
-      {needsVideo && shouldLoadVideo && (
-        <video
-          src={effectiveVideoUrl}
-          muted
-          playsInline
-          preload="auto"
-          onLoadedData={handleVideoLoaded}
-          onError={handleVideoError}
-          style={{ ...baseStyle, opacity: loaded ? 1 : 0, transition: 'opacity 0.2s ease' }}
-        />
-      )}
-
-      {/* Inject shimmer keyframes */}
       <style>{`
         @keyframes vthumb-shimmer {
           0% { transform: translateX(-100%); }

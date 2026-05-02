@@ -27,7 +27,10 @@ def _get_ffmpeg_path() -> str:
 
 
 async def generate_thumbnail(video_url: str, job_id: str) -> str | None:
-    """Download the first frame of a video and upload as a JPEG thumbnail.
+    """Extract the first frame of a video and upload as a JPEG thumbnail.
+
+    Uses FFmpeg's native HTTP support to read directly from the URL,
+    avoiding the need to download the entire file.
 
     Returns the public URL of the thumbnail, or None on failure.
     """
@@ -44,7 +47,6 @@ async def generate_thumbnail(video_url: str, job_id: str) -> str | None:
     try:
         from ugc_db.db_manager import get_supabase
         sb = get_supabase()
-        # Try to get the public URL — if the file exists, return it immediately
         import httpx
         thumb_url = sb.storage.from_("generated-videos").get_public_url(storage_filename)
         async with httpx.AsyncClient(timeout=5.0) as http:
@@ -57,44 +59,35 @@ async def generate_thumbnail(video_url: str, job_id: str) -> str | None:
 
     ffmpeg = _get_ffmpeg_path()
     thumb_path = None
-    video_path = None
 
     try:
-        # 1. Download the video (only first few seconds needed)
-        import httpx
-        video_path = tempfile.mktemp(suffix=".mp4")
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as http:
-            async with http.stream("GET", video_url) as resp:
-                resp.raise_for_status()
-                with open(video_path, "wb") as f:
-                    bytes_read = 0
-                    async for chunk in resp.aiter_bytes(chunk_size=65536):
-                        f.write(chunk)
-                        bytes_read += len(chunk)
-                        # Only need first ~2MB to get a frame
-                        if bytes_read > 2 * 1024 * 1024:
-                            break
-
-        # 2. Extract first frame with FFmpeg
+        # Extract first frame directly from URL — FFmpeg handles HTTP natively.
+        # This only downloads the bytes needed for a single frame (typically <500KB)
+        # instead of the full video file.
         thumb_path = tempfile.mktemp(suffix=".jpg")
         result = await asyncio.to_thread(
             subprocess.run,
             [
                 ffmpeg, "-y",
-                "-i", video_path,
+                "-i", video_url,
                 "-vframes", "1",
                 "-q:v", "3",  # Good quality JPEG
                 "-vf", "scale='min(720,iw)':-2",  # Cap width at 720px
                 thumb_path,
             ],
             capture_output=True,
-            timeout=15,
+            timeout=30,
         )
         if result.returncode != 0 or not os.path.exists(thumb_path):
-            print(f"[Thumbnail] FFmpeg failed for {job_id}: {result.stderr[-200:]}")
+            stderr = result.stderr.decode("utf-8", errors="replace")[-300:] if result.stderr else "unknown"
+            print(f"[Thumbnail] FFmpeg failed for {job_id}: {stderr}")
             return None
 
-        # 3. Upload to Supabase Storage
+        if os.path.getsize(thumb_path) == 0:
+            print(f"[Thumbnail] FFmpeg produced empty file for {job_id}")
+            return None
+
+        # Upload to Supabase Storage
         from ugc_db.db_manager import get_supabase
         sb = get_supabase()
         with open(thumb_path, "rb") as f:
@@ -119,12 +112,11 @@ async def generate_thumbnail(video_url: str, job_id: str) -> str | None:
 
     except Exception as e:
         print(f"[Thumbnail] Failed for {job_id}: {e}")
+        import traceback; traceback.print_exc()
         return None
     finally:
-        # Cleanup temp files
-        for p in (video_path, thumb_path):
-            if p:
-                try:
-                    os.unlink(p)
-                except Exception:
-                    pass
+        if thumb_path:
+            try:
+                os.unlink(thumb_path)
+            except Exception:
+                pass
