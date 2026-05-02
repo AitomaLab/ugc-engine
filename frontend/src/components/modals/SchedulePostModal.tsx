@@ -55,9 +55,40 @@ function formatShortDate(dateStr: string | null | undefined): string {
 }
 
 /* ── Component ──────────────────────────────────────────────────────────── */
+/* ── Project type for Step 1 ─────────────────────────────────────────── */
+interface ProjectInfo {
+    id: string;
+    name: string;
+    is_default?: boolean;
+    created_at?: string;
+    recent_previews?: { url: string; type: 'image' | 'video' }[];
+    asset_counts?: { images?: number; videos?: number };
+}
+
+/* ── Unified asset type for Step 2 (videos + images) ─────────────────── */
+interface ScheduleAsset {
+    id: string;
+    type: 'video' | 'image';
+    url: string;  // final_video_url or image url
+    previewUrl?: string;
+    label: string;
+    subLabel: string;
+    created_at?: string;
+}
+
 export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: Props) {
     const { t } = useTranslation();
     const [step, setStep] = useState(1);
+
+    // ── Step 1: Project selection ────────────────────────────────────
+    const [projects, setProjects] = useState<ProjectInfo[]>([]);
+    const [loadingProjects, setLoadingProjects] = useState(true);
+    const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+
+    // ── Step 2: Asset selection ──────────────────────────────────────
+    const [assets, setAssets] = useState<ScheduleAsset[]>([]);
+    const [loadingAssets, setLoadingAssets] = useState(false);
+    const [assetFilter, setAssetFilter] = useState<'all' | 'video' | 'image'>('all');
     const [jobs, setJobs] = useState<VideoJob[]>([]);
     const [influencers, setInfluencers] = useState<Influencer[]>([]);
     const [connectedPlatforms, setConnectedPlatforms] = useState<string[]>([]);
@@ -74,42 +105,92 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
     const [loadingData, setLoadingData] = useState(true);
     const [thumbMap, setThumbMap] = useState<Record<string, string>>({});
 
-    // ── fetch data ─────────────────────────────────────────────────────
+    // ── Step 1: Fetch projects ─────────────────────────────────────────
     useEffect(() => {
         if (!isOpen) return;
-        setLoadingData(true);
+        setLoadingProjects(true);
         (async () => {
             try {
-                const [jobsData, infData] = await Promise.all([
-                    apiFetch<VideoJob[]>('/jobs?limit=200'),
-                    apiFetch<Influencer[]>('/influencers'),
-                ]);
-                const successJobs = (jobsData || []).filter(j => j.status === 'success' && j.final_video_url);
-                setJobs(successJobs);
-                setInfluencers(infData || []);
+                const data = await creativeFetch<ProjectInfo[]>('/creative-os/projects/');
+                setProjects(data || []);
             } catch (err) {
-                console.error('[ScheduleModal] Failed to fetch data:', err);
-                setJobs([]);
+                console.error('[ScheduleModal] Failed to fetch projects:', err);
+                setProjects([]);
             }
-            // Fetch connections separately (non-blocking)
+            setLoadingProjects(false);
+        })();
+        // Fetch connections separately (non-blocking)
+        (async () => {
             try {
                 const connData = await apiFetch<{ socials: SocialConnection[] }>('/api/connections');
                 setConnectedPlatforms((connData?.socials || []).map(s => s.platform?.toLowerCase()).filter(Boolean) as string[]);
             } catch {
                 setConnectedPlatforms([]);
             }
-            setLoadingData(false);
+        })();
+        // Fetch influencers for labels
+        (async () => {
+            try {
+                const infData = await apiFetch<Influencer[]>('/influencers');
+                setInfluencers(infData || []);
+            } catch { /* non-critical */ }
         })();
     }, [isOpen]);
 
+    // ── Step 2: Fetch assets when project is selected ─────────────────
+    useEffect(() => {
+        if (!selectedProjectId) return;
+        setLoadingAssets(true);
+        setAssets([]);
+        setSelectedIds([]);
+        setSearch('');
+        (async () => {
+            try {
+                const [videos, images] = await Promise.all([
+                    creativeFetch<any[]>(`/creative-os/projects/${selectedProjectId}/assets/videos`),
+                    creativeFetch<any[]>(`/creative-os/projects/${selectedProjectId}/assets/images`),
+                ]);
+                const videoAssets: ScheduleAsset[] = (videos || []).filter((v: any) => v.status === 'success' && v.final_video_url).map((v: any) => ({
+                    id: v.id,
+                    type: 'video' as const,
+                    url: v.final_video_url,
+                    previewUrl: v.preview_url || v.reference_image_url || v.thumbnail_url,
+                    label: v.campaign_name || 'Video',
+                    subLabel: formatShortDate(v.created_at),
+                    created_at: v.created_at,
+                }));
+                const imageAssets: ScheduleAsset[] = (images || []).map((img: any) => ({
+                    id: img.id,
+                    type: 'image' as const,
+                    url: img.url || img.image_url,
+                    previewUrl: img.url || img.image_url,
+                    label: img.name || img.prompt?.slice(0, 40) || 'Image',
+                    subLabel: formatShortDate(img.created_at),
+                    created_at: img.created_at,
+                }));
+                const all = [...videoAssets, ...imageAssets].sort(
+                    (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+                );
+                setAssets(all);
+                // Also set jobs for compatibility with Step 3/4
+                setJobs((videos || []).filter((v: any) => v.status === 'success' && v.final_video_url));
+            } catch (err) {
+                console.error('[ScheduleModal] Failed to fetch assets:', err);
+                setAssets([]);
+            }
+            setLoadingAssets(false);
+            setLoadingData(false);
+        })();
+    }, [selectedProjectId]);
+
     // ── generate thumbnails for videos without image previews ──────────
     useEffect(() => {
-        if (!jobs.length) return;
+        const videoAssets = assets.filter(a => a.type === 'video');
+        if (!videoAssets.length) return;
         const VIDEO_EXT_RE = /\.(mp4|webm|mov|avi|mkv)(\?.*)?$/i;
-        // Find jobs that don't have a usable image thumbnail
-        const needsThumbnail = jobs.filter(j => {
-            const preview = (j as any).preview_url || (j as any).reference_image_url || (j as any).thumbnail_url;
-            return !preview || VIDEO_EXT_RE.test(preview);
+        // Find videos that don't have a usable image thumbnail
+        const needsThumbnail = videoAssets.filter(a => {
+            return !a.previewUrl || VIDEO_EXT_RE.test(a.previewUrl);
         });
         if (!needsThumbnail.length) return;
         // Call backend to generate FFmpeg thumbnails (non-blocking)
@@ -120,7 +201,7 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                     {
                         method: 'POST',
                         body: JSON.stringify({
-                            jobs: needsThumbnail.map(j => ({ id: j.id, video_url: j.final_video_url })),
+                            jobs: needsThumbnail.map(a => ({ id: a.id, video_url: a.url })),
                         }),
                     }
                 );
@@ -132,27 +213,31 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
             }
         })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [jobs]);
+    }, [assets]);
 
     // ── pre-select from videos page ────────────────────────────────────
     useEffect(() => {
-        if (preSelectedIds && preSelectedIds.size > 0 && jobs.length > 0) {
-            // Only include IDs that exist in the loaded jobs
-            const validIds = [...preSelectedIds].filter(id => jobs.some(j => j.id === id));
+        if (preSelectedIds && preSelectedIds.size > 0 && assets.length > 0) {
+            // Only include IDs that exist in the loaded assets
+            const validIds = [...preSelectedIds].filter(id => assets.some(a => a.id === id));
             if (validIds.length > 0) setSelectedIds(validIds);
         }
-    }, [preSelectedIds, jobs]);
+    }, [preSelectedIds, assets]);
 
     // ── reset on close ─────────────────────────────────────────────────
     useEffect(() => {
         if (!isOpen) {
             setStep(1);
+            setSelectedProjectId(null);
+            setAssets([]);
+            setAssetFilter('all');
             setSelectedIds([]);
             setConfigs({});
             setActiveVideoIdx(0);
             setAiCaptions([]);
             setSubmitting(false);
             setSearch('');
+            setThumbMap({});
         }
     }, [isOpen]);
 
@@ -171,6 +256,18 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
         return date || '';
     }, []);
 
+    const getAssetLabel = useCallback((id: string): string => {
+        const asset = assets.find(a => a.id === id);
+        if (asset) return asset.label;
+        const job = jobs.find(j => j.id === id);
+        return job ? getJobLabel(job) : 'Asset';
+    }, [assets, jobs, getJobLabel]);
+
+    const getAssetSubLabel = useCallback((id: string): string => {
+        const asset = assets.find(a => a.id === id);
+        return asset?.subLabel || '';
+    }, [assets]);
+
     // ── toggle video selection ──────────────────────────────────────────
     const toggleVideo = (id: string) => {
         setSelectedIds(prev => {
@@ -181,29 +278,34 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
 
     // ── select all / deselect all ───────────────────────────────────────
     const toggleAll = () => {
-        if (selectedIds.length === filteredJobs.length) {
+        if (selectedIds.length === filteredAssets.length) {
             setSelectedIds([]);
         } else {
-            setSelectedIds(filteredJobs.map(j => j.id));
+            setSelectedIds(filteredAssets.map(a => a.id));
         }
     };
 
-    // ── filter by search ────────────────────────────────────────────────
-    const filteredJobs = useMemo(() => {
-        if (!search) return jobs;
-        const q = search.toLowerCase();
-        return jobs.filter(job => {
-            const inf = influencerMap.get(job.influencer_id || '');
-            return (
-                (inf?.name || '').toLowerCase().includes(q) ||
-                (job.campaign_name || '').toLowerCase().includes(q) ||
-                job.id.toLowerCase().includes(q)
+    // ── filter assets by search and type ─────────────────────────────────
+    const filteredAssets = useMemo(() => {
+        let filtered = assets;
+        if (assetFilter !== 'all') {
+            filtered = filtered.filter(a => a.type === assetFilter);
+        }
+        if (search) {
+            const q = search.toLowerCase();
+            filtered = filtered.filter(a =>
+                a.label.toLowerCase().includes(q) ||
+                a.id.toLowerCase().includes(q)
             );
-        });
-    }, [jobs, search, influencerMap]);
+        }
+        return filtered;
+    }, [assets, search, assetFilter]);
 
-    // ── progressive loading for the video grid ──────────────────────────
-    const { visibleItems: visibleJobs, sentinelRef, hasMore, scrollContainerRef } = useProgressiveList(filteredJobs, 12);
+    // ── progressive loading for the asset grid ──────────────────────────
+    const { visibleItems: visibleAssets, sentinelRef, hasMore, scrollContainerRef } = useProgressiveList(filteredAssets, 12);
+
+    // Compat: keep filteredJobs for Step 3/4
+    const filteredJobs = filteredAssets;
 
     // ── initialise configs when stepping from 1→2 ──────────────────────
     const initConfigs = useCallback(() => {
@@ -244,17 +346,35 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
     };
 
     // ── AI caption generation ───────────────────────────────────────────
-    const generateCaption = async (videoId: string, platform: string) => {
+    const generateCaption = async (assetId: string, platform: string) => {
         setAiLoading(true);
         setAiCaptions([]);
         try {
-            const data = await apiFetch<{ captions: string[] }>('/api/schedule/generate-caption', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ video_job_id: videoId, platform }),
-            });
-            setAiCaptions(data.captions || []);
-        } catch { /* empty */ }
+            const asset = assets.find(a => a.id === assetId);
+            if (asset?.type === 'image') {
+                // For images: generate captions via creative-os (which can handle arbitrary context)
+                const data = await creativeFetch<{ captions: string[] }>('/creative-os/projects/generate-caption', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        asset_type: 'image',
+                        asset_label: asset.label,
+                        asset_url: asset.url,
+                        platform,
+                    }),
+                });
+                setAiCaptions(data.captions || []);
+            } else {
+                // For videos: use existing endpoint
+                const data = await apiFetch<{ captions: string[] }>('/api/schedule/generate-caption', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ video_job_id: assetId, platform }),
+                });
+                setAiCaptions(data.captions || []);
+            }
+        } catch (err) {
+            console.error('[ScheduleModal] Caption generation failed:', err);
+        }
         setAiLoading(false);
     };
 
@@ -292,7 +412,10 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
     const activeVideoId = selectedIds[activeVideoIdx];
     const activeConfig = activeVideoId ? configs[activeVideoId] : null;
     const allReady = selectedIds.every(id => configs[id]?.ready);
-    const STEPS = [t('scheduleModal.step1'), t('scheduleModal.step2'), t('scheduleModal.step3')];
+    const selectedProject = projects.find(p => p.id === selectedProjectId);
+    const STEPS = ['Select Project', 'Select Assets', t('scheduleModal.step2'), t('scheduleModal.step3')];
+    const videoCount = assets.filter(a => a.type === 'video').length;
+    const imageCount = assets.filter(a => a.type === 'image').length;
 
     /* ── RENDER ──────────────────────────────────────────────────────────── */
     return (
@@ -374,16 +497,146 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                 <div style={{ height: '1px', background: 'var(--border)', margin: '16px 0 0' }} />
 
                 {/* ── Body ─────────────────────────────────────────────── */}
-                <div style={{ flex: 1, overflow: step === 1 ? 'hidden' : 'auto', padding: '20px 32px 0', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                <div style={{ flex: 1, overflow: (step === 1 || step === 2) ? 'hidden' : 'auto', padding: '20px 32px 0', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
 
-                    {/* ════ STEP 1: Select Videos ════ */}
+                    {/* ════ STEP 1: Select Project ════ */}
                     {step === 1 && (
+                        <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, paddingBottom: '12px' }}>
+                            {loadingProjects ? (
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '60px 0', color: 'var(--text-3)', fontSize: '14px' }}>
+                                    Loading projects...
+                                </div>
+                            ) : projects.length === 0 ? (
+                                <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--text-3)' }}>
+                                    <div style={{ fontSize: '14px', marginBottom: '8px' }}>No projects found</div>
+                                    <div style={{ fontSize: '12px' }}>Create a project first to schedule assets</div>
+                                </div>
+                            ) : (
+                                <div style={{
+                                    display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+                                    gap: '16px',
+                                }}>
+                                    {projects.map(project => {
+                                        const counts = project.asset_counts || {};
+                                        const totalAssets = (counts.images || 0) + (counts.videos || 0);
+                                        const previews = (project.recent_previews || []).filter((p: any) => p?.url).slice(0, 4);
+                                        const isSelected = selectedProjectId === project.id;
+                                        return (
+                                            <div key={project.id}
+                                                onClick={() => { setSelectedProjectId(project.id); setStep(2); }}
+                                                style={{
+                                                    borderRadius: '16px', overflow: 'hidden', cursor: 'pointer',
+                                                    border: `2px solid ${isSelected ? 'var(--blue)' : 'transparent'}`,
+                                                    background: 'white',
+                                                    boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+                                                    transition: 'all 0.2s ease',
+                                                }}
+                                                onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 8px 32px rgba(51,122,255,0.12)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
+                                                onMouseLeave={e => { e.currentTarget.style.boxShadow = '0 1px 4px rgba(0,0,0,0.06)'; e.currentTarget.style.transform = 'none'; }}
+                                            >
+                                                {/* Preview grid */}
+                                                <div style={{ aspectRatio: '16 / 10', overflow: 'hidden', background: 'linear-gradient(135deg, #E3ECFF 0%, #D5DCFA 50%, #EDE3FA 100%)' }}>
+                                                    {(() => {
+                                                        const VIDEO_RE = /\.(mp4|webm|mov)(\?|#|$)/i;
+                                                        const renderPreviewItem = (p: { url: string; type: 'image' | 'video' }, i: number) => {
+                                                            const isVid = VIDEO_RE.test(p.url);
+                                                            return isVid ? (
+                                                                <video key={i} src={p.url} muted playsInline preload="metadata"
+                                                                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                                                                    onError={e => { (e.target as HTMLVideoElement).style.display = 'none'; }}
+                                                                />
+                                                            ) : (
+                                                                // eslint-disable-next-line @next/next/no-img-element
+                                                                <img key={i} src={p.url} alt="" loading="lazy"
+                                                                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                                                                    onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                                                                />
+                                                            );
+                                                        };
+                                                        if (previews.length === 0) return (
+                                                            <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                                <svg viewBox="0 0 24 24" style={{ width: 36, height: 36, fill: 'none', stroke: 'rgba(51,122,255,0.25)', strokeWidth: 1.5 }}>
+                                                                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                                                                </svg>
+                                                            </div>
+                                                        );
+                                                        if (previews.length === 1) return (
+                                                            <div style={{ width: '100%', height: '100%' }}>
+                                                                {renderPreviewItem(previews[0], 0)}
+                                                            </div>
+                                                        );
+                                                        return (
+                                                            <div style={{ display: 'grid', gridTemplateColumns: previews.length >= 2 ? '1fr 1fr' : '1fr', gridTemplateRows: previews.length >= 3 ? '1fr 1fr' : '1fr', gap: '2px', height: '100%' }}>
+                                                                {previews.map((p, i) => (
+                                                                    <div key={i} style={{ overflow: 'hidden' }}>
+                                                                        {renderPreviewItem(p, i)}
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        );
+                                                    })()}
+                                                </div>
+                                                {/* Info */}
+                                                <div style={{ padding: '12px 14px' }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                        <div style={{ fontSize: '14px', fontWeight: 650, color: 'var(--text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                                                            {project.name}
+                                                        </div>
+                                                        {project.is_default && (
+                                                            <span style={{ fontSize: '10px', fontWeight: 700, color: 'var(--blue)', background: 'rgba(51,122,255,0.08)', padding: '2px 7px', borderRadius: '4px' }}>
+                                                                Default
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <div style={{ fontSize: '12px', color: 'var(--text-3)', marginTop: '4px', display: 'flex', gap: '4px' }}>
+                                                        {(counts.videos || 0) > 0 && <span>{counts.videos} video{(counts.videos || 0) !== 1 ? 's' : ''}</span>}
+                                                        {(counts.videos || 0) > 0 && (counts.images || 0) > 0 && <span style={{ opacity: 0.5 }}>·</span>}
+                                                        {(counts.images || 0) > 0 && <span>{counts.images} image{(counts.images || 0) !== 1 ? 's' : ''}</span>}
+                                                        {totalAssets === 0 && <span>No assets</span>}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* ════ STEP 2: Select Assets ════ */}
+                    {step === 2 && (
                         <div style={{ display: 'flex', gap: '24px', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-                            {/* Left: Video grid — scrolls independently */}
+                            {/* Left: Asset grid — scrolls independently */}
                             <div ref={scrollContainerRef} style={{
                                 flex: 1, display: 'flex', flexDirection: 'column', gap: '14px',
                                 overflowY: 'auto', minHeight: 0, paddingBottom: '12px',
                             }}>
+                                {/* Project name + filter tabs */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '2px' }}>
+                                    <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <svg viewBox="0 0 24 24" style={{ width: 14, height: 14, fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}>
+                                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                                        </svg>
+                                        {selectedProject?.name || 'Project'}
+                                    </div>
+                                    <div style={{ flex: 1 }} />
+                                    {/* Type filter tabs */}
+                                    {[
+                                        { key: 'all' as const, label: `All (${assets.length})` },
+                                        { key: 'video' as const, label: `Videos (${videoCount})` },
+                                        { key: 'image' as const, label: `Images (${imageCount})` },
+                                    ].map(tab => (
+                                        <button key={tab.key} onClick={() => setAssetFilter(tab.key)} style={{
+                                            padding: '5px 12px', borderRadius: '8px', border: 'none',
+                                            background: assetFilter === tab.key ? 'var(--blue)' : 'rgba(0,0,0,0.04)',
+                                            color: assetFilter === tab.key ? 'white' : 'var(--text-2)',
+                                            fontSize: '12px', fontWeight: 600, cursor: 'pointer',
+                                            transition: 'all 0.15s ease',
+                                        }}>
+                                            {tab.label}
+                                        </button>
+                                    ))}
+                                </div>
                                 {/* Search + Select All */}
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                                     <div style={{
@@ -395,7 +648,7 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                             <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
                                         </svg>
                                         <input
-                                            type="text" placeholder={t('scheduleModal.searchVideos')}
+                                            type="text" placeholder="Search assets..."
                                             value={search} onChange={e => setSearch(e.target.value)}
                                             style={{ border: 'none', outline: 'none', fontSize: '13px', flex: 1, background: 'transparent', color: 'var(--text-1)' }}
                                         />
@@ -406,48 +659,65 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                         fontSize: '13px', fontWeight: 600, cursor: 'pointer',
                                         color: 'var(--text-1)', whiteSpace: 'nowrap',
                                     }}>
-                                        {selectedIds.length === filteredJobs.length && filteredJobs.length > 0 ? t('scheduleModal.deselectAll') : t('scheduleModal.selectAllN')}
+                                        {selectedIds.length === filteredAssets.length && filteredAssets.length > 0 ? t('scheduleModal.deselectAll') : t('scheduleModal.selectAllN')}
                                     </button>
                                 </div>
 
                                 {/* Grid — progressive loading */}
-                                {loadingData ? (
+                                {loadingAssets ? (
                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '60px 0', color: 'var(--text-3)', fontSize: '14px' }}>
-                                        {t('scheduleModal.loadingVideos')}
+                                        Loading assets...
                                     </div>
-                                ) : filteredJobs.length === 0 ? (
+                                ) : filteredAssets.length === 0 ? (
                                     <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--text-3)' }}>
-                                        <div style={{ fontSize: '14px', marginBottom: '8px' }}>{t('scheduleModal.noVideos')}</div>
-                                        <div style={{ fontSize: '12px' }}>{t('scheduleModal.noVideosDesc')}</div>
+                                        <div style={{ fontSize: '14px', marginBottom: '8px' }}>No assets found</div>
+                                        <div style={{ fontSize: '12px' }}>Generate some images or videos in this project first</div>
                                     </div>
                                 ) : (
-                                    <div style={{
-                                        paddingBottom: '8px',
-                                    }}>
+                                    <div style={{ paddingBottom: '8px' }}>
                                         <div style={{
                                             display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))',
                                             gap: '14px',
                                         }}>
-                                            {visibleJobs.map(job => {
-                                                const idx = selectedIds.indexOf(job.id);
+                                            {visibleAssets.map(asset => {
+                                                const idx = selectedIds.indexOf(asset.id);
                                                 const isSelected = idx >= 0;
+                                                const isVideo = asset.type === 'video';
                                                 return (
-                                                    <div key={job.id} onClick={() => toggleVideo(job.id)} style={{
+                                                    <div key={asset.id} onClick={() => toggleVideo(asset.id)} style={{
                                                         borderRadius: '14px', overflow: 'hidden', cursor: 'pointer',
                                                         border: `2.5px solid ${isSelected ? 'var(--blue)' : 'transparent'}`,
                                                         background: 'white', transition: 'all 0.15s ease',
                                                         boxShadow: isSelected ? '0 0 0 3px rgba(51,122,255,0.12)' : '0 1px 4px rgba(0,0,0,0.06)',
                                                     }}>
-                                                        {/* Thumbnail — uses VideoThumbnail with sequential loading */}
+                                                        {/* Thumbnail */}
                                                         <div style={{
                                                             position: 'relative', paddingTop: '125%',
                                                             background: 'linear-gradient(135deg, #f0f0f5 0%, #e8e8ee 100%)',
                                                         }}>
-                                                            <VideoThumbnail
-                                                                previewUrl={thumbMap[job.id] || (job as any).preview_url || (job as any).reference_image_url || (job as any).thumbnail_url}
-                                                                videoUrl={job.final_video_url}
-                                                                alt={getJobLabel(job)}
-                                                            />
+                                                            {asset.previewUrl ? (
+                                                                <VideoThumbnail
+                                                                    previewUrl={thumbMap[asset.id] || asset.previewUrl}
+                                                                    videoUrl={isVideo ? asset.url : undefined}
+                                                                    alt={asset.label}
+                                                                />
+                                                            ) : (
+                                                                <VideoThumbnail
+                                                                    previewUrl={thumbMap[asset.id]}
+                                                                    videoUrl={isVideo ? asset.url : undefined}
+                                                                    alt={asset.label}
+                                                                />
+                                                            )}
+                                                            {/* Type badge */}
+                                                            <div style={{
+                                                                position: 'absolute', bottom: 6, left: 6,
+                                                                padding: '2px 6px', borderRadius: '4px',
+                                                                background: 'rgba(0,0,0,0.6)',
+                                                                color: 'white', fontSize: '9px', fontWeight: 700,
+                                                                backdropFilter: 'blur(4px)', letterSpacing: '0.3px',
+                                                            }}>
+                                                                {isVideo ? '▶ VIDEO' : '▢ IMAGE'}
+                                                            </div>
                                                             {/* Selection badge */}
                                                             {isSelected && (
                                                                 <div style={{
@@ -474,17 +744,6 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                                                     </svg>
                                                                 </div>
                                                             )}
-                                                            {/* Play icon overlay */}
-                                                            {!isSelected && (
-                                                                <div style={{
-                                                                    position: 'absolute', inset: 0,
-                                                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                                                }}>
-                                                                    <svg viewBox="0 0 24 24" style={{ width: 36, height: 36, fill: 'rgba(255,255,255,0.5)', stroke: 'none' }}>
-                                                                        <polygon points="5 3 19 12 5 21 5 3" />
-                                                                    </svg>
-                                                                </div>
-                                                            )}
                                                         </div>
                                                         {/* Info */}
                                                         <div style={{ padding: '10px 12px' }}>
@@ -492,13 +751,13 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                                                 fontSize: '12px', fontWeight: 600, color: 'var(--text-1)',
                                                                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                                                             }}>
-                                                                {getJobLabel(job)}
+                                                                {asset.label}
                                                             </div>
                                                             <div style={{
                                                                 fontSize: '11px', color: 'var(--text-3)', marginTop: '2px',
                                                                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                                                             }}>
-                                                                {getJobSubLabel(job)}
+                                                                {asset.subLabel}
                                                             </div>
                                                         </div>
                                                     </div>
@@ -522,7 +781,7 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                 {/* Top section: selection count + selected list */}
                                 <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1 }}>
                                     <div style={{ fontWeight: 700, fontSize: '14px', marginBottom: '4px' }}>
-                                        {selectedIds.length} {t('scheduleModal.videosSelected')}
+                                        {selectedIds.length} asset{selectedIds.length !== 1 ? 's' : ''} selected
                                     </div>
                                     <div style={{ fontSize: '12px', color: 'var(--text-3)', marginBottom: '12px' }}>
                                         {t('scheduleModal.willBeScheduled')}
@@ -536,8 +795,8 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                             marginBottom: '12px', paddingRight: '4px',
                                         }}>
                                             {selectedIds.map((id) => {
-                                                const job = jobs.find(j => j.id === id);
-                                                if (!job) return null;
+                                                const asset = assets.find(a => a.id === id);
+                                                if (!asset) return null;
                                                 return (
                                                     <div key={id} style={{
                                                         display: 'flex', alignItems: 'center', gap: '10px',
@@ -547,19 +806,27 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                                     }}>
                                                         <div style={{
                                                             width: 28, height: 28, borderRadius: '8px',
-                                                            background: 'rgba(51,122,255,0.08)',
+                                                            background: asset.type === 'video' ? 'rgba(51,122,255,0.08)' : 'rgba(34,197,94,0.08)',
                                                             display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
                                                         }}>
-                                                            <svg viewBox="0 0 24 24" style={{ width: 12, height: 12, fill: 'var(--blue)', stroke: 'none' }}>
-                                                                <polygon points="5 3 19 12 5 21 5 3" />
-                                                            </svg>
+                                                            {asset.type === 'video' ? (
+                                                                <svg viewBox="0 0 24 24" style={{ width: 12, height: 12, fill: 'var(--blue)', stroke: 'none' }}>
+                                                                    <polygon points="5 3 19 12 5 21 5 3" />
+                                                                </svg>
+                                                            ) : (
+                                                                <svg viewBox="0 0 24 24" style={{ width: 12, height: 12, fill: 'none', stroke: '#22c55e', strokeWidth: 2 }}>
+                                                                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                                                                    <circle cx="8.5" cy="8.5" r="1.5" />
+                                                                    <polyline points="21 15 16 10 5 21" />
+                                                                </svg>
+                                                            )}
                                                         </div>
                                                         <div style={{ flex: 1, overflow: 'hidden' }}>
                                                             <div style={{ fontSize: '12px', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                                                {getJobLabel(job)}
+                                                                {asset.label}
                                                             </div>
                                                             <div style={{ fontSize: '10px', color: 'var(--text-3)' }}>
-                                                                {getJobSubLabel(job)}
+                                                                {asset.subLabel}
                                                             </div>
                                                         </div>
                                                         <button onClick={e => { e.stopPropagation(); toggleVideo(id); }} style={{
@@ -611,13 +878,13 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                         </div>
                     )}
 
-                    {/* ════ STEP 2: Configure Each Video ════ */}
-                    {step === 2 && activeConfig && (
+                    {/* ════ STEP 3: Configure Each ════ */}
+                    {step === 3 && activeConfig && (
                         <div style={{ display: 'flex', gap: '24px' }}>
                             {/* Left: video list */}
                             <div style={{ width: '220px', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '60vh', overflowY: 'auto' }}>
                                 {selectedIds.map((id, i) => {
-                                    const job = jobs.find(j => j.id === id);
+                                    const asset = assets.find(a => a.id === id);
                                     const cfg = configs[id];
                                     return (
                                         <div key={id} onClick={() => { setActiveVideoIdx(i); setAiCaptions([]); }} style={{
@@ -627,11 +894,22 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                             cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px',
                                         }}>
                                             <div style={{ width: 40, height: 52, borderRadius: '6px', overflow: 'hidden', background: '#f0f0f0', flexShrink: 0 }}>
-                                                {job?.final_video_url && <video src={job.final_video_url} muted preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+                                                {(() => {
+                                                    const src = thumbMap[id] || asset?.previewUrl;
+                                                    if (!src) return null;
+                                                    const isVid = /\.(mp4|webm|mov)(\?|#|$)/i.test(src);
+                                                    return isVid ? (
+                                                        <video src={src} muted playsInline preload="metadata"
+                                                            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                                                    ) : (
+                                                        // eslint-disable-next-line @next/next/no-img-element
+                                                        <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                                                    );
+                                                })()}
                                             </div>
                                             <div style={{ flex: 1, overflow: 'hidden' }}>
                                                 <div style={{ fontSize: '12px', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                                    {job ? getJobLabel(job) : 'Video'}
+                                                    {asset?.label || 'Asset'}
                                                 </div>
                                                 <div style={{
                                                     fontSize: '10px', fontWeight: 600, marginTop: '4px',
@@ -756,11 +1034,11 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                         </div>
                     )}
 
-                    {/* ════ STEP 3: Review & Schedule ════ */}
-                    {step === 3 && (
+                    {/* ════ STEP 4: Review & Schedule ════ */}
+                    {step === 4 && (
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '16px' }}>
                             {selectedIds.map(id => {
-                                const job = jobs.find(j => j.id === id);
+                                const asset = assets.find(a => a.id === id);
                                 const cfg = configs[id];
                                 if (!cfg) return null;
                                 return (
@@ -768,21 +1046,21 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                         background: 'white', border: '1px solid var(--border)', borderRadius: '14px', overflow: 'hidden',
                                         display: 'flex', flexDirection: 'column',
                                     }}>
-                                        {/* 9:16 video preview */}
+                                        {/* Preview */}
                                         <div style={{
                                             position: 'relative', paddingTop: '177.78%',
                                             background: 'linear-gradient(135deg, #f0f0f5 0%, #e8e8ee 100%)',
                                         }}>
                                             <VideoThumbnail
-                                                previewUrl={job ? (thumbMap[job.id] || (job as any).preview_url || (job as any).reference_image_url || (job as any).thumbnail_url) : undefined}
-                                                videoUrl={job?.final_video_url}
-                                                alt={job ? getJobLabel(job) : 'Video'}
+                                                previewUrl={asset ? (thumbMap[asset.id] || asset.previewUrl) : undefined}
+                                                videoUrl={asset?.type === 'video' ? asset.url : undefined}
+                                                alt={asset?.label || 'Asset'}
                                             />
                                         </div>
                                         {/* Card info */}
                                         <div style={{ padding: '12px 14px', flex: 1, display: 'flex', flexDirection: 'column' }}>
                                             <div style={{ fontWeight: 600, fontSize: '13px', marginBottom: '6px' }}>
-                                                {job ? getJobLabel(job) : 'Video'}
+                                                {asset?.label || 'Asset'}
                                             </div>
                                             <div style={{ display: 'flex', gap: '6px', marginBottom: '8px', flexWrap: 'wrap' }}>
                                                 {cfg.platforms.map(p => (
@@ -808,7 +1086,7 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                             }}>
                                                 {cfg.caption || t('scheduleModal.noCaption')}
                                             </div>
-                                            <button onClick={() => { setActiveVideoIdx(selectedIds.indexOf(id)); setStep(2); }}
+                                            <button onClick={() => { setActiveVideoIdx(selectedIds.indexOf(id)); setStep(3); }}
                                                 style={{
                                                     marginTop: '10px', width: '100%', padding: '6px 0', borderRadius: '8px',
                                                     border: '1px solid var(--border)', background: 'transparent',
@@ -830,8 +1108,9 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                 }}>
                     <div style={{ fontSize: '13px', color: 'var(--blue)', fontWeight: 600 }}>
-                        {step === 1 && selectedIds.length > 0 && `${selectedIds.length} ${t('scheduleModal.videosReady')}`}
-                        {step === 2 && t('scheduleModal.videoOf').replace('{current}', String(activeVideoIdx + 1)).replace('{total}', String(selectedIds.length))}
+                        {step === 1 && `${projects.length} project${projects.length !== 1 ? 's' : ''}`}
+                        {step === 2 && selectedIds.length > 0 && `${selectedIds.length} asset${selectedIds.length !== 1 ? 's' : ''} selected`}
+                        {step === 3 && t('scheduleModal.videoOf').replace('{current}', String(activeVideoIdx + 1)).replace('{total}', String(selectedIds.length))}
                     </div>
                     <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                         {step > 1 && (
@@ -852,9 +1131,9 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                 {t('common.cancel')}
                             </button>
                         )}
-                        {step === 1 && (
+                        {step === 2 && (
                             <button disabled={selectedIds.length === 0}
-                                onClick={() => { initConfigs(); setStep(2); }}
+                                onClick={() => { initConfigs(); setStep(3); }}
                                 style={{
                                     padding: '10px 24px', borderRadius: '10px', border: 'none',
                                     background: selectedIds.length > 0 ? 'var(--blue)' : 'var(--border)',
@@ -868,8 +1147,8 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                 </svg>
                             </button>
                         )}
-                        {step === 2 && (
-                            <button disabled={!allReady} onClick={() => setStep(3)}
+                        {step === 3 && (
+                            <button disabled={!allReady} onClick={() => setStep(4)}
                                 style={{
                                     padding: '10px 24px', borderRadius: '10px', border: 'none',
                                     background: allReady ? 'var(--blue)' : 'var(--border)',
@@ -879,7 +1158,7 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                 {t('scheduleModal.nextReview')}
                             </button>
                         )}
-                        {step === 3 && (
+                        {step === 4 && (
                             <button disabled={submitting} onClick={handleSubmit}
                                 style={{
                                     padding: '12px 28px', borderRadius: '10px', border: 'none',

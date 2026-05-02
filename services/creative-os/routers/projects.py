@@ -837,3 +837,74 @@ async def generate_video_thumbnails(data: dict, user: dict = Depends(get_current
 
     await asyncio.gather(*[_gen(j) for j in jobs_needing_gen], return_exceptions=True)
     return {"thumbnails": thumbnails}
+
+
+# ── AI Caption Generation (for images and generic assets) ──────────────────
+
+class CaptionGenerateRequest(BaseModel):
+    asset_type: str = "image"
+    asset_label: str = ""
+    asset_url: str = ""
+    platform: str = "instagram"
+
+
+@router.post("/generate-caption")
+async def generate_caption(
+    data: CaptionGenerateRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Generate 3 AI caption suggestions for an asset (image or video)."""
+    from pathlib import Path
+    from env_loader import load_env
+    load_env(Path(__file__))
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return {"captions": [
+            f"Check out this amazing content! 🔥 #ugc #ai",
+            f"You need to see this! ✨ #viral #creative",
+            f"POV: This is your new obsession 👀 #trending",
+        ]}
+
+    platform = data.platform.capitalize()
+    asset_desc = data.asset_label or "creative content"
+
+    prompt = f"""Generate exactly 3 distinct, engaging social media captions for {platform}.
+
+Context:
+- Asset type: {data.asset_type}
+- Description: {asset_desc}
+- This is a {data.asset_type} post
+
+Requirements:
+- Each caption should have a different angle (e.g. storytelling, CTA, question)
+- Include relevant emojis
+- Keep under 200 characters for TikTok, 2200 for Instagram, 500 for YouTube
+- Include 3-5 relevant hashtags at the end
+- Sound natural and authentic, not salesy
+
+Return ONLY a JSON array of 3 strings, nothing else."""
+
+    try:
+        client = AsyncOpenAI(api_key=api_key)
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.8,
+        )
+        import json
+        raw = response.choices[0].message.content or ""
+        raw = raw.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        captions = json.loads(raw)
+        if not isinstance(captions, list):
+            captions = [raw]
+        return {"captions": captions[:3]}
+    except Exception as e:
+        print(f"[CaptionGen] Failed: {e}")
+        return {"captions": [
+            f"Check out this amazing content! 🔥 #ugc #ai",
+            f"You need to see this! ✨ #viral #creative",
+            f"POV: This is your new obsession 👀 #trending",
+        ]}
