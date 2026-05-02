@@ -403,42 +403,43 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                                         background: 'white', transition: 'all 0.15s ease',
                                                         boxShadow: isSelected ? '0 0 0 3px rgba(51,122,255,0.12)' : '0 1px 4px rgba(0,0,0,0.06)',
                                                     }}>
-                                                        {/* Thumbnail — uses <img> to avoid loading full video files */}
+                                                        {/* Thumbnail — uses preview_url or video preload=metadata */}
                                                         <div style={{
                                                             position: 'relative', paddingTop: '125%',
                                                             background: 'linear-gradient(135deg, #f0f0f5 0%, #e8e8ee 100%)',
                                                         }}>
-                                                            {job.final_video_url && (
+                                                            {(job as any).preview_url ? (
+                                                                // eslint-disable-next-line @next/next/no-img-element
                                                                 <img
-                                                                    src={job.final_video_url.replace(/\.mp4$/i, '_thumb.jpg')}
+                                                                    src={(job as any).preview_url}
                                                                     loading="lazy"
                                                                     onError={(e) => {
-                                                                        // Fallback: if no _thumb.jpg exists, load video poster frame
+                                                                        // If preview_url fails, replace with video element
                                                                         const img = e.currentTarget;
-                                                                        if (!img.dataset.fallback) {
+                                                                        if (job.final_video_url && !img.dataset.fallback) {
                                                                             img.dataset.fallback = '1';
-                                                                            // Create a hidden video to grab a poster frame
                                                                             const vid = document.createElement('video');
-                                                                            vid.crossOrigin = 'anonymous';
                                                                             vid.muted = true;
                                                                             vid.preload = 'metadata';
+                                                                            vid.playsInline = true;
                                                                             vid.src = job.final_video_url + '#t=0.5';
-                                                                            vid.onloadeddata = () => {
-                                                                                try {
-                                                                                    const c = document.createElement('canvas');
-                                                                                    c.width = vid.videoWidth;
-                                                                                    c.height = vid.videoHeight;
-                                                                                    c.getContext('2d')?.drawImage(vid, 0, 0);
-                                                                                    img.src = c.toDataURL('image/jpeg', 0.6);
-                                                                                } catch { /* cross-origin, show gradient bg */ }
-                                                                                vid.remove();
-                                                                            };
+                                                                            vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover';
+                                                                            img.parentElement?.appendChild(vid);
+                                                                            img.style.display = 'none';
                                                                         }
                                                                     }}
                                                                     style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
                                                                     alt=""
                                                                 />
-                                                            )}
+                                                            ) : job.final_video_url ? (
+                                                                <video
+                                                                    src={`${job.final_video_url}#t=0.5`}
+                                                                    muted
+                                                                    playsInline
+                                                                    preload="metadata"
+                                                                    style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+                                                                />
+                                                            ) : null}
                                                             {/* Selection badge */}
                                                             {isSelected && (
                                                                 <div style={{
