@@ -108,7 +108,7 @@ function relativeTime(d: string, t: (k: string) => string, lang: 'en' | 'es'): s
 }
 
 interface MentionItem {
-  type: 'product' | 'influencer';
+  type: 'product' | 'influencer' | 'image' | 'video';
   tag: string;
   name: string;
   image_url?: string;
@@ -164,6 +164,7 @@ export default function StudioPage() {
   const [mentionItems, setMentionItems] = useState<MentionItem[]>([]);
   const [activeRefs, setActiveRefs] = useState<Map<string, { type: string; tag: string; name: string; id?: string; image_url?: string; app_clip_id?: string; product_type?: 'physical' | 'digital' }>>(new Map());
   const [shotPickerItem, setShotPickerItem] = useState<MentionItem | null>(null);
+  const [mentionTab, setMentionTab] = useState<MentionItem['type']>('influencer');
 
   const loadMentionData = async () => {
     if (mentionsLoaded) return;
@@ -218,6 +219,35 @@ export default function StudioPage() {
           views: views.length > 1 ? views : undefined,
         });
       }
+      // Add recent images
+      for (const img of recentImages) {
+        const imgUrl = img.image_url || img.result_url;
+        if (!imgUrl) continue;
+        const baseName = img.product_name || 'image';
+        const shortId = (img.id || '').slice(0, 8);
+        const tag = `${slugify(baseName)}_${shortId}`;
+        items.push({
+          type: 'image',
+          tag,
+          name: `${baseName} · ${shortId}`,
+          image_url: imgUrl,
+          ref: { type: 'image', tag, name: baseName, shot_id: img.id, image_url: imgUrl },
+        });
+      }
+      // Add recent videos
+      const successVideos = jobs.filter(j => j.status === 'success' && j.final_video_url);
+      for (const vid of successVideos) {
+        const baseName = (vid as any).campaign_name || (vid as any).product_name || 'clip';
+        const shortId = (vid.id || '').slice(0, 8);
+        const tag = `${slugify(baseName)}_${shortId}`;
+        items.push({
+          type: 'video',
+          tag,
+          name: `${baseName} · ${shortId}`,
+          image_url: (vid as any).preview_url,
+          ref: { type: 'video', tag, name: baseName, job_id: vid.id, video_url: vid.final_video_url },
+        });
+      }
       setMentionItems(items);
       setMentionsLoaded(true);
     } catch (e) {
@@ -229,6 +259,24 @@ export default function StudioPage() {
     if (!mentionFilter) return mentionItems;
     return mentionItems.filter(m => m.tag.includes(mentionFilter) || m.name.toLowerCase().includes(mentionFilter));
   }, [mentionItems, mentionFilter]);
+
+  // Group filtered mentions for the tabbed dropdown
+  const groupedMentions = useMemo(() => ({
+    product: filteredMentions.filter(m => m.type === 'product'),
+    influencer: filteredMentions.filter(m => m.type === 'influencer'),
+    image: filteredMentions.filter(m => m.type === 'image'),
+    video: filteredMentions.filter(m => m.type === 'video'),
+  }), [filteredMentions]);
+
+  const orderedMentions = useMemo(
+    () => [
+      ...groupedMentions.influencer,
+      ...groupedMentions.product,
+      ...groupedMentions.image,
+      ...groupedMentions.video,
+    ],
+    [groupedMentions],
+  );
 
   const autosizeTextarea = (el: HTMLTextAreaElement | null) => {
     if (!el) return;
@@ -775,107 +823,234 @@ export default function StudioPage() {
               )}
 
               {/* Textarea */}
-              {mentionOpen && (
-                <div style={{
-                  position: 'absolute',
-                  bottom: 'calc(100% - 20px)',
-                  left: '24px',
-                  background: 'white',
-                  border: '1px solid rgba(13,27,62,0.12)',
-                  borderRadius: '12px',
-                  boxShadow: '0 12px 32px rgba(13,27,62,0.16)',
-                  maxHeight: '320px',
-                  width: '360px',
-                  overflowY: 'auto',
-                  padding: '8px',
-                  zIndex: 100,
-                }}>
-                  {shotPickerItem ? (
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 6px 8px' }}>
-                        <button
-                          type="button"
-                          onMouseDown={(e) => { e.preventDefault(); setShotPickerItem(null); }}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px', color: '#8A93B0', padding: 0 }}
-                          aria-label="Back"
-                        >
-                          ←
-                        </button>
-                        <span style={{ fontSize: '11px', fontWeight: 700, color: '#8A93B0', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                          {shotPickerItem.product_type === 'digital' ? `Pick clip for ${shotPickerItem.name}` : `Pick shot for ${shotPickerItem.name}`}
-                        </span>
-                      </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
-                        {(shotPickerItem.views || []).map((url) => (
+              {mentionOpen && (() => {
+                const GROUP_LABELS: Record<MentionItem['type'], string> = {
+                  influencer: t('creativeOs.mention.models'),
+                  product: t('creativeOs.mention.products'),
+                  image: t('creativeOs.mention.images'),
+                  video: t('creativeOs.mention.videos'),
+                };
+                const groupOrder: MentionItem['type'][] = ['influencer', 'product', 'image', 'video'];
+                const availableGroups = groupOrder.filter(g => (groupedMentions[g]?.length || 0) > 0);
+                const effectiveTab = availableGroups.includes(mentionTab) ? mentionTab : (availableGroups[0] || 'influencer');
+                const tabItems = groupedMentions[effectiveTab] || [];
+                return (
+                  <div style={{
+                    position: 'absolute',
+                    bottom: 'calc(100% - 20px)',
+                    left: '24px',
+                    background: 'white',
+                    border: '1px solid rgba(13,27,62,0.12)',
+                    borderRadius: '12px',
+                    boxShadow: '0 12px 32px rgba(13,27,62,0.16)',
+                    maxHeight: '320px',
+                    width: '360px',
+                    overflow: 'hidden',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    zIndex: 100,
+                  }}>
+                    {shotPickerItem ? (
+                      <>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 12px 8px' }}>
                           <button
-                            key={url}
                             type="button"
-                            onMouseDown={(e) => { e.preventDefault(); finalizeMention(shotPickerItem, url); }}
+                            onMouseDown={(e) => { e.preventDefault(); setShotPickerItem(null); }}
                             style={{
-                              padding: 0, border: '1px solid transparent', background: 'transparent',
-                              borderRadius: '8px', cursor: 'pointer', overflow: 'hidden',
+                              border: '1px solid rgba(13,27,62,0.15)', background: 'white',
+                              borderRadius: '6px', padding: '2px 8px', cursor: 'pointer',
+                              fontSize: '11px', color: '#0D1B3E',
                             }}
                           >
-                            <div style={{ width: '100%', aspectRatio: '1 / 1', borderRadius: '6px', background: '#F4F6FA', overflow: 'hidden' }}>
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                            </div>
+                            {t('creativeOs.mention.back')}
                           </button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : filteredMentions.length === 0 ? (
-                    <div style={{ padding: '8px', fontSize: '12px', color: '#8A93B0', textAlign: 'center' }}>No matches</div>
-                  ) : (
-                    (['product', 'influencer'] as const).map(groupType => {
-                      const groupItems = filteredMentions.filter(m => m.type === groupType);
-                      if (groupItems.length === 0) return null;
-                      return (
-                        <div key={groupType} style={{ marginBottom: '6px' }}>
-                          <div style={{
-                            fontSize: '10px', fontWeight: 700, color: '#8A93B0',
-                            textTransform: 'uppercase', letterSpacing: '0.5px', padding: '4px 6px'
-                          }}>
-                            {groupType === 'product' ? 'Products' : 'Models'}
-                          </div>
+                          <span style={{ fontSize: '11px', fontWeight: 600, color: '#0D1B3E' }}>
+                            {shotPickerItem.product_type === 'digital' ? `Pick clip for ${shotPickerItem.name}` : `Pick shot for ${shotPickerItem.name}`}
+                          </span>
+                        </div>
+                        <div style={{ overflowY: 'auto', padding: '0 8px 8px' }}>
                           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
-                            {groupItems.map(item => {
-                              const globalIdx = filteredMentions.indexOf(item);
-                              const active = globalIdx === mentionIndex;
+                            {(shotPickerItem.views || []).map((url, i) => (
+                              <button
+                                key={`${url}-${i}`}
+                                type="button"
+                                onMouseDown={(e) => { e.preventDefault(); finalizeMention(shotPickerItem, url); }}
+                                style={{
+                                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px',
+                                  padding: '6px 4px', border: '1px solid transparent',
+                                  background: 'transparent', borderRadius: '8px', cursor: 'pointer', minWidth: 0,
+                                }}
+                                onMouseEnter={(e) => {
+                                  (e.currentTarget as HTMLButtonElement).style.background = 'rgba(51,122,255,0.08)';
+                                  (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(51,122,255,0.5)';
+                                }}
+                                onMouseLeave={(e) => {
+                                  (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+                                  (e.currentTarget as HTMLButtonElement).style.borderColor = 'transparent';
+                                }}
+                              >
+                                <div style={{ width: '100%', aspectRatio: '1 / 1', borderRadius: '6px', background: '#F4F6FA', overflow: 'hidden' }}>
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                </div>
+                                <span style={{ fontSize: '10px', color: '#0D1B3E', fontWeight: 500, textAlign: 'center' }}>
+                                  {i === 0 ? t('creativeOs.mention.profile') : t('creativeOs.mention.shot').replace('{n}', String(i + 1))}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        {/* ── Tabs ── */}
+                        {availableGroups.length > 1 && (
+                          <div
+                            style={{
+                              display: 'flex',
+                              gap: '0',
+                              borderBottom: '1px solid rgba(13,27,62,0.08)',
+                              padding: '0 8px',
+                              flexShrink: 0,
+                            }}
+                          >
+                            {availableGroups.map((g) => {
+                              const isActive = g === effectiveTab;
                               return (
                                 <button
-                                  key={item.tag}
+                                  key={g}
                                   type="button"
-                                  onMouseDown={(e) => { e.preventDefault(); insertMention(item); }}
-                                  onMouseEnter={() => setMentionIndex(globalIdx)}
-                                  title={item.name}
+                                  onMouseDown={(e) => { e.preventDefault(); setMentionTab(g); }}
                                   style={{
-                                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px',
-                                    padding: '6px 4px',
-                                    border: active ? '1px solid rgba(51,122,255,0.5)' : '1px solid transparent',
-                                    background: active ? 'rgba(51,122,255,0.08)' : 'transparent',
-                                    borderRadius: '8px', cursor: 'pointer', minWidth: 0
+                                    flex: 1,
+                                    padding: '9px 0 7px',
+                                    border: 'none',
+                                    borderBottom: isActive ? '2px solid #337AFF' : '2px solid transparent',
+                                    background: 'transparent',
+                                    cursor: 'pointer',
+                                    fontSize: '11px',
+                                    fontWeight: isActive ? 700 : 500,
+                                    color: isActive ? '#337AFF' : '#8A93B0',
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.4px',
+                                    transition: 'color 0.15s, border-color 0.15s',
                                   }}
                                 >
-                                  <div style={{ width: '100%', aspectRatio: '1 / 1', borderRadius: '6px', background: '#F4F6FA', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                    {item.image_url ? (
-                                      // eslint-disable-next-line @next/next/no-img-element
-                                      <img src={item.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                    ) : <span style={{ fontSize: '14px', color: '#8A93B0' }}>{item.type === 'product' ? '📦' : '👤'}</span>}
-                                  </div>
-                                  <span style={{ fontSize: '10px', color: '#0D1B3E', fontWeight: 500, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', width: '100%', textAlign: 'center' }}>
-                                    {item.name}
+                                  {GROUP_LABELS[g]}
+                                  <span
+                                    style={{
+                                      marginLeft: '4px',
+                                      fontSize: '10px',
+                                      fontWeight: 600,
+                                      color: isActive ? '#337AFF' : '#B0B8CC',
+                                    }}
+                                  >
+                                    {groupedMentions[g]?.length || 0}
                                   </span>
                                 </button>
                               );
                             })}
                           </div>
+                        )}
+                        {/* ── Tab content ── */}
+                        <div style={{ overflowY: 'auto', padding: '8px' }}>
+                          {orderedMentions.length === 0 ? (
+                            <div style={{ padding: '12px 8px', fontSize: '12px', color: '#8A93B0', textAlign: 'center' }}>
+                              {t('creativeOs.mention.noMatches')}
+                            </div>
+                          ) : (
+                            <div
+                              style={{
+                                display: 'grid',
+                                gridTemplateColumns: 'repeat(4, 1fr)',
+                                gap: '6px',
+                              }}
+                            >
+                              {tabItems.map((item, itemIdx) => {
+                                const idx = orderedMentions.indexOf(item);
+                                const active = idx === mentionIndex;
+                                return (
+                                  <button
+                                    key={`${item.type}-${item.ref?.id || item.tag}-${itemIdx}`}
+                                    type="button"
+                                    onMouseDown={(e) => { e.preventDefault(); insertMention(item); }}
+                                    onMouseEnter={() => setMentionIndex(idx)}
+                                    title={item.name}
+                                    style={{
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      padding: '6px 4px',
+                                      border: active
+                                        ? '1px solid rgba(51,122,255,0.5)'
+                                        : '1px solid transparent',
+                                      background: active
+                                        ? 'rgba(51,122,255,0.08)'
+                                        : 'transparent',
+                                      borderRadius: '8px',
+                                      cursor: 'pointer',
+                                      minWidth: 0,
+                                    }}
+                                  >
+                                    <div
+                                      style={{
+                                        width: '100%',
+                                        aspectRatio: '1 / 1',
+                                        borderRadius: '6px',
+                                        background: '#F4F6FA',
+                                        overflow: 'hidden',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                      }}
+                                    >
+                                      {item.image_url ? (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img
+                                          src={item.image_url}
+                                          alt={item.name}
+                                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                        />
+                                      ) : item.type === 'video' && item.ref?.video_url ? (
+                                        <video
+                                          src={item.ref.video_url}
+                                          muted
+                                          playsInline
+                                          preload="metadata"
+                                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                        />
+                                      ) : (
+                                        <span style={{ fontSize: '14px', color: '#8A93B0' }}>
+                                          {item.type === 'video' ? '▶' : '·'}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <span
+                                      style={{
+                                        fontSize: '10px',
+                                        color: '#0D1B3E',
+                                        fontWeight: 500,
+                                        textOverflow: 'ellipsis',
+                                        overflow: 'hidden',
+                                        whiteSpace: 'nowrap',
+                                        width: '100%',
+                                        textAlign: 'center',
+                                      }}
+                                    >
+                                      {item.name}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
-                      );
-                    })
-                  )}
-                </div>
-              )}
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
               <textarea
                 ref={(el) => {
                   textareaRef.current = el;
