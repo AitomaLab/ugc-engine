@@ -1725,9 +1725,17 @@ class FindTrendingRequest(BaseModel):
     sources: list[str] | None = None
 
 @app.post("/api/scripts/find-trending")
-def api_find_trending(data: FindTrendingRequest):
+def api_find_trending(
+    data: FindTrendingRequest,
+    request: Request,
+    user: dict = Depends(get_optional_user),
+):
     """Trigger trending script discovery in the background."""
     import threading
+
+    # Capture user/project context for the background thread
+    user_id = user["id"] if user else None
+    project_id = _resolve_project_id(request, user) if user else None
 
     def _run_scraper():
         try:
@@ -1737,9 +1745,9 @@ def api_find_trending(data: FindTrendingRequest):
                 sources=data.sources,
                 max_scripts=data.max_scripts,
             )
-            # Save each extracted script
+            # Save each extracted script — scoped to user + project
             for s in scripts_data:
-                create_script({
+                script_payload = {
                     "name": s.get("name", "Trending Script"),
                     "script_json": s,
                     "category": data.topic if data.topic != "UGC ads" else "General",
@@ -1747,8 +1755,13 @@ def api_find_trending(data: FindTrendingRequest):
                     "video_length": s.get("target_duration_sec", 15),
                     "source": "web_scraped",
                     "is_trending": True,
-                })
-            print(f"      [Trending] Saved {len(scripts_data)} scripts to database.")
+                }
+                if user_id:
+                    script_payload["user_id"] = user_id
+                if project_id:
+                    script_payload["project_id"] = project_id
+                create_script(script_payload)
+            print(f"      [Trending] Saved {len(scripts_data)} scripts to database (user={user_id}, project={project_id}).")
         except Exception as e:
             import traceback
             print(f"      [Trending] Background job failed: {e}")

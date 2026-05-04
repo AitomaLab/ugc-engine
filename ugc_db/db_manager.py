@@ -120,6 +120,7 @@ def create_script(data: dict):
         "id", "name", "text", "script_json", "category", "methodology",
         "video_length", "product_id", "influencer_id", "source",
         "is_trending", "times_used", "created_at",
+        "user_id", "project_id",
     }
     # If name was provided, store it inside script_json
     if "name" in data and data.get("script_json"):
@@ -165,6 +166,7 @@ def bulk_create_scripts(scripts_list: list):
         "id", "name", "text", "script_json", "category", "methodology",
         "video_length", "product_id", "influencer_id", "source",
         "is_trending", "times_used", "created_at",
+        "user_id", "project_id",
     }
     cleaned = []
     for item in scripts_list:
