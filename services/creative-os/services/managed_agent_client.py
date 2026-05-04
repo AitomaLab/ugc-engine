@@ -1490,16 +1490,20 @@ class ToolContext:
 
 # ── Tool implementations (unchanged from v1) ──────────────────────────
 async def _tool_list_project_assets(ctx: ToolContext, **_: Any) -> str:
+    # Use a project-unscoped client for products & influencers so the agent
+    # sees ALL of the user's assets across every project — matching the
+    # @mention dropdown behaviour.  Shots remain project-scoped.
+    global_core = CoreAPIClient(token=ctx.user_token, skip_project_scope=True)
     core = ctx.core()
     products: list = []
     influencers: list = []
     shots: list = []
     try:
-        products = await core.list_products()
+        products = await global_core.list_products()
     except Exception as e:  # pragma: no cover - best-effort
         products = [{"error": f"list_products failed: {e}"}]
     try:
-        influencers = await core.list_influencers()
+        influencers = await global_core.list_influencers()
     except Exception as e:
         influencers = [{"error": f"list_influencers failed: {e}"}]
     if ctx.project_id:
