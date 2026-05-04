@@ -552,15 +552,11 @@ def generate_video_with_retry(
     # ── WaveSpeed-primary outer layer (additive; no behaviour change when flag off) ──
     # Skip WS-primary when kling_elements are present without pre-resolved element_ids
     # (the router has the context to resolve element_ids and will pass them in).
-    # Also skip for the seedance-fast family: KIE is materially faster than WaveSpeed
-    # for Seedance 2.0 Fast multi-ref jobs (~150s vs ~360-450s on identical
-    # payloads). KIE is the better primary for Seedance Fast; WaveSpeed remains the
-    # tail-end fallback at the bottom of this function.
-    # For seedance-2.0 (non-fast), allow WaveSpeed primary — it has reliable support.
-    is_seedance_fast = family == "seedance" and "fast" in (model_api or "").lower()
+    # Also skip for the seedance family: KIE (kie.ai) is the canonical provider
+    # for Seedance 2.0 / 2.0 Fast. WaveSpeed remains the tail-end fallback.
     can_attempt_ws = (
         _wavespeed_primary_enabled()
-        and not is_seedance_fast
+        and family != "seedance"
         and (not kling_elements or element_ids)
     )
     if can_attempt_ws:

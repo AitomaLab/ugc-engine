@@ -664,7 +664,15 @@ async def _generate_seedance_video(
         print(f"[Seedance] Job created: {job_id} (cost={credit_cost})")
     except Exception as e:
         import traceback; traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to create job: {str(e)[:200]}")
+        err_detail = str(e)
+        # If it's an httpx error, extract the response body
+        if hasattr(e, 'response'):
+            try:
+                err_detail = f"{e} | body={e.response.text[:500]}"
+            except Exception:
+                pass
+        print(f"[Seedance] CRITICAL: create_job failed: {err_detail[:600]}", flush=True)
+        raise HTTPException(status_code=500, detail=f"Failed to create job: {err_detail[:400]}")
 
     # ── Onboarding free video: refund credits for the user's first video ──
     # Check if this is the first-ever job in this project. If so, it's the
