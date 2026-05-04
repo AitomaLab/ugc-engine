@@ -4561,12 +4561,35 @@ def _summarize_input(tool_input: dict, max_len: int = 80) -> str:
 # + per-turn reminder) to call `apply_editor_ops` instead, but the pretrained
 # pattern still leaks occasionally. Server-side scrub guarantees the user
 # never sees it.
+#
+# We also strip other technical patterns that should never appear in chat:
+#   - Large JSON arrays/objects (op-lists, editor_state, etc.)
+#   - Tool-call-like text (function_name({...}))
 import re as _re_module
-_AI_EDIT_OPS_LEAK_RE = _re_module.compile(r"AI_EDIT_OPS[\s\S]*", _re_module.MULTILINE)
+
+# AI_EDIT_OPS (any casing, optional whitespace/newline before JSON)
+_AI_EDIT_OPS_LEAK_RE = _re_module.compile(
+    r"AI_EDIT_OPS\s*[\s\S]*", _re_module.IGNORECASE
+)
+
+# Large JSON array starting with [{"op": (the ops format the agent sometimes dumps)
+_JSON_OPS_LEAK_RE = _re_module.compile(
+    r"\[[\s]*\{[\s]*\"op\"[\s\S]*",
+)
+
+# Generic tool-call leak: tool_name(json) or tool_name({...})
+_TOOL_CALL_LEAK_RE = _re_module.compile(
+    r"(?:apply_editor_ops|caption_video|combine_videos|load_editor_state|"
+    r"save_editor_state|render_edited_video|generate_video|create_ugc_video|"
+    r"generate_music|splice_app_clip|extend_video|add_voiceover)\s*\([\s\S]*",
+)
 
 
 def _strip_ai_edit_ops_leak(text: str) -> str:
-    return _AI_EDIT_OPS_LEAK_RE.sub("", text).rstrip()
+    text = _AI_EDIT_OPS_LEAK_RE.sub("", text)
+    text = _JSON_OPS_LEAK_RE.sub("", text)
+    text = _TOOL_CALL_LEAK_RE.sub("", text)
+    return text.rstrip()
 
 
 def _summarize_result(result_text: str, max_len: int = 120) -> str:

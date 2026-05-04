@@ -102,6 +102,22 @@ function formatElapsed(sec: number): string {
 }
 
 // Maps a backend tool_call event to a user-facing activity label. Specific
+// ── Agent text scrubber ─────────────────────────────────────────────────────
+// Defence-in-depth: strip technical content that should never appear in chat.
+// The backend already scrubs, but this catches anything that leaks through
+// (stale deployments, thread hydration from before the backend fix, etc.).
+const _AI_EDIT_OPS_RE = /AI_EDIT_OPS\s*[\s\S]*/i;
+const _JSON_OPS_RE = /\[\s*\{\s*"op"[\s\S]*/;
+const _TOOL_CALL_RE = /(?:apply_editor_ops|caption_video|combine_videos|load_editor_state|save_editor_state|render_edited_video|generate_video|create_ugc_video|generate_music|splice_app_clip|extend_video|add_voiceover)\s*\([\s\S]*/;
+
+function scrubAgentText(text: string): string {
+    return text
+        .replace(_AI_EDIT_OPS_RE, '')
+        .replace(_JSON_OPS_RE, '')
+        .replace(_TOOL_CALL_RE, '')
+        .trim();
+}
+
 // long-running jobs (animate, generate_video, render_edited_video, etc.) keep
 // their detailed copy; everything else falls into a phase category so the
 // indicator varies instead of flashing "Thinking…" for every call.
@@ -593,13 +609,24 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
 
     // Strip hidden instruction markers from user turns loaded from thread history
     // (e.g. [9:16 vertical], [5s clip duration], [ONBOARDING_FIRST_VIDEO ...])
+    // AND scrub leaked technical content from agent turns (AI_EDIT_OPS, JSON ops, tool calls).
     const sanitizeTurns = useCallback((turns: AgentTurn[]): AgentTurn[] => {
         return turns.map((t) => {
             if (t.role === 'user' && t.text) {
                 const clean = t.text.replace(/\s*\[[^\]]*\]\s*/g, ' ').trim();
                 if (clean !== t.text) return { ...t, text: clean };
             }
+            if (t.role === 'agent' && t.text) {
+                const clean = scrubAgentText(t.text);
+                if (!clean) return { ...t, text: '' };
+                if (clean !== t.text) return { ...t, text: clean };
+            }
             return t;
+        }).filter((t) => {
+            // Drop agent turns that are now empty after scrubbing
+            // (unless they have artifacts or tool_calls to show)
+            if (t.role === 'agent' && !t.text && !(t.artifacts?.length) && !(t.tool_calls?.length)) return false;
+            return true;
         });
     }, []);
 
@@ -872,10 +899,13 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                 case 'session':
                     setSessionId(e.session_id);
                     break;
-                case 'agent_message':
+                case 'agent_message': {
                     // Text has started arriving — clear the thinking indicator now
                     // so the user sees the message instead of a redundant spinner.
                     setActivity('');
+                    // Scrub any leaked technical content before displaying
+                    const cleanText = scrubAgentText(e.text);
+                    if (!cleanText) break; // purely technical message — suppress entirely
                     setTurns((prev) => {
                         const copy = prev.slice();
                         const idx = copy.length - 1;
@@ -884,11 +914,11 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                         // Subsequent agent_messages start their own bubble so each
                         // distinct model utterance renders as a separate pill.
                         if (last && last.role === 'agent' && !last.text && !(last.artifacts || []).length && !(last.tool_calls || []).length) {
-                            copy[idx] = { ...last, text: e.text };
+                            copy[idx] = { ...last, text: cleanText };
                         } else {
                             copy.push({
                                 role: 'agent',
-                                text: e.text,
+                                text: cleanText,
                                 artifacts: [],
                                 tool_calls: [],
                                 ts: Date.now(),
@@ -897,6 +927,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                         return copy;
                     });
                     break;
+                }
                 case 'tool_call': {
                     setActivity(toolActivityLabel(e.name, e.mode, e.input_summary, t));
                     setSawToolCall(true);
