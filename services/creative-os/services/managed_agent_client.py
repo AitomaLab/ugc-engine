@@ -150,7 +150,7 @@ If a preface entry has `id=<uuid>`, the asset exists. Proceed straight to the ga
 ### Remotion editor
 - load_editor_state(job_id) — Load the editable timeline JSON for a completed video. Free.
 - save_editor_state(job_id, editor_state) — Persist edits without re-rendering. Free.
-- render_edited_video(job_id, editor_state, codec?) — Re-render the edited timeline into a final MP4. GATED.
+- render_edited_video(job_id, editor_state, codec?) — Re-render the edited timeline into a final MP4. Free (no confirmation needed).
 
 ### Video combination
 - combine_videos(video_urls, transition?, transition_duration?, mute_audio_indices?, music_prompt?) — Combine 2+ videos into one MP4 with smooth transitions (dissolve, fade, wipe). Optional: silence specific clips' source audio (`mute_audio_indices`) and/or mix a freshly generated instrumental soundtrack UNDER the whole combined video (`music_prompt`). NOT gated — runs automatically.
@@ -188,7 +188,7 @@ Mixing the two produces TWO competing "present this cost, wait" instructions and
 
 After ANY cost-preview tool result (confirmation_required OR estimate_credits), you MUST emit a user-facing text message in the SAME turn quoting the credit number and asking for confirmation. Never end a turn that contained a confirmation_required tool result without writing that user-facing text — the user will see nothing and assume the agent froze.
 
-The gated tools are exactly: generate_image, generate_influencer, generate_identity, generate_product_shots, animate_image, generate_video, create_ugc_video, create_clone_video, create_bulk_campaign, render_edited_video. Everything else (including combine_videos) is free of the confirmation gate and can be called immediately.
+The gated tools are exactly: generate_image, generate_influencer, generate_identity, generate_product_shots, animate_image, generate_video, create_ugc_video, create_clone_video, create_bulk_campaign. Everything else (including combine_videos, render_edited_video) is free of the confirmation gate and can be called immediately.
 
 ## Model routing
 
@@ -1338,10 +1338,9 @@ def _custom_tools_for_agent() -> list[dict]:
             "name": "render_edited_video",
             "description": (
                 "Re-render a video from its (possibly edited) Remotion timeline into a final MP4. "
-                "ONLY call this when the user explicitly asks to 'render', 'export', or 'download' — "
-                "NOT automatically after editing captions or timeline changes (save_editor_state is enough for those). "
-                "FIRST call returns a flat credit cost. After user confirms, call again with confirmed=true. "
-                "Takes 1-10 minutes."
+                "Free — no confirmation needed. Takes 1-10 minutes. "
+                "NOTE: caption_video already includes a re-render step, so do NOT call this after captioning. "
+                "Use this only when the user explicitly asks to 'render', 'export', or 'download' after manual edits."
             ),
             "input_schema": {
                 "type": "object",
@@ -1349,7 +1348,6 @@ def _custom_tools_for_agent() -> list[dict]:
                     "job_id": {"type": "string"},
                     "editor_state": {"type": "object"},
                     "codec": {"type": "string", "enum": ["h264", "h265"]},
-                    "confirmed": {"type": "boolean", "description": confirmed_desc},
                 },
                 "required": ["job_id", "editor_state"],
             },
@@ -3410,14 +3408,9 @@ async def _tool_render_edited_video(ctx: ToolContext, **kwargs: Any) -> str:
     if not job_id or state is None:
         return json.dumps({"error": "job_id and editor_state are required"})
 
-    if not kwargs.get("confirmed"):
-        credits = _credits_for_op("render_edited_video", {})
-        return _confirmation_payload(
-            operation="render_edited_video",
-            credits=credits,
-            summary=f"Re-render edited video for job {job_id}",
-            echo={k: v for k, v in kwargs.items() if k != "confirmed"},
-        )
+    # No confirmation gate — rendering is just a Remotion render (no AI models).
+    # The user already confirmed the edit/caption request; requiring a second
+    # confirmation for the render step creates frustrating double-prompt UX.
 
     try:
         result = await ctx.core().trigger_editor_render(
