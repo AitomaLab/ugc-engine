@@ -1242,6 +1242,23 @@ async def generate_identity(
     print(f"[Generate Identity] Step 1/3: Analyzing profile via GPT-4o Vision...")
     print(f"[Generate Identity] Image URL: {data.image_url[:100]}...")
     try:
+        import httpx
+        import base64
+        from PIL import Image
+
+        # Download and resize image to avoid OpenAI's 20MB download limit.
+        # NanoBanana Pro 4K PNGs can be 30-50MB; resize to 1024px max + JPEG.
+        async with httpx.AsyncClient(timeout=30.0) as http_client:
+            img_resp = await http_client.get(data.image_url)
+            img_resp.raise_for_status()
+        pil_img = Image.open(io.BytesIO(img_resp.content)).convert("RGB")
+        pil_img.thumbnail((1024, 1024), Image.LANCZOS)
+        buf = io.BytesIO()
+        pil_img.save(buf, format="JPEG", quality=85)
+        b64_str = base64.b64encode(buf.getvalue()).decode()
+        vision_url = f"data:image/jpeg;base64,{b64_str}"
+        print(f"[Generate Identity] Resized image: {pil_img.size[0]}x{pil_img.size[1]}, {len(buf.getvalue())//1024}KB")
+
         client = openai.OpenAI()
 
         _user_text = "Describe the visual appearance of the person in this reference photo and generate a NanoBanana Pro character sheet prompt. Return valid JSON."
@@ -1251,7 +1268,7 @@ async def generate_identity(
                 "role": "user",
                 "content": [
                     {"type": "text", "text": _user_text},
-                    {"type": "image_url", "image_url": {"url": data.image_url, "detail": "low"}},
+                    {"type": "image_url", "image_url": {"url": vision_url, "detail": "low"}},
                 ],
             },
         ]
@@ -1280,7 +1297,7 @@ async def generate_identity(
                     "role": "user",
                     "content": [
                         {"type": "text", "text": "For a creative video production project, describe how this person looks (hair, build, clothing, facial features) and write a NanoBanana Pro prompt for a 4-view character reference sheet. Return JSON with keys: description, nano_banana_prompt"},
-                        {"type": "image_url", "image_url": {"url": data.image_url, "detail": "low"}},
+                        {"type": "image_url", "image_url": {"url": vision_url, "detail": "low"}},
                     ],
                 },
             ]
