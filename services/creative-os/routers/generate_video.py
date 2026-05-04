@@ -629,35 +629,14 @@ async def _generate_seedance_video(
     Static / Audio). No NanoBanana composite is built: Seedance accepts
     multiple image + video reference URLs directly.
     """
-    # The video_jobs table has a FK on influencer_id, so the core API's /jobs
-    # endpoint rejects the nil UUID. Fall back to the first influencer purely
-    # to satisfy the FK — the downstream pipeline below gates image injection
-    # on the ORIGINAL data.influencer_id, so no persona image / product leaks
-    # into a prompt that didn't ask for one.
-    influencer_id = data.influencer_id
-    if not influencer_id:
-        try:
-            influencers = await client.list_influencers()
-            influencer_id = influencers[0]["id"] if influencers else None
-        except Exception:
-            pass
-    # The project-scoped list may return empty (user is in a fresh project).
-    # Try a global user-wide search so we get a real influencer for the FK.
-    if not influencer_id:
-        try:
-            global_client = CoreAPIClient(token=client.token, skip_project_scope=True)
-            all_infs = await global_client.list_influencers()
-            influencer_id = all_infs[0]["id"] if all_infs else None
-        except Exception:
-            pass
-    if not influencer_id:
-        influencer_id = "00000000-0000-0000-0000-000000000000"
+    # Seedance modes are product-centric and do NOT require an influencer.
+    # Only pass the influencer_id when the user explicitly @-mentioned one.
+    influencer_id = data.influencer_id or None
 
     product_type = "physical" if data.product_id else "digital"
 
     try:
-        job = await client.create_job({
-            "influencer_id": influencer_id,
+        job_payload = {
             "product_id": data.product_id,
             "product_type": product_type,
             "model_api": "seedance-2.0",
@@ -667,7 +646,10 @@ async def _generate_seedance_video(
             "subtitles_enabled": False,
             "music_enabled": False,
             "hook": (data.prompt or "")[:500],
-        })
+        }
+        if influencer_id:
+            job_payload["influencer_id"] = influencer_id
+        job = await client.create_job(job_payload)
         job_id = job.get("id") or job.get("job", {}).get("id")
         credit_cost = int(job.get("credits_deducted") or 0)
         print(f"[Seedance] Job created: {job_id} (cost={credit_cost})")

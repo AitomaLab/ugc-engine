@@ -662,7 +662,7 @@ class TransitionShotRequest(BaseModel):
     preceding_scene_video_url: str          # URL of the preceding influencer scene video
 
 class JobCreate(BaseModel):
-    influencer_id: str
+    influencer_id: Optional[str] = None
     script_id: Optional[str] = None
     app_clip_id: Optional[str] = None
     product_id: Optional[str] = None            # NEW for Physical Products
@@ -1166,10 +1166,12 @@ def api_create_job(
         else:
             credit_cost = None
 
-        # 1. Validate Influencer
-        inf = get_influencer(data.influencer_id)
-        if not inf:
-            raise HTTPException(status_code=404, detail="Influencer not found")
+        # 1. Validate Influencer (optional — Seedance product-only modes skip this)
+        inf = None
+        if data.influencer_id:
+            inf = get_influencer(data.influencer_id)
+            if not inf:
+                raise HTTPException(status_code=404, detail="Influencer not found")
 
         # 2. Flow-specific Validation
         if data.product_type == "physical" and not data.product_id:
@@ -1193,7 +1195,7 @@ def api_create_job(
         if data.product_type == "digital" and not data.app_clip_id:
             clips = list_app_clips()
             if clips:
-                inf_style = (inf.get("style") or "").lower().strip()
+                inf_style = ((inf or {}).get("style") or "").lower().strip()
                 matching_clips = [
                     c for c in clips
                     if inf_style and (
