@@ -1033,10 +1033,18 @@ def _run_editor_render(
     codec: str,
 ):
     """
-    Background thread: dispatches render to Modal (production) or calls
-    Remotion renderer directly (local dev fallback).
+    Background thread: renders the editor state via the Remotion renderer
+    service. Always uses the direct Remotion renderer (synchronous) so the
+    in-memory progress dict is updated immediately when the render finishes.
+
+    Previously this dispatched to Modal with a fire-and-forget pattern that
+    relied on callbacks — which silently failed when the callback couldn't
+    reach the backend (wrong instance, network issues, etc.), causing the
+    caption_video tool to poll forever and never show the rendered video.
     """
     import requests as _req
+    import tempfile
+    from datetime import datetime as _dt
 
     def _update(data: dict):
         if render_id not in _editor_renders:
@@ -1046,90 +1054,62 @@ def _run_editor_render(
     try:
         _update({"status": "processing", "progress": 5})
 
-        modal_url = os.environ.get("MODAL_EDITOR_RENDER_URL")
+        remotion_url = os.environ.get(
+            "REMOTION_RENDERER_URL", "http://localhost:8090"
+        )
 
-        if modal_url:
-            # ── Production: dispatch to Modal ──
-            print(f"[EDITOR RENDER] Dispatching {render_id} to Modal: {modal_url}")
-            resp = _req.post(
-                modal_url,
-                json={
-                    "render_id": render_id,
-                    "editor_state": editor_state,
-                    "codec": codec,
-                },
-                timeout=15,
-            )
-            if resp.status_code != 200:
-                raise RuntimeError(
-                    f"Modal dispatch failed ({resp.status_code}): {resp.text[:500]}"
-                )
-            _update({"status": "processing", "progress": 10})
-            print(f"[EDITOR RENDER] ✓ Dispatched to Modal — waiting for callback")
-            # Modal will call POST /api/editor/render/{render_id}/callback
-            # when done, which updates _editor_renders.
+        print(f"[EDITOR RENDER] Starting render {render_id} via {remotion_url}")
+        response = _req.post(
+            f"{remotion_url}/render-editor",
+            json={"editorState": editor_state, "codec": codec},
+            timeout=600,
+            stream=True,
+        )
 
-        else:
-            # ── Local dev: call Remotion renderer directly ──
-            import tempfile
-            from datetime import datetime as _dt
-
-            remotion_url = os.environ.get(
-                "REMOTION_RENDERER_URL", "http://localhost:8090"
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"Remotion renderer returned {response.status_code}: "
+                f"{response.text[:500]}"
             )
 
-            print(f"[EDITOR RENDER] Starting render {render_id} via {remotion_url}")
-            response = _req.post(
-                f"{remotion_url}/render-editor",
-                json={"editorState": editor_state, "codec": codec},
-                timeout=600,
-                stream=True,
+        _update({"progress": 50})
+
+        timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
+        storage_filename = f"edited_{job_id[:8]}_{timestamp}.mp4"
+
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    tmp.write(chunk)
+            tmp_path = tmp.name
+
+        _update({"progress": 80})
+
+        try:
+            from ugc_db.db_manager import get_supabase
+            sb = get_supabase()
+            with open(tmp_path, "rb") as f:
+                sb.storage.from_("generated-videos").upload(
+                    storage_filename, f,
+                    file_options={"content-type": "video/mp4"},
+                )
+            output_url = sb.storage.from_("generated-videos").get_public_url(
+                storage_filename
             )
+        except Exception as upload_err:
+            print(f"[EDITOR RENDER] Upload failed: {upload_err}")
+            output_url = f"file:///{tmp_path}"
 
-            if response.status_code != 200:
-                raise RuntimeError(
-                    f"Remotion renderer returned {response.status_code}: "
-                    f"{response.text[:500]}"
-                )
+        output_size = os.path.getsize(tmp_path)
+        os.unlink(tmp_path)
 
-            _update({"progress": 50})
-
-            timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
-            storage_filename = f"edited_{job_id[:8]}_{timestamp}.mp4"
-
-            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        tmp.write(chunk)
-                tmp_path = tmp.name
-
-            _update({"progress": 80})
-
-            try:
-                from ugc_db.db_manager import get_supabase
-                sb = get_supabase()
-                with open(tmp_path, "rb") as f:
-                    sb.storage.from_("generated-videos").upload(
-                        storage_filename, f,
-                        file_options={"content-type": "video/mp4"},
-                    )
-                output_url = sb.storage.from_("generated-videos").get_public_url(
-                    storage_filename
-                )
-            except Exception as upload_err:
-                print(f"[EDITOR RENDER] Upload failed: {upload_err}")
-                output_url = f"file:///{tmp_path}"
-
-            output_size = os.path.getsize(tmp_path)
-            os.unlink(tmp_path)
-
-            _update({
-                "status": "done",
-                "progress": 100,
-                "output_url": output_url,
-                "output_size": output_size,
-            })
-            print(f"[EDITOR RENDER] ✓ Render {render_id} done: {output_url}")
+        _update({
+            "status": "done",
+            "progress": 100,
+            "output_url": output_url,
+            "output_size": output_size,
+        })
+        print(f"[EDITOR RENDER] ✓ Render {render_id} done: {output_url}")
 
     except Exception as e:
         print(f"[EDITOR RENDER] ✗ Render {render_id} failed: {e}")
