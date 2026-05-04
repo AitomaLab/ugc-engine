@@ -1251,7 +1251,7 @@ async def generate_identity(
                 "role": "user",
                 "content": [
                     {"type": "text", "text": _user_text},
-                    {"type": "image_url", "image_url": {"url": data.image_url}},
+                    {"type": "image_url", "image_url": {"url": data.image_url, "detail": "low"}},
                 ],
             },
         ]
@@ -1280,7 +1280,7 @@ async def generate_identity(
                     "role": "user",
                     "content": [
                         {"type": "text", "text": "For a creative video production project, describe how this person looks (hair, build, clothing, facial features) and write a NanoBanana Pro prompt for a 4-view character reference sheet. Return JSON with keys: description, nano_banana_prompt"},
-                        {"type": "image_url", "image_url": {"url": data.image_url}},
+                        {"type": "image_url", "image_url": {"url": data.image_url, "detail": "low"}},
                     ],
                 },
             ]
