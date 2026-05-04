@@ -401,42 +401,8 @@ export default function ProjectContainerPage() {
             {/* Spacer to right-align controls when agent panel is open */}
             {isWide && agentOpen && <div style={{ flex: 1 }} />}
 
-            {/* Divider */}
-            <div style={{ width: '1px', height: '24px', background: 'rgba(0,0,0,0.08)', flexShrink: 0 }} />
 
-            {/* Seedance Toggle */}
-            {isWide && (
-                <div
-                    onClick={() => agentRef.current?.toggleSeedance()}
-                    title={agentState.useSeedance ? t('creativeOs.project.seedanceOn') : t('creativeOs.project.seedanceOff')}
-                    style={{
-                        display: 'flex', alignItems: 'center', gap: '6px',
-                        cursor: agentState.running ? 'not-allowed' : 'pointer',
-                        opacity: agentState.running ? 0.5 : 1,
-                        userSelect: 'none', flexShrink: 0,
-                    }}
-                >
-                    <span style={{
-                        fontSize: '11px', fontWeight: 600,
-                        color: agentState.useSeedance ? '#337AFF' : '#5B6585',
-                        letterSpacing: '0.2px',
-                    }}>Seedance 2.0</span>
-                    <div style={{
-                        width: '32px', height: '18px', borderRadius: '9px', position: 'relative',
-                        background: agentState.useSeedance
-                            ? 'linear-gradient(135deg, #5B7BFF, #337AFF)'
-                            : 'rgba(138,147,176,0.25)',
-                        transition: 'background 0.2s', flexShrink: 0,
-                    }}>
-                        <div style={{
-                            width: '14px', height: '14px', borderRadius: '50%', background: 'white',
-                            position: 'absolute', top: '2px',
-                            left: agentState.useSeedance ? '16px' : '2px',
-                            transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
-                        }} />
-                    </div>
-                </div>
-            )}
+
 
             {/* Clear Chat (only when agent panel is open) */}
             {isWide && agentOpen && (
