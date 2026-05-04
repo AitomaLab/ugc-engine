@@ -641,6 +641,15 @@ async def _generate_seedance_video(
             influencer_id = influencers[0]["id"] if influencers else None
         except Exception:
             pass
+    # The project-scoped list may return empty (user is in a fresh project).
+    # Try a global user-wide search so we get a real influencer for the FK.
+    if not influencer_id:
+        try:
+            global_client = CoreAPIClient(token=client.token, skip_project_scope=True)
+            all_infs = await global_client.list_influencers()
+            influencer_id = all_infs[0]["id"] if all_infs else None
+        except Exception:
+            pass
     if not influencer_id:
         influencer_id = "00000000-0000-0000-0000-000000000000"
 
