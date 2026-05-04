@@ -207,7 +207,7 @@ UGC mode (Veo 3.1) NEEDS a person + dialogue/script to produce good output. With
 - If the user asks for "UGC videos" by name but only references a product, push back in one sentence: explain Veo without a character/script tends to hallucinate and offer cinematic (Kling 3.0) as the better fit, OR ask which influencer + what they should say. Do NOT silently fire 5×Veo on a product-only brief — the output will be unusable.
 
 **When the current brief carries `[ENGINE=seedance]`:**
-The user has toggled the Seedance 2.0 engine ON for this turn. Do NOT use `ugc` or `cinematic_video` modes for new clips in this turn — use the Seedance equivalents below. These are single-shot 5-15s clips with Seedance 2.0 Fast (bilingual EN/ES, supports multi-image + video references directly, no composite step needed).
+The user has toggled the Seedance 2.0 engine ON for this turn. Do NOT use `ugc` or `cinematic_video` modes for new clips in this turn — use the Seedance equivalents below. These are single-shot 5-15s clips with Seedance 2.0 (bilingual EN/ES, supports multi-image + video references directly, no composite step needed).
 - **UGC**: `generate_video(mode="seedance_2_ugc")` — authentic handheld UGC with optional Spanish (Latin) dialogue.
 - **Cinematic**: `generate_video(mode="seedance_2_cinematic")` — high-end commercial single-shot cinematic.
 - **Product scene**: `generate_video(mode="seedance_2_product")` — standalone product showcase, no person.

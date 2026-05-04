@@ -651,7 +651,7 @@ async def _generate_seedance_video(
             "influencer_id": influencer_id,
             "product_id": data.product_id,
             "product_type": product_type,
-            "model_api": "seedance-2.0-fast",
+            "model_api": "seedance-2.0",
             "length": data.clip_length,
             "campaign_name": _derive_asset_name(data.prompt),
             "video_language": data.language,
@@ -862,7 +862,7 @@ async def _run_seedance_clip_pipeline(
         def _submit():
             return generate_scenes.generate_video_with_retry(
                 prompt=structured_prompt,
-                model_api="seedance-2.0-fast",
+                model_api="seedance-2.0",
                 duration=data.clip_length,
                 reference_image_urls=reference_image_urls or None,
                 reference_video_urls=reference_video_urls or None,
@@ -909,7 +909,7 @@ async def _run_seedance_clip_pipeline(
         # returns so the user sees two discrete activity cards (cinematic
         # done → splicing B-roll) instead of a single 3-min wait. We stash
         # app_clip_id in metadata so splice_app_clip can find it.
-        meta = {"mode": data.mode, "engine": "seedance-2.0-fast"}
+        meta = {"mode": data.mode, "engine": "seedance-2.0"}
         if app_clip and app_clip.get("video_url"):
             meta["app_clip_id"] = data.app_clip_id
         await _update_video_job_via_api(token, project_id, job_id, {

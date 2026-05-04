@@ -448,6 +448,76 @@ def seedance2_fast_t2v(
 
 
 # ---------------------------------------------------------------------------
+# Seedance 2.0 (full quality — NOT fast)
+# ---------------------------------------------------------------------------
+
+def seedance2_i2v(
+    *,
+    image: str,
+    prompt: str,
+    duration: int = 5,
+    aspect_ratio: str | None = None,
+    resolution: str = "720p",
+    last_image: str | None = None,
+    generate_audio: bool = True,
+    enable_web_search: bool = False,
+    webhook: str | None = None,
+) -> dict:
+    if not image:
+        raise WaveSpeedError("seedance2_i2v: image is required", transient=False)
+    if not prompt:
+        raise WaveSpeedError("seedance2_i2v: prompt is required", transient=False)
+    dur = _clamp_to(duration, SEEDANCE_DURATIONS)
+    payload: dict = {
+        "image": image,
+        "prompt": prompt,
+        "duration": dur,
+        "resolution": resolution if resolution in ("480p", "720p", "1080p") else "720p",
+        "generate_audio": bool(generate_audio),
+    }
+    if aspect_ratio:
+        payload["aspect_ratio"] = _coerce_aspect(aspect_ratio, SEEDANCE_ASPECTS, "9:16")
+    if last_image:
+        payload["last_image"] = last_image
+    if enable_web_search:
+        payload["enable_web_search"] = True
+    return submit("bytedance/seedance-2.0/image-to-video", payload, webhook=webhook, label="Seedance 2.0 i2v")
+
+
+def seedance2_t2v(
+    *,
+    prompt: str,
+    reference_images: Sequence[str] | None = None,
+    reference_videos: Sequence[str] | None = None,
+    reference_audios: Sequence[str] | None = None,
+    duration: int = 5,
+    aspect_ratio: str = "9:16",
+    resolution: str = "720p",
+    generate_audio: bool = True,
+    enable_web_search: bool = False,
+    webhook: str | None = None,
+) -> dict:
+    if not prompt:
+        raise WaveSpeedError("seedance2_t2v: prompt is required", transient=False)
+    payload: dict = {
+        "prompt": prompt,
+        "duration": _clamp_to(duration, SEEDANCE_DURATIONS),
+        "aspect_ratio": _coerce_aspect(aspect_ratio, SEEDANCE_ASPECTS, "9:16"),
+        "resolution": resolution if resolution in ("480p", "720p", "1080p") else "720p",
+        "generate_audio": bool(generate_audio),
+    }
+    if reference_images:
+        payload["reference_images"] = list(reference_images)[:9]
+    if reference_videos:
+        payload["reference_videos"] = list(reference_videos)[:3]
+    if reference_audios:
+        payload["reference_audios"] = list(reference_audios)[:3]
+    if enable_web_search:
+        payload["enable_web_search"] = True
+    return submit("bytedance/seedance-2.0/text-to-video", payload, webhook=webhook, label="Seedance 2.0 t2v")
+
+
+# ---------------------------------------------------------------------------
 # NanoBanana Pro (Gemini 3.0 Pro Image)
 # ---------------------------------------------------------------------------
 

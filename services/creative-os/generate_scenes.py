@@ -446,6 +446,7 @@ def generate_video_wavespeed(prompt, reference_image_url=None, duration=8, famil
 def _wavespeed_primary_video_attempt(
     *, prompt, reference_image_url, family, duration, aspect_ratio, multi_prompt,
     element_ids=None, reference_image_urls=None, reference_video_urls=None,
+    model_api=None,
 ):
     """Try video generation via WaveSpeed first using the new wavespeed_client.
 
@@ -481,13 +482,16 @@ def _wavespeed_primary_video_attempt(
         # phrase keeps the prompt grammatical without leaking a token.
         ws_prompt = re.sub(r"@Image\d+", "the reference image", prompt or "")
         ws_prompt = re.sub(r"@Video\d+", "the reference video", ws_prompt).strip()
+        # Choose between seedance-2.0 (full quality) and seedance-2.0-fast
+        use_fast = "fast" in (model_api or "").lower()
         # Multi-image or video-ref → t2v. WaveSpeed i2v is single-image only;
         # routing >1 image through i2v silently drops everything past the first,
         # which loses product/secondary-ref fidelity. KIE's unified Seedance
         # endpoint accepts a reference_image_urls array, so to match KIE quality
         # on WaveSpeed we use t2v for any multi-ref case.
         if ref_vids or len(ref_imgs) > 1:
-            data = ws.seedance2_fast_t2v(
+            t2v_fn = ws.seedance2_fast_t2v if use_fast else ws.seedance2_t2v
+            data = t2v_fn(
                 prompt=ws_prompt,
                 reference_images=ref_imgs or None,
                 reference_videos=ref_vids or None,
@@ -498,7 +502,8 @@ def _wavespeed_primary_video_attempt(
             primary_img = reference_image_url or (ref_imgs[0] if ref_imgs else None)
             if not primary_img:
                 raise ws.WaveSpeedError("WS Seedance i2v requires reference image", transient=True)
-            data = ws.seedance2_fast_i2v(
+            i2v_fn = ws.seedance2_fast_i2v if use_fast else ws.seedance2_i2v
+            data = i2v_fn(
                 image=primary_img,
                 prompt=ws_prompt,
                 duration=sd_dur,
@@ -569,6 +574,7 @@ def generate_video_with_retry(
                 element_ids=element_ids,
                 reference_image_urls=reference_image_urls,
                 reference_video_urls=reference_video_urls,
+                model_api=model_api,
             )
         except Exception as ws_primary_err:
             print(f"      [WaveSpeed primary failed: {ws_primary_err}] — falling through to KIE chain")
