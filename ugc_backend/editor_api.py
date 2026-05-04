@@ -1034,13 +1034,17 @@ def _run_editor_render(
 ):
     """
     Background thread: renders the editor state via the Remotion renderer
-    service. Always uses the direct Remotion renderer (synchronous) so the
+    service. Uses the direct Remotion renderer (synchronous) so the
     in-memory progress dict is updated immediately when the render finishes.
 
-    Previously this dispatched to Modal with a fire-and-forget pattern that
-    relied on callbacks — which silently failed when the callback couldn't
-    reach the backend (wrong instance, network issues, etc.), causing the
-    caption_video tool to poll forever and never show the rendered video.
+    Priority:
+      1. REMOTION_RENDERER_URL (Railway-hosted Remotion service) — preferred,
+         synchronous, reliable.
+      2. MODAL_EDITOR_RENDER_URL — fallback, dispatches to Modal and polls
+         for completion via a Supabase marker row.
+
+    The old Modal-only approach relied on HTTP callbacks which were unreliable
+    (wrong instance, network issues). The direct renderer avoids this.
     """
     import requests as _req
     import tempfile
@@ -1054,13 +1058,56 @@ def _run_editor_render(
     try:
         _update({"status": "processing", "progress": 5})
 
-        remotion_url = os.environ.get(
-            "REMOTION_RENDERER_URL", "http://localhost:8090"
-        )
+        remotion_url = os.environ.get("REMOTION_RENDERER_URL", "")
+        modal_url = os.environ.get("MODAL_EDITOR_RENDER_URL", "")
 
-        print(f"[EDITOR RENDER] Starting render {render_id} via {remotion_url}")
+        # ── Decide which renderer to use ──
+        renderer_base_url = None
+
+        if remotion_url:
+            # Prefer the direct Remotion renderer — it's synchronous
+            # and doesn't rely on callbacks.
+            try:
+                health = _req.get(f"{remotion_url}/health", timeout=5)
+                if health.status_code == 200:
+                    renderer_base_url = remotion_url
+                    print(f"[EDITOR RENDER] Using Remotion renderer: {remotion_url}")
+            except Exception as health_err:
+                print(f"[EDITOR RENDER] Remotion renderer unreachable ({health_err}), trying Modal...")
+
+        if not renderer_base_url and modal_url:
+            # Fallback: dispatch to Modal and wait for callback.
+            # Modal's trigger_editor_render uses .spawn() and calls back.
+            print(f"[EDITOR RENDER] Dispatching {render_id} to Modal: {modal_url}")
+            resp = _req.post(
+                modal_url,
+                json={
+                    "render_id": render_id,
+                    "editor_state": editor_state,
+                    "codec": codec,
+                },
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                raise RuntimeError(
+                    f"Modal dispatch failed ({resp.status_code}): {resp.text[:500]}"
+                )
+            _update({"status": "processing", "progress": 10})
+            print(f"[EDITOR RENDER] ✓ Dispatched to Modal — callback will update progress")
+            # Modal will call POST /api/editor/render/{render_id}/callback
+            # when done, which updates _editor_renders.
+            return
+
+        if not renderer_base_url:
+            raise RuntimeError(
+                "No renderer available. Set REMOTION_RENDERER_URL or "
+                "MODAL_EDITOR_RENDER_URL in the environment."
+            )
+
+        # ── Direct render via Remotion service ──
+        print(f"[EDITOR RENDER] Starting render {render_id} via {renderer_base_url}")
         response = _req.post(
-            f"{remotion_url}/render-editor",
+            f"{renderer_base_url}/render-editor",
             json={"editorState": editor_state, "codec": codec},
             timeout=600,
             stream=True,
