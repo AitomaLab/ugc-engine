@@ -821,6 +821,29 @@ async def _run_seedance_clip_pipeline(
         except Exception as e:
             print(f"[Seedance] Prompt enhance failed (using raw): {e}")
 
+        # ── Preserve user's verbatim dialogue (hook) ──
+        # The prompt enhancer generates its own dialogue in the Audio section.
+        # If the user provided an explicit script via hook, replace the
+        # AI-generated dialogue with the user's exact words.
+        if data.hook and data.hook.strip():
+            import re
+            user_dialogue = data.hook.strip()
+            print(f"[Seedance] Injecting user's VERBATIM dialogue into prompt: {user_dialogue[:80]}...")
+            # Replace the Dialogue line in the Audio section
+            # Pattern: Dialogue: "..." or Dialogue: ...
+            dialogue_replaced = re.sub(
+                r'(Dialogue:\s*)"[^"]*"',
+                f'\\1"{user_dialogue}"',
+                structured_prompt,
+            )
+            if dialogue_replaced != structured_prompt:
+                structured_prompt = dialogue_replaced
+                print(f"[Seedance] Replaced AI dialogue with user's verbatim script")
+            else:
+                # If no Dialogue: "..." pattern found, append it
+                structured_prompt += f'\nAudio: Dialogue: "{user_dialogue}"'
+                print(f"[Seedance] Appended user dialogue (no existing Dialogue pattern found)")
+
         # Safety net: ensure reference bindings are present. Without them,
         # Seedance treats the references as loose style guides and
         # hallucinates on-screen content.
