@@ -3122,8 +3122,20 @@ async def _tool_caption_video(ctx: ToolContext, **kwargs: Any) -> str:
         print(f"[caption_video] Phase 1 FAILED: {e}")
         return json.dumps({"error": f"caption_video failed: {e}"})
 
-    # ── Phase 2: re-render so final_video_url shows the captions ─────
-    print(f"[caption_video] ── Phase 2: Re-render with burned-in captions ──")
+    # ── Phase 2: Check if backend already burned captions via ffmpeg ────
+    burned_url = caption_result.get("burned_video_url")
+    if burned_url:
+        # Fast path: backend did ffmpeg burn-in, final_video_url already updated
+        print(f"[caption_video] Fast burn complete — video URL: {burned_url}")
+        _record_artifact(ctx, {"type": "video", "url": burned_url, "job_id": job_id})
+        return json.dumps({
+            **caption_result,
+            "status": "success",
+            "video_url": burned_url,
+        })
+
+    # ── Fallback: Remotion render (only if ffmpeg burn failed) ─────────
+    print(f"[caption_video] ffmpeg burn not available — falling back to Remotion render")
     try:
         editor_state = await ctx.core().get_editor_state(job_id)
         print(f"[caption_video] Loaded editor_state ({len(json.dumps(editor_state))} bytes)")
@@ -3160,7 +3172,7 @@ async def _tool_caption_video(ctx: ToolContext, **kwargs: Any) -> str:
 
     print(f"[caption_video] Polling render {render_id} (max 180s, every 4s)...")
     waited = 0
-    max_wait_s = 180  # Backend auto-persists final_video_url, so we don't need to wait forever
+    max_wait_s = 180
     poll_interval_s = 4
     progress_payload: dict | None = None
     while waited < max_wait_s:

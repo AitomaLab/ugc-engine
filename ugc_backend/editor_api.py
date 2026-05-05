@@ -676,6 +676,406 @@ CAPTION_STYLES = {
 STROKE_MODES = {"solid", "shadow", "glow"}
 
 
+# ============================================================================
+# HELPER: ffmpeg-based caption burn-in (fast alternative to Remotion render)
+# ============================================================================
+
+def _hex_to_ass_color(hex_color: str) -> str:
+    """Convert #RRGGBB to ASS &HAABBGGRR& format (BGR, alpha=00=opaque)."""
+    h = hex_color.lstrip("#")
+    if len(h) == 6:
+        r, g, b = h[0:2], h[2:4], h[4:6]
+        return f"&H00{b}{g}{r}&"
+    return "&H00FFFFFF&"
+
+
+def _group_captions_into_pages(
+    captions: list[dict],
+    max_words_per_page: int = 5,
+) -> list[list[dict]]:
+    """Group word-level captions into display pages."""
+    pages = []
+    current_page: list[dict] = []
+    for cap in captions:
+        current_page.append(cap)
+        if len(current_page) >= max_words_per_page:
+            pages.append(current_page)
+            current_page = []
+    if current_page:
+        pages.append(current_page)
+    return pages
+
+
+def _generate_ass_subtitles(
+    captions: list[dict],
+    style_props: dict,
+    placement: str,
+    width: int = 1080,
+    height: int = 1920,
+) -> str:
+    """Generate ASS subtitle content from word-level caption data with
+    word-level highlighting (current word in highlight color)."""
+
+    font_family = style_props.get("fontFamily", "Anton")
+    font_size = style_props.get("fontSize", 72)
+    primary_color = _hex_to_ass_color(style_props.get("color", "#FFFFFF"))
+    highlight_color = _hex_to_ass_color(style_props.get("highlightColor", "#FFFF00"))
+    outline_color = _hex_to_ass_color(style_props.get("strokeColor", "#000000"))
+    outline_width = style_props.get("strokeWidth", 8)
+    max_lines = style_props.get("maxLines", 2)
+
+    # Placement -> ASS alignment (numpad: 2=bottom, 5=middle, 8=top)
+    alignment_map = {"bottom": 2, "middle": 5, "top": 8}
+    alignment = alignment_map.get(placement, 5)
+
+    # Vertical margin based on placement
+    margin_v_map = {"bottom": int(height * 0.12), "middle": int(height * 0.02), "top": int(height * 0.10)}
+    margin_v = margin_v_map.get(placement, int(height * 0.02))
+
+    # Words per page: ~max_lines * 2-3 words per line
+    words_per_page = max(max_lines * 3, 3)
+    pages = _group_captions_into_pages(captions, max_words_per_page=words_per_page)
+
+    def _ms_to_ass_time(ms: int) -> str:
+        """Convert milliseconds to ASS time format H:MM:SS.CC"""
+        total_cs = ms // 10
+        cs = total_cs % 100
+        total_s = total_cs // 100
+        s = total_s % 60
+        m = (total_s // 60) % 60
+        h = total_s // 3600
+        return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
+
+    header = (
+        "[Script Info]\n"
+        "ScriptType: v4.00+\n"
+        f"PlayResX: {width}\n"
+        f"PlayResY: {height}\n"
+        "WrapStyle: 0\n"
+        "ScaledBorderAndShadow: yes\n"
+        "\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
+        "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
+        "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
+        "Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        f"Style: Default,{font_family},{font_size},{primary_color},"
+        f"{highlight_color},{outline_color},&H00000000&,"
+        f"1,0,0,0,100,100,0,0,1,{outline_width},0,"
+        f"{alignment},40,40,{margin_v},1\n"
+        "\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+    )
+
+    events = []
+    for page in pages:
+        if not page:
+            continue
+        page_start_ms = page[0]["startMs"]
+        page_end_ms = page[-1]["endMs"]
+
+        # For each word's time slice in this page, generate an event
+        # showing all page words with the current word highlighted
+        for i, word_cap in enumerate(page):
+            word_start = word_cap["startMs"]
+            # Word end = next word's start (or page end for last word)
+            word_end = page[i + 1]["startMs"] if i + 1 < len(page) else page_end_ms
+
+            if word_end <= word_start:
+                word_end = word_start + 100  # minimum 100ms
+
+            # Build text with current word highlighted
+            parts = []
+            for j, w in enumerate(page):
+                word_text = w["text"].strip()
+                if not word_text:
+                    continue
+                if j == i:
+                    # Highlight current word
+                    parts.append(f"{{\\1c{highlight_color}}}{word_text.upper()}{{\\1c{primary_color}}}")
+                else:
+                    parts.append(word_text.upper())
+
+            line_text = " ".join(parts)
+            # Insert line break at midpoint for multi-line display
+            if max_lines >= 2 and len(page) >= 4:
+                mid = len(parts) // 2
+                words_list = line_text.split(" ")
+                # Find approximate midpoint
+                if len(words_list) >= 4:
+                    mid_idx = len(words_list) // 2
+                    line_text = " ".join(words_list[:mid_idx]) + "\\N" + " ".join(words_list[mid_idx:])
+
+            start_t = _ms_to_ass_time(word_start)
+            end_t = _ms_to_ass_time(word_end)
+            events.append(
+                f"Dialogue: 0,{start_t},{end_t},Default,,0,0,0,,{line_text}"
+            )
+
+    return header + "\n".join(events) + "\n"
+
+
+def _ffmpeg_burn_captions(
+    video_url: str,
+    captions: list[dict],
+    style_props: dict,
+    placement: str,
+    job_id: str,
+) -> Optional[str]:
+    """Download video, render caption overlay PNGs with Pillow, burn with
+    ffmpeg overlay filter. Works with any ffmpeg (no libass required).
+    Returns the new public video URL, or None on failure."""
+    import requests as req_lib
+    from datetime import datetime as _dt
+
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        print("[CAPTION BURN] Pillow not installed — skipping ffmpeg burn")
+        return None
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        try:
+            # 1. Download video
+            video_path = Path(tmpdir) / "input.mp4"
+            print(f"[CAPTION BURN] Downloading video...")
+            resp = req_lib.get(video_url, timeout=120)
+            resp.raise_for_status()
+            video_path.write_bytes(resp.content)
+
+            # 2. Probe video dimensions + fps
+            probe_width, probe_height, fps = 1080, 1920, 30.0
+            try:
+                probe = subprocess.run(
+                    ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                     "-show_entries", "stream=width,height,r_frame_rate",
+                     "-of", "csv=s=x:p=0", str(video_path)],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if probe.returncode == 0:
+                    parts = probe.stdout.strip().split("x")
+                    if len(parts) >= 2:
+                        probe_width = int(parts[0])
+                        # height might have fps appended like "1920x30/1"
+                        height_fps = parts[1]
+                        if "/" in height_fps:
+                            # Format: "1920x30/1" — need different parsing
+                            pass
+                        probe_height = int(height_fps.split("/")[0].split("x")[0]) if "/" in height_fps else int(height_fps)
+            except Exception:
+                pass
+
+            print(f"[CAPTION BURN] Video: {probe_width}x{probe_height}")
+
+            # 3. Load font
+            font_family = style_props.get("fontFamily", "Anton")
+            font_size = style_props.get("fontSize", 72)
+            # Scale font size relative to video resolution
+            font_scale = probe_width / 1080.0
+            scaled_font_size = int(font_size * font_scale)
+
+            font = ImageFont.load_default()
+            # Try system fonts
+            font_paths = [
+                f"/System/Library/Fonts/{font_family}.ttf",
+                f"/System/Library/Fonts/Supplemental/{font_family}.ttf",
+                f"/usr/share/fonts/truetype/{font_family.lower()}/{font_family}.ttf",
+                "/System/Library/Fonts/Helvetica.ttc",
+                "/System/Library/Fonts/SFCompact.ttf",
+            ]
+            for fp in font_paths:
+                try:
+                    font = ImageFont.truetype(fp, scaled_font_size)
+                    break
+                except (IOError, OSError):
+                    continue
+            else:
+                # Fallback: try any bold system font
+                try:
+                    font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", scaled_font_size)
+                except Exception:
+                    font = ImageFont.load_default()
+
+            # 4. Parse colors
+            def _hex_to_rgb(h: str) -> tuple:
+                h = h.lstrip("#")
+                return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+
+            primary_rgb = _hex_to_rgb(style_props.get("color", "#FFFFFF"))
+            highlight_rgb = _hex_to_rgb(style_props.get("highlightColor", "#FFFF00"))
+            stroke_rgb = _hex_to_rgb(style_props.get("strokeColor", "#000000"))
+            stroke_width = max(1, int(style_props.get("strokeWidth", 8) * font_scale * 0.5))
+            max_lines = style_props.get("maxLines", 2)
+
+            # 5. Placement -> vertical position
+            placement_y_ratio = {"top": 0.12, "middle": 0.45, "bottom": 0.75}
+            y_ratio = placement_y_ratio.get(placement, 0.45)
+
+            # 6. Group captions into pages and render overlay PNGs
+            words_per_page = max(max_lines * 3, 3)
+            pages = _group_captions_into_pages(captions, max_words_per_page=words_per_page)
+
+            overlay_segments = []  # list of (png_path, start_s, end_s)
+
+            for page_idx, page in enumerate(pages):
+                if not page:
+                    continue
+
+                for word_idx, word_cap in enumerate(page):
+                    word_start_s = word_cap["startMs"] / 1000.0
+                    word_end_s = (page[word_idx + 1]["startMs"] / 1000.0
+                                  if word_idx + 1 < len(page)
+                                  else page[-1]["endMs"] / 1000.0)
+                    if word_end_s <= word_start_s:
+                        word_end_s = word_start_s + 0.1
+
+                    # Render transparent PNG for this time slice
+                    img = Image.new("RGBA", (probe_width, probe_height), (0, 0, 0, 0))
+                    draw = ImageDraw.Draw(img)
+
+                    # Build page text lines
+                    words = [w["text"].strip().upper() for w in page if w["text"].strip()]
+                    if not words:
+                        continue
+
+                    # Split into lines
+                    if max_lines >= 2 and len(words) >= 4:
+                        mid = len(words) // 2
+                        lines = [" ".join(words[:mid]), " ".join(words[mid:])]
+                    else:
+                        lines = [" ".join(words)]
+
+                    # Calculate line positions
+                    line_height = scaled_font_size * 1.3
+                    total_text_height = line_height * len(lines)
+                    base_y = int(probe_height * y_ratio) - int(total_text_height / 2)
+
+                    # Find which word index we're highlighting
+                    highlighted_word = page[word_idx]["text"].strip().upper()
+
+                    for line_idx, line in enumerate(lines):
+                        line_y = base_y + int(line_idx * line_height)
+
+                        # Calculate text width for centering
+                        try:
+                            bbox = font.getbbox(line)
+                            text_width = bbox[2] - bbox[0]
+                        except Exception:
+                            text_width = len(line) * scaled_font_size * 0.6
+                        line_x = (probe_width - text_width) // 2
+
+                        # Draw word by word so we can highlight the current one
+                        x_cursor = line_x
+                        for word in line.split(" "):
+                            if not word:
+                                continue
+                            # Determine color
+                            color = highlight_rgb if word == highlighted_word else primary_rgb
+
+                            # Draw stroke (outline)
+                            for dx in range(-stroke_width, stroke_width + 1):
+                                for dy in range(-stroke_width, stroke_width + 1):
+                                    if dx * dx + dy * dy <= stroke_width * stroke_width:
+                                        draw.text((x_cursor + dx, line_y + dy), word,
+                                                  font=font, fill=(*stroke_rgb, 255))
+
+                            # Draw text
+                            draw.text((x_cursor, line_y), word, font=font, fill=(*color, 255))
+
+                            # Advance cursor
+                            try:
+                                wbbox = font.getbbox(word + " ")
+                                x_cursor += wbbox[2] - wbbox[0]
+                            except Exception:
+                                x_cursor += int(len(word) * scaled_font_size * 0.6) + scaled_font_size // 4
+
+                    # Save PNG
+                    png_path = Path(tmpdir) / f"cap_{page_idx:03d}_{word_idx:03d}.png"
+                    img.save(str(png_path), "PNG")
+                    overlay_segments.append((str(png_path), word_start_s, word_end_s))
+
+            if not overlay_segments:
+                print("[CAPTION BURN] No overlay segments generated")
+                return None
+
+            print(f"[CAPTION BURN] Rendered {len(overlay_segments)} caption overlay frames")
+
+            # 7. Build ffmpeg command with overlay chain
+            # Strategy: use multiple -i for each PNG, chain overlays with enable
+            output_path = Path(tmpdir) / "output.mp4"
+
+            # For many segments, batch them: max ~30 overlays to avoid filter complexity
+            MAX_OVERLAYS = 30
+            if len(overlay_segments) > MAX_OVERLAYS:
+                # Merge adjacent segments with the same page
+                step = max(1, len(overlay_segments) // MAX_OVERLAYS)
+                merged = []
+                for i in range(0, len(overlay_segments), step):
+                    batch = overlay_segments[i:i + step]
+                    # Use the middle segment's PNG
+                    mid_seg = batch[len(batch) // 2]
+                    merged.append((mid_seg[0], batch[0][1], batch[-1][2]))
+                overlay_segments = merged
+
+            inputs = ["-i", str(video_path)]
+            for seg_path, _, _ in overlay_segments:
+                inputs.extend(["-i", seg_path])
+
+            # Build filter graph
+            filter_parts = []
+            prev_label = "[0:v]"
+            for idx, (_, start_s, end_s) in enumerate(overlay_segments):
+                input_label = f"[{idx + 1}:v]"
+                out_label = f"[v{idx}]"
+                enable = f"between(t,{start_s:.3f},{end_s:.3f})"
+                filter_parts.append(
+                    f"{prev_label}{input_label}overlay=0:0:enable='{enable}'{out_label}"
+                )
+                prev_label = out_label
+
+            filter_graph = ";".join(filter_parts)
+
+            cmd = ["ffmpeg"] + inputs + [
+                "-filter_complex", filter_graph,
+                "-map", prev_label.strip("[]"),
+                "-map", "0:a?",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                "-c:a", "copy",
+                "-y", str(output_path),
+            ]
+            print(f"[CAPTION BURN] Running ffmpeg ({len(overlay_segments)} overlays)...")
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            if result.returncode != 0:
+                print(f"[CAPTION BURN] ffmpeg failed: {result.stderr[:800]}")
+                return None
+
+            print(f"[CAPTION BURN] ffmpeg done, output {output_path.stat().st_size} bytes")
+
+            # 8. Upload to Supabase
+            timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
+            storage_filename = f"captioned_{job_id[:8]}_{timestamp}.mp4"
+            try:
+                sb = get_supabase()
+                with open(output_path, "rb") as f:
+                    sb.storage.from_("generated-videos").upload(
+                        storage_filename, f,
+                        file_options={"content-type": "video/mp4"},
+                    )
+                public_url = sb.storage.from_("generated-videos").get_public_url(storage_filename)
+                print(f"[CAPTION BURN] Uploaded: {public_url}")
+                return public_url
+            except Exception as upload_err:
+                print(f"[CAPTION BURN] Upload failed: {upload_err}")
+                return None
+
+        except Exception as e:
+            print(f"[CAPTION BURN] Error: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+
 class CaptionVideoRequest(BaseModel):
     style: Optional[str] = "hormozi"
     placement: Optional[str] = "middle"
@@ -908,7 +1308,36 @@ def caption_video(job_id: str, body: CaptionVideoRequest = CaptionVideoRequest()
         else:
             update_job(job_id, {"editor_state": editor_state})
 
-        print(f"[CAPTION] Done: {len(captions)} words, style={style_name}, placement={placement}")
+        print(f"[CAPTION] Editor state saved: {len(captions)} words, style={style_name}, placement={placement}")
+
+        # ── ffmpeg burn-in: produce a fast captioned video for Videos tab ──
+        burned_url = None
+        try:
+            burned_url = _ffmpeg_burn_captions(
+                video_url=video_url,
+                captions=captions,
+                style_props=style_props,
+                placement=placement,
+                job_id=job_id,
+            )
+            if burned_url:
+                # Persist as final_video_url so Videos tab shows captioned version
+                if table == "clone_video_jobs":
+                    try:
+                        sb = get_supabase()
+                        sb.table("clone_video_jobs").update(
+                            {"final_video_url": burned_url}
+                        ).eq("id", job_id).execute()
+                    except Exception:
+                        pass
+                else:
+                    update_job(job_id, {"final_video_url": burned_url})
+                print(f"[CAPTION] ffmpeg burn complete — final_video_url updated")
+            else:
+                print(f"[CAPTION] ffmpeg burn failed — video URL not updated (editor captions still work)")
+        except Exception as burn_err:
+            print(f"[CAPTION] ffmpeg burn error (non-fatal): {burn_err}")
+
         return {
             "status": "ok",
             "word_count": len(captions),
@@ -916,6 +1345,7 @@ def caption_video(job_id: str, body: CaptionVideoRequest = CaptionVideoRequest()
             "style": style_name,
             "placement": placement,
             "stroke_mode": stroke_mode,
+            "burned_video_url": burned_url,
         }
 
     except HTTPException:

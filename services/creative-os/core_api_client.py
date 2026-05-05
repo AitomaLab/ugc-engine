@@ -460,7 +460,7 @@ class CoreAPIClient:
             payload["shadow_offset_x"] = shadow_offset_x
         if shadow_offset_y is not None:
             payload["shadow_offset_y"] = shadow_offset_y
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=300.0) as client:
             resp = await client.request(
                 "POST",
                 f"{CORE_API_URL}/api/editor/caption-video/{job_id}",
