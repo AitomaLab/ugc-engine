@@ -2022,8 +2022,33 @@ async def _run_ugc_clip_pipeline(
         # ── Step 4: Generate composite image or use reference ──
         has_reference_image = bool(data.reference_image_url)
 
+        # KEY LOGIC: When the user uploaded a product image (reference_image_url)
+        # AND selected an influencer (but no registered product), we should
+        # generate a NanoBanana composite (influencer holding the uploaded product)
+        # rather than sending the raw upload directly to Veo.
+        uploaded_product_for_composite = (
+            has_reference_image
+            and influencer
+            and not data.product_id  # No registered product — the upload IS the product
+        )
+
+        if uploaded_product_for_composite:
+            # Treat the uploaded image as a product image for NanoBanana compositing
+            print(f"[UGC Clip] Uploaded product image detected + influencer selected — "
+                  f"will generate NanoBanana composite")
+            # Synthesize a minimal product dict from the upload
+            if not product:
+                product = {
+                    "name": "uploaded product",
+                    "image_url": data.reference_image_url,
+                }
+            else:
+                product["image_url"] = data.reference_image_url
+            # Clear reference_image_url so the composite path runs
+            has_reference_image = False
+
         if has_reference_image:
-            # User selected a pre-generated image → skip NanoBanana
+            # User selected a pre-generated image with NO influencer → use directly
             composite_url = data.reference_image_url
             print(f"[UGC Clip] Using pre-generated reference image: {composite_url[:80]}...")
             await _update_video_job_via_api(token, project_id, job_id, {
