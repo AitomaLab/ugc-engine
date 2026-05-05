@@ -1127,19 +1127,46 @@ def caption_video(job_id: str, body: CaptionVideoRequest = CaptionVideoRequest()
         metadata = job.get("metadata") or {}
         if not isinstance(metadata, dict):
             metadata = {}
-        original_url = metadata.get("original_video_url")
         current_url = job.get("final_video_url")
         if not current_url:
             raise HTTPException(status_code=400, detail="Job has no final video URL")
 
-        if original_url:
-            # Re-captioning: use the clean original
-            video_url = original_url
-            print(f"[CAPTION] Using original (pre-caption) video for burn-in")
-        else:
-            # First captioning: save the original URL before we overwrite it
-            video_url = current_url
-            metadata["original_video_url"] = current_url
+        # Strategy: find the true original URL from multiple sources
+        video_url = None
+
+        # Source 1: Editor state → video asset remoteUrl (always the original)
+        editor_state_raw = job.get("editor_state")
+        if editor_state_raw:
+            es = editor_state_raw if isinstance(editor_state_raw, dict) else json.loads(editor_state_raw)
+            for _aid, asset in (es.get("assets") or {}).items():
+                if asset.get("type") == "video" and asset.get("remoteUrl"):
+                    candidate = asset["remoteUrl"]
+                    if "captioned_" not in candidate:
+                        video_url = candidate
+                        print(f"[CAPTION] Using original video from editor state asset")
+                        break
+
+        # Source 2: metadata.original_video_url (if not a captioned URL)
+        if not video_url:
+            stored_original = metadata.get("original_video_url")
+            if stored_original and "captioned_" not in stored_original:
+                video_url = stored_original
+                print(f"[CAPTION] Using original_video_url from metadata")
+
+        # Source 3: current final_video_url (only if it's not a captioned URL)
+        if not video_url:
+            if "captioned_" not in current_url:
+                video_url = current_url
+                print(f"[CAPTION] Using current final_video_url (not yet captioned)")
+
+        if not video_url:
+            # All URLs are captioned — this shouldn't happen, but fall back
+            video_url = metadata.get("original_video_url") or current_url
+            print(f"[CAPTION] WARNING: Could not find original uncaptioned video, using: {video_url[:80]}")
+
+        # Persist the original URL for future re-captioning
+        if "original_video_url" not in metadata or "captioned_" in (metadata.get("original_video_url") or ""):
+            metadata["original_video_url"] = video_url
             if table == "clone_video_jobs":
                 try:
                     sb = get_supabase()
@@ -1150,7 +1177,7 @@ def caption_video(job_id: str, body: CaptionVideoRequest = CaptionVideoRequest()
                     pass
             else:
                 update_job(job_id, {"metadata": metadata})
-            print(f"[CAPTION] Saved original_video_url to metadata for future re-captioning")
+            print(f"[CAPTION] Saved clean original_video_url to metadata")
 
         # ── Step 1: Get or create transcription ──────────────────────
         # For voiceover_on_video jobs the mix drops source audio volume which
