@@ -951,25 +951,15 @@ async def _generate_kling_video(
     """
 
     # 1. Create job record immediately so frontend can poll.
-    # The video_jobs FK requires a real influencer_id, so fall back to the
-    # first available one purely to satisfy the constraint. The downstream
-    # pipeline gates influencer_image_url on the ORIGINAL data.influencer_id
-    # below, so a random persona's image never leaks into the rendered scene.
-    influencer_id = data.influencer_id
-    if not influencer_id:
-        try:
-            influencers = await client.list_influencers()
-            influencer_id = influencers[0]["id"] if influencers else None
-        except Exception:
-            pass
-    if not influencer_id:
-        influencer_id = "00000000-0000-0000-0000-000000000000"
+    # Cinematic clips do NOT require an influencer — the pipeline works
+    # with just a product/reference image. Only include influencer_id when
+    # the user explicitly selected one.
+    influencer_id = data.influencer_id or None
 
     product_type = "physical" if data.product_id else "digital"
 
     try:
-        job = await client.create_job({
-            "influencer_id": influencer_id,
+        job_payload = {
             "product_id": data.product_id,
             "product_type": product_type,
             "model_api": "kling-3.0/video",
@@ -979,7 +969,10 @@ async def _generate_kling_video(
             "subtitles_enabled": False,
             "music_enabled": False,
             "hook": data.prompt[:500] if data.prompt else "",
-        })
+        }
+        if influencer_id:
+            job_payload["influencer_id"] = influencer_id
+        job = await client.create_job(job_payload)
         job_id = job.get("id") or job.get("job", {}).get("id")
         credit_cost = int(job.get("credits_deducted") or 0)
         print(f"[Creative OS] Cinematic job created: {job_id} (cost={credit_cost})")
