@@ -2169,14 +2169,17 @@ async def _run_ugc_clip_pipeline(
                     )
                 else:
                     nano_prompt = (
-                        f"action: character holding the product up close to the camera with an excited expression, "
-                        f"casually presenting the product\n"
+                        f"action: character holding the product naturally at chest level with an excited expression, "
+                        f"casually presenting the product to the camera\n"
                         f"anatomy: exactly one person with exactly two arms and two hands, "
                         f"one hand explicitly holds the product, other arm rests naturally TO THE PERSON'S SIDE\n"
                         f"character: infer exact appearance from reference image, preserve facial features and skin tone, "
                         f"detailed realistic complexion with fine natural imperfections, unretouched raw look\n"
                         f"product: the {visual_desc_str} is clearly visible, "
-                        f"preserve all visible text and logos exactly as in reference image\n"
+                        f"preserve all visible text and logos exactly as in reference image. "
+                        f"CRITICAL: the product MUST be sized accurately to its real-world proportions relative to the person's hand and body — "
+                        f"a small item (lipstick, banana, can) fits in one hand, a medium item (bottle, box) is held with one or two hands, "
+                        f"a large item (laptop, bag) is held with both hands. NEVER enlarge the product beyond its natural size\n"
                         f"setting: {ctx['setting']}, natural lighting\n"
                         f"camera: amateur iPhone selfie, slightly uneven framing\n"
                         f"style: candid UGC look, no filters, photorealistic, high detail, "
@@ -2185,7 +2188,8 @@ async def _run_ugc_clip_pipeline(
                         f"no third arm, no third hand, no extra limbs, no extra fingers, "
                         f"no studio backdrop, no geometric distortion, "
                         f"no mutated hands, no floating limbs, disconnected limbs, mutation, "
-                        f"no arm crossing screen, no unnatural arm position"
+                        f"no arm crossing screen, no unnatural arm position, "
+                        f"no oversized product, no giant product, no miniature person"
                     )
 
                 scene = {
@@ -2269,12 +2273,19 @@ async def _run_ugc_clip_pipeline(
                 f"emotion: {energy_str}, genuine excitement\n"
                 f"voice_type: clear confident pronunciation, casual, {tone_str}, conversational {accent_str}, consistent medium-fast pacing\n"
                 f"style: raw UGC, candid, not polished\n"
+                f"motion_constraint: all movements must be slow, natural, and physically realistic like a real human — "
+                f"no instant or teleporting actions, no objects appearing or disappearing, "
+                f"if the character holds a product they keep holding it steadily throughout, "
+                f"no phantom biting or eating motions unless the product is visibly at the mouth, "
+                f"hands and arms move at natural human speed with realistic inertia\n"
                 f"speech_constraint: speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, "
                 f"absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, "
                 f"speaking pace is consistent, MUST finish speaking all words entirely 1 second before the end of the video, "
                 f"character remains completely silent and just smiles warmly during the final 1-2 seconds\n"
                 f"negative: no auditory hallucinations, no filler words, no repeated words, no stuttering, no repeated syllables, "
-                f"no artificial smoothing, no plastic CGI appearance, no extra limbs, no extra fingers, no mutated hands"
+                f"no artificial smoothing, no plastic CGI appearance, no extra limbs, no extra fingers, no mutated hands, "
+                f"no teleporting objects, no instant actions, no phantom eating, no objects appearing from nowhere, "
+                f"no oversized products, no physically impossible movements"
             )
         else:
             # No influencer selected — build prompt from user's input + reference image context
