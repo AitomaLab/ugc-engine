@@ -276,6 +276,8 @@ BEFORE following ANY generation workflow below, check whether the user attached 
 4. The frontend renders two buttons from this marker: "Save as Product/Model" and "Generate Now".
    - If the user clicks "Save as Product" or "Save as Model", the frontend opens the product/influencer creation modal pre-populated with the image. After saving, the user replies with the new asset's id — use that `product_id` or `influencer_id` in your generation call, and then automatically call `analyze_product_image(product_id)` or `generate_identity(image_url)` to enrich it with visual metadata.
    - If the user clicks "Generate Now" or says to proceed without saving, use the raw image as `reference_image_url` in the generation call.
+5. If the user asks you to save the image as a product directly in chat (without clicking a button), call `create_product(name="...", image_url="<the_upload_url>", product_type="physical")` — you MUST pass the `image_url` from the upload ref. The image_url is available in the preface for that upload. After creation, auto-call `analyze_product_image(product_id)`.
+6. If the user asks to update an existing product's image, call `update_product(product_id="...", image_url="<new_url>")`.
 You MUST do this check BEFORE starting any generation. Do NOT skip it.
 
 **Full UGC video (15-30s)**: list_project_assets → check if the user supplied their own script/dialogue text.
@@ -363,7 +365,7 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
    - `generate_video` → for Seedance modes (seedance_2_ugc / seedance_2_cinematic / seedance_2_product) pass EVERY relevant upload URL via `reference_image_urls: [url1, url2, ...]` — Seedance 2.0 accepts up to 4 references and blends them (e.g. product + model). For Veo/Kling modes (ugc, cinematic_video) pass the most-relevant single URL via `reference_image_url` (first-frame / hero shot) since those models only accept one.
    Only fall back to `product_id` / `influencer_id` when the user @-mentioned an existing DB asset; for raw uploads (upload_* tags) those IDs do not exist.
    IMPORTANT: `reference_image_urls` / `reference_video_urls` are ONLY for `upload_*` tags. For @-mentioned DB entities (products / influencers / app clips), forward the IDs (`product_id`, `influencer_id`, `app_clip_id`) and NOTHING else — the pipeline resolves every image / video URL server-side. Mixing IDs with explicit URLs causes duplicate references and face-swap artifacts.
-9. UGC mode does NOT require a registered product. If the user provides uploaded images (upload_* refs), call `generate_image(mode="ugc", reference_image_urls=[...])` directly — the pipeline treats the first upload as the product and any additional upload as the character/influencer. Do not suggest switching to iPhone look or ask the user to create a product first when uploads are already present. Only create or request a registered product when the user explicitly asks to save the asset for future reuse.
+9. UGC mode does NOT require a registered product. If the user provides uploaded images (upload_* refs), generation can proceed with just the raw image URLs. However, you MUST FIRST follow the **MANDATORY PRE-FLIGHT** check above: offer the user the option to save the uploaded image as a product/model (via `[[SAVE_OR_GENERATE:...]]` marker) before starting any generation. If the user clicks "Generate Now" or says to proceed without saving, call `generate_image(mode="ugc", reference_image_urls=[...])` directly using the raw URLs.
 10. ASPECT RATIO — MANDATORY before gated generation. Before calling `generate_image` or `generate_video` with `confirmed=true`, you MUST know the aspect ratio. If the user's brief already specifies it ("vertical", "9:16", "horizontal", "16:9", "square", "1:1", "for TikTok", "for YouTube", "for Instagram feed", "landscape", "portrait"), use it directly. For images, '1:1' is available for Instagram feed posts. Otherwise you MUST ask the user BEFORE presenting the cost confirmation: ask the question in one short sentence, then append the literal marker `[[ASPECT_BUTTONS]]` on the last line of your message. The frontend detects this marker and renders clickable Vertical / Horizontal buttons for the user. When the user replies with their choice, THEN show the cost confirmation, THEN call the tool with `confirmed=true` and `aspect_ratio="9:16"` or `"16:9"` (or `"1:1"` for images). Never skip this step for gated generation. Do NOT include the marker when the aspect is already known.
 10b. LANGUAGE — for video clips (`generate_video`), pass `language="es"` when the user requests Spanish / Latin dialogue. Default is English. Seedance 2.0 modes have full bilingual EN/ES support.
 11. NO RANDOM INFLUENCER / PRODUCT — for cinematic / scene / b-roll prompts that do not mention a specific person or product (e.g. "rooftop chase", "sunset over a city", "close-up of a coffee cup"), you MUST call `generate_video` WITHOUT `influencer_id` and WITHOUT `product_id`. Never auto-attach an influencer or product "to be safe" — the pipeline will generate the scene from the prompt alone, which is what the user wants. Only pass `influencer_id` / `product_id` when the user @-mentioned that asset or explicitly named them in the brief.
@@ -952,8 +954,8 @@ def _custom_tools_for_agent() -> list[dict]:
             "type": "custom",
             "name": "create_product",
             "description": (
-                "Create a new product (physical or digital). After creation you can call "
-                "analyze_product_image / analyze_digital_product to enrich it with marketing copy."
+                "Create a new product (physical or digital). Pass image_url to attach the product photo. "
+                "After creation you can call analyze_product_image to enrich it with marketing copy."
             ),
             "input_schema": {
                 "type": "object",
@@ -961,11 +963,31 @@ def _custom_tools_for_agent() -> list[dict]:
                     "name": {"type": "string"},
                     "description": {"type": "string"},
                     "product_type": {"type": "string", "enum": ["physical", "digital"]},
-                    "image_url": {"type": "string"},
+                    "image_url": {"type": "string", "description": "URL of the product image (e.g. from an upload_xxx ref)"},
                     "website_url": {"type": "string"},
                     "price": {"type": "string"},
                 },
                 "required": ["name"],
+            },
+        },
+        {
+            "type": "custom",
+            "name": "update_product",
+            "description": (
+                "Update an existing product's fields (name, image_url, description, etc.). "
+                "Use this to change a product's image or other metadata after creation."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "product_id": {"type": "string", "description": "ID of the product to update"},
+                    "name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "image_url": {"type": "string", "description": "New image URL for the product"},
+                    "website_url": {"type": "string"},
+                    "price": {"type": "string"},
+                },
+                "required": ["product_id"],
             },
         },
         {
@@ -2255,10 +2277,30 @@ async def _tool_create_product(ctx: ToolContext, **kwargs: Any) -> str:
     if not kwargs.get("name"):
         return json.dumps({"error": "name is required"})
     payload = {k: v for k, v in kwargs.items() if v is not None}
+    print(f"[Agent Tool] create_product called with: {payload}")
     try:
         result = await ctx.core().create_product(payload)
+        print(f"[Agent Tool] create_product result: {result}")
     except Exception as e:
+        print(f"[Agent Tool] create_product FAILED: {e}")
         return json.dumps({"error": f"create_product failed: {e}"})
+    return json.dumps({"product": result})
+
+
+async def _tool_update_product(ctx: ToolContext, **kwargs: Any) -> str:
+    pid = kwargs.get("product_id")
+    if not pid:
+        return json.dumps({"error": "product_id is required"})
+    payload = {k: v for k, v in kwargs.items() if v is not None and k != "product_id"}
+    if not payload:
+        return json.dumps({"error": "No fields to update"})
+    print(f"[Agent Tool] update_product called: product_id={pid}, payload={payload}")
+    try:
+        result = await ctx.core().update_product(pid, payload)
+        print(f"[Agent Tool] update_product result: {result}")
+    except Exception as e:
+        print(f"[Agent Tool] update_product FAILED: {e}")
+        return json.dumps({"error": f"update_product failed: {e}"})
     return json.dumps({"product": result})
 
 
@@ -4526,6 +4568,7 @@ TOOL_DISPATCH: dict[str, Callable[..., Awaitable[str]]] = {
     "create_project": _tool_create_project,
     "create_influencer": _tool_create_influencer,
     "create_product": _tool_create_product,
+    "update_product": _tool_update_product,
     "analyze_product_image": _tool_analyze_product_image,
     "analyze_digital_product": _tool_analyze_digital_product,
     "generate_scripts": _tool_generate_scripts,

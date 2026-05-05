@@ -369,6 +369,9 @@ class CoreAPIClient:
     async def create_product(self, data: dict) -> dict:
         return await self._request("POST", "/api/products", json=data)
 
+    async def update_product(self, product_id: str, data: dict) -> dict:
+        return await self._request("PUT", f"/api/products/{product_id}", json=data)
+
     async def analyze_product_image(self, product_id: str) -> dict:
         return await self._request(
             "POST", "/api/products/analyze",
