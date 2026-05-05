@@ -2022,21 +2022,27 @@ async def _run_ugc_clip_pipeline(
         # ── Step 4: Generate composite image or use reference ──
         has_reference_image = bool(data.reference_image_url)
 
-        # KEY LOGIC: When the user uploaded a product image (reference_image_url)
-        # AND selected an influencer (but no registered product), we should
-        # generate a NanoBanana composite (influencer holding the uploaded product)
-        # rather than sending the raw upload directly to Veo.
+        # KEY LOGIC: When the user uploaded an image (reference_image_url)
+        # AND has either an influencer or product (but not both from DB),
+        # use the uploaded image to fill the missing role for NanoBanana compositing.
+        #
+        # Case A: upload + influencer (no product) → upload = product image
+        # Case B: upload + product (no influencer) → upload = influencer/character image
         uploaded_product_for_composite = (
             has_reference_image
             and influencer
             and not data.product_id  # No registered product — the upload IS the product
         )
+        uploaded_influencer_for_composite = (
+            has_reference_image
+            and product
+            and product.get("image_url")
+            and not influencer  # No registered influencer — the upload IS the character
+        )
 
         if uploaded_product_for_composite:
             # Treat the uploaded image as a product image for NanoBanana compositing
-            print(f"[UGC Clip] Uploaded product image detected + influencer selected — "
-                  f"will generate NanoBanana composite")
-            # Synthesize a minimal product dict from the upload
+            print(f"[UGC Clip] Uploaded product image + influencer selected → NanoBanana composite")
             if not product:
                 product = {
                     "name": "uploaded product",
@@ -2044,7 +2050,23 @@ async def _run_ugc_clip_pipeline(
                 }
             else:
                 product["image_url"] = data.reference_image_url
-            # Clear reference_image_url so the composite path runs
+            has_reference_image = False
+
+        elif uploaded_influencer_for_composite:
+            # Treat the uploaded image as an influencer/character for NanoBanana compositing
+            print(f"[UGC Clip] Uploaded character image + product selected → NanoBanana composite")
+            influencer = {
+                "name": "uploaded character",
+                "image_url": data.reference_image_url,
+                "gender": "Female",
+                "age": "25-year-old",
+                "description": "casual style",
+                "setting": "natural environment",
+                "accent": "neutral English",
+                "tone": "Enthusiastic",
+                "energy_level": "High",
+            }
+            user_selected_influencer = True
             has_reference_image = False
 
         if has_reference_image:
