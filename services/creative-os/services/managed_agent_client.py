@@ -284,12 +284,13 @@ You MUST do this check BEFORE starting any generation. Do NOT skip it.
 **Full UGC video (15-30s)**: list_project_assets → check if the user supplied their own script/dialogue text.
   - **User provided script**: When the user wrote actual dialogue lines (hook, body, CTA, or any spoken text), pass ALL of it verbatim as the `hook` argument to generate_video or create_ugc_video. The `hook` field carries the user's EXACT spoken words — NEVER paraphrase, rewrite, or embellish the user's dialogue. Put your visual/action direction in the `prompt` field instead. The pipeline will use `hook` as-is for the character's speech and enhance only the visual direction from `prompt`.
   - **Script length validation (MANDATORY — ALWAYS REPORT)**: Before generating, ALWAYS count the words in the user's script and report the fit. Use ~2.5 words per second as a guideline:
-    - 5s clip → ~12 words max
-    - 8s clip → ~20 words max
-    - 10s clip → ~25 words max
-    - 15s clip → ~37 words max
-    ALWAYS include a line like: "Your script is ~X words — [fits well / is a bit long / is too short] for a [duration]s clip (~Y words ideal)."
-    If the script is too long: suggest 2-3 trimmed alternatives. If too short for a long clip: suggest extending it or reducing clip length. If it fits: confirm it's good and proceed. Do NOT skip this feedback — the user needs to see that the script was validated before generation starts.
+    - 5s clip → ~12 words ideal
+    - 8s clip → ~20 words ideal
+    - 10s clip → ~25 words ideal
+    - 15s clip → ~37 words ideal
+    ALWAYS include a line like: "Your script is ~X words — [fits well / is too long / is too short] for a [duration]s clip (~Y words ideal)."
+    If the script does NOT fit (too short OR too long): "keep as-is" is NEVER an option — a mismatched script causes the AI to hallucinate filler dialogue, rush words, or leave dead silence. You MUST suggest 2-3 alternative scripts that expand or trim the user's original words to hit the ideal word count for the chosen clip duration. Every suggestion must be close to the ideal word count. The user must pick one or provide a new script before you proceed.
+    If the script fits well: confirm it's good and proceed directly.
   - **No script provided, but clear direction**: If the user gave a creative brief (e.g. "make a video about the health benefits") but no actual dialogue, call `generate_scripts(product_id, duration, influencer_id, context=<user's brief>)` FIRST to produce a script, then pass the generated hook + scene dialogues (newline-joined) as the `hook` argument.
   - **No script AND no clear direction**: If the user's request is vague about what the character should say (e.g. "make a 30s UGC video for this product"), you MUST ask before generating: "What should [influencer name] say in the video? Do you have a specific script, or should I write one based on the product?" End your turn and wait for the answer. Do NOT silently generate a random script — the user needs to guide the content.
   Then call create_ugc_video (gated). Wait for completion, then confirm in plain text.
