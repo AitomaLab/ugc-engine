@@ -3111,16 +3111,24 @@ async def _tool_caption_video(ctx: ToolContext, **kwargs: Any) -> str:
         if k in kwargs and kwargs[k] is not None
     }
 
+    print(f"[caption_video] ── Phase 1: Whisper transcription + inject captions ──")
+    print(f"[caption_video] job_id={job_id}, style={style}, placement={placement}, extra={extra}")
+
     # ── Phase 1: inject captions into editor_state ───────────────────
     try:
         caption_result = await ctx.core().caption_video(job_id, style=style, placement=placement, **extra)
+        print(f"[caption_video] Phase 1 DONE: {caption_result}")
     except Exception as e:
+        print(f"[caption_video] Phase 1 FAILED: {e}")
         return json.dumps({"error": f"caption_video failed: {e}"})
 
     # ── Phase 2: re-render so final_video_url shows the captions ─────
+    print(f"[caption_video] ── Phase 2: Re-render with burned-in captions ──")
     try:
         editor_state = await ctx.core().get_editor_state(job_id)
+        print(f"[caption_video] Loaded editor_state ({len(json.dumps(editor_state))} bytes)")
     except Exception as e:
+        print(f"[caption_video] editor_state load FAILED: {e}")
         return json.dumps({
             **caption_result,
             "status": "captions_saved_render_skipped",
@@ -3131,7 +3139,9 @@ async def _tool_caption_video(ctx: ToolContext, **kwargs: Any) -> str:
         render_dispatch = await ctx.core().trigger_editor_render(
             job_id=job_id, editor_state=editor_state, codec="h264",
         )
+        print(f"[caption_video] Render dispatched: {render_dispatch}")
     except Exception as e:
+        print(f"[caption_video] Render dispatch FAILED: {e}")
         return json.dumps({
             **caption_result,
             "status": "captions_saved_render_skipped",
@@ -3140,6 +3150,7 @@ async def _tool_caption_video(ctx: ToolContext, **kwargs: Any) -> str:
 
     render_id = render_dispatch.get("renderId")
     if not render_id:
+        print(f"[caption_video] No renderId in response — skipping render")
         return json.dumps({
             **caption_result,
             "status": "captions_saved_render_skipped",
@@ -3147,6 +3158,7 @@ async def _tool_caption_video(ctx: ToolContext, **kwargs: Any) -> str:
             "raw": render_dispatch,
         })
 
+    print(f"[caption_video] Polling render {render_id} (max 600s, every 6s)...")
     waited = 0
     max_wait_s = 600
     poll_interval_s = 6
@@ -3157,11 +3169,14 @@ async def _tool_caption_video(ctx: ToolContext, **kwargs: Any) -> str:
         try:
             progress_payload = await ctx.core().get_editor_render_progress(render_id)
         except Exception as e:
-            print(f"[caption_video] render poll error (retrying): {e}")
+            print(f"[caption_video] render poll error @{waited}s (retrying): {e}")
             continue
         ptype = progress_payload.get("type")
+        progress_pct = progress_payload.get("progress", "?")
+        print(f"[caption_video] poll @{waited}s: type={ptype}, progress={progress_pct}")
         if ptype == "done":
             new_url = progress_payload.get("outputFile")
+            print(f"[caption_video] Render DONE — new URL: {new_url}")
             if new_url:
                 try:
                     from routers.generate_video import _update_video_job_via_api
@@ -3179,6 +3194,7 @@ async def _tool_caption_video(ctx: ToolContext, **kwargs: Any) -> str:
                 "video_url": new_url,
             })
         if ptype == "error":
+            print(f"[caption_video] Render FAILED: {progress_payload.get('error')}")
             return json.dumps({
                 **caption_result,
                 "status": "captions_saved_render_failed",
@@ -3186,6 +3202,7 @@ async def _tool_caption_video(ctx: ToolContext, **kwargs: Any) -> str:
                 "error": progress_payload.get("error", "render failed"),
             })
 
+    print(f"[caption_video] Render TIMED OUT after {max_wait_s}s — returning partial result")
     return json.dumps({
         **caption_result,
         "status": "captions_saved_render_still_processing",
