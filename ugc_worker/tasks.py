@@ -152,51 +152,10 @@ def generate_ugc_video(self, job_id: str):
             else:
                 print(f"      ⚠️ App Clip ID {clip_id} not found in database!")
         else:
-            # Auto-select: match influencer category to app clip category
-            import random
-            inf_style = (influencer.get("style") or "").lower().strip()
-            print(f"      🔄 Auto-selecting App Clip for category: '{inf_style}'")
-            all_clips = sb.table("app_clips").select("*").execute().data or []
-            
-            # Match by category or description field containing the influencer style
-            matching = [
-                c for c in all_clips
-                if inf_style and (
-                    inf_style in (c.get("category") or "").lower()
-                    or inf_style in (c.get("description") or "").lower()
-                    or inf_style in (c.get("name") or "").lower()
-                )
-            ]
-            
-            selected = random.choice(matching) if matching else (random.choice(all_clips) if all_clips else None)
-            
-            if selected:
-                app_clip_dict = {
-                    "name": selected["name"],
-                    "description": selected.get("description", ""),
-                    "video_url": selected.get("video_url", ""),
-                    "duration": selected.get("duration_seconds", 4),
-                    "first_frame_url": selected.get("first_frame_url", ""),
-                    "product_id": selected.get("product_id", ""),
-                }
-                match_type = "category match" if matching else "random fallback"
-                print(f"      ✅ Auto-selected: {selected['name']} ({match_type})")
-
-                # Ensure first_frame_url for auto-selected clips too
-                if app_clip_dict["video_url"] and not app_clip_dict["first_frame_url"]:
-                    print(f"      🎞️ first_frame_url missing — extracting synchronously...")
-                    try:
-                        from ugc_backend.frame_extractor import extract_first_frame
-                        from ugc_db.db_manager import update_app_clip
-                        frame_url = extract_first_frame(app_clip_dict["video_url"])
-                        if frame_url:
-                            app_clip_dict["first_frame_url"] = frame_url
-                            update_app_clip(selected["id"], {"first_frame_url": frame_url})
-                            print(f"      ✅ First frame extracted: {frame_url[:60]}...")
-                    except Exception as e:
-                        print(f"      ⚠️ Sync frame extraction failed: {e}")
-            else:
-                print("      ⚠️ No App Clips available for auto-selection!")
+            # No app_clip_id specified — skip app clip processing.
+            # Random auto-selection was removed (deprecated bulk campaign behavior).
+            # The agent or frontend must explicitly set app_clip_id if needed.
+            print("      ℹ️ No app_clip_id specified — skipping app clip")
 
         # Fetch product if linked (any product type — physical or digital)
         product_dict = None

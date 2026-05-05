@@ -1177,37 +1177,23 @@ def api_create_job(
         if data.product_type == "physical" and not data.product_id:
             raise HTTPException(status_code=400, detail="product_id required for physical products")
 
-        # 3. Auto-Select Script if missing
+        # 3. Resolve script text from explicit script_id or hook
+        # NOTE: Random script auto-selection was removed — it was a deprecated
+        # bulk campaign behavior that overrode agent-provided scripts. The agent
+        # now handles script generation via generate_scripts() or passes the
+        # user's script directly as `hook`. If neither is provided, the worker
+        # falls back to a generic line ("Check this out!") which is intentional.
         script_text = ""
         if data.script_id:
             s = get_script(data.script_id)
             if s: script_text = s.get("text", "")
         elif data.hook:
             script_text = data.hook
-        else:
-            scripts = list_scripts()
-            if scripts:
-                s = random.choice(scripts)
-                data.script_id = s.get("id")
-                script_text = s.get("text", "")
 
-        # 4. Auto-Select App Clip if missing (for digital products)
-        if data.product_type == "digital" and not data.app_clip_id:
-            clips = list_app_clips()
-            if clips:
-                inf_style = ((inf or {}).get("style") or "").lower().strip()
-                matching_clips = [
-                    c for c in clips
-                    if inf_style and (
-                        inf_style in (c.get("category") or "").lower()
-                        or inf_style in (c.get("description") or "").lower()
-                        or inf_style in (c.get("name") or "").lower()
-                    )
-                ]
-                clip_pool = matching_clips if matching_clips else clips
-                if clip_pool:
-                    c = random.choice(clip_pool)
-                    data.app_clip_id = c.get("id")
+        # 4. App clip selection — DISABLED (deprecated bulk campaign behavior)
+        # Digital products now have user-selected clips via the agent panel.
+        # The agent or frontend must explicitly set app_clip_id if needed.
+        # Random auto-selection was injecting unexpected app clips into videos.
 
         # 5. Calculate Cost Estimate
         costs = cost_service.estimate_total_cost(

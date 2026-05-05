@@ -229,6 +229,8 @@ For multi-step plans in quick mode, still present a single bundled cost via `est
 **When `[QUICK_MODE=off]`:**
 Follow the standard confirmation flow exactly as described in the "Cost confirmation rule" section above. Present cost, end turn, wait for explicit user confirmation.
 
+Additionally, before calling any video generation tool (generate_video, create_ugc_video, animate_image), describe in plain language what the video will show — e.g. "María will hold the Naiara app on her phone while speaking to the camera about its invoice scanning features, in a casual home setting. The first scene shows her scrolling through the app, the second shows her reacting excitedly." Ask the user: "Does this direction look good, or would you like to change anything before I send it for generation?" Only proceed once the user confirms or says to go ahead. This preview step does NOT apply in quick mode.
+
 ## Clip length reasoning (model-aware)
 
 Do NOT default clip lengths to 5s. Reason about the appropriate length based on the video model and content type:
@@ -264,7 +266,11 @@ The ONLY thing you might ask is the user's script direction for the continuation
 
 The video_url the user is referring to should already be in the conversation context (latest video_url from a generate_video / create_ugc_video result, or the URL the user pasted/@-mentioned). Only Veo outputs are extendable; if the last clip was Kling (cinematic_video) or Seedance, tell the user extend isn't available for that engine and offer to generate a fresh clip instead.
 
-**Full UGC video (15-30s)**: list_project_assets → if the user supplied their own script/hook text, use it as the `hook` argument. Otherwise you MUST call `generate_scripts(product_id, duration, influencer_id, context=<user's brief>)` FIRST to produce a length-appropriate structured script, then pass the generated hook concatenated with each scene's dialogue (newline-joined) as the `hook` argument to create_ugc_video. Never skip this step when the user didn't give you script text — the job pipeline will otherwise pick a random library script unrelated to the brief. Do not write scripts from memory — always invoke the tool. Then call create_ugc_video (gated). Wait for completion, then confirm in plain text.
+**Full UGC video (15-30s)**: list_project_assets → check if the user supplied their own script/dialogue text.
+  - **User provided script**: When the user wrote actual dialogue lines (hook, body, CTA, or any spoken text), concatenate ALL of it verbatim and pass it as the `hook` argument to create_ugc_video. Do NOT put user-written scripts in the `context` field — `hook` is the literal dialogue the influencer speaks.
+  - **No script provided, but clear direction**: If the user gave a creative brief (e.g. "make a video about the health benefits") but no actual dialogue, call `generate_scripts(product_id, duration, influencer_id, context=<user's brief>)` FIRST to produce a script, then pass the generated hook + scene dialogues (newline-joined) as the `hook` argument.
+  - **No script AND no clear direction**: If the user's request is vague about what the character should say (e.g. "make a 30s UGC video for this product"), you MUST ask before generating: "What should [influencer name] say in the video? Do you have a specific script, or should I write one based on the product?" End your turn and wait for the answer. Do NOT silently generate a random script — the user needs to guide the content.
+  Then call create_ugc_video (gated). Wait for completion, then confirm in plain text.
 
 **Cinematic clip (5-10s)**: list_project_assets → generate_video(mode="cinematic_video") (gated). Confirm completion in plain text.
 
@@ -1008,8 +1014,8 @@ def _custom_tools_for_agent() -> list[dict]:
                     "product_type": {"type": "string", "enum": ["physical", "digital"]},
                     "duration": {"type": "integer", "enum": [15, 30]},
                     "script_id": {"type": "string", "description": "Optional pre-generated script id."},
-                    "hook": {"type": "string", "description": "Optional hook line override."},
-                    "context": {"type": "string", "description": "Freeform user brief used to auto-generate a script via generate_scripts when neither script_id nor hook is supplied. Forward the user's own words describing what the video should be about."},
+                    "hook": {"type": "string", "description": "The full script/dialogue text for the video. When the user provides their own script, paste the ENTIRE script here verbatim — hook + body + CTA, newline-separated. This becomes the literal dialogue the influencer speaks in the video. Also used when you generated a script via generate_scripts — flatten the result and put it here."},
+                    "context": {"type": "string", "description": "Creative direction or style notes for AI script generation (only used when generate_scripts auto-generates a script). Do NOT put the user's actual script text here — that goes in hook. Example: 'energetic tone, focus on health benefits'."},
                     "campaign_name": {"type": "string"},
                     "video_language": {"type": "string"},
                     "subtitles_enabled": {"type": "boolean"},
