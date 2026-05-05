@@ -19,6 +19,8 @@ import {
 import { CaptionStylePreviewCard } from '@/components/captions/CaptionStylePreviewCard';
 import { supabase } from '@/lib/supabaseClient';
 import { useTranslation } from '@/lib/i18n';
+import ProductModal from '@/components/ui/ProductModal';
+import { InfluencerModal } from '@/app/library/InfluencerModal';
 import { FEATURE_AGENTPANEL_EDITOR_ROUTING } from '@/editor/flags';
 import { classifyEditorAgentRoute } from '@/editor-agent/route-intent';
 
@@ -2518,11 +2520,25 @@ function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspec
     // historical turns they reflect the user's selection (filled vs. muted).
     const rawText = turn.text || '';
     const hasAspectMarker = !isUser && rawText.includes('[[ASPECT_BUTTONS]]');
-    const displayText = hasAspectMarker
-        ? rawText.replace(/\s*\[\[ASPECT_BUTTONS\]\]\s*/g, '').trim()
-        : rawText;
+
+    // Detect [[SAVE_OR_GENERATE:image_url=...&type=product|influencer]] marker
+    const saveOrGenMatch = !isUser ? rawText.match(/\[\[SAVE_OR_GENERATE:image_url=([^&]+)&type=(product|influencer)\]\]/) : null;
+    const saveOrGenImageUrl = saveOrGenMatch?.[1] || null;
+    const saveOrGenType = (saveOrGenMatch?.[2] || 'product') as 'product' | 'influencer';
+    const hasSaveOrGenMarker = !!saveOrGenMatch;
+
+    // Strip both markers from display text
+    let displayText = rawText;
+    if (hasAspectMarker) displayText = displayText.replace(/\s*\[\[ASPECT_BUTTONS\]\]\s*/g, '').trim();
+    if (hasSaveOrGenMarker) displayText = displayText.replace(/\s*\[\[SAVE_OR_GENERATE:[^\]]+\]\]\s*/g, '').trim();
+
+    // Save-or-generate modal state
+    const [showSaveModal, setShowSaveModal] = useState(false);
+    const [saveChoice, setSaveChoice] = useState<'save' | 'generate' | null>(null);
+
     const aspectButtonsActive = hasAspectMarker && !!isLast && !!onQuickReply && !selectedAspect;
-    const hasContent = !!displayText || !!turn.artifacts?.length || turn.interrupted || hasRefPreviews || hasAspectMarker;
+    const saveOrGenActive = hasSaveOrGenMarker && !!isLast && !!onQuickReply && !saveChoice;
+    const hasContent = !!displayText || !!turn.artifacts?.length || turn.interrupted || hasRefPreviews || hasAspectMarker || hasSaveOrGenMarker;
     // While a run is active, show a placeholder "…" bubble (three breathing
     // dots) in place of the empty agent turn so the UI never looks frozen
     // while waiting for the first `agent_message`. Historical empty turns
@@ -2658,6 +2674,93 @@ function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspec
                             );
                         })}
                     </div>
+                )}
+
+                {/* Save-or-Generate buttons */}
+                {hasSaveOrGenMarker && (
+                    <div style={{ display: 'flex', gap: '8px', marginTop: displayText ? '10px' : 0, flexWrap: 'wrap' }}>
+                        {(() => {
+                            const isSaveSelected = saveChoice === 'save';
+                            const isGenSelected = saveChoice === 'generate';
+                            const saveLabel = saveOrGenType === 'influencer' ? '\ud83d\udcbe Save as Model' : '\ud83d\udcbe Save as Product';
+                            return (
+                                <>
+                                    <button
+                                        type="button"
+                                        disabled={!saveOrGenActive}
+                                        onClick={() => { if (saveOrGenActive) { setSaveChoice('save'); setShowSaveModal(true); } }}
+                                        style={{
+                                            padding: '6px 14px',
+                                            borderRadius: '8px',
+                                            border: isSaveSelected
+                                                ? '1px solid #337AFF'
+                                                : '1px solid rgba(51,122,255,0.15)',
+                                            background: isSaveSelected
+                                                ? 'linear-gradient(135deg, #337AFF 0%, #5B8FFF 100%)'
+                                                : isGenSelected ? 'rgba(51,122,255,0.03)' : 'white',
+                                            color: isSaveSelected ? 'white' : isGenSelected ? '#8A93B0' : '#337AFF',
+                                            fontSize: '13px',
+                                            fontWeight: 500,
+                                            cursor: saveOrGenActive ? 'pointer' : 'default',
+                                        }}
+                                    >
+                                        {saveLabel}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        disabled={!saveOrGenActive}
+                                        onClick={() => { if (saveOrGenActive) { setSaveChoice('generate'); onQuickReply?.('Generate now without saving'); } }}
+                                        style={{
+                                            padding: '6px 14px',
+                                            borderRadius: '8px',
+                                            border: isGenSelected
+                                                ? '1px solid #337AFF'
+                                                : '1px solid rgba(51,122,255,0.15)',
+                                            background: isGenSelected
+                                                ? 'linear-gradient(135deg, #337AFF 0%, #5B8FFF 100%)'
+                                                : isSaveSelected ? 'rgba(51,122,255,0.03)' : 'white',
+                                            color: isGenSelected ? 'white' : isSaveSelected ? '#8A93B0' : '#337AFF',
+                                            fontSize: '13px',
+                                            fontWeight: 500,
+                                            cursor: saveOrGenActive ? 'pointer' : 'default',
+                                        }}
+                                    >
+                                        ⚡ Generate Now
+                                    </button>
+                                </>
+                            );
+                        })()}
+                    </div>
+                )}
+
+                {/* Save-or-Generate modals */}
+                {showSaveModal && saveOrGenType === 'product' && (
+                    <ProductModal
+                        isOpen={true}
+                        product={null}
+                        onClose={() => setShowSaveModal(false)}
+                        onSave={(saved) => {
+                            setShowSaveModal(false);
+                            if (saved?.id && onQuickReply) {
+                                onQuickReply(`I saved this as product "${saved.name}" (product_id: ${saved.id}). Please analyze it and continue with video generation.`);
+                            }
+                        }}
+                        defaultImageUrl={saveOrGenImageUrl || undefined}
+                    />
+                )}
+                {showSaveModal && saveOrGenType === 'influencer' && (
+                    <InfluencerModal
+                        isOpen={true}
+                        initialData={null}
+                        onClose={() => setShowSaveModal(false)}
+                        onSave={(saved) => {
+                            setShowSaveModal(false);
+                            if (saved?.id && onQuickReply) {
+                                onQuickReply(`I saved this as model "${saved.name}" (influencer_id: ${saved.id}). Please generate their identity and continue with video generation.`);
+                            }
+                        }}
+                        defaultImageUrl={saveOrGenImageUrl || undefined}
+                    />
                 )}
 
                 {(() => {

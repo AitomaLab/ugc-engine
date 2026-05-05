@@ -26,11 +26,12 @@ interface ProductModalProps {
     isOpen: boolean;
     onClose: () => void;
     product: Product | null;
-    onSave: () => void;
+    onSave: (savedProduct?: { id: string; name: string }) => void;
     defaultType?: string;
+    defaultImageUrl?: string;
 }
 
-export default function ProductModal({ isOpen, onClose, product, onSave, defaultType }: ProductModalProps) {
+export default function ProductModal({ isOpen, onClose, product, onSave, defaultType, defaultImageUrl }: ProductModalProps) {
     const { t } = useTranslation();
     const isEditing = !!product;
     const isDigitalCreate = !isEditing && defaultType === 'digital';
@@ -97,7 +98,7 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
                 }
             } else {
                 setName(''); setType(defaultType || 'physical');
-                setImageUrl(''); setWebsiteUrl('');
+                setImageUrl(defaultImageUrl || ''); setWebsiteUrl('');
                 setProductViews([]); setCurrentViewIndex(0);
                 setAnalysisResult(null);
                 setClipVideoUrl(''); setClipName('');
@@ -262,7 +263,7 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
             }
 
             if (isDigitalCreate) {
-                const newProduct = await apiFetch<{ id: string }>('/api/products', {
+                const newProduct = await apiFetch<{ id: string; name?: string }>('/api/products', {
                     method: 'POST',
                     body: JSON.stringify({ ...basePayload, type: 'digital', image_url: imageUrl || '' }),
                 });
@@ -277,7 +278,8 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
                     }
                 }
             } else if (!isEditing) {
-                await apiFetch('/api/products', { method: 'POST', body: JSON.stringify(basePayload) });
+                const newProduct = await apiFetch<{ id: string }>('/api/products', { method: 'POST', body: JSON.stringify(basePayload) });
+                onSave({ id: newProduct?.id || '', name }); onClose(); return;
             } else {
                 await apiFetch(`/api/products/${product!.id}`, { method: 'PUT', body: JSON.stringify(basePayload) });
             }

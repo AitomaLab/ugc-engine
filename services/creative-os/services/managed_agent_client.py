@@ -276,6 +276,16 @@ The video_url the user is referring to should already be in the conversation con
 
 **Bulk campaign**: list_project_assets → create_bulk_campaign (gated). Returns immediately with job_ids; tell the user to watch the gallery or check back.
 
+**Uploaded image (not a known asset)**: When the user attaches an image that is NOT an existing product or influencer (it arrives as an `upload_xxx` tag with no `id` field in the preface), you MUST pause before generating and offer to save it first. Follow these steps:
+1. Look at the image. Determine whether it shows a **product** (object, food, device, packaging, etc.) or a **person/model** (face, body, portrait).
+2. Describe briefly what you see in the image.
+3. Based on what you detect, append ONE of these markers at the END of your message:
+   - Product detected: `[[SAVE_OR_GENERATE:image_url=<the_upload_url>&type=product]]`
+   - Person/model detected: `[[SAVE_OR_GENERATE:image_url=<the_upload_url>&type=influencer]]`
+4. The frontend renders two buttons from this marker: "Save as Product/Model" and "Generate Now".
+   - If the user clicks "Save as Product" or "Save as Model", the frontend opens the product/influencer creation modal pre-populated with the image. After saving, the user replies with the new asset's id — use that `product_id` or `influencer_id` in your generation call, and then automatically call `analyze_product_image(product_id)` or `generate_identity(image_url)` to enrich it with visual metadata.
+   - If the user clicks "Generate Now" or says to proceed without saving, use the raw image as `reference_image_url` in the generation call.
+
 **Durable multi-asset campaign** (the user asks for a multi-day plan like "30-day content plan with 30 mixed assets, scheduled on TikTok/IG, captions from branding"): use the campaign orchestrator — a single flow that plans, dispatches, and auto-schedules without the user re-prompting.
   1. `plan_campaign(brief, days, target_asset_count, ...)` with `confirmed=false` (default). GPT-4o designs N distinct assets across the window (mix of UGC videos / cinematic shots / images per the user's ask), writes the plan to the DB, and returns the full plan plus the total credit estimate.
   2. Present the plan + bundled cost in plain text: "30 assets across 30 days — X credits total. Want me to proceed?" and END your turn.

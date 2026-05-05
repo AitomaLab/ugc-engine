@@ -13,7 +13,8 @@ interface InfluencerModalProps {
     isOpen: boolean;
     onClose: () => void;
     initialData: Influencer | null;
-    onSave: () => void;
+    onSave: (savedInfluencer?: { id: string; name: string }) => void;
+    defaultImageUrl?: string;
 }
 
 const PRESET_CATEGORIES = ['Travel', 'Fashion', 'Tech', 'Fitness', 'Food', 'General'];
@@ -47,7 +48,7 @@ const IDENTITY_STEPS = [
 const GEN_ESTIMATED_SECONDS = 50;
 const IDENTITY_ESTIMATED_SECONDS = 90;
 
-export function InfluencerModal({ isOpen, onClose, initialData, onSave }: InfluencerModalProps) {
+export function InfluencerModal({ isOpen, onClose, initialData, onSave, defaultImageUrl }: InfluencerModalProps) {
     const { t } = useTranslation();
     const [name, setName] = useState('');
     const [gender, setGender] = useState('Female');
@@ -109,7 +110,7 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
                 setCurrentViewIndex(0);
             } else {
                 setName(''); setGender('Female'); setDescription('');
-                setStyle(''); setImageUrl(''); setVoiceId('');
+                setStyle(''); setImageUrl(defaultImageUrl || ''); setVoiceId('');
                 setCharacterViews([]); setCurrentViewIndex(0);
             }
         }
@@ -214,10 +215,11 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave }: Influe
             }
             if (initialData) {
                 await apiFetch(`/influencers/${initialData.id}`, { method: 'PUT', body: JSON.stringify(payload) });
+                onSave(); onClose();
             } else {
-                await apiFetch('/influencers', { method: 'POST', body: JSON.stringify(payload) });
+                const result = await apiFetch<{ id: string }>('/influencers', { method: 'POST', body: JSON.stringify(payload) });
+                onSave({ id: result?.id || '', name }); onClose();
             }
-            onSave(); onClose();
         } catch (err) {
             console.error('Save Error:', err); alert('Failed to save influencer.');
         } finally { setSaving(false); }
