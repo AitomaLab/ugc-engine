@@ -281,7 +281,7 @@ BEFORE following ANY generation workflow below, check whether the user attached 
 You MUST do this check BEFORE starting any generation. Do NOT skip it.
 
 **Full UGC video (15-30s)**: list_project_assets → check if the user supplied their own script/dialogue text.
-  - **User provided script**: When the user wrote actual dialogue lines (hook, body, CTA, or any spoken text), concatenate ALL of it verbatim and pass it as the `hook` argument to create_ugc_video. Do NOT put user-written scripts in the `context` field — `hook` is the literal dialogue the influencer speaks.
+  - **User provided script**: When the user wrote actual dialogue lines (hook, body, CTA, or any spoken text), pass ALL of it verbatim as the `hook` argument to generate_video or create_ugc_video. The `hook` field carries the user's EXACT spoken words — NEVER paraphrase, rewrite, or embellish the user's dialogue. Put your visual/action direction in the `prompt` field instead. The pipeline will use `hook` as-is for the character's speech and enhance only the visual direction from `prompt`.
   - **No script provided, but clear direction**: If the user gave a creative brief (e.g. "make a video about the health benefits") but no actual dialogue, call `generate_scripts(product_id, duration, influencer_id, context=<user's brief>)` FIRST to produce a script, then pass the generated hook + scene dialogues (newline-joined) as the `hook` argument.
   - **No script AND no clear direction**: If the user's request is vague about what the character should say (e.g. "make a 30s UGC video for this product"), you MUST ask before generating: "What should [influencer name] say in the video? Do you have a specific script, or should I write one based on the product?" End your turn and wait for the answer. Do NOT silently generate a random script — the user needs to guide the content.
   Then call create_ugc_video (gated). Wait for completion, then confirm in plain text.
@@ -624,7 +624,22 @@ def _custom_tools_for_agent() -> list[dict]:
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "prompt": {"type": "string"},
+                    "prompt": {
+                        "type": "string",
+                        "description": (
+                            "Visual direction for the video (action, camera, setting, style). "
+                            "Do NOT put the user's spoken dialogue here — use the 'hook' parameter for that."
+                        ),
+                    },
+                    "hook": {
+                        "type": "string",
+                        "description": (
+                            "The user's VERBATIM spoken dialogue/script for the video. Pass the user's EXACT "
+                            "words here — do NOT paraphrase, rewrite, or embellish. This text is sent directly "
+                            "to the video model as the character's spoken lines. Only omit this if the user "
+                            "gave no specific dialogue and wants AI-generated script."
+                        ),
+                    },
                     "mode": {"type": "string", "enum": video_mode_ids},
                     "product_id": {
                         "type": "string",
@@ -1901,6 +1916,7 @@ async def _tool_generate_video(ctx: ToolContext, **kwargs: Any) -> str:
 
     req = VideoGenerateRequest(
         prompt=kwargs["prompt"],
+        hook=kwargs.get("hook") or None,
         mode=kwargs["mode"],
         project_id=ctx.project_id,
         product_id=kwargs.get("product_id"),

@@ -125,6 +125,7 @@ class ElementRef(BaseModel):
 
 class VideoGenerateRequest(BaseModel):
     prompt: str
+    hook: Optional[str] = None  # User's verbatim dialogue script — bypasses prompt enhancer
     mode: str  # "ugc", "cinematic_video", "ai_clone"
     project_id: str
     product_id: Optional[str] = None
@@ -1931,8 +1932,34 @@ async def _run_ugc_clip_pipeline(
         if influencer:
             enhance_ctx["influencer_name"] = influencer.get("name")
 
-        # CASE A: User provided a prompt → Enhance it into a UGC script
-        if user_prompt:
+        # CASE A-1: User provided a verbatim script via hook → use it as-is
+        if data.hook and data.hook.strip():
+            script_text = data.hook.strip()
+            print(f"[UGC Clip] Using user's VERBATIM script (hook): {script_text[:100]}...")
+
+            # Still enhance the visual/action direction from prompt, but do NOT touch dialogue
+            if user_prompt:
+                try:
+                    from services.prompt_enhancer import enhance_prompt
+                    enhanced_options = await enhance_prompt(
+                        user_prompt=user_prompt,
+                        mode="ugc",
+                        language=data.language,
+                        context=enhance_ctx,
+                    )
+                    if enhanced_options:
+                        professional_prompt = enhanced_options[0]["prompt"]
+                        # Extract ONLY action direction, ignore any dialogue the enhancer generated
+                        for line in professional_prompt.split("\n"):
+                            if line.lower().startswith("action:"):
+                                action_direction = line[len("action:"):].strip()
+                                print(f"[UGC Clip] Enhanced action direction: {action_direction[:100]}...")
+                                break
+                except Exception as e:
+                    print(f"[UGC Clip] Visual enhancement failed (non-fatal): {e}")
+
+        # CASE A-2: User provided a prompt but no explicit hook → Enhance it (may rewrite dialogue)
+        elif user_prompt:
             try:
                 from services.prompt_enhancer import enhance_prompt
                 enhanced_options = await enhance_prompt(
@@ -2006,130 +2033,148 @@ async def _run_ugc_clip_pipeline(
                 "preview_type": "image",
             })
         elif product and influencer:
-            # Generate NanoBanana Pro composite
-            await _update_video_job_via_api(token, project_id, job_id, {
-                "status_message": "Creating composite image...",
-                "progress": 20,
-            })
-
-            # Build context for prompt generation
-            visual_desc = product.get("visual_description") or {}
-            if isinstance(visual_desc, str):
-                visual_desc_str = visual_desc
+            # Check if product actually has an image for the composite
+            if not product.get("image_url"):
+                print(f"[UGC Clip] ⚠️ WARNING: Product '{product.get('name', '?')}' has NO image_url — "
+                      f"NanoBanana composite CANNOT be created. Veo will hallucinate the product from text. "
+                      f"Upload a product image to fix this.")
+                # Fall through to influencer-only reference
+                composite_url = influencer.get("image_url")
+                if composite_url:
+                    print(f"[UGC Clip] Falling back to influencer-only reference image")
+                    await _update_video_job_via_api(token, project_id, job_id, {
+                        "status_message": "Animating reference image (no product image available)...",
+                        "progress": 40,
+                        "preview_url": composite_url,
+                        "preview_type": "image",
+                    })
+                else:
+                    composite_url = None
             else:
-                visual_desc_str = visual_desc.get("visual_description", product.get("name", "the product"))
-
-            poss = "his" if influencer.get("gender", "Female") == "Male" else "her"
-            ctx = {
-                "age": influencer.get("age", "25-year-old"),
-                "gender": influencer.get("gender", "Female"),
-                "visuals": influencer.get("description", "casual style")[:200],
-                "setting": influencer.get("setting", "") or "natural environment matching the background visible in the reference image",
-                "product": product,
-            }
-
-            # The composite device framing follows the APP CLIP's native
-            # orientation — a phone-native recording gets a phone prop; a
-            # laptop-native recording gets a laptop prop. The COMPOSITE CANVAS
-            # aspect is independent: it follows the user-selected final video
-            # aspect ratio (passed as `composite_aspect` to NanoBanana below).
-            # B-roll letterboxing in concat_videos_matched handles any aspect
-            # mismatch between the UGC clip and the B-roll at render time.
-            digital_device = clip_orientation if clip_orientation in ("phone", "laptop") else "phone"
-
-            if product_type == "digital" and digital_device == "phone":
-                nano_prompt = (
-                    f"action: character holding a smartphone facing the camera in portrait orientation "
-                    f"with an excited expression, casually showing the app on screen\n"
-                    f"device: modern smartphone held vertically, phone screen fills the frame from the "
-                    f"phone's perspective; the phone screen displays the provided app interface EXACTLY as "
-                    f"shown in the reference image — pixel-perfect, do NOT redraw or reinterpret UI, keep "
-                    f"all text, icons, layout, colors identical\n"
-                    f"anatomy: exactly one person with exactly two arms and two hands, "
-                    f"one hand explicitly holds the phone, other arm rests naturally TO THE PERSON'S SIDE\n"
-                    f"character: infer exact appearance from reference image, preserve facial features and skin tone, "
-                    f"detailed realistic complexion with fine natural imperfections, unretouched raw look\n"
-                    f"setting: {ctx['setting']}, natural lighting\n"
-                    f"camera: amateur iPhone selfie, slightly uneven framing\n"
-                    f"style: candid UGC look, no filters, photorealistic, high detail, raw unedited photo quality\n"
-                    f"negative: no artificial smoothing, no plastic CGI appearance, no third arm, no third hand, "
-                    f"no extra limbs, no extra fingers, no studio backdrop, no geometric distortion, "
-                    f"no mutated hands, no floating limbs, disconnected limbs, mutation, "
-                    f"no arm crossing screen, no unnatural arm position, no altered UI, no made-up UI elements"
-                )
-            elif product_type == "digital" and digital_device == "laptop":
-                nano_prompt = (
-                    f"action: character seated at a desk in front of a laptop or desktop monitor with an "
-                    f"engaged expression, casually presenting the app on-screen\n"
-                    f"device: laptop or desktop monitor in landscape orientation facing the camera at a "
-                    f"natural angle; the screen displays the provided app interface EXACTLY as shown in "
-                    f"the reference image — pixel-perfect, do NOT redraw or reinterpret UI, keep all text, "
-                    f"icons, layout, colors identical\n"
-                    f"anatomy: exactly one person with exactly two arms and two hands, hands resting near "
-                    f"the keyboard or gesturing naturally toward the screen\n"
-                    f"character: infer exact appearance from reference image, preserve facial features and skin tone, "
-                    f"detailed realistic complexion with fine natural imperfections, unretouched raw look\n"
-                    f"setting: {ctx['setting']}, natural lighting\n"
-                    f"camera: amateur iPhone capture, slightly uneven framing\n"
-                    f"style: candid UGC look, no filters, photorealistic, high detail, raw unedited photo quality\n"
-                    f"negative: no artificial smoothing, no plastic CGI appearance, no extra limbs, no extra fingers, "
-                    f"no studio backdrop, no geometric distortion, no altered UI, no made-up UI elements"
-                )
-            else:
-                nano_prompt = (
-                    f"action: character holding the product up close to the camera with an excited expression, "
-                    f"casually presenting the product\n"
-                    f"anatomy: exactly one person with exactly two arms and two hands, "
-                    f"one hand explicitly holds the product, other arm rests naturally TO THE PERSON'S SIDE\n"
-                    f"character: infer exact appearance from reference image, preserve facial features and skin tone, "
-                    f"detailed realistic complexion with fine natural imperfections, unretouched raw look\n"
-                    f"product: the {visual_desc_str} is clearly visible, "
-                    f"preserve all visible text and logos exactly as in reference image\n"
-                    f"setting: {ctx['setting']}, natural lighting\n"
-                    f"camera: amateur iPhone selfie, slightly uneven framing\n"
-                    f"style: candid UGC look, no filters, photorealistic, high detail, "
-                    f"raw unedited photo quality\n"
-                    f"negative: no artificial smoothing, no plastic CGI appearance, "
-                    f"no third arm, no third hand, no extra limbs, no extra fingers, "
-                    f"no studio backdrop, no geometric distortion, "
-                    f"no mutated hands, no floating limbs, disconnected limbs, mutation, "
-                    f"no arm crossing screen, no unnatural arm position"
-                )
-
-            scene = {
-                "nano_banana_prompt": nano_prompt,
-                "reference_image_url": influencer.get("image_url", ""),
-                "product_image_url": product.get("image_url", ""),
-            }
-
-            # Composite aspect MUST match the downstream video aspect —
-            # otherwise Veo/Kling crop or stretch the first frame and the
-            # output looks zoomed-in (9:16 composite feeding a 16:9 render
-            # was the bug that prompted this plumbing).
-            composite_aspect = data.aspect_ratio or "9:16"
-            print(f"[UGC Clip] Generating NanoBanana composite (aspect={composite_aspect})...")
-            try:
-                import random
-                global_seed = random.randint(0, 2**32 - 1)
-                composite_url = await asyncio.to_thread(
-                    generate_scenes.generate_composite_image_with_retry,
-                    scene=scene,
-                    influencer=influencer,
-                    product=product,
-                    seed=global_seed,
-                    aspect_ratio=composite_aspect,
-                )
-                print(f"[UGC Clip] Composite ready: {composite_url[:80]}...")
-
+                # Generate NanoBanana Pro composite
                 await _update_video_job_via_api(token, project_id, job_id, {
-                    "status_message": "Composite image ready, animating...",
-                    "progress": 40,
-                    "preview_url": composite_url,
-                    "preview_type": "image",
+                    "status_message": "Creating composite image...",
+                    "progress": 20,
                 })
-            except Exception as e:
-                print(f"[UGC Clip] NanoBanana composite FAILED: {e}")
-                raise RuntimeError(f"Composite image generation failed: {e}")
+
+                # Build context for prompt generation
+                visual_desc = product.get("visual_description") or {}
+                if isinstance(visual_desc, str):
+                    visual_desc_str = visual_desc
+                else:
+                    visual_desc_str = visual_desc.get("visual_description", product.get("name", "the product"))
+
+                poss = "his" if influencer.get("gender", "Female") == "Male" else "her"
+                ctx = {
+                    "age": influencer.get("age", "25-year-old"),
+                    "gender": influencer.get("gender", "Female"),
+                    "visuals": influencer.get("description", "casual style")[:200],
+                    "setting": influencer.get("setting", "") or "natural environment matching the background visible in the reference image",
+                    "product": product,
+                }
+
+                # The composite device framing follows the APP CLIP's native
+                # orientation — a phone-native recording gets a phone prop; a
+                # laptop-native recording gets a laptop prop. The COMPOSITE CANVAS
+                # aspect is independent: it follows the user-selected final video
+                # aspect ratio (passed as `composite_aspect` to NanoBanana below).
+                # B-roll letterboxing in concat_videos_matched handles any aspect
+                # mismatch between the UGC clip and the B-roll at render time.
+                digital_device = clip_orientation if clip_orientation in ("phone", "laptop") else "phone"
+
+                if product_type == "digital" and digital_device == "phone":
+                    nano_prompt = (
+                        f"action: character holding a smartphone facing the camera in portrait orientation "
+                        f"with an excited expression, casually showing the app on screen\n"
+                        f"device: modern smartphone held vertically, phone screen fills the frame from the "
+                        f"phone's perspective; the phone screen displays the provided app interface EXACTLY as "
+                        f"shown in the reference image — pixel-perfect, do NOT redraw or reinterpret UI, keep "
+                        f"all text, icons, layout, colors identical\n"
+                        f"anatomy: exactly one person with exactly two arms and two hands, "
+                        f"one hand explicitly holds the phone, other arm rests naturally TO THE PERSON'S SIDE\n"
+                        f"character: infer exact appearance from reference image, preserve facial features and skin tone, "
+                        f"detailed realistic complexion with fine natural imperfections, unretouched raw look\n"
+                        f"setting: {ctx['setting']}, natural lighting\n"
+                        f"camera: amateur iPhone selfie, slightly uneven framing\n"
+                        f"style: candid UGC look, no filters, photorealistic, high detail, raw unedited photo quality\n"
+                        f"negative: no artificial smoothing, no plastic CGI appearance, no third arm, no third hand, "
+                        f"no extra limbs, no extra fingers, no studio backdrop, no geometric distortion, "
+                        f"no mutated hands, no floating limbs, disconnected limbs, mutation, "
+                        f"no arm crossing screen, no unnatural arm position, no altered UI, no made-up UI elements"
+                    )
+                elif product_type == "digital" and digital_device == "laptop":
+                    nano_prompt = (
+                        f"action: character seated at a desk in front of a laptop or desktop monitor with an "
+                        f"engaged expression, casually presenting the app on-screen\n"
+                        f"device: laptop or desktop monitor in landscape orientation facing the camera at a "
+                        f"natural angle; the screen displays the provided app interface EXACTLY as shown in "
+                        f"the reference image — pixel-perfect, do NOT redraw or reinterpret UI, keep all text, "
+                        f"icons, layout, colors identical\n"
+                        f"anatomy: exactly one person with exactly two arms and two hands, hands resting near "
+                        f"the keyboard or gesturing naturally toward the screen\n"
+                        f"character: infer exact appearance from reference image, preserve facial features and skin tone, "
+                        f"detailed realistic complexion with fine natural imperfections, unretouched raw look\n"
+                        f"setting: {ctx['setting']}, natural lighting\n"
+                        f"camera: amateur iPhone capture, slightly uneven framing\n"
+                        f"style: candid UGC look, no filters, photorealistic, high detail, raw unedited photo quality\n"
+                        f"negative: no artificial smoothing, no plastic CGI appearance, no extra limbs, no extra fingers, "
+                        f"no studio backdrop, no geometric distortion, no altered UI, no made-up UI elements"
+                    )
+                else:
+                    nano_prompt = (
+                        f"action: character holding the product up close to the camera with an excited expression, "
+                        f"casually presenting the product\n"
+                        f"anatomy: exactly one person with exactly two arms and two hands, "
+                        f"one hand explicitly holds the product, other arm rests naturally TO THE PERSON'S SIDE\n"
+                        f"character: infer exact appearance from reference image, preserve facial features and skin tone, "
+                        f"detailed realistic complexion with fine natural imperfections, unretouched raw look\n"
+                        f"product: the {visual_desc_str} is clearly visible, "
+                        f"preserve all visible text and logos exactly as in reference image\n"
+                        f"setting: {ctx['setting']}, natural lighting\n"
+                        f"camera: amateur iPhone selfie, slightly uneven framing\n"
+                        f"style: candid UGC look, no filters, photorealistic, high detail, "
+                        f"raw unedited photo quality\n"
+                        f"negative: no artificial smoothing, no plastic CGI appearance, "
+                        f"no third arm, no third hand, no extra limbs, no extra fingers, "
+                        f"no studio backdrop, no geometric distortion, "
+                        f"no mutated hands, no floating limbs, disconnected limbs, mutation, "
+                        f"no arm crossing screen, no unnatural arm position"
+                    )
+
+                scene = {
+                    "nano_banana_prompt": nano_prompt,
+                    "reference_image_url": influencer.get("image_url", ""),
+                    "product_image_url": product.get("image_url", ""),
+                }
+
+                # Composite aspect MUST match the downstream video aspect —
+                # otherwise Veo/Kling crop or stretch the first frame and the
+                # output looks zoomed-in (9:16 composite feeding a 16:9 render
+                # was the bug that prompted this plumbing).
+                composite_aspect = data.aspect_ratio or "9:16"
+                print(f"[UGC Clip] Generating NanoBanana composite (aspect={composite_aspect})...")
+                try:
+                    import random
+                    global_seed = random.randint(0, 2**32 - 1)
+                    composite_url = await asyncio.to_thread(
+                        generate_scenes.generate_composite_image_with_retry,
+                        scene=scene,
+                        influencer=influencer,
+                        product=product,
+                        seed=global_seed,
+                        aspect_ratio=composite_aspect,
+                    )
+                    print(f"[UGC Clip] Composite ready: {composite_url[:80]}...")
+
+                    await _update_video_job_via_api(token, project_id, job_id, {
+                        "status_message": "Composite image ready, animating...",
+                        "progress": 40,
+                        "preview_url": composite_url,
+                        "preview_type": "image",
+                    })
+                except Exception as e:
+                    print(f"[UGC Clip] NanoBanana composite FAILED: {e}")
+                    raise RuntimeError(f"Composite image generation failed: {e}")
         else:
             # No product+influencer combo — use reference_image_url if available
             composite_url = data.reference_image_url or None
