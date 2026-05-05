@@ -2682,7 +2682,7 @@ function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspec
                         {(() => {
                             const isSaveSelected = saveChoice === 'save';
                             const isGenSelected = saveChoice === 'generate';
-                            const saveLabel = saveOrGenType === 'influencer' ? '\ud83d\udcbe Save as Model' : '\ud83d\udcbe Save as Product';
+                            const saveLabel = saveOrGenType === 'influencer' ? 'Save as Model' : 'Save as Product';
                             return (
                                 <>
                                     <button
@@ -2725,7 +2725,7 @@ function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspec
                                             cursor: saveOrGenActive ? 'pointer' : 'default',
                                         }}
                                     >
-                                        ⚡ Generate Now
+                                        Generate Now
                                     </button>
                                 </>
                             );
