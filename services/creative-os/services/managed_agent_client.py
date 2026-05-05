@@ -3158,10 +3158,10 @@ async def _tool_caption_video(ctx: ToolContext, **kwargs: Any) -> str:
             "raw": render_dispatch,
         })
 
-    print(f"[caption_video] Polling render {render_id} (max 600s, every 6s)...")
+    print(f"[caption_video] Polling render {render_id} (max 180s, every 4s)...")
     waited = 0
-    max_wait_s = 600
-    poll_interval_s = 6
+    max_wait_s = 180  # Backend auto-persists final_video_url, so we don't need to wait forever
+    poll_interval_s = 4
     progress_payload: dict | None = None
     while waited < max_wait_s:
         await asyncio.sleep(poll_interval_s)
@@ -3207,7 +3207,7 @@ async def _tool_caption_video(ctx: ToolContext, **kwargs: Any) -> str:
         **caption_result,
         "status": "captions_saved_render_still_processing",
         "render_id": render_id,
-        "warning": "Render is taking longer than 10 minutes. The Videos tab will update when it finishes.",
+        "warning": "Render is still processing — the captioned video will appear in the Videos tab automatically when it finishes.",
     })
 
 

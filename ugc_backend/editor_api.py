@@ -1158,6 +1158,16 @@ def _run_editor_render(
         })
         print(f"[EDITOR RENDER] ✓ Render {render_id} done: {output_url}")
 
+        # Auto-persist final_video_url on the job row so the Videos tab
+        # shows the captioned version even if the agent's poll loop timed out.
+        if job_id and job_id != "standalone" and output_url and not output_url.startswith("file://"):
+            try:
+                from ugc_db.db_manager import update_job as _update_job
+                _update_job(job_id, {"final_video_url": output_url})
+                print(f"[EDITOR RENDER] ✓ Persisted final_video_url on job {job_id[:8]}")
+            except Exception as persist_err:
+                print(f"[EDITOR RENDER] ⚠ final_video_url persist failed (non-fatal): {persist_err}")
+
     except Exception as e:
         print(f"[EDITOR RENDER] ✗ Render {render_id} failed: {e}")
         _update({"status": "failed", "error": str(e)})
