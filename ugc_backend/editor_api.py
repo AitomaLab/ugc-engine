@@ -1038,7 +1038,7 @@ def _ffmpeg_burn_captions(
 
             cmd = ["ffmpeg"] + inputs + [
                 "-filter_complex", filter_graph,
-                "-map", prev_label.strip("[]"),
+                "-map", prev_label,
                 "-map", "0:a?",
                 "-c:v", "libx264", "-preset", "fast", "-crf", "18",
                 "-c:a", "copy",
