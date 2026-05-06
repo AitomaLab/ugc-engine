@@ -94,6 +94,23 @@ export type AiEditOp =
 			position?: 'bottom' | 'top' | 'center';
 			highlight_words?: boolean;
 	  }
+	| {
+			op: 'set_caption_style';
+			itemId: string;
+			color?: string;
+			highlightColor?: string;
+			strokeColor?: string;
+			strokeWidth?: number;
+			strokeMode?: 'solid' | 'shadow' | 'glow';
+			shadowColor?: string;
+			shadowBlur?: number;
+			shadowOffsetX?: number;
+			shadowOffsetY?: number;
+			fontSize?: number;
+			fontFamily?: string;
+			maxLines?: number;
+			pageDurationInMilliseconds?: number;
+	  }
 	| {op: 'add_text'; text: string; from?: number; durationInFrames?: number};
 
 export function stripAiEditBlockForDisplay(text: string): string {
@@ -277,6 +294,33 @@ function isValidAiEditOp(row: unknown): row is AiEditOp {
 			o.highlight_words !== undefined &&
 			typeof o.highlight_words !== 'boolean'
 		) {
+			return false;
+		}
+		return true;
+	}
+	if (o.op === 'set_caption_style') {
+		if (typeof o.itemId !== 'string') {
+			return false;
+		}
+		// At least one style property must be set
+		const hasAny =
+			o.color !== undefined ||
+			o.highlightColor !== undefined ||
+			o.strokeColor !== undefined ||
+			o.strokeWidth !== undefined ||
+			o.strokeMode !== undefined ||
+			o.shadowColor !== undefined ||
+			o.shadowBlur !== undefined ||
+			o.shadowOffsetX !== undefined ||
+			o.shadowOffsetY !== undefined ||
+			o.fontSize !== undefined ||
+			o.fontFamily !== undefined ||
+			o.maxLines !== undefined ||
+			o.pageDurationInMilliseconds !== undefined;
+		if (!hasAny) {
+			return false;
+		}
+		if (o.strokeMode !== undefined && o.strokeMode !== 'solid' && o.strokeMode !== 'shadow' && o.strokeMode !== 'glow') {
 			return false;
 		}
 		return true;
@@ -605,6 +649,34 @@ export async function applyAiEditOps(
 			continue;
 		}
 
+		if (op.op === 'set_caption_style') {
+			const item = s.undoableState.items[op.itemId];
+			if (!item || item.type !== 'captions') {
+				continue;
+			}
+			s = changeItem(s, op.itemId, (i: EditorStarterItem) => {
+				if (i.type !== 'captions') {
+					return i;
+				}
+				const updated = {...i};
+				if (op.color !== undefined) updated.color = op.color;
+				if (op.highlightColor !== undefined) updated.highlightColor = op.highlightColor;
+				if (op.strokeColor !== undefined) updated.strokeColor = op.strokeColor;
+				if (typeof op.strokeWidth === 'number') updated.strokeWidth = Math.max(0, op.strokeWidth);
+				if (op.strokeMode !== undefined) updated.strokeMode = op.strokeMode;
+				if (op.shadowColor !== undefined) updated.shadowColor = op.shadowColor;
+				if (typeof op.shadowBlur === 'number') updated.shadowBlur = Math.max(0, op.shadowBlur);
+				if (typeof op.shadowOffsetX === 'number') updated.shadowOffsetX = op.shadowOffsetX;
+				if (typeof op.shadowOffsetY === 'number') updated.shadowOffsetY = op.shadowOffsetY;
+				if (typeof op.fontSize === 'number') updated.fontSize = Math.max(8, op.fontSize);
+				if (typeof op.fontFamily === 'string') updated.fontFamily = op.fontFamily;
+				if (typeof op.maxLines === 'number') updated.maxLines = Math.max(1, Math.min(4, op.maxLines));
+				if (typeof op.pageDurationInMilliseconds === 'number') updated.pageDurationInMilliseconds = Math.max(200, op.pageDurationInMilliseconds);
+				return updated;
+			});
+			continue;
+		}
+
 		if (op.op === 'set_text_content') {
 			const item = s.undoableState.items[op.itemId];
 			if (!item || item.type !== 'text') {
@@ -921,6 +993,27 @@ export function summarizeAiEditOpsForPreview(
 						after: String(op.highlight_words ?? false),
 					},
 				],
+			};
+		}
+		if (op.op === 'set_caption_style') {
+			const captionItem = state.undoableState.items[op.itemId];
+			const rows: AiEditPreviewRow[] = [];
+			const addRow = (field: string, before: string, after: string) => {
+				if (before !== after) rows.push({field, before, after});
+			};
+			if (captionItem && captionItem.type === 'captions') {
+				if (op.color !== undefined) addRow('color', captionItem.color, op.color);
+				if (op.highlightColor !== undefined) addRow('highlightColor', captionItem.highlightColor, op.highlightColor);
+				if (op.strokeColor !== undefined) addRow('strokeColor', captionItem.strokeColor, op.strokeColor);
+				if (op.strokeWidth !== undefined) addRow('strokeWidth', String(captionItem.strokeWidth), String(op.strokeWidth));
+				if (op.strokeMode !== undefined) addRow('strokeMode', captionItem.strokeMode ?? 'solid', op.strokeMode);
+				if (op.fontSize !== undefined) addRow('fontSize', String(captionItem.fontSize), String(op.fontSize));
+				if (op.fontFamily !== undefined) addRow('fontFamily', captionItem.fontFamily, op.fontFamily);
+				if (op.maxLines !== undefined) addRow('maxLines', String(captionItem.maxLines), String(op.maxLines));
+			}
+			return {
+				title: `Update caption style`,
+				rows: rows.length > 0 ? rows : [{field: 'style', before: '(current)', after: '(updated)'}],
 			};
 		}
 		const item = state.undoableState.items[op.itemId];
