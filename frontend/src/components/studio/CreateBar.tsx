@@ -42,72 +42,7 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
     const fileInputRef = useRef<HTMLInputElement>(null);
     const mentionListRef = useRef<HTMLDivElement>(null);
 
-    // ── Compute the pixel position of the '@' character in the textarea ──
-    // Stored as state so it can be passed as an inline style prop on the dropdown div.
-    const [mentionPos, setMentionPos] = useState<{ bottom: number; left: number; width: number; maxHeight: number } | null>(null);
 
-    const computeMentionPosition = useCallback((cursorIndex: number) => {
-        const textarea = textareaRef.current;
-        if (!textarea) return;
-
-        const textareaRect = textarea.getBoundingClientRect();
-        const textareaStyles = window.getComputedStyle(textarea);
-
-        // Build a hidden mirror div that replicates the textarea's text layout
-        const mirror = document.createElement('div');
-        mirror.style.position = 'absolute';
-        mirror.style.visibility = 'hidden';
-        mirror.style.whiteSpace = 'pre-wrap';
-        mirror.style.wordWrap = 'break-word';
-        mirror.style.overflow = 'hidden';
-        mirror.style.width = `${textarea.clientWidth}px`;
-        mirror.style.font = textareaStyles.font;
-        mirror.style.fontSize = textareaStyles.fontSize;
-        mirror.style.fontFamily = textareaStyles.fontFamily;
-        mirror.style.lineHeight = textareaStyles.lineHeight;
-        mirror.style.letterSpacing = textareaStyles.letterSpacing;
-        mirror.style.padding = textareaStyles.padding;
-        mirror.style.border = textareaStyles.border;
-        mirror.style.boxSizing = textareaStyles.boxSizing;
-
-        // Insert text up to the '@' position, then a marker span
-        const textBeforeAt = textarea.value.slice(0, cursorIndex);
-        mirror.appendChild(document.createTextNode(textBeforeAt));
-        const marker = document.createElement('span');
-        marker.textContent = '@';
-        mirror.appendChild(marker);
-        document.body.appendChild(mirror);
-
-        // Measure the marker's Y position relative to the mirror
-        const markerRect = marker.getBoundingClientRect();
-        const mirrorRect = mirror.getBoundingClientRect();
-        const relativeTop = markerRect.top - mirrorRect.top;
-        document.body.removeChild(mirror);
-
-        // The '@' Y position in viewport coords
-        const atY = textareaRect.top + relativeTop - textarea.scrollTop;
-        const headerHeight = 72;
-        const gap = 8;
-        const availableHeight = Math.max(120, Math.min(340, atY - headerHeight - gap));
-
-        setMentionPos({
-            bottom: window.innerHeight - atY + gap,
-            left: textareaRect.left,
-            width: textareaRect.width,
-            maxHeight: availableHeight,
-        });
-    }, []);
-
-    // Inline style for the mention dropdown — overrides the CSS class positioning
-    const mentionDropdownStyle: React.CSSProperties = mentionPos ? {
-        position: 'fixed',
-        bottom: mentionPos.bottom,
-        left: mentionPos.left,
-        width: mentionPos.width,
-        maxHeight: mentionPos.maxHeight,
-        top: 'auto',
-        right: 'auto',
-    } : {};
 
     const [barState, setBarState] = useState<BarState>('idle');
     const [prompt, setPrompt] = useState('');
@@ -528,11 +463,8 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                 loadInfluencers();
             }
             setMentionOpen(true);
-            // Compute dropdown position at the '@' character
-            computeMentionPosition(cursor - filter.length - 1);
         } else {
             setMentionOpen(false);
-            setMentionPos(null);
         }
     };
 
@@ -688,8 +620,12 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                                 rows={1}
                                 className="co-bar-input"
                             />
-                            {mentionOpen && mentionShotPicker && (
-                                <div className="co-mention-dropdown" ref={mentionListRef} style={mentionDropdownStyle}>
+                        </div>
+                    </div>
+
+                    {/* @Mention dropdown — positioned above the card, outside the wrapper */}
+                    {mentionOpen && mentionShotPicker && (
+                                <div className="co-mention-dropdown" ref={mentionListRef}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 6px 8px' }}>
                                         <button
                                             type="button"
@@ -727,7 +663,7 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                                 const mentionProducts = filteredMentions.filter(m => m.type === 'product');
                                 const ordered = [...mentionModels, ...mentionProducts];
                                 return (
-                                <div className="co-mention-dropdown" ref={mentionListRef} style={mentionDropdownStyle}>
+                                <div className="co-mention-dropdown" ref={mentionListRef}>
                                     {mentionModels.length > 0 && (
                                         <>
                                             <div className="co-mention-header">{t('creativeOs.createBar.models')}</div>
@@ -781,8 +717,6 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                                 </div>
                                 );
                             })()}
-                        </div>
-                    </div>
 
                     {/* ── ROW 2: Mode + Settings + Action ── */}
                     <div className="co-bar-row2">
@@ -918,6 +852,7 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                         animation: coSlideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
                     }
                     .co-bar-card {
+                        position: relative; overflow: visible;
                         background: rgba(255,255,255,0.98); backdrop-filter: blur(24px);
                         border-radius: 20px; border: 1px solid rgba(51,122,255,0.08);
                         box-shadow: 0 8px 40px rgba(0,0,0,0.10), 0 0 0 1px rgba(51,122,255,0.04);
@@ -1091,8 +1026,8 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                     .co-mention-wrapper { position: relative; flex: 1; min-width: 0; display: flex; align-items: center; }
                     .co-mention-wrapper .co-bar-input { width: 100%; }
                     .co-mention-dropdown {
-                        position: absolute; bottom: calc(100% + 6px); left: 0; right: 0;
-                        max-height: 340px; overflow-y: auto;
+                        position: absolute; bottom: calc(100% + 6px); left: 14px; right: 14px;
+                        max-height: min(340px, calc(100vh - 200px)); overflow-y: auto;
                         background: rgba(255,255,255,0.99); backdrop-filter: blur(20px);
                         border-radius: 14px; border: 1px solid rgba(51,122,255,0.12);
                         box-shadow: 0 8px 32px rgba(0,0,0,0.12), 0 0 0 1px rgba(51,122,255,0.04);
