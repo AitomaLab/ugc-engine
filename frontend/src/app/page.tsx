@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/utils";
 import { useApp } from "@/providers/AppProvider";
@@ -823,7 +824,7 @@ export default function StudioPage() {
               )}
 
               {/* Textarea */}
-              {mentionOpen && (() => {
+              {typeof document !== 'undefined' && mentionOpen && (() => {
                 const GROUP_LABELS: Record<MentionItem['type'], string> = {
                   influencer: t('creativeOs.mention.models'),
                   product: t('creativeOs.mention.products'),
@@ -834,21 +835,23 @@ export default function StudioPage() {
                 const availableGroups = groupOrder.filter(g => (groupedMentions[g]?.length || 0) > 0);
                 const effectiveTab = availableGroups.includes(mentionTab) ? mentionTab : (availableGroups[0] || 'influencer');
                 const tabItems = groupedMentions[effectiveTab] || [];
-                return (
+                const rect = textareaRef.current?.getBoundingClientRect();
+                if (!rect) return null;
+                return createPortal(
                   <div style={{
-                    position: 'absolute',
-                    bottom: 'calc(100% - 20px)',
-                    left: '24px',
+                    position: 'fixed',
+                    bottom: `${window.innerHeight - rect.top + 8}px`,
+                    left: `${rect.left}px`,
+                    width: `${rect.width}px`,
                     background: 'white',
                     border: '1px solid rgba(13,27,62,0.12)',
                     borderRadius: '12px',
                     boxShadow: '0 12px 32px rgba(13,27,62,0.16)',
-                    maxHeight: '320px',
-                    width: '360px',
+                    maxHeight: 'min(320px, calc(100vh - 200px))',
                     overflow: 'hidden',
                     display: 'flex',
-                    flexDirection: 'column',
-                    zIndex: 100,
+                    flexDirection: 'column' as const,
+                    zIndex: 9999,
                   }}>
                     {shotPickerItem ? (
                       <>
@@ -1048,7 +1051,8 @@ export default function StudioPage() {
                         </div>
                       </>
                     )}
-                  </div>
+                  </div>,
+                  document.body
                 );
               })()}
               <textarea
