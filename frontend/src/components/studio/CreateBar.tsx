@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { creativeFetch } from '@/lib/creative-os-api';
 import type { PromptOption, EnhanceResponse } from '@/lib/creative-os-api';
 import { useApp } from '@/providers/AppProvider';
@@ -42,72 +42,72 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
     const fileInputRef = useRef<HTMLInputElement>(null);
     const mentionListRef = useRef<HTMLDivElement>(null);
 
-    // ── Position mention dropdown right above the '@' character ──
-    // Uses a mirror-div technique to find the pixel coords of '@' inside the textarea.
-    useLayoutEffect(() => {
-        const el = mentionListRef.current;
+    // ── Compute the pixel position of the '@' character in the textarea ──
+    // Stored as state so it can be passed as an inline style prop on the dropdown div.
+    const [mentionPos, setMentionPos] = useState<{ bottom: number; left: number; width: number; maxHeight: number } | null>(null);
+
+    const computeMentionPosition = useCallback((cursorIndex: number) => {
         const textarea = textareaRef.current;
-        if (!el || !textarea || !mentionOpen) return;
+        if (!textarea) return;
 
         const textareaRect = textarea.getBoundingClientRect();
         const textareaStyles = window.getComputedStyle(textarea);
 
         // Build a hidden mirror div that replicates the textarea's text layout
         const mirror = document.createElement('div');
-        const mirrorStyles: Record<string, string> = {
-            position: 'absolute',
-            visibility: 'hidden',
-            whiteSpace: 'pre-wrap',
-            wordWrap: 'break-word',
-            overflow: 'hidden',
-            width: `${textarea.clientWidth}px`,
-            font: textareaStyles.font,
-            fontSize: textareaStyles.fontSize,
-            fontFamily: textareaStyles.fontFamily,
-            lineHeight: textareaStyles.lineHeight,
-            letterSpacing: textareaStyles.letterSpacing,
-            padding: textareaStyles.padding,
-            border: textareaStyles.border,
-            boxSizing: textareaStyles.boxSizing,
-        };
-        Object.assign(mirror.style, mirrorStyles);
+        mirror.style.position = 'absolute';
+        mirror.style.visibility = 'hidden';
+        mirror.style.whiteSpace = 'pre-wrap';
+        mirror.style.wordWrap = 'break-word';
+        mirror.style.overflow = 'hidden';
+        mirror.style.width = `${textarea.clientWidth}px`;
+        mirror.style.font = textareaStyles.font;
+        mirror.style.fontSize = textareaStyles.fontSize;
+        mirror.style.fontFamily = textareaStyles.fontFamily;
+        mirror.style.lineHeight = textareaStyles.lineHeight;
+        mirror.style.letterSpacing = textareaStyles.letterSpacing;
+        mirror.style.padding = textareaStyles.padding;
+        mirror.style.border = textareaStyles.border;
+        mirror.style.boxSizing = textareaStyles.boxSizing;
 
         // Insert text up to the '@' position, then a marker span
-        const textBeforeAt = textarea.value.slice(0, mentionCursorStart);
-        const textNode = document.createTextNode(textBeforeAt);
+        const textBeforeAt = textarea.value.slice(0, cursorIndex);
+        mirror.appendChild(document.createTextNode(textBeforeAt));
         const marker = document.createElement('span');
         marker.textContent = '@';
-        mirror.appendChild(textNode);
         mirror.appendChild(marker);
         document.body.appendChild(mirror);
 
-        // Measure the marker's position relative to the mirror
+        // Measure the marker's Y position relative to the mirror
         const markerRect = marker.getBoundingClientRect();
         const mirrorRect = mirror.getBoundingClientRect();
         const relativeTop = markerRect.top - mirrorRect.top;
-
         document.body.removeChild(mirror);
 
-        // The '@' position in viewport coords:
-        // Start from the textarea's top, add the relative offset, subtract scroll
+        // The '@' Y position in viewport coords
         const atY = textareaRect.top + relativeTop - textarea.scrollTop;
-
         const headerHeight = 72;
         const gap = 8;
+        const availableHeight = Math.max(120, Math.min(340, atY - headerHeight - gap));
 
-        // Available space above the '@' character (below the header)
-        const availableHeight = atY - headerHeight - gap;
-        const maxH = Math.max(120, Math.min(340, availableHeight));
+        setMentionPos({
+            bottom: window.innerHeight - atY + gap,
+            left: textareaRect.left,
+            width: textareaRect.width,
+            maxHeight: availableHeight,
+        });
+    }, []);
 
-        // Position dropdown with its bottom edge just above the '@'
-        el.style.position = 'fixed';
-        el.style.left = `${textareaRect.left}px`;
-        el.style.width = `${textareaRect.width}px`;
-        el.style.bottom = `${window.innerHeight - atY + gap}px`;
-        el.style.top = 'auto';
-        el.style.right = 'auto';
-        el.style.maxHeight = `${maxH}px`;
-    });
+    // Inline style for the mention dropdown — overrides the CSS class positioning
+    const mentionDropdownStyle: React.CSSProperties = mentionPos ? {
+        position: 'fixed',
+        bottom: mentionPos.bottom,
+        left: mentionPos.left,
+        width: mentionPos.width,
+        maxHeight: mentionPos.maxHeight,
+        top: 'auto',
+        right: 'auto',
+    } : {};
 
     const [barState, setBarState] = useState<BarState>('idle');
     const [prompt, setPrompt] = useState('');
@@ -528,8 +528,11 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                 loadInfluencers();
             }
             setMentionOpen(true);
+            // Compute dropdown position at the '@' character
+            computeMentionPosition(cursor - filter.length - 1);
         } else {
             setMentionOpen(false);
+            setMentionPos(null);
         }
     };
 
@@ -686,7 +689,7 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                                 className="co-bar-input"
                             />
                             {mentionOpen && mentionShotPicker && (
-                                <div className="co-mention-dropdown" ref={mentionListRef}>
+                                <div className="co-mention-dropdown" ref={mentionListRef} style={mentionDropdownStyle}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 6px 8px' }}>
                                         <button
                                             type="button"
@@ -724,7 +727,7 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                                 const mentionProducts = filteredMentions.filter(m => m.type === 'product');
                                 const ordered = [...mentionModels, ...mentionProducts];
                                 return (
-                                <div className="co-mention-dropdown" ref={mentionListRef}>
+                                <div className="co-mention-dropdown" ref={mentionListRef} style={mentionDropdownStyle}>
                                     {mentionModels.length > 0 && (
                                         <>
                                             <div className="co-mention-header">{t('creativeOs.createBar.models')}</div>
