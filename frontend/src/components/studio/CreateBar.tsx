@@ -42,21 +42,29 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
     const fileInputRef = useRef<HTMLInputElement>(null);
     const mentionListRef = useRef<HTMLDivElement>(null);
 
-    // ── Clamp mention dropdown so it never clips behind the top nav bar ──
+    // ── Position mention dropdown using fixed coords so it always appears
+    //    right above the textarea, never clipped behind the header ──
     useLayoutEffect(() => {
         const el = mentionListRef.current;
-        if (!el || !mentionOpen) return;
-        // Reset any previous overrides so we measure the natural size
-        el.style.maxHeight = '';
-        el.style.bottom = '';
-        const rect = el.getBoundingClientRect();
-        const headerHeight = 64; // px – height of the top nav bar
-        if (rect.top < headerHeight) {
-            // Shrink max-height so the dropdown's top edge sits just below the header
-            const overflow = headerHeight - rect.top + 8; // 8px breathing room
-            const newMax = Math.max(120, rect.height - overflow);
-            el.style.maxHeight = `${newMax}px`;
-        }
+        const textarea = textareaRef.current;
+        if (!el || !textarea || !mentionOpen) return;
+
+        const textareaRect = textarea.getBoundingClientRect();
+        const headerHeight = 72; // px – height of the top nav bar + padding
+        const gap = 6; // px gap between dropdown and textarea
+
+        // Available vertical space between header and textarea top
+        const availableHeight = textareaRect.top - headerHeight - gap;
+        const maxH = Math.max(120, Math.min(340, availableHeight));
+
+        // Use fixed positioning anchored to the textarea's top edge
+        el.style.position = 'fixed';
+        el.style.left = `${textareaRect.left}px`;
+        el.style.width = `${textareaRect.width}px`;
+        el.style.bottom = `${window.innerHeight - textareaRect.top + gap}px`;
+        el.style.top = 'auto';
+        el.style.right = 'auto';
+        el.style.maxHeight = `${maxH}px`;
     });
 
     const [barState, setBarState] = useState<BarState>('idle');
