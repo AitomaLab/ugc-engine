@@ -995,6 +995,13 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     onArtifact?.();
                     break;
                 }
+                case 'confirmation_pending': {
+                    updateLastAgentTurn((t) => ({
+                        ...t,
+                        pendingConfirmation: { credits: e.credits, summaries: e.summaries },
+                    }));
+                    break;
+                }
                 case 'done':
                     setRunning(false);
                     setActivity('');
@@ -2509,6 +2516,74 @@ function AnimatedText({ text, refMap, speedCharsPerSec = 60 }: { text: string; r
     return <>{renderMessageContent(shown, refMap, false)}</>;
 }
 
+function CostConfirmChip({ pending, active, onQuickReply }: { pending: { credits: number; summaries: string[] }; active: boolean; onQuickReply?: (text: string) => void }) {
+    const { t } = useTranslation();
+    const handleConfirm = () => {
+        if (active && onQuickReply) onQuickReply('Confirmed — proceed with the pending generation now.');
+    };
+    const handleCancel = () => {
+        if (active && onQuickReply) onQuickReply("Cancel that — don't proceed.");
+    };
+    return (
+        <div
+            style={{
+                marginTop: '10px',
+                padding: '12px',
+                borderRadius: '10px',
+                border: '1px solid rgba(51,122,255,0.18)',
+                background: active ? 'rgba(51,122,255,0.04)' : 'rgba(138,147,176,0.05)',
+            }}
+        >
+            <div style={{ fontSize: '14px', fontWeight: 600, color: '#1F2A4A' }}>
+                {t('creativeOs.agent.costCredits').replace('{n}', String(pending.credits))}
+            </div>
+            {pending.summaries.length > 0 && (
+                <ul style={{ margin: '6px 0 10px 0', padding: 0, listStyle: 'none', fontSize: '12px', color: '#5C6781' }}>
+                    {pending.summaries.map((s, i) => (
+                        <li key={i} style={{ padding: '2px 0' }}>• {s}</li>
+                    ))}
+                </ul>
+            )}
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <button
+                    type="button"
+                    disabled={!active}
+                    onClick={handleConfirm}
+                    style={{
+                        padding: '6px 14px',
+                        borderRadius: '8px',
+                        border: '1px solid #337AFF',
+                        background: active ? 'linear-gradient(135deg, #337AFF 0%, #5B8FFF 100%)' : 'rgba(51,122,255,0.15)',
+                        color: active ? 'white' : '#8A93B0',
+                        fontSize: '13px',
+                        fontWeight: 500,
+                        cursor: active ? 'pointer' : 'default',
+                    }}
+                >
+                    {t('creativeOs.agent.costConfirm')}
+                </button>
+                <button
+                    type="button"
+                    disabled={!active}
+                    onClick={handleCancel}
+                    style={{
+                        padding: '6px 14px',
+                        borderRadius: '8px',
+                        border: '1px solid rgba(51,122,255,0.25)',
+                        background: 'white',
+                        color: active ? '#337AFF' : '#8A93B0',
+                        fontSize: '13px',
+                        fontWeight: 500,
+                        cursor: active ? 'pointer' : 'default',
+                    }}
+                >
+                    {t('creativeOs.agent.costCancel')}
+                </button>
+            </div>
+        </div>
+    );
+}
+
 function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspect }: { turn: AgentTurn; refMap: Map<string, AgentRef>; isLast?: boolean; running?: boolean; onQuickReply?: (text: string) => void; selectedAspect?: 'vertical' | 'horizontal' | null }) {
     const { t } = useTranslation();
     const isUser = turn.role === 'user';
@@ -2538,7 +2613,8 @@ function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspec
 
     const aspectButtonsActive = hasAspectMarker && !!isLast && !!onQuickReply && !selectedAspect;
     const saveOrGenActive = hasSaveOrGenMarker && !!isLast && !!onQuickReply && !saveChoice;
-    const hasContent = !!displayText || !!turn.artifacts?.length || turn.interrupted || hasRefPreviews || hasAspectMarker || hasSaveOrGenMarker;
+    const confirmChipActive = !!turn.pendingConfirmation && !!isLast && !!onQuickReply;
+    const hasContent = !!displayText || !!turn.artifacts?.length || turn.interrupted || hasRefPreviews || hasAspectMarker || hasSaveOrGenMarker || !!turn.pendingConfirmation;
     // While a run is active, show a placeholder "…" bubble (three breathing
     // dots) in place of the empty agent turn so the UI never looks frozen
     // while waiting for the first `agent_message`. Historical empty turns
@@ -2674,6 +2750,14 @@ function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspec
                             );
                         })}
                     </div>
+                )}
+
+                {turn.pendingConfirmation && (
+                    <CostConfirmChip
+                        pending={turn.pendingConfirmation}
+                        active={confirmChipActive}
+                        onQuickReply={onQuickReply}
+                    />
                 )}
 
                 {/* Save-or-Generate buttons */}

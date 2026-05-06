@@ -5212,6 +5212,13 @@ class ManagedAgentClient:
                         else None
                     )
 
+                    if pending_confirmation:
+                        yield {
+                            "type": "confirmation_pending",
+                            "credits": pending_confirmation["credits"],
+                            "summaries": pending_confirmation["summaries"],
+                        }
+
                     # Drain new artifacts produced by all tools in this batch.
                     if ctx.new_artifacts:
                         for art in ctx.new_artifacts:

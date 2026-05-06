@@ -835,6 +835,9 @@
   "creativeOs.agent.activityWorking": "Working…",
   "creativeOs.agent.aspectVertical": "Vertical (9:16)",
   "creativeOs.agent.aspectHorizontal": "Horizontal (16:9)",
+  "creativeOs.agent.costCredits": "{n} credits",
+  "creativeOs.agent.costConfirm": "Confirm",
+  "creativeOs.agent.costCancel": "Cancel",
 
   "creativeOs.createBar.imageMode": "Image",
   "creativeOs.createBar.videoMode": "Video",
