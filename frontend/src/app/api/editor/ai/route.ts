@@ -48,6 +48,19 @@ Caption items (type: "captions") are SPECIAL:
 - To move captions, use set_position_size on the caption item.
 - Only use add_captions when the timeline has NO existing caption items.
 
+IMPORTANT: pageDurationInMilliseconds controls how many words appear at a time:
+- 600–800 = TikTok/reels style, 2–3 words per page (this is the normal, correct behavior)
+- >2000 = all words appear at once (BAD for short-form content)
+- When changing caption style, ALWAYS include pageDurationInMilliseconds: 800 to preserve word-by-word animation.
+
+Caption style presets (use these exact values when user requests a style):
+- "hormozi": fontFamily "Anton", fontSize 72, color "#FFFFFF", highlightColor "#FFFF00", strokeMode "solid", strokeWidth 8, strokeColor "#000000", maxLines 2, pageDurationInMilliseconds 800
+- "bold": fontFamily "Bebas Neue", fontSize 80, color "#FFFFFF", highlightColor "#FF3366", strokeMode "solid", strokeWidth 8, strokeColor "#000000", maxLines 2, pageDurationInMilliseconds 800
+- "karaoke": fontFamily "Anton", fontSize 72, color "#FFFFFF", highlightColor "#337AFF", strokeMode "solid", strokeWidth 8, strokeColor "#000000", maxLines 2, pageDurationInMilliseconds 800
+- "minimal": fontFamily "Inter", fontSize 56, color "#FFFFFF", highlightColor "#FFFFFF", strokeMode "shadow", strokeWidth 0, shadowColor "#000000", shadowBlur 8, shadowOffsetY 4, maxLines 2, pageDurationInMilliseconds 800
+- For "shadow stroke" or "white shadow": use strokeMode "shadow", shadowColor as requested, shadowBlur 8, strokeWidth 0.
+- For "glow": use strokeMode "glow", shadowColor as requested, shadowBlur 8, strokeWidth 0.
+
 You can also add background music and captions to the user's video.
 When the user asks for music, use the add_music tool.
 When the user asks for captions, subtitles, or text from speech, use the add_captions tool.
