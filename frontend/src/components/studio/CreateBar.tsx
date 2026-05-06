@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { creativeFetch } from '@/lib/creative-os-api';
 import type { PromptOption, EnhanceResponse } from '@/lib/creative-os-api';
 import { useApp } from '@/providers/AppProvider';
@@ -42,7 +43,8 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
     const fileInputRef = useRef<HTMLInputElement>(null);
     const mentionListRef = useRef<HTMLDivElement>(null);
 
-
+    // ── Dropdown position: fixed coords computed from the bar element ──
+    const [dropdownPos, setDropdownPos] = useState<{ bottom: number; left: number; width: number } | null>(null);
 
     const [barState, setBarState] = useState<BarState>('idle');
     const [prompt, setPrompt] = useState('');
@@ -87,6 +89,26 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
     const [mentionShotPicker, setMentionShotPicker] = useState<{ id: string; type: 'product' | 'influencer'; name: string; views: string[] } | null>(null);
     // Picked app clip for digital products (drives composite + B-roll).
     const [pickedAppClipId, setPickedAppClipId] = useState<string | null>(null);
+
+    // ── Position the mention dropdown via portal using barRef coordinates ──
+    useEffect(() => {
+        if (!mentionOpen || !barRef.current) {
+            setDropdownPos(null);
+            return;
+        }
+        const update = () => {
+            const rect = barRef.current?.getBoundingClientRect();
+            if (!rect) return;
+            setDropdownPos({
+                bottom: window.innerHeight - rect.top + 8,
+                left: rect.left,
+                width: rect.width,
+            });
+        };
+        update();
+        window.addEventListener('resize', update);
+        return () => window.removeEventListener('resize', update);
+    }, [mentionOpen]);
 
     useEffect(() => {
         setMode(activeTab === 'images' ? 'cinematic' : 'ugc');
@@ -623,9 +645,9 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                         </div>
                     </div>
 
-                    {/* @Mention dropdown — positioned above the card, outside the wrapper */}
-                    {mentionOpen && mentionShotPicker && (
-                                <div className="co-mention-dropdown" ref={mentionListRef}>
+                    {/* @Mention dropdown — rendered via portal at document.body */}
+                    {typeof document !== 'undefined' && dropdownPos && mentionOpen && mentionShotPicker && createPortal(
+                                <div className="co-mention-dropdown" ref={mentionListRef} style={{ position: 'fixed', bottom: dropdownPos.bottom, left: dropdownPos.left, width: dropdownPos.width, zIndex: 9999 }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 6px 8px' }}>
                                         <button
                                             type="button"
@@ -656,14 +678,15 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                                             </div>
                                         ))}
                                     </div>
-                                </div>
+                                </div>,
+                            document.body
                             )}
-                            {mentionOpen && !mentionShotPicker && filteredMentions.length > 0 && (() => {
+                    {typeof document !== 'undefined' && dropdownPos && mentionOpen && !mentionShotPicker && filteredMentions.length > 0 && (() => {
                                 const mentionModels = filteredMentions.filter(m => m.type === 'influencer');
                                 const mentionProducts = filteredMentions.filter(m => m.type === 'product');
                                 const ordered = [...mentionModels, ...mentionProducts];
-                                return (
-                                <div className="co-mention-dropdown" ref={mentionListRef}>
+                                return createPortal(
+                                <div className="co-mention-dropdown" ref={mentionListRef} style={{ position: 'fixed', bottom: dropdownPos.bottom, left: dropdownPos.left, width: dropdownPos.width, zIndex: 9999 }}>
                                     {mentionModels.length > 0 && (
                                         <>
                                             <div className="co-mention-header">{t('creativeOs.createBar.models')}</div>
@@ -714,7 +737,8 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                                             </div>
                                         </>
                                     )}
-                                </div>
+                                </div>,
+                                document.body
                                 );
                             })()}
 
@@ -1026,12 +1050,11 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
                     .co-mention-wrapper { position: relative; flex: 1; min-width: 0; display: flex; align-items: center; }
                     .co-mention-wrapper .co-bar-input { width: 100%; }
                     .co-mention-dropdown {
-                        position: absolute; bottom: calc(100% + 6px); left: 14px; right: 14px;
                         max-height: min(340px, calc(100vh - 200px)); overflow-y: auto;
                         background: rgba(255,255,255,0.99); backdrop-filter: blur(20px);
                         border-radius: 14px; border: 1px solid rgba(51,122,255,0.12);
                         box-shadow: 0 8px 32px rgba(0,0,0,0.12), 0 0 0 1px rgba(51,122,255,0.04);
-                        z-index: 1100; animation: coFadeIn 0.12s ease;
+                        animation: coFadeIn 0.12s ease;
                         padding: 4px 4px 2px;
                     }
                     .co-mention-header {
