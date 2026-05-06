@@ -42,26 +42,68 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
     const fileInputRef = useRef<HTMLInputElement>(null);
     const mentionListRef = useRef<HTMLDivElement>(null);
 
-    // ── Position mention dropdown using fixed coords so it always appears
-    //    right above the textarea, never clipped behind the header ──
+    // ── Position mention dropdown right above the '@' character ──
+    // Uses a mirror-div technique to find the pixel coords of '@' inside the textarea.
     useLayoutEffect(() => {
         const el = mentionListRef.current;
         const textarea = textareaRef.current;
         if (!el || !textarea || !mentionOpen) return;
 
         const textareaRect = textarea.getBoundingClientRect();
-        const headerHeight = 72; // px – height of the top nav bar + padding
-        const gap = 6; // px gap between dropdown and textarea
+        const textareaStyles = window.getComputedStyle(textarea);
 
-        // Available vertical space between header and textarea top
-        const availableHeight = textareaRect.top - headerHeight - gap;
+        // Build a hidden mirror div that replicates the textarea's text layout
+        const mirror = document.createElement('div');
+        const mirrorStyles: Record<string, string> = {
+            position: 'absolute',
+            visibility: 'hidden',
+            whiteSpace: 'pre-wrap',
+            wordWrap: 'break-word',
+            overflow: 'hidden',
+            width: `${textarea.clientWidth}px`,
+            font: textareaStyles.font,
+            fontSize: textareaStyles.fontSize,
+            fontFamily: textareaStyles.fontFamily,
+            lineHeight: textareaStyles.lineHeight,
+            letterSpacing: textareaStyles.letterSpacing,
+            padding: textareaStyles.padding,
+            border: textareaStyles.border,
+            boxSizing: textareaStyles.boxSizing,
+        };
+        Object.assign(mirror.style, mirrorStyles);
+
+        // Insert text up to the '@' position, then a marker span
+        const textBeforeAt = textarea.value.slice(0, mentionCursorStart);
+        const textNode = document.createTextNode(textBeforeAt);
+        const marker = document.createElement('span');
+        marker.textContent = '@';
+        mirror.appendChild(textNode);
+        mirror.appendChild(marker);
+        document.body.appendChild(mirror);
+
+        // Measure the marker's position relative to the mirror
+        const markerRect = marker.getBoundingClientRect();
+        const mirrorRect = mirror.getBoundingClientRect();
+        const relativeTop = markerRect.top - mirrorRect.top;
+
+        document.body.removeChild(mirror);
+
+        // The '@' position in viewport coords:
+        // Start from the textarea's top, add the relative offset, subtract scroll
+        const atY = textareaRect.top + relativeTop - textarea.scrollTop;
+
+        const headerHeight = 72;
+        const gap = 8;
+
+        // Available space above the '@' character (below the header)
+        const availableHeight = atY - headerHeight - gap;
         const maxH = Math.max(120, Math.min(340, availableHeight));
 
-        // Use fixed positioning anchored to the textarea's top edge
+        // Position dropdown with its bottom edge just above the '@'
         el.style.position = 'fixed';
         el.style.left = `${textareaRect.left}px`;
         el.style.width = `${textareaRect.width}px`;
-        el.style.bottom = `${window.innerHeight - textareaRect.top + gap}px`;
+        el.style.bottom = `${window.innerHeight - atY + gap}px`;
         el.style.top = 'auto';
         el.style.right = 'auto';
         el.style.maxHeight = `${maxH}px`;
