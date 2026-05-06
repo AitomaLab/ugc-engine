@@ -44,37 +44,10 @@ export function MentionDropdown({ groups, ordered, activeIndex, onPick, onHover,
         overflowY: 'auto',
         padding: '8px',
         zIndex: 10,
-        /* Prevent clipping behind the top nav bar */
-        maxWidth: 'calc(100% - 28px)',
     };
-
-    /* After first render, clamp position so dropdown is never hidden behind the top nav */
-    const dropdownRef = React.useRef<HTMLDivElement>(null);
-    React.useEffect(() => {
-        const el = dropdownRef.current;
-        if (!el) return;
-        const rect = el.getBoundingClientRect();
-        if (rect.top < 64) {
-            // Dropdown is overflowing above the viewport / header (assumed ~64px tall).
-            // Flip to open downward from the top of the container instead.
-            el.style.bottom = 'auto';
-            el.style.top = '0';
-            el.style.transform = 'translateY(-6px)';
-            // Re-check: if downward also clips, just pin to below header
-            const newRect = el.getBoundingClientRect();
-            if (newRect.top < 64) {
-                el.style.position = 'fixed';
-                el.style.top = '68px';
-                el.style.left = `${rect.left}px`;
-                el.style.right = 'auto';
-                el.style.width = `${rect.width}px`;
-                el.style.transform = 'none';
-            }
-        }
-    });
     if (shotPickerItem && shotPickerItem.views && onPickShot) {
         return (
-            <div ref={dropdownRef} style={containerStyle}>
+            <div style={containerStyle}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 6px 8px' }}>
                     <button
                         type="button"
@@ -137,7 +110,7 @@ export function MentionDropdown({ groups, ordered, activeIndex, onPick, onHover,
         );
     }
     return (
-        <div ref={dropdownRef} style={containerStyle}>
+        <div style={containerStyle}>
             {ordered.length === 0 ? (
                 <div style={{ padding: '12px 8px', fontSize: '12px', color: '#8A93B0', textAlign: 'center' }}>
                     {t('creativeOs.mention.noMatches')}

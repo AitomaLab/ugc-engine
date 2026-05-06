@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import { creativeFetch } from '@/lib/creative-os-api';
 import type { PromptOption, EnhanceResponse } from '@/lib/creative-os-api';
 import { useApp } from '@/providers/AppProvider';
@@ -41,6 +41,23 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
     const barRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const mentionListRef = useRef<HTMLDivElement>(null);
+
+    // ── Clamp mention dropdown so it never clips behind the top nav bar ──
+    useLayoutEffect(() => {
+        const el = mentionListRef.current;
+        if (!el || !mentionOpen) return;
+        // Reset any previous overrides so we measure the natural size
+        el.style.maxHeight = '';
+        el.style.bottom = '';
+        const rect = el.getBoundingClientRect();
+        const headerHeight = 64; // px – height of the top nav bar
+        if (rect.top < headerHeight) {
+            // Shrink max-height so the dropdown's top edge sits just below the header
+            const overflow = headerHeight - rect.top + 8; // 8px breathing room
+            const newMax = Math.max(120, rect.height - overflow);
+            el.style.maxHeight = `${newMax}px`;
+        }
+    });
 
     const [barState, setBarState] = useState<BarState>('idle');
     const [prompt, setPrompt] = useState('');
