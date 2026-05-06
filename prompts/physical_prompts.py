@@ -347,30 +347,36 @@ def build_physical_product_scenes(fields, influencer, product, durations, ctx, m
         
         script_parts = script_parts[:num_scenes]
 
-        # POST-SPLIT VALIDATION: Replace any part outside word count range
-        # Seedance 2.0 uses variable durations (4s/12s) → different word counts per scene
-        is_seedance = "seedance" in str(fields.get("model_api", "")).lower()
-        if is_seedance and video_length == "15s":
-            # 15s physical: Part 1 (4s → 7-9 words), Part 2 (12s → 28-33 words)
-            word_ranges = [(5, 12), (25, 38)]
-        elif is_seedance and video_length == "30s":
-            # 30s physical: Part 1 (4s), Part 2 (12s), Part 3 (12s), Part 4 (4s)
-            word_ranges = [(5, 12), (25, 38), (25, 38), (5, 12)]
-        else:
-            # Veo: uniform 8s scenes → 17-23 words each
-            word_ranges = [(17, 23)] * num_scenes
+        # POST-SPLIT VALIDATION: Replace any part outside word count range.
+        # IMPORTANT: Skip this when the user provided a verbatim script via the
+        # agent — the word-count ranges assume AI-generated English scripts and
+        # would incorrectly replace confirmed user dialogue (especially non-English)
+        # with generic English fallback text.
+        if not is_manual_script:
+            is_seedance = "seedance" in str(fields.get("model_api", "")).lower()
+            if is_seedance and video_length == "15s":
+                # 15s physical: Part 1 (4s → 7-9 words), Part 2 (12s → 28-33 words)
+                word_ranges = [(5, 12), (25, 38)]
+            elif is_seedance and video_length == "30s":
+                # 30s physical: Part 1 (4s), Part 2 (12s), Part 3 (12s), Part 4 (4s)
+                word_ranges = [(5, 12), (25, 38), (25, 38), (5, 12)]
+            else:
+                # Veo: uniform 8s scenes → 17-23 words each
+                word_ranges = [(17, 23)] * num_scenes
 
-        for idx, part in enumerate(script_parts):
-            word_count = len(part.split())
-            min_w, max_w = word_ranges[idx] if idx < len(word_ranges) else (17, 23)
-            if word_count < min_w:
-                old_part = part
-                script_parts[idx] = _fallbacks[idx % len(_fallbacks)]
-                print(f"      [Script] Part {idx+1} too short ({len(old_part.split())} words, min {min_w}: '{old_part}'). Replaced with fallback.")
-            elif word_count > max_w:
-                old_part = part
-                script_parts[idx] = _fallbacks[idx % len(_fallbacks)]
-                print(f"      [Script] Part {idx+1} too long ({len(old_part.split())} words, max {max_w}). Replaced with fallback.")
+            for idx, part in enumerate(script_parts):
+                word_count = len(part.split())
+                min_w, max_w = word_ranges[idx] if idx < len(word_ranges) else (17, 23)
+                if word_count < min_w:
+                    old_part = part
+                    script_parts[idx] = _fallbacks[idx % len(_fallbacks)]
+                    print(f"      [Script] Part {idx+1} too short ({len(old_part.split())} words, min {min_w}: '{old_part}'). Replaced with fallback.")
+                elif word_count > max_w:
+                    old_part = part
+                    script_parts[idx] = _fallbacks[idx % len(_fallbacks)]
+                    print(f"      [Script] Part {idx+1} too long ({len(old_part.split())} words, max {max_w}). Replaced with fallback.")
+        else:
+            print(f"      [Script] User-provided script — skipping word-count validation (preserving verbatim dialogue)")
 
     # Generate Scenes
     for i, desc in enumerate(scene_descriptions):

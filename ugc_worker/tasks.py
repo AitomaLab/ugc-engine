@@ -256,6 +256,13 @@ def generate_ugc_video(self, job_id: str):
             "video_language": job.get("video_language", "en"),
         }
 
+        # ── Trace hook provenance for debugging ──
+        _hook_source = "job.hook" if job.get("hook") else ("metadata.hook" if job_metadata.get("hook") else "script_text fallback")
+        print(f"      [HOOK TRACE] Source: {_hook_source}")
+        print(f"      [HOOK TRACE] Hook ({len(fields['Hook'])} chars): {fields['Hook'][:150]}...")
+        print(f"      [HOOK TRACE] Language: {fields['video_language']}")
+        print(f"      [HOOK TRACE] Model: {fields['model_api']}")
+
     except Exception as e:
         update_job(job_id, {"status": "failed", "error_message": f"Data fetch failed: {str(e)}"})
         raise

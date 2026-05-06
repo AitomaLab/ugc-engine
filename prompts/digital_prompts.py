@@ -120,6 +120,44 @@ def build_15s(dur, app_clip, ctx):
     return scenes
 
 
+def _split_items_proportionally(items, num_veo_scenes, ctx):
+    """Split sentences or words proportionally based on AI scene durations."""
+    ai_durations = []
+    model_api = ctx.get("model_api", "")
+    
+    if "seedance" in model_api.lower():
+        import config
+        s_cfg = config.get_seedance_durations("30s", "digital")
+        for sc in s_cfg["scenes"]:
+            if sc.get("has_video_input") is not None:  # It's an AI scene
+                ai_durations.append(sc["duration"])
+        ai_durations = ai_durations[:num_veo_scenes]
+    else:
+        # Veo uses equal splits, typically 8s each
+        ai_durations = [8] * num_veo_scenes
+
+    # Fallback to equal weights if config doesn't match
+    while len(ai_durations) < num_veo_scenes:
+        ai_durations.append(8)
+        
+    total_ai_dur = sum(ai_durations)
+    if total_ai_dur == 0:
+        total_ai_dur = 1
+
+    parts = []
+    start_idx = 0
+    for i in range(num_veo_scenes):
+        if i == num_veo_scenes - 1:
+            chunk = " ".join(items[start_idx:])
+        else:
+            weight = ai_durations[i] / total_ai_dur
+            chunk_len = max(1, int(round(len(items) * weight)))
+            chunk = " ".join(items[start_idx:start_idx + chunk_len])
+            start_idx += chunk_len
+        parts.append(chunk)
+    return parts
+
+
 def build_30s(dur, app_clip, ctx, product=None, influencer=None):
     """
     30s structure optimised for the Veo 3.1 Extend pipeline.
@@ -154,54 +192,81 @@ def build_30s(dur, app_clip, ctx, product=None, influencer=None):
         num_veo_scenes = 2
 
     import re
-    
+
+    # Assemble user-provided script segments. ONLY include ctx["caption"]
+    # if it looks like a real dialogue segment (not the default placeholder).
+    # The default "Link in bio!" or "¡Descárgala ya..." creates a fake |||
+    # delimiter that prevents proper proportional splitting.
+    _default_captions = {"link in bio!", "check the link in bio!", "link in my bio!"}
     parts = []
     if ctx.get("hook"): parts.append(ctx["hook"])
     if ctx.get("reaction_text"): parts.append(ctx["reaction_text"])
-    if ctx.get("caption"): parts.append(ctx["caption"])
+    caption_val = (ctx.get("caption") or "").strip()
+    if caption_val and caption_val.lower() not in _default_captions and len(caption_val.split()) > 5:
+        parts.append(caption_val)
     full_script = " ||| ".join(parts) if parts else "Okay you guys, I found this app and I am obsessed. You need to check it out."
 
     if ctx.get("scene_dialogues"):
         script_parts = ctx["scene_dialogues"]
     elif "|||" in full_script:
-        parts = [sanitize_dialogue(p.strip()) for p in full_script.split("|||") if p.strip()]
-        script_parts = parts[:num_veo_scenes]
+        raw_parts = [sanitize_dialogue(p.strip()) for p in full_script.split("|||") if p.strip()]
+        # Guard against lopsided splits
+        substantial = [p for p in raw_parts if len(p.split()) > 15]
+        if len(substantial) == 1 and len(raw_parts) < num_veo_scenes:
+            # Treat the single substantial part as a monolithic script
+            sanitized = substantial[0]
+            words = sanitized.split()
+            print(f"      [build_30s] Lopsided ||| split detected — re-splitting {len(words)} words / {num_veo_scenes} scenes")
+            script_parts = _split_items_proportionally(words, num_veo_scenes, ctx)
+        else:
+            script_parts = raw_parts[:num_veo_scenes]
     else:
         sanitized = sanitize_dialogue(full_script)
         sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', sanitized) if s.strip()]
 
-        # Instead of a strict 15-word minimum that drains the script into 1 chunk,
-        # we evenly divide the available sentences across num_veo_scenes.
-        num_sentences = len(sentences)
-        sentences_per_scene = max(1, num_sentences // num_veo_scenes)
-        
-        script_parts = []
-        for i in range(num_veo_scenes):
-            if i == num_veo_scenes - 1:
-                chunk = " ".join(sentences[i * sentences_per_scene :])
-            else:
-                chunk = " ".join(sentences[i * sentences_per_scene : (i + 1) * sentences_per_scene])
-            script_parts.append(chunk)
+        if len(sentences) >= num_veo_scenes:
+            script_parts = _split_items_proportionally(sentences, num_veo_scenes, ctx)
+        else:
+            words = sanitized.split()
+            print(f"      [build_30s] Word-based split: {len(words)} words / {num_veo_scenes} scenes")
+            script_parts = _split_items_proportionally(words, num_veo_scenes, ctx)
 
     brand = product.get("name", "this") if product else "this app"
-    fallbacks = [
-        f"Honestly, {brand} is a total game changer for me, I use it literally every single day now.",
-        f"You have got to try {brand} for yourself, I promise it makes everything so much easier and faster.",
-        f"I cannot stop using {brand}, it is genuinely that good, trust me you are going to love it.",
-        f"Seriously, go check out {brand} right now, it is going to save you so much time and stress."
-    ]
+    if _video_lang == 'es':
+        fallbacks = [
+            f"En serio, {brand} me ha cambiado la vida, lo uso literalmente todos los días.",
+            f"Tienes que probar {brand}, te prometo que te hace todo mucho más fácil y rápido.",
+            f"No puedo dejar de usar {brand}, es así de bueno, confía en mí te va a encantar.",
+            f"Ve a buscar {brand} ahora mismo, te va a ahorrar un montón de tiempo y estrés.",
+        ]
+    else:
+        fallbacks = [
+            f"Honestly, {brand} is a total game changer for me, I use it literally every single day now.",
+            f"You have got to try {brand} for yourself, I promise it makes everything so much easier and faster.",
+            f"I cannot stop using {brand}, it is genuinely that good, trust me you are going to love it.",
+            f"Seriously, go check out {brand} right now, it is going to save you so much time and stress.",
+        ]
     
     # Pad if necessary
     while len(script_parts) < num_veo_scenes:
         script_parts.append(fallbacks[len(script_parts) % len(fallbacks)])
 
-    # POST-SPLIT VALIDATION: Ensure time boundary (18-22 words ≈ 6-7s at 3 words/sec)
-    MIN_WORDS = 18
-    MAX_WORDS = 22
-    for idx, part in enumerate(script_parts):
-        word_count = len(part.split())
-        if word_count < MIN_WORDS or word_count > MAX_WORDS:
-            script_parts[idx] = fallbacks[idx % len(fallbacks)]
+    # POST-SPLIT VALIDATION: Ensure time boundary (18-22 words ≈ 6-7s at 3 words/sec).
+    # Skip when the user provided a verbatim script (via ctx['scene_dialogues'] or
+    # a manual hook) — the word ranges are calibrated for AI-generated English and
+    # would silently replace user-confirmed non-English scripts with fallback text.
+    _is_user_script = bool(ctx.get("scene_dialogues")) or (
+        ctx.get("hook", "").strip() not in ("", "Check this out!")
+    )
+    if not _is_user_script:
+        MIN_WORDS = 18
+        MAX_WORDS = 22
+        for idx, part in enumerate(script_parts):
+            word_count = len(part.split())
+            if word_count < MIN_WORDS or word_count > MAX_WORDS:
+                script_parts[idx] = fallbacks[idx % len(fallbacks)]
+    else:
+        print(f"      [build_30s] User-provided script — skipping word-count validation")
 
     # Check if we can use composite image for Scene 1 (digital product with first frame)
     first_frame_url = app_clip.get("first_frame_url") if app_clip else None

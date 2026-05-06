@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
-from anthropic import AsyncAnthropic, BadRequestError, NotFoundError
+from anthropic import AsyncAnthropic, APIStatusError, BadRequestError, NotFoundError
 from dotenv import load_dotenv
 
 # Defensive env load — works in both local dev (deep nesting) and Railway (/app/).
@@ -211,7 +211,7 @@ The user has toggled the Seedance 2.0 engine ON for this turn. Do NOT use `ugc` 
 - **UGC**: `generate_video(mode="seedance_2_ugc")` — authentic handheld UGC with optional Spanish (Latin) dialogue.
 - **Cinematic**: `generate_video(mode="seedance_2_cinematic")` — high-end commercial single-shot cinematic.
 - **Product scene**: `generate_video(mode="seedance_2_product")` — standalone product showcase, no person.
-If the user's brief requires a full 15/30s produced video (create_ugc_video) or a lip-synced clone, the Seedance toggle does NOT apply — fall back to the default Veo / clone pipelines.
+If the user's brief requires a lip-synced clone, the Seedance toggle does NOT apply — fall back to the clone pipeline. For full 15/30s produced videos (create_ugc_video), when the current brief carries [ENGINE=seedance], pass model_api="seedance-2.0" to create_ugc_video so the worker uses the Seedance engine instead of Veo 3.1.
 
 ## Quick Mode — `[QUICK_MODE=on]` / `[QUICK_MODE=off]`
 
@@ -229,7 +229,7 @@ For multi-step plans in quick mode, still present a single bundled cost via `est
 **When `[QUICK_MODE=off]`:**
 Follow the standard confirmation flow exactly as described in the "Cost confirmation rule" section above. Present cost, end turn, wait for explicit user confirmation.
 
-Additionally, before calling any video generation tool (generate_video, create_ugc_video, animate_image), describe in plain language what the video will show — e.g. "María will hold the Naiara app on her phone while speaking to the camera about its invoice scanning features, in a casual home setting. The first scene shows her scrolling through the app, the second shows her reacting excitedly." Ask the user: "Does this direction look good, or would you like to change anything before I send it for generation?" Only proceed once the user confirms or says to go ahead. This preview step does NOT apply in quick mode.
+Additionally, before calling any video generation tool (generate_video, animate_image), describe in plain language what the video will show. Ask the user: "Does this direction look good?" Only proceed once the user confirms. This preview step does NOT apply in quick mode or to create_ugc_video (which already has its own built-in credit confirmation gate — do NOT add a separate direction-approval step for create_ugc_video).
 
 ## Clip length reasoning (model-aware)
 
@@ -283,14 +283,17 @@ You MUST do this check BEFORE starting any generation. Do NOT skip it.
 
 **Full UGC video (15-30s)**: list_project_assets → check if the user supplied their own script/dialogue text.
   - **User provided script**: When the user wrote actual dialogue lines (hook, body, CTA, or any spoken text), pass ALL of it verbatim as the `hook` argument to generate_video or create_ugc_video. The `hook` field carries the user's EXACT spoken words — NEVER paraphrase, rewrite, or embellish the user's dialogue. Put your visual/action direction in the `prompt` field instead. The pipeline will use `hook` as-is for the character's speech and enhance only the visual direction from `prompt`.
-  - **Script length validation (MANDATORY — ALWAYS REPORT)**: Before generating, ALWAYS count the words in the user's script and report the fit. Use ~2.5 words per second as a guideline:
-    - 5s clip → ~12 words ideal
-    - 8s clip → ~20 words ideal
-    - 10s clip → ~25 words ideal
-    - 15s clip → ~37 words ideal
-    ALWAYS include a line like: "Your script is ~X words — [fits well / is too long / is too short] for a [duration]s clip (~Y words ideal)."
-    If the script does NOT fit (too short OR too long): "keep as-is" is NEVER an option — a mismatched script causes the AI to hallucinate filler dialogue, rush words, or leave dead silence. You MUST suggest 2-3 alternative scripts that expand or trim the user's original words to hit the ideal word count for the chosen clip duration. Every suggestion must be close to the ideal word count. The user must pick one or provide a new script before you proceed.
-    If the script fits well: confirm it's good and proceed directly.
+  - **Script length auto-validation**: The create_ugc_video and generate_video tools automatically validate the hook's word count against the target duration BEFORE charging credits. If validation fails, the tool returns a `script_validation: "failed"` response with issues, suggestions, and the ideal word budget. When you receive this:
+    1. Present the issue to the user clearly (e.g. "Your script is 15 words, but a 30s video needs 45-100 words").
+    2. Suggest 2-3 alternative scripts that preserve the user's core message but adjust the length to fit. Each suggestion should be close to the `budget.ideal` word count.
+    3. Ask the user to pick one, adjust their script, or confirm they want to proceed as-is (note: short scripts cause dead silence, long scripts cause rushing/cutoff).
+    4. Once the user provides an adjusted script or confirms, call the tool again with the updated hook.
+    Word count guidelines for reference (the tool enforces these):
+    - 5s clip → 10-18 words (ideal ~14)
+    - 8s clip → 18-28 words (ideal ~22)
+    - 10s clip → 22-35 words (ideal ~28)
+    - 15s video → 30-50 words (ideal ~40, split across 2 scenes)
+    - 30s video → 45-100 words (ideal ~70, split across 3-4 scenes)
   - **No script provided, but clear direction**: If the user gave a creative brief (e.g. "make a video about the health benefits") but no actual dialogue, call `generate_scripts(product_id, duration, influencer_id, context=<user's brief>)` FIRST to produce a script, then pass the generated hook + scene dialogues (newline-joined) as the `hook` argument.
   - **No script AND no clear direction**: If the user's request is vague about what the character should say (e.g. "make a 30s UGC video for this product"), you MUST ask before generating: "What should [influencer name] say in the video? Do you have a specific script, or should I write one based on the product?" End your turn and wait for the answer. Do NOT silently generate a random script — the user needs to guide the content.
   Then call create_ugc_video (gated). Wait for completion, then confirm in plain text.
@@ -1078,6 +1081,8 @@ def _custom_tools_for_agent() -> list[dict]:
                     "video_language": {"type": "string"},
                     "subtitles_enabled": {"type": "boolean"},
                     "music_enabled": {"type": "boolean"},
+                    "app_clip_id": {"type": "string", "description": "ID of the app clip (screen recording) to include in the video. For digital products, this enables the NanoBanana composite pipeline (influencer holding device with app on screen)."},
+                    "model_api": {"type": "string", "description": "Engine to use. 'veo-3.1-fast' (default) or 'seedance-2.0' when user has Seedance toggle on."},
                     "confirmed": {"type": "boolean", "description": confirmed_desc},
                 },
                 "required": ["influencer_id", "duration"],
@@ -1756,9 +1761,13 @@ def _credits_for_op(operation: str, params: dict) -> int:
     raise ValueError(f"unknown operation for credit estimate: {operation}")
 
 
-def _confirmation_payload(operation: str, credits: int, summary: str, echo: dict) -> str:
-    """Standard payload returned when a generation tool is called without confirmed=true."""
-    return json.dumps({
+def _confirmation_payload(operation: str, credits: int, summary: str, echo: dict, **extra) -> str:
+    """Standard payload returned when a generation tool is called without confirmed=true.
+
+    Extra keyword arguments (e.g. script_status, script_word_count, script_notes)
+    are merged into the response so the agent LLM can see validation metadata.
+    """
+    payload = {
         "action": "confirmation_required",
         "operation": operation,
         "credits": credits,
@@ -1770,7 +1779,10 @@ def _confirmation_payload(operation: str, credits: int, summary: str, echo: dict
             f"Do NOT just reply with text saying the job has started — you must emit a tool_use call. "
             f"The generation only starts when you actually call the tool."
         ),
-    })
+    }
+    if extra:
+        payload.update(extra)
+    return json.dumps(payload)
 
 
 async def _tool_generate_image(ctx: ToolContext, **kwargs: Any) -> str:
@@ -1907,17 +1919,53 @@ async def _tool_generate_video(ctx: ToolContext, **kwargs: Any) -> str:
     if not ctx.project_id:
         return json.dumps({"error": "project_id is required to generate videos"})
 
+    clip_length = int(kwargs.get("clip_length", 5))
+
+    # ── Script validation for clips (before credit gate) ──────────────
+    user_hook = (kwargs.get("hook") or "").strip()
+    if user_hook and not kwargs.get("confirmed") and kwargs.get("mode") == "ugc":
+        # Clip-specific word budgets (single scene, no |||)
+        _CLIP_WORD_BUDGETS = {
+            5: {"min": 10, "max": 18, "ideal": 14},
+            8: {"min": 18, "max": 28, "ideal": 22},
+            10: {"min": 22, "max": 35, "ideal": 28},
+        }
+        budget = _CLIP_WORD_BUDGETS.get(clip_length, _CLIP_WORD_BUDGETS[8])
+        word_count = len(user_hook.split())
+        if word_count < budget["min"] or word_count > budget["max"]:
+            direction = "short" if word_count < budget["min"] else "long"
+            diff = abs(word_count - (budget["min"] if direction == "short" else budget["max"]))
+            return json.dumps({
+                "script_validation": "failed",
+                "word_count": word_count,
+                "clip_length": clip_length,
+                "issues": [
+                    f"Script is too {direction} ({word_count} words) for a {clip_length}s clip. "
+                    f"Target range is {budget['min']}-{budget['max']} words (ideal: ~{budget['ideal']})."
+                ],
+                "suggestions": [
+                    f"{'Add' if direction == 'short' else 'Remove'} approximately {diff} words. "
+                    f"A {clip_length}s clip has about {clip_length - 1} seconds of speech time."
+                ],
+                "budget": budget,
+                "action_required": (
+                    "Tell the user about the script length issue. "
+                    "Ask if they'd like to adjust it or have you suggest an optimized version."
+                ),
+                "original_script": user_hook,
+            })
+
     # Cost confirmation gate
     if not kwargs.get("confirmed"):
         credits = _credits_for_op("generate_video", {
             "mode": kwargs.get("mode", "ugc"),
-            "clip_length": kwargs.get("clip_length", 5),
+            "clip_length": clip_length,
         })
         return _confirmation_payload(
             operation="generate_video",
             credits=credits,
             summary=(
-                f"Generate {kwargs.get('clip_length', 5)}s video clip "
+                f"Generate {clip_length}s video clip "
                 f"(mode={kwargs.get('mode')})"
             ),
             echo={k: v for k, v in kwargs.items() if k != "confirmed"},
@@ -2369,6 +2417,121 @@ async def _tool_generate_scripts(ctx: ToolContext, **kwargs: Any) -> str:
 
 
 # ── Phase 3: Full UGC video + clone + bulk campaign ───────────────────
+
+# ---------------------------------------------------------------------------
+# Script Validation — ensures user-provided scripts match video duration
+# ---------------------------------------------------------------------------
+
+# Word count requirements per video model/duration/scene:
+#   Veo 3.1 (default): 8s scenes → 17-23 words each (3 words/sec speech rate)
+#   Seedance 2.0:      variable (4s→7-9 words, 12s→28-33 words)
+#
+# Total word budgets:
+#   15s (2 Veo scenes): 34-46 words total  (ideal ~40)
+#   30s (3-4 Veo scenes): 51-92 words total (ideal ~60-80)
+#   Single clip (5-10s): 12-30 words depending on clip_length
+
+_SCRIPT_WORD_BUDGETS = {
+    15: {"min": 30, "max": 50, "ideal": 40, "scenes": 2, "per_scene": "17-23"},
+    30: {"min": 45, "max": 100, "ideal": 70, "scenes": "3-4", "per_scene": "17-23"},
+}
+
+
+def _validate_script_for_video(
+    script: str,
+    duration: int,
+    video_language: str = "en",
+) -> dict:
+    """Validate a user-provided script against the target video duration.
+
+    Returns a dict with:
+        valid (bool): True if the script can be used as-is
+        word_count (int): Total word count of the script
+        duration (int): Target duration in seconds
+        budget (dict): Expected word count range
+        issues (list[str]): Human-readable issues found
+        suggestions (list[str]): Actionable suggestions for the user
+    """
+    budget = _SCRIPT_WORD_BUDGETS.get(duration, _SCRIPT_WORD_BUDGETS[15])
+    words = script.split()
+    word_count = len(words)
+    issues = []
+    suggestions = []
+
+    # Check total word count
+    if word_count < budget["min"]:
+        deficit = budget["min"] - word_count
+        issues.append(
+            f"Script is too short ({word_count} words) for a {duration}s video. "
+            f"Minimum is {budget['min']} words ({budget['scenes']} scenes × {budget['per_scene']} words each)."
+        )
+        suggestions.append(
+            f"Add approximately {deficit} more words. The script needs to fill "
+            f"{budget['scenes']} scenes of ~8 seconds each. "
+            f"Consider adding more detail, a benefit statement, or a call-to-action."
+        )
+    elif word_count > budget["max"]:
+        excess = word_count - budget["max"]
+        issues.append(
+            f"Script is too long ({word_count} words) for a {duration}s video. "
+            f"Maximum is {budget['max']} words to fit within {duration} seconds of speech."
+        )
+        suggestions.append(
+            f"Remove approximately {excess} words. Long scripts cause the character "
+            f"to rush or get cut off mid-sentence. Focus on the most impactful lines."
+        )
+
+    # Check if multi-scene split will work (needs enough content per scene)
+    if duration == 30 and "|||" not in script:
+        # 30s videos get split into 3-4 scenes. Check if there's enough structure.
+        import re
+        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', script) if s.strip()]
+        if len(sentences) < 3 and word_count >= budget["min"]:
+            suggestions.append(
+                "For a 30s video, the script is split across 3-4 scenes. "
+                "Consider structuring it as: Hook → Benefit → Reaction → CTA, "
+                "with clear sentence breaks between each section."
+            )
+
+    # Language-specific checks
+    if video_language == "es":
+        # Spanish words tend to be longer, so the word-per-second rate is slightly lower
+        # Adjust thresholds by ~15% to account for this
+        adjusted_min = int(budget["min"] * 0.85)
+        if word_count < adjusted_min:
+            # Override the too-short issue with adjusted threshold
+            issues = [i for i in issues if "too short" not in i]
+            if word_count < adjusted_min:
+                issues.append(
+                    f"Script is too short ({word_count} words) for a {duration}s video in Spanish. "
+                    f"Minimum is approximately {adjusted_min} words."
+                )
+
+    valid = len(issues) == 0
+
+    # If valid but close to boundaries, add a soft note
+    if valid and word_count < budget["min"] + 5:
+        suggestions.append(
+            f"Script length ({word_count} words) is at the lower end of the range. "
+            f"Ideal is around {budget['ideal']} words for natural pacing."
+        )
+
+    return {
+        "valid": valid,
+        "word_count": word_count,
+        "duration": duration,
+        "budget": {
+            "min": budget["min"],
+            "max": budget["max"],
+            "ideal": budget["ideal"],
+            "scenes": budget["scenes"],
+            "per_scene": budget["per_scene"],
+        },
+        "issues": issues,
+        "suggestions": suggestions,
+    }
+
+
 async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
     """Full 15s/30s UGC video — script → TTS → scenes → captions → music → assemble."""
     if not kwargs.get("influencer_id"):
@@ -2402,14 +2565,51 @@ async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
                 ),
             })
 
+    # ── Script validation (before credit gate) ────────────────────────
+    # When the user provides a script via hook, validate it against the
+    # target duration BEFORE asking them to confirm credits. This way
+    # they can fix the script without wasting credits on a video that
+    # would have bad pacing or get cut off.
+    user_hook = kwargs.get("hook", "").strip()
+    if user_hook and not kwargs.get("confirmed"):
+        video_language = kwargs.get("video_language", "en")
+        validation = _validate_script_for_video(user_hook, duration, video_language)
+        if not validation["valid"]:
+            return json.dumps({
+                "script_validation": "failed",
+                "word_count": validation["word_count"],
+                "duration": duration,
+                "issues": validation["issues"],
+                "suggestions": validation["suggestions"],
+                "budget": validation["budget"],
+                "action_required": (
+                    "Tell the user about the script length issue and share the suggestions. "
+                    "Ask if they'd like to: (1) adjust the script, (2) have you generate "
+                    "an optimized version based on their script, or (3) proceed anyway "
+                    "(the pipeline will try to adapt but results may not be ideal)."
+                ),
+                "original_script": user_hook,
+            })
+        elif validation["suggestions"]:
+            # Valid but with soft warnings — include them in the confirmation
+            print(f"[create_ugc_video] Script valid with notes: {validation['suggestions']}")
+
     # Cost confirmation gate
     if not kwargs.get("confirmed"):
         credits = _credits_for_op("create_ugc_video", {"product_type": product_type, "duration": duration})
+        # Include script validation summary in the confirmation if hook was provided
+        extra_info = {}
+        if user_hook:
+            validation = _validate_script_for_video(user_hook, duration, kwargs.get("video_language", "en"))
+            extra_info["script_status"] = "validated"
+            extra_info["script_word_count"] = validation["word_count"]
+            extra_info["script_notes"] = validation["suggestions"] if validation["suggestions"] else ["Script length is good for this duration."]
         return _confirmation_payload(
             operation="create_ugc_video",
             credits=credits,
             summary=f"Generate full {duration}s UGC video ({product_type} product)",
             echo={k: v for k, v in kwargs.items() if k != "confirmed"},
+            **extra_info,
         )
 
     # Safety net: if the LLM forgot to run generate_scripts first, do it here so
@@ -2437,6 +2637,12 @@ async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
         except Exception as e:
             print(f"[create_ugc_video] auto generate_scripts failed (non-fatal): {e}")
 
+    print(f"[create_ugc_video] Building payload:")
+    print(f"  hook={'YES (' + str(len(kwargs.get('hook', '') or '')) + ' chars)' if kwargs.get('hook') else 'NONE'}")
+    print(f"  hook_preview={repr((kwargs.get('hook') or '')[:120])}")
+    print(f"  video_language={kwargs.get('video_language', 'en')}")
+    print(f"  duration={duration}s, product_type={product_type}")
+
     payload = {
         "influencer_id": kwargs["influencer_id"],
         "product_type": product_type,
@@ -2448,11 +2654,17 @@ async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
         "video_language": kwargs.get("video_language", "en"),
         "subtitles_enabled": kwargs.get("subtitles_enabled", True),
         "music_enabled": kwargs.get("music_enabled", True),
-        # Agent always uses Veo 3.1 for UGC (not Seedance) — more reliable,
-        # routes to the Veo extend pipeline in core_engine.
-        "model_api": "veo-3.1-fast",
+        # Respect model_api from the agent (seedance-2.0 when toggle is on)
+        "model_api": kwargs.get("model_api", "veo-3.1-fast"),
     }
+    # Include app_clip_id so the worker can fetch the clip, build composite
+    # images (NanoBanana), and use the correct scene structure.
+    if kwargs.get("app_clip_id"):
+        payload["app_clip_id"] = kwargs["app_clip_id"]
     payload = {k: v for k, v in payload.items() if v is not None}
+
+    print(f"[create_ugc_video] Final payload keys: {list(payload.keys())}")
+    print(f"[create_ugc_video] hook in payload: {'hook' in payload}")
 
     try:
         job = await ctx.core().create_ugc_video_job(payload)
@@ -5033,32 +5245,86 @@ class ManagedAgentClient:
         # (e.g. first message after a Railway restart wiped the session cache),
         # include the context primer so the agent doesn't start from scratch.
         initial_primer = bool(prior_turns) and not seen_event_ids
-        try:
-            await _send_user_message(session_id, with_primer=initial_primer)
-        except (BadRequestError, NotFoundError) as e:
-            err_str = str(e).lower()
-            # Covers: "waiting on responses" (pending tool call), "not found" (expired session),
-            # and any agent-mismatch errors that occur when the service was restarted and a new
-            # agent was created, making the old session_id invalid.
-            should_reset = (
-                "waiting on responses" in err_str
-                or "not found" in err_str
-                or "agent" in err_str
-                or "session" in err_str
-            )
-            if should_reset:
-                session_id = await _reset_and_send()
-                yield {"type": "session", "session_id": session_id, "agent_id": current_agent_id}
-            else:
-                raise
+        # ── Send user message with retry for transient errors ─────────
+        _send_max_retries = 3
+        for _send_attempt in range(1, _send_max_retries + 1):
+            try:
+                await asyncio.wait_for(
+                    _send_user_message(session_id, with_primer=initial_primer),
+                    timeout=30,  # 30s timeout on the send itself
+                )
+                break  # success
+            except (BadRequestError, NotFoundError) as e:
+                err_str = str(e).lower()
+                # Covers: "waiting on responses" (pending tool call), "not found" (expired session),
+                # and any agent-mismatch errors that occur when the service was restarted and a new
+                # agent was created, making the old session_id invalid.
+                should_reset = (
+                    "waiting on responses" in err_str
+                    or "not found" in err_str
+                    or "agent" in err_str
+                    or "session" in err_str
+                )
+                if should_reset:
+                    session_id = await _reset_and_send()
+                    yield {"type": "session", "session_id": session_id, "agent_id": current_agent_id}
+                else:
+                    raise
+                break
+            except (APIStatusError, asyncio.TimeoutError) as e:
+                err_str = str(e).lower()
+                is_overloaded = (
+                    isinstance(e, asyncio.TimeoutError)
+                    or "overloaded" in err_str or "529" in err_str
+                    or "rate limit" in err_str or "503" in err_str
+                )
+                if is_overloaded and _send_attempt < _send_max_retries:
+                    delay = 2 ** _send_attempt
+                    print(f"[ManagedAgent] send failed ({e}), retry {_send_attempt}/{_send_max_retries} in {delay}s")
+                    await asyncio.sleep(delay)
+                    continue
+                raise  # not transient or exhausted retries
 
         try:
             # Carries cost-preview info from one pass to the next, so if the
             # agent ends a turn after a confirmation_required result without
             # writing user-facing text, we can synthesize a fallback message.
             pending_confirmation: dict | None = None
+
+            # ── Retry wrapper for transient Anthropic errors ──────────
+            # The Anthropic API can return 529 ("overloaded"), 500, or
+            # rate-limit errors. These are transient — retrying after a
+            # short backoff usually succeeds. Without retry the user sees
+            # a raw red error pill and has to re-type their message.
+            _TRANSIENT_PATTERNS = (
+                "overloaded", "rate limit", "rate_limit",
+                "internal server error", "500", "529",
+                "timeout", "timed out", "temporarily unavailable",
+                "service unavailable", "503",
+            )
+            _MAX_RETRIES = 3
+            _retry_count = 0
+
+            def _is_transient_error(msg: str) -> bool:
+                msg_lower = msg.lower()
+                return any(p in msg_lower for p in _TRANSIENT_PATTERNS)
+
             while True:
-                stream = await self._client.beta.sessions.events.stream(session_id)
+                try:
+                    stream = await asyncio.wait_for(
+                        self._client.beta.sessions.events.stream(session_id),
+                        timeout=90,  # 90s timeout — prevents indefinite hanging
+                    )
+                except (asyncio.TimeoutError, APIStatusError) as e:
+                    err_str = str(e) if not isinstance(e, asyncio.TimeoutError) else "stream timeout"
+                    if _is_transient_error(err_str) and _retry_count < _MAX_RETRIES:
+                        _retry_count += 1
+                        delay = 2 ** _retry_count
+                        print(f"[ManagedAgent] stream open failed ({err_str[:120]}), retry {_retry_count}/{_MAX_RETRIES} in {delay}s")
+                        await asyncio.sleep(delay)
+                        continue  # retry the while-True loop
+                    raise  # exhausted retries or non-transient
+
                 went_idle = False
                 # Collect all tool calls emitted in this stream pass before executing,
                 # so multiple tools requested in a single agent turn run concurrently
@@ -5066,6 +5332,7 @@ class ManagedAgentClient:
                 pending_tool_calls: list[Any] = []
                 hit_limit = False
                 emitted_text_this_pass = False
+                _session_error_retried = False
 
                 async for ev in stream:
                     ev_type = getattr(ev, "type", None)
@@ -5117,8 +5384,22 @@ class ManagedAgentClient:
                     elif ev_type == "session.error":
                         err = getattr(ev, "error", None)
                         msg = getattr(err, "message", None) or str(err) or "unknown session error"
+                        # Retry transient errors (overloaded, rate limit, etc.)
+                        if _is_transient_error(msg) and _retry_count < _MAX_RETRIES:
+                            _retry_count += 1
+                            delay = 2 ** _retry_count  # 2s, 4s, 8s
+                            print(f"[ManagedAgent] transient session.error ({msg}), retry {_retry_count}/{_MAX_RETRIES} in {delay}s")
+                            await asyncio.sleep(delay)
+                            _session_error_retried = True
+                            break  # break inner for-loop to re-open stream
                         yield {"type": "error", "message": msg}
                         return
+
+                # If we broke out of the inner loop to retry a transient error,
+                # loop back to re-open the stream.
+                if _session_error_retried:
+                    _session_error_retried = False
+                    continue
 
                 if hit_limit:
                     return
@@ -5212,6 +5493,13 @@ class ManagedAgentClient:
                         else None
                     )
 
+                    if pending_confirmation and "[QUICK_MODE=on]" in brief and pending_confirmation["credits"] <= 100:
+                        # Quick mode active and cost is reasonable.
+                        # Do not emit the confirmation UI event, and do not break the loop.
+                        # The agent will immediately call confirmed=true in this same turn.
+                        print(f"[ManagedAgent] Quick mode auto-proceeding for {pending_confirmation['credits']} credits")
+                        pending_confirmation = None
+
                     if pending_confirmation:
                         yield {
                             "type": "confirmation_pending",
@@ -5248,6 +5536,15 @@ class ManagedAgentClient:
                     await send_task
 
                     pending_tool_calls.clear()
+
+                    # If we just emitted a confirmation_pending, stop the turn here.
+                    # The user needs to click Confirm / Cancel before the agent continues.
+                    # If we `continue` the loop, the agent will generate a follow-up
+                    # message that pushes the confirmation buttons off the last turn,
+                    # making them unclickable.
+                    if pending_confirmation:
+                        break
+
                     # Loop back to re-open the stream for the agent's next response
                     # (which may itself contain more tool calls — i.e. tool chaining).
                     continue
@@ -5284,7 +5581,14 @@ class ManagedAgentClient:
             print(f"[ManagedAgent] stream cancelled (client disconnect) — leaving session {session_id} alive")
             raise
         except Exception as e:
-            yield {"type": "error", "message": f"agent run failed: {e}"}
+            # Check if this is a transient Anthropic error (SDK throws before
+            # session.error events for HTTP-level failures like 529).
+            err_str = str(e)
+            if _is_transient_error(err_str):
+                print(f"[ManagedAgent] transient SDK error: {err_str[:200]}")
+                yield {"type": "error", "message": "The AI service is momentarily busy. Please resend your message in a few seconds."}
+            else:
+                yield {"type": "error", "message": f"agent run failed: {e}"}
 
     # ── blocking convenience wrapper for the smoke-test script ───────
     async def run(

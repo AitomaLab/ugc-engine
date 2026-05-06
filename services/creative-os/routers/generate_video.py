@@ -1636,8 +1636,11 @@ async def _generate_full_video(
     multi-scene assembly, music, captions, and everything else.
 
     Key design decisions:
-    - User prompt is ALWAYS passed as `context` to generate_script(), not as
-      the literal script. The AI script chain uses it as creative direction.
+    - If data.hook is provided (user's verbatim confirmed script from the agent
+      chat), it is used AS-IS — never overwritten. This preserves language and
+      exact wording the user approved.
+    - When no hook is provided but a product exists, user prompt is passed as
+      `context` to generate_script() for AI-generated dialogue.
     - Custom reference image (uploaded or selected) is stored in job metadata
       so the worker can prioritize it over the influencer's default image.
     - When no influencer is selected, we still satisfy the FK constraint with
@@ -1670,18 +1673,27 @@ async def _generate_full_video(
             pass
 
     # ── Build the hook/script ────────────────────────────────────────
-    # Always try AI script generation with user prompt as CONTEXT.
-    # The user's prompt provides creative direction (e.g. "woman drinking
-    # matcha tea talking about benefits") — it should NOT be the literal
-    # dialogue sent to Veo.
+    # Priority order:
+    #   1. data.hook (user's verbatim confirmed script — NEVER overwrite)
+    #   2. AI-generated script (uses user prompt as creative direction)
+    #   3. User prompt as fallback
     user_prompt = data.prompt.strip()
     hook = None
 
-    if data.product_id:
+    # CASE 1: User provided a verbatim script via hook → use it as-is.
+    # This happens when the agent confirms a script with the user in chat
+    # and passes it through to generation. The script may be in any language.
+    if data.hook and data.hook.strip():
+        hook = data.hook.strip()
+        print(f"[Full Video] Using user's VERBATIM script (hook): {hook[:120]}...")
+        print(f"[Full Video]   language={data.language}, length={len(hook)} chars")
+
+    # CASE 2: No hook provided, product exists → generate AI script
+    elif data.product_id:
         # Product exists → generate a proper AI script using product data,
         # influencer personality, and user prompt as context/direction
         try:
-            print(f"[Full Video] Generating AI script with user prompt as context...")
+            print(f"[Full Video] No hook provided — generating AI script with user prompt as context...")
             print(f"[Full Video]   context: {user_prompt[:100]}...")
             script_result = await client.generate_script(
                 product_id=data.product_id,
@@ -1701,11 +1713,11 @@ async def _generate_full_video(
         except Exception as e:
             print(f"[Full Video] Script generation failed: {e}")
             hook = user_prompt or "Check this out!"
+
+    # CASE 3: No hook, no product → use user prompt directly
     else:
-        # No product — use user prompt directly as the hook.
-        # The worker's scene builder will use it as the script text.
         hook = user_prompt or "Check this out!"
-        print(f"[Full Video] No product selected — using user prompt as hook")
+        print(f"[Full Video] No hook or product — using user prompt as hook")
 
     # ── Build job metadata ───────────────────────────────────────────
     # Store the custom reference image URL in metadata so the worker can
@@ -1718,7 +1730,6 @@ async def _generate_full_video(
     if not user_selected_influencer:
         job_metadata["influencer_is_fallback"] = True
 
-    # ── Create job via core API — worker picks it up automatically ───
     job_payload = {
         "influencer_id": influencer_id,
         "product_id": data.product_id,
@@ -1729,9 +1740,14 @@ async def _generate_full_video(
         "video_language": data.language,
         "subtitles_enabled": data.captions,
         "music_enabled": data.background_music,
-        "hook": (hook or "")[:500],
+        "hook": hook or "",
     }
-    print(f"[Full Video] Job payload hook: {job_payload['hook'][:120]}...")
+    # Pass app_clip_id so the worker can fetch the clip, build composite
+    # images (NanoBanana), and select the correct scene structure.
+    if data.app_clip_id:
+        job_payload["app_clip_id"] = data.app_clip_id
+        print(f"[Full Video] Including app_clip_id: {data.app_clip_id}")
+    print(f"[Full Video] Job payload: hook={job_payload['hook'][:120]}... lang={job_payload['video_language']}")
 
     job = await client.create_job(job_payload, skip_dispatch=False)
     job_id = job.get("id") or job.get("job", {}).get("id")
@@ -1739,6 +1755,10 @@ async def _generate_full_video(
 
     # Store metadata on the job record (separate update since create_job
     # may strip unknown fields)
+    # Also store the hook in metadata as a safety net — the worker checks
+    # both job.hook and job.metadata.hook (belt and suspenders).
+    if hook:
+        job_metadata["hook"] = hook
     if job_metadata and job_id:
         try:
             await _update_video_job_via_api(user["token"], data.project_id, job_id, {

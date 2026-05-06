@@ -236,6 +236,9 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
     // bubble's breathing dots are the single source of "I'm thinking" feedback
     // — so we don't compete with a static "Processing…" pill that reads dead.
     const [sawToolCall, setSawToolCall] = useState(false);
+    // Deferred confirmation — stored here when confirmation_pending arrives
+    // before the agent's cost-message text, then applied to the next agent turn.
+    const pendingConfirmRef = useRef<{ credits: number; summaries: string[] } | null>(null);
     // Cycles every 4s while the pill is showing a generic label, so the user
     // sees motion in the copy itself instead of a static "Processing…".
     const [pillTick, setPillTick] = useState(0);
@@ -819,6 +822,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         setArtifactFlashTick(0);
         setLastHeartbeatAt(Date.now());
         setSawToolCall(false);
+        pendingConfirmRef.current = null;
 
         // Submit intercept: parent handles the prompt (e.g. home page creates a project)
         if (onSubmitOverride) {
@@ -908,6 +912,10 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     // Scrub any leaked technical content before displaying
                     const cleanText = scrubAgentText(e.text);
                     if (!cleanText) break; // purely technical message — suppress entirely
+                    // Grab any deferred confirmation so we can attach it to the
+                    // turn that contains the cost-message text.
+                    const deferredConfirm = pendingConfirmRef.current;
+                    pendingConfirmRef.current = null;
                     setTurns((prev) => {
                         const copy = prev.slice();
                         const idx = copy.length - 1;
@@ -916,7 +924,11 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                         // Subsequent agent_messages start their own bubble so each
                         // distinct model utterance renders as a separate pill.
                         if (last && last.role === 'agent' && !last.text && !(last.artifacts || []).length && !(last.tool_calls || []).length) {
-                            copy[idx] = { ...last, text: cleanText };
+                            copy[idx] = {
+                                ...last,
+                                text: cleanText,
+                                ...(deferredConfirm ? { pendingConfirmation: deferredConfirm } : {}),
+                            };
                         } else {
                             copy.push({
                                 role: 'agent',
@@ -924,6 +936,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                 artifacts: [],
                                 tool_calls: [],
                                 ts: Date.now(),
+                                ...(deferredConfirm ? { pendingConfirmation: deferredConfirm } : {}),
                             });
                         }
                         return copy;
@@ -996,19 +1009,30 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     break;
                 }
                 case 'confirmation_pending': {
-                    updateLastAgentTurn((t) => ({
-                        ...t,
-                        pendingConfirmation: { credits: e.credits, summaries: e.summaries },
-                    }));
+                    // Defer — don't attach to the current (tool-call) turn.
+                    // Store it so the next agent_message turn picks it up,
+                    // ensuring the modal renders BELOW the cost text.
+                    pendingConfirmRef.current = { credits: e.credits, summaries: e.summaries };
                     break;
                 }
-                case 'done':
+                case 'done': {
+                    // Flush any deferred confirmation that wasn't consumed by an
+                    // agent_message (edge case: backend synthesised fallback text).
+                    const leftover = pendingConfirmRef.current;
+                    if (leftover) {
+                        pendingConfirmRef.current = null;
+                        updateLastAgentTurn((t) => ({
+                            ...t,
+                            pendingConfirmation: leftover,
+                        }));
+                    }
                     setRunning(false);
                     setActivity('');
                     setActivityStartedAt(null);
                     abortRef.current = null;
                     onArtifact?.(); // final refresh — pick up anything generated
                     break;
+                }
                 case 'interrupted':
                     updateLastAgentTurn((t) => ({ ...t, interrupted: true }));
                     setRunning(false);
@@ -2584,6 +2608,67 @@ function CostConfirmChip({ pending, active, onQuickReply }: { pending: { credits
     );
 }
 
+const THINKING_MESSAGES = [
+    'Analyzing your request…',
+    'Reviewing your assets…',
+    'Planning the best approach…',
+    'Preparing your creative…',
+    'Almost ready…',
+];
+
+/** Animated thinking indicator with rotating status messages.
+ *  Replaces the plain 3-dot indicator to give immediate, engaging feedback
+ *  while the Anthropic API processes (which can take 10-20s). */
+function ThinkingIndicator() {
+    const [msgIdx, setMsgIdx] = useState(0);
+    const [fade, setFade] = useState(true);
+
+    useEffect(() => {
+        const interval = setInterval(() => {
+            setFade(false); // fade out
+            setTimeout(() => {
+                setMsgIdx((prev) => (prev + 1) % THINKING_MESSAGES.length);
+                setFade(true); // fade in
+            }, 300);
+        }, 3000);
+        return () => clearInterval(interval);
+    }, []);
+
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '2px 0' }}>
+            {/* Bouncing dots */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                {[0, 1, 2].map((i) => (
+                    <span
+                        key={i}
+                        style={{
+                            display: 'inline-block',
+                            width: '6px',
+                            height: '6px',
+                            borderRadius: '50%',
+                            background: '#337AFF',
+                            animation: `thinkingDot 1.2s ease-in-out ${i * 0.15}s infinite`,
+                        }}
+                    />
+                ))}
+            </div>
+            {/* Rotating status message */}
+            <span
+                style={{
+                    fontSize: '12px',
+                    color: '#8A93B0',
+                    fontStyle: 'italic',
+                    transition: 'opacity 0.3s ease',
+                    opacity: fade ? 1 : 0,
+                    lineHeight: 1.3,
+                }}
+            >
+                {THINKING_MESSAGES[msgIdx]}
+            </span>
+        </div>
+    );
+}
+
 function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspect }: { turn: AgentTurn; refMap: Map<string, AgentRef>; isLast?: boolean; running?: boolean; onQuickReply?: (text: string) => void; selectedAspect?: 'vertical' | 'horizontal' | null }) {
     const { t } = useTranslation();
     const isUser = turn.role === 'user';
@@ -2687,21 +2772,7 @@ function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspec
                 )}
 
                 {showThinkingDots && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '2px 0' }}>
-                        {[0, 1, 2].map((i) => (
-                            <span
-                                key={i}
-                                style={{
-                                    display: 'inline-block',
-                                    width: '6px',
-                                    height: '6px',
-                                    borderRadius: '50%',
-                                    background: '#8A93B0',
-                                    animation: `thinkingDot 1.2s ease-in-out ${i * 0.15}s infinite`,
-                                }}
-                            />
-                        ))}
-                    </div>
+                    <ThinkingIndicator />
                 )}
 
                 {displayText && (

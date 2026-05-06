@@ -1266,6 +1266,12 @@ def api_create_job(
                 pass
 
         print(f"DEBUG api_create_job: inserting keys={list(job_data.keys())}")
+        # ── Trace hook for script-passthrough debugging ──
+        _hook_val = job_data.get("hook", "")
+        print(f"DEBUG api_create_job: hook={'YES (' + str(len(_hook_val)) + ' chars)' if _hook_val else 'NONE'}")
+        if _hook_val:
+            print(f"DEBUG api_create_job: hook_preview={repr(_hook_val[:120])}")
+        print(f"DEBUG api_create_job: video_language={job_data.get('video_language', 'NOT SET')}")
 
         # 7. Deduct credits (before creating job, so failed creation doesn't lose credits)
         deduction_result = None

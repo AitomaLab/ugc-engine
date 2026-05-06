@@ -139,6 +139,26 @@ def run_seedance_chain_pipeline(scenes, output_dir, model_api, status_callback=N
 
             # Store the last frame for the next iteration
             last_frame_url = result.get("lastFrameUrl")
+            if not last_frame_url and needs_last_frame:
+                try:
+                    import uuid
+                    from ugc_backend.vision_analysis import extract_last_frame
+                    from ugc_db.db_manager import get_supabase
+                    
+                    frame_name = f"frame_{uuid.uuid4().hex[:8]}.jpg"
+                    frame_path = output_dir / frame_name
+                    extract_last_frame(str(output_path), str(frame_path))
+                    
+                    sb = get_supabase()
+                    with open(frame_path, "rb") as f:
+                        sb.storage.from_("video-previews").upload(
+                            frame_name, f.read(), file_options={"content-type": "image/jpeg"}
+                        )
+                    last_frame_url = sb.storage.from_("video-previews").get_public_url(frame_name)
+                    print(f"      [SEEDANCE] Fallback: Extracted last frame locally for chaining")
+                except Exception as e:
+                    print(f"      [SEEDANCE] Local frame extraction failed: {e}")
+
             print(f"      [SEEDANCE] Scene {i} complete. Last frame URL: "
                   f"{'set' if last_frame_url else 'None'}")
 

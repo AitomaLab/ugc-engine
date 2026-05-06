@@ -22,56 +22,116 @@ def _extract_visual_appearance(influencer: dict) -> str:
     
     This function extracts just the physical appearance info (build, hair,
     skin, clothing) — typically 1-2 sentences, ~100-200 chars.
+    
+    CRITICAL: The output must NOT contain character names, persona titles,
+    or markdown formatting — Veo's safety filter rejects prompts that
+    reference named individuals (even fictional AI personas).
     """
+    import re
+    
+    def _sanitize_visual(text: str) -> str:
+        """Strip markdown formatting, names, and non-visual noise from text."""
+        # Remove markdown headers (# ## ### etc.)
+        text = re.sub(r'^#{1,6}\s+.*$', '', text, flags=re.MULTILINE)
+        # Remove bold/italic markers
+        text = re.sub(r'\*{1,3}([^*]+)\*{1,3}', r'\1', text)
+        # Remove lines that are just labels (Nombre:, Edad:, Ubicación:, Name:, Age:)
+        text = re.sub(r'^(?:Nombre|Edad|Ubicación|Origen|Name|Age|Location|Asistente)[:\s].*$', '', text, flags=re.MULTILINE | re.IGNORECASE)
+        # Remove persona/character names (patterns like "Carlos 'El Autónomo' Vega")
+        text = re.sub(r"[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+(?:'[^']+'\s+)?[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){1,3}", '', text)
+        # Remove section titles (PERFIL DEL PERSONAJE, etc.)
+        text = re.sub(r'(?:PERFIL DEL PERSONAJE|GUÍA DE ESTILO|STYLE GUIDE|CHARACTER PROFILE)[:\s]*', '', text, flags=re.IGNORECASE)
+        # Collapse whitespace
+        text = re.sub(r'\n+', ' ', text)
+        text = re.sub(r'\s{2,}', ' ', text)
+        return text.strip()
+    
     # Prefer a dedicated short visual description if available
     short_desc = influencer.get("visual_description", "")
     if short_desc and len(short_desc) < 300:
-        return short_desc
+        return _sanitize_visual(short_desc)
     
     full_desc = influencer.get("description", "")
     if not full_desc:
         return "casual style"
     
-    # If the description is already short, use it as-is
+    # If the description is already short, use it as-is (after sanitization)
     if len(full_desc) < 300:
-        return full_desc
+        return _sanitize_visual(full_desc)
     
-    # Extract from the "Style Guide:" section which contains physical appearance
-    import re
+    # --- Section-based extraction (English + Spanish) ---
+    # Try to find appearance-related sections
+    section_patterns = [
+        # English
+        r'Style Guide[:\s]*(.*?)(?:\n\n|\n#{1,3}\s|$)',
+        r'Visual Description[:\s]*(.*?)(?:\n\n|\n#{1,3}\s|$)',
+        r'Physical Description[:\s]*(.*?)(?:\n\n|\n#{1,3}\s|$)',
+        r'Appearance[:\s]*(.*?)(?:\n\n|\n#{1,3}\s|$)',
+        # Spanish
+        r'Gu[ií]a de Estilo(?:\s+Visual)?[:\s]*(.*?)(?:\n\n|\n#{1,3}\s|$)',
+        r'Descripci[oó]n F[ií]sica[:\s]*(.*?)(?:\n\n|\n#{1,3}\s|$)',
+        r'Apariencia[:\s]*(.*?)(?:\n\n|\n#{1,3}\s|$)',
+        r'Estilo Visual[:\s]*(.*?)(?:\n\n|\n#{1,3}\s|$)',
+    ]
     
-    # Try to find the Style Guide section
-    style_match = re.search(r'Style Guide[:\s]*(.*?)(?:\n\n|\Z)', full_desc, re.DOTALL | re.IGNORECASE)
-    if style_match:
-        style_text = style_match.group(1).strip()
-        # Extract sentences about physical appearance (build, hair, skin, clothing)
-        appearance_keywords = ['build', 'hair', 'skin', 'height', 'complexion', 'wear', 
-                              'clothing', 'shirt', 'dress', 'stocky', 'athletic', 'slender',
-                              'blonde', 'brunette', 'stubble', 'jawline', 'muscular',
-                              'ponytail', 'coily', 'fade']
-        sentences = re.split(r'(?<=[.!])\s+', style_text)
-        appearance_sentences = []
-        for sent in sentences:
-            if any(kw in sent.lower() for kw in appearance_keywords):
-                appearance_sentences.append(sent.strip())
-        if appearance_sentences:
-            result = ' '.join(appearance_sentences)
-            # Cap at ~250 chars
+    # Appearance keywords (English + Spanish)
+    appearance_keywords = [
+        'build', 'hair', 'skin', 'height', 'complexion', 'wear', 
+        'clothing', 'shirt', 'dress', 'stocky', 'athletic', 'slender',
+        'blonde', 'brunette', 'stubble', 'jawline', 'muscular',
+        'ponytail', 'coily', 'fade', 'beard', 'eyes', 'tall', 'short',
+        # Spanish
+        'cabello', 'pelo', 'piel', 'complexión', 'ropa', 'camisa',
+        'vestido', 'robusto', 'atlético', 'delgado', 'barba', 'ojos',
+        'estatura', 'moreno', 'rubio', 'constitución', 'musculoso',
+    ]
+    
+    for pattern in section_patterns:
+        match = re.search(pattern, full_desc, re.DOTALL | re.IGNORECASE)
+        if match:
+            section_text = match.group(1).strip()
+            # Extract sentences about physical appearance
+            sentences = re.split(r'(?<=[.!])\s+', section_text)
+            appearance_sentences = [
+                sent.strip() for sent in sentences
+                if any(kw in sent.lower() for kw in appearance_keywords)
+            ]
+            if appearance_sentences:
+                result = _sanitize_visual(' '.join(appearance_sentences))
+                if len(result) > 250:
+                    result = result[:247] + '...'
+                return result
+    
+    # Fallback: extract just the Summary/Resumen section
+    summary_patterns = [
+        r'Summary[:\s]*(.*?)(?:\n\n|\n#{1,3}\s|$)',
+        r'Resumen[:\s]*(.*?)(?:\n\n|\n#{1,3}\s|$)',
+    ]
+    for pattern in summary_patterns:
+        match = re.search(pattern, full_desc, re.DOTALL | re.IGNORECASE)
+        if match:
+            summary = match.group(1).strip()
+            first_sent = summary.split('.')[0] + '.'
+            result = _sanitize_visual(first_sent)
             if len(result) > 250:
                 result = result[:247] + '...'
             return result
     
-    # Fallback: extract just the Summary section (first paragraph)
-    summary_match = re.search(r'Summary[:\s]*(.*?)(?:\n\n|\Z)', full_desc, re.DOTALL | re.IGNORECASE)
-    if summary_match:
-        summary = summary_match.group(1).strip()
-        # Take first sentence only
-        first_sent = summary.split('.')[0] + '.'
-        if len(first_sent) > 250:
-            first_sent = first_sent[:247] + '...'
-        return first_sent
+    # Last resort: scan ALL lines for appearance keywords, take the best ones
+    lines = full_desc.split('\n')
+    appearance_lines = []
+    for line in lines:
+        clean = line.strip()
+        if clean and any(kw in clean.lower() for kw in appearance_keywords):
+            appearance_lines.append(clean)
+    if appearance_lines:
+        result = _sanitize_visual(' '.join(appearance_lines[:3]))
+        if len(result) > 250:
+            result = result[:247] + '...'
+        return result
     
-    # Last resort: take first 200 chars of description
-    return full_desc[:200].rsplit(' ', 1)[0] + '...'
+    # Absolute last resort: take first 200 chars, sanitized
+    return _sanitize_visual(full_desc[:200])
 
 
 
@@ -95,6 +155,8 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=Non
     durations = config.get_scene_durations(length)
 
     hook = content_row.get("Hook") or content_row.get("Script") or content_row.get("caption") or "Check this out!"
+    print(f"      [scene_builder] Hook input ({len(hook)} chars): {hook[:150]}...")
+    print(f"      [scene_builder] Language: {content_row.get('video_language', 'en')}")
     assistant = content_row.get("AI Assistant", "Travel")
     theme = content_row.get("Theme", "")
     caption = content_row.get("Caption", "Link in bio!")
