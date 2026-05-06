@@ -49,6 +49,26 @@ function summarizeItem(item: EditorStarterItem): Record<string, unknown> {
 		base.audioStartFromInSeconds = item.audioStartFromInSeconds;
 		base.assetId = item.assetId;
 	}
+	if (item.type === 'captions') {
+		base.assetId = item.assetId;
+		base.fontFamily = item.fontFamily;
+		base.fontSize = item.fontSize;
+		base.color = item.color;
+		base.highlightColor = item.highlightColor;
+		base.strokeWidth = item.strokeWidth;
+		base.strokeColor = item.strokeColor;
+		base.strokeMode = item.strokeMode ?? 'solid';
+		base.shadowColor = item.shadowColor;
+		base.shadowBlur = item.shadowBlur;
+		base.shadowOffsetX = item.shadowOffsetX;
+		base.shadowOffsetY = item.shadowOffsetY;
+		base.maxLines = item.maxLines;
+		base.pageDurationInMilliseconds = item.pageDurationInMilliseconds;
+		base.left = item.left;
+		base.top = item.top;
+		base.width = item.width;
+		base.height = item.height;
+	}
 	return base;
 }
 
