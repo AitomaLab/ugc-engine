@@ -268,6 +268,16 @@ def run_generation_pipeline(
         # --- Decide whether to use the Veo Extend pipeline (VEO ONLY) ---
         use_extend = should_use_extend_pipeline(scenes)
 
+    # When the extend pipeline runs scene 1 as a `physical_product_scene`, it
+    # generates a Nano Banana composite (influencer + device showing the app
+    # screenshot) and chains scenes 2-N from that video's last frame. If
+    # extend later fails (e.g. Kie's audio safety filter), the fallback loop
+    # below regenerates each veo scene independently — and the original
+    # `reference_image_url` is the influencer-only image, so scenes 2-3 lose
+    # the product on screen and Veo hallucinates a substitute. Cache the
+    # composite here so the fallback can reuse it.
+    cached_composite_url = None
+
     if use_extend:
         try:
             # === VEO EXTEND PIPELINE ===
@@ -307,6 +317,7 @@ def run_generation_pipeline(
                     product=product,
                     seed=global_seed
                 )
+                cached_composite_url = composite_url
                 print(f"      [EXTEND] Composite ready: {composite_url}")
 
                 # Preview: show composite image immediately
@@ -670,9 +681,16 @@ def run_generation_pipeline(
                         )
                     else:
                         # Pure AI Model generation (Seedance, Kling, Veo, etc.)
+                        # If extend already generated a product composite for
+                        # scene 1 and then failed, use that composite as the
+                        # reference for subsequent veo scenes so they keep the
+                        # product on screen instead of hallucinating one.
+                        fallback_ref = cached_composite_url or scene.get("reference_image_url")
+                        if cached_composite_url:
+                            print(f"      [FALLBACK] Reusing extend's composite as reference for scene {i}")
                         result = generate_scenes.generate_video(
                             prompt=scene["prompt"],
-                            reference_image_url=scene.get("reference_image_url"),
+                            reference_image_url=fallback_ref,
                             model_api=model_api
                         )
                         video_url = result["videoUrl"]

@@ -262,6 +262,22 @@ def build_30s(dur, app_clip, ctx, product=None, influencer=None):
         _hook_text and _hook_text.lower() not in _default_hooks
     )
 
+    # Veo's audio safety filter trips when an 8s scene has very little speech:
+    # the model fills the silence with breath/filler that Kie flags as
+    # PUBLIC_ERROR_AUDIO_FILTERED. It also tends to pick a fresh voice for a
+    # scene with so few words, breaking continuity with the previous scene.
+    # If the user's split leaves a tiny tail (e.g. "Descárgala hoy y
+    # compruébalo.") merge it back into the previous scene.
+    _MIN_WORDS_PER_SCENE = 8
+    if (_is_user_script
+            and len(script_parts) >= 2
+            and len(script_parts[-1].split()) < _MIN_WORDS_PER_SCENE):
+        merged_tail = script_parts[-1]
+        script_parts[-2] = (script_parts[-2].rstrip() + " " + merged_tail).strip()
+        script_parts = script_parts[:-1]
+        num_veo_scenes = max(1, num_veo_scenes - 1)
+        print(f"      [build_30s] Final scene too short ({len(merged_tail.split())}w); merged into previous, num_veo_scenes={num_veo_scenes}")
+
     # Diagnostic: when the user reports a wrong-language video, these three
     # lines in the production logs immediately show whether the user's hook
     # arrived intact, whether the splitter produced sensible parts, and which

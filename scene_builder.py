@@ -28,7 +28,25 @@ def _extract_visual_appearance(influencer: dict) -> str:
     reference named individuals (even fictional AI personas).
     """
     import re
-    
+
+    def _smart_truncate(text: str, limit: int = 250) -> str:
+        """Truncate to ≤limit chars at a sentence/clause/word boundary.
+
+        Veo 3.1 Extend rejects oversized prompts; the prior implementation
+        cut at exactly limit-3 chars and produced mid-word artifacts like
+        "They ar..." in production. Prefer cutting at "., ", ", ", or " "
+        — but only if the boundary is past 60% of the limit, otherwise
+        fall back to a hard cut so a single long token can't blow up.
+        """
+        if len(text) <= limit:
+            return text
+        cut = text[:limit - 3]
+        for sep in ('. ', ', ', ' '):
+            idx = cut.rfind(sep)
+            if idx > limit * 0.6:
+                return cut[:idx] + '...'
+        return cut + '...'
+
     def _sanitize_visual(text: str) -> str:
         """Strip markdown formatting, names, and non-visual noise from text."""
         # Remove markdown headers (# ## ### etc.)
@@ -41,10 +59,22 @@ def _extract_visual_appearance(influencer: dict) -> str:
         text = re.sub(r"[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+(?:'[^']+'\s+)?[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){1,3}", '', text)
         # Remove section titles (PERFIL DEL PERSONAJE, etc.)
         text = re.sub(r'(?:PERFIL DEL PERSONAJE|GUÍA DE ESTILO|STYLE GUIDE|CHARACTER PROFILE)[:\s]*', '', text, flags=re.IGNORECASE)
+        # Strip age phrases — the prompt template already injects an authoritative
+        # `{age}` token from the influencer record, so any age mentioned here would
+        # contradict it (e.g. "25-year-old female ... appears to be in their 30s").
+        text = re.sub(r'\b(?:in (?:her|his|their) (?:teens|20s|30s|40s|50s|60s|70s))\b', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'\b\d{1,3}[- ]?year[- ]?old\b', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'\b(?:de|en sus)\s+\d{1,3}\s+años\b', '', text, flags=re.IGNORECASE)
+        # Strip stray sentence fragments left behind by age removal (e.g. "The
+        # person appears to be , with...")
+        text = re.sub(r'\b(?:appears? to be|aparenta(?:r)?(?: tener)?)\s*[,.]', '', text, flags=re.IGNORECASE)
         # Collapse whitespace
         text = re.sub(r'\n+', ' ', text)
         text = re.sub(r'\s{2,}', ' ', text)
-        return text.strip()
+        # Remove orphaned punctuation left by deletions (", ," / " ,")
+        text = re.sub(r'\s+,', ',', text)
+        text = re.sub(r',{2,}', ',', text)
+        return text.strip().strip(',').strip()
     
     # Prefer a dedicated short visual description if available
     short_desc = influencer.get("visual_description", "")
@@ -98,9 +128,7 @@ def _extract_visual_appearance(influencer: dict) -> str:
             ]
             if appearance_sentences:
                 result = _sanitize_visual(' '.join(appearance_sentences))
-                if len(result) > 250:
-                    result = result[:247] + '...'
-                return result
+                return _smart_truncate(result)
     
     # Fallback: extract just the Summary/Resumen section
     summary_patterns = [
@@ -113,9 +141,7 @@ def _extract_visual_appearance(influencer: dict) -> str:
             summary = match.group(1).strip()
             first_sent = summary.split('.')[0] + '.'
             result = _sanitize_visual(first_sent)
-            if len(result) > 250:
-                result = result[:247] + '...'
-            return result
+            return _smart_truncate(result)
     
     # Last resort: scan ALL lines for appearance keywords, take the best ones
     lines = full_desc.split('\n')
@@ -126,9 +152,7 @@ def _extract_visual_appearance(influencer: dict) -> str:
             appearance_lines.append(clean)
     if appearance_lines:
         result = _sanitize_visual(' '.join(appearance_lines[:3]))
-        if len(result) > 250:
-            result = result[:247] + '...'
-        return result
+        return _smart_truncate(result)
     
     # Absolute last resort: take first 200 chars, sanitized
     return _sanitize_visual(full_desc[:200])

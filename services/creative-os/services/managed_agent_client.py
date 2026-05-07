@@ -238,7 +238,11 @@ Do NOT default clip lengths to 5s. Reason about the appropriate length based on 
 - **Veo 3.1 (UGC)**: Always use **8s** for single UGC clips. Veo 3.1 outputs are 8s fixed.
 - **Kling 3.0 (Cinematic)**: Default to **5s** for single-shot cinematic clips. For multi-shot mode (`multi_shot_mode=true`), set `clip_length` to the desired total duration (3–15s) — the backend auto-splits into scenes. Range: 5–10s per clip.
 - **Seedance 2.0**: Pick based on the brief complexity. Short action/showcase → **5s**. Dialogue or narrative → **8–10s**. Complex multi-beat scene → **12–15s**. Range: 5–15s. Use `clip_length=7` for punchy cinematic shots, `clip_length=15` for narrative scenes.
-- **create_ugc_video (full pipeline)**: Duration is 15s or 30s — set by the `duration` param, not clip_length. Ask the user if they want 15s or 30s only if they didn't specify.
+- **create_ugc_video (full pipeline)**: Duration is 15s or 30s — set by the `duration` param, not clip_length. When the user provides a script BEFORE specifying duration, count the words FIRST and recommend up-front:
+    - ≤30 words → recommend 15s ("Your script is 22 words — that fits 15s. Use 15s?")
+    - ≥50 words → recommend 30s ("Your script is 70 words — that needs 30s. Going with 30s?")
+    - 31–49 words (overlap) → ask: "That's between 15s and 30s — which would you like?"
+  Only ask the generic "15s or 30s?" when the user gave NO script at all. Use the same word-count thresholds documented under "Script length auto-validation" below.
 
 If the user explicitly states a desired length, always use their number. If the content type makes the ideal length ambiguous and the user didn't specify, ask in one short sentence: "How long — 5s quick showcase or 10s extended scene?" Do NOT silently pick 5s for everything.
 
@@ -5089,7 +5093,13 @@ class ManagedAgentClient:
                 model=DEFAULT_MODEL,
                 name=AGENT_NAME,
                 description="Studio creative director — drives Creative OS image/animation/video tools.",
-                system=SYSTEM_PROMPT,
+                system=[
+                    {
+                        "type": "text",
+                        "text": SYSTEM_PROMPT,
+                        "cache_control": {"type": "ephemeral", "ttl": "1h"},
+                    },
+                ],
                 tools=[
                     {"type": "agent_toolset_20260401"},
                     *_custom_tools_for_agent(),
@@ -5254,10 +5264,14 @@ class ManagedAgentClient:
         # suggests, mirror their language. Otherwise users end up reading
         # English replies after typing Spanish (and vice versa) just
         # because they never flipped the dropdown — confusing UX.
-        # `_detect_input_language` returns 'es'/'en' only when confident;
-        # short / ambiguous input falls back to the dropdown.
-        _detected_lang = _detect_input_language(brief)
-        _effective_lang = _detected_lang or lang
+        #
+        # The router (`agent.py`) already runs detection on the CLEAN brief
+        # (before memory-snapshot augmentation injects English markers) and
+        # passes the result here as `lang`. Trust that value when present;
+        # only fall back to local detection for direct callers that bypass
+        # the router. Detecting again on the augmented `brief` here would
+        # let the English memory preface flip 'es' → 'en'.
+        _effective_lang = lang or _detect_input_language(brief)
         if _effective_lang == "es":
             brief = (
                 "[LANG=es — Responde en español para coincidir con el idioma "
