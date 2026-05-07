@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 from auth import get_current_user
 from services.agent_threads import get_thread, reset_thread, upsert_thread
-from services.managed_agent_client import get_managed_agent_client
+from services.managed_agent_client import get_managed_agent_client, _detect_input_language
 
 router = APIRouter(prefix="/agent", tags=["managed-agent"])
 
@@ -447,6 +447,16 @@ async def agent_stream(
                         print(f"[agent_stream] memory preface failed: {_e}")
 
                 image_urls = [r.image_url for r in refs if r.image_url]
+                # Mirror the user's actual input language. The EN/ES dropdown
+                # (`data.lang`) becomes a fallback for short or ambiguous
+                # input (button clicks, "ok", numbers) — when the user
+                # clearly types Spanish in an EN-defaulted session, the
+                # agent should still reply in Spanish. We run detection on
+                # the original `brief`, not `augmented_brief`, because the
+                # augmentation injects English markers (engine, refs preface,
+                # etc.) that dilute the language signal.
+                _detected_brief_lang = _detect_input_language(brief)
+                _effective_lang = _detected_brief_lang or data.lang
                 async for ev in client.run_stream(
                     brief=augmented_brief,
                     user_token=user_token,
@@ -454,7 +464,7 @@ async def agent_stream(
                     session_id=session_id,
                     stored_agent_id=stored_agent_id,
                     prior_turns=prior_turns,
-                    lang=data.lang,
+                    lang=_effective_lang,
                     image_urls=image_urls or None,
                 ):
                     t = ev.get("type")
