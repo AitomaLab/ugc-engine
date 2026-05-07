@@ -139,21 +139,21 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
         if (!file) return;
         setUploading(true);
         try {
-            const signRes = await apiFetch<{ signed_url: string; public_url: string }>('/api/products/upload', {
+            // Upload via multipart FormData (matches backend's File(...) parameter)
+            const formData = new FormData();
+            formData.append('file', file);
+            const uploadRes = await apiFetch<{ public_url: string; path: string }>('/api/products/upload', {
                 method: 'POST',
-                body: JSON.stringify({ file_name: file.name, content_type: file.type }),
+                body: formData,
+                // Do NOT set Content-Type — browser auto-sets multipart boundary
             });
-            const uploadRes = await fetch(signRes.signed_url, {
-                method: 'PUT', headers: { 'Content-Type': file.type }, body: file,
-            });
-            if (!uploadRes.ok) throw new Error("Upload failed");
 
             if (!imageUrl) {
                 // No image yet — set as the main product image
-                setImageUrl(signRes.public_url);
+                setImageUrl(uploadRes.public_url);
             } else {
                 // Already have image(s) — append to product views
-                setProductViews(prev => [...prev, signRes.public_url]);
+                setProductViews(prev => [...prev, uploadRes.public_url]);
                 // Navigate to the newly added image
                 setCurrentViewIndex(displayImages.length); // will be the new last real image
             }
