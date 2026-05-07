@@ -2618,13 +2618,30 @@ async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
     # validator's word budget accounts for the trailing silent B-roll. The
     # static budget table assumes 100% of `duration` is dialogue, which is
     # wrong for digital products (the last 5-8s is the app walkthrough).
+    #
+    # `app_clips.duration` is a nullable FLOAT in the DB, so even when the
+    # clip exists the field may be NULL. Default to 8s in that case — it's
+    # the same default scene_builder.py uses (`app_clip.get("duration") or 8`)
+    # and roughly matches the typical clip we render. Without this default
+    # the budget falls back to the old static table and 42-word scripts get
+    # incorrectly accepted as a "perfect fit for 15s".
+    _DIGITAL_CLIP_DEFAULT_S = 8
     _app_clip_duration_s = 0
-    if product_type == "digital" and kwargs.get("app_clip_id") and not kwargs.get("confirmed"):
-        try:
-            _clip = await ctx.core().get_app_clip(kwargs["app_clip_id"])
-            _app_clip_duration_s = int(_clip.get("duration") or 0) if _clip else 0
-        except Exception as e:
-            print(f"[create_ugc_video] app clip lookup for budget failed (non-fatal): {e}")
+    if product_type == "digital" and not kwargs.get("confirmed"):
+        if kwargs.get("app_clip_id"):
+            try:
+                _clip = await ctx.core().get_app_clip(kwargs["app_clip_id"])
+                _raw = _clip.get("duration") if _clip else None
+                _app_clip_duration_s = int(round(float(_raw))) if _raw else _DIGITAL_CLIP_DEFAULT_S
+            except Exception as e:
+                print(f"[create_ugc_video] app clip lookup for budget failed (using default {_DIGITAL_CLIP_DEFAULT_S}s): {e}")
+                _app_clip_duration_s = _DIGITAL_CLIP_DEFAULT_S
+        else:
+            # Digital product without an app_clip_id is unusual but possible
+            # (e.g. cinematic-only render). Assume the typical app-clip slot
+            # so the budget stays honest about effective dialogue time.
+            _app_clip_duration_s = _DIGITAL_CLIP_DEFAULT_S
+        print(f"[create_ugc_video] digital budget setup: app_clip_duration={_app_clip_duration_s}s")
 
     if user_hook and not kwargs.get("confirmed"):
         video_language = kwargs.get("video_language", "en")
