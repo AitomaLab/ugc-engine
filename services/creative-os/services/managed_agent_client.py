@@ -301,6 +301,11 @@ You MUST do this check BEFORE starting any generation. Do NOT skip it.
   - **No script provided, but clear direction**: If the user gave a creative brief (e.g. "make a video about the health benefits") but no actual dialogue, call `generate_scripts(product_id, duration, influencer_id, context=<user's brief>)` FIRST to produce a script, then pass the generated hook + scene dialogues (newline-joined) as the `hook` argument.
   - **No script AND no clear direction**: If the user's request is vague about what the character should say (e.g. "make a 30s UGC video for this product"), you MUST ask before generating: "What should [influencer name] say in the video? Do you have a specific script, or should I write one based on the product?" End your turn and wait for the answer. Do NOT silently generate a random script — the user needs to guide the content.
   Then call create_ugc_video (gated). Wait for completion, then confirm in plain text.
+  - **Music + captions are post-delivery options, NOT defaults**: `create_ugc_video` produces the bare assembled video (no music, no captions) so the user sees the result fast (~5-7 min instead of ~10-15 min). After the tool returns successfully, surface the video with one short sentence describing what's in it, then end your turn with a follow-up offer in the user's language: "Want to add captions or background music?" If the user accepts:
+    • Captions only → `caption_video(job_id=<id>)`. If they didn't pick a style, call `list_caption_styles()` first per the captions section below.
+    • Music only → `combine_videos(video_urls=[<final_video_url>], music_prompt="<short style description matching the brand/vibe>")`.
+    • Both → call `caption_video` FIRST (so the burned captions live in the asset), then `combine_videos(video_urls=[<captioned_video_url>], music_prompt=...)` so the music is layered on top of the captioned cut.
+  Skip the follow-up offer entirely when the user explicitly opted out ("no music", "sin subtítulos") — and when they explicitly asked for music or captions UPFRONT (e.g. "create a UGC video with music and captions"), pass `music_enabled=true` and/or `subtitles_enabled=true` to `create_ugc_video` so they're baked into the first delivery and you don't need to offer a follow-up.
 
 **Cinematic clip (5-10s)**: list_project_assets → generate_video(mode="cinematic_video") (gated). Confirm completion in plain text.
 
@@ -1083,8 +1088,8 @@ def _custom_tools_for_agent() -> list[dict]:
                     "context": {"type": "string", "description": "Creative direction or style notes for AI script generation (only used when generate_scripts auto-generates a script). Do NOT put the user's actual script text here — that goes in hook. Example: 'energetic tone, focus on health benefits'."},
                     "campaign_name": {"type": "string"},
                     "video_language": {"type": "string"},
-                    "subtitles_enabled": {"type": "boolean"},
-                    "music_enabled": {"type": "boolean"},
+                    "subtitles_enabled": {"type": "boolean", "description": "Burn word-timed subtitles into the final video during initial generation. Default: false — the bare video delivers fast and captions are offered as a follow-up via caption_video. Set to true ONLY when the user explicitly asks for captions baked into the first delivery (e.g. 'create a UGC video with captions', 'with subtitles')."},
+                    "music_enabled": {"type": "boolean", "description": "Mix a generated background music bed under the dialogue during initial generation. Default: false — the bare video delivers fast and music is offered as a follow-up via combine_videos(music_prompt=...). Set to true ONLY when the user explicitly asks for music baked into the first delivery (e.g. 'create a UGC video with background music')."},
                     "app_clip_id": {"type": "string", "description": "ID of the app clip (screen recording) to include in the video. For digital products, this enables the NanoBanana composite pipeline (influencer holding device with app on screen)."},
                     "model_api": {"type": "string", "description": "Engine to use. 'veo-3.1-fast' (default) or 'seedance-2.0' when user has Seedance toggle on."},
                     "confirmed": {"type": "boolean", "description": confirmed_desc},
@@ -2750,8 +2755,14 @@ async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
         "hook": kwargs.get("hook"),
         "campaign_name": kwargs.get("campaign_name"),
         "video_language": kwargs.get("video_language", "en"),
-        "subtitles_enabled": kwargs.get("subtitles_enabled", True),
-        "music_enabled": kwargs.get("music_enabled", True),
+        # Default OFF so the bare assembled video delivers fast (~5-7 min)
+        # instead of waiting on Suno music (~2 min) and Whisper + Remotion
+        # caption burn (~5-8 min) before showing the user anything. The
+        # agent surfaces the video and offers music / captions as a
+        # follow-up step (see SYSTEM_PROMPT). Pass True only when the user
+        # explicitly opts in upfront.
+        "subtitles_enabled": kwargs.get("subtitles_enabled", False),
+        "music_enabled": kwargs.get("music_enabled", False),
         # Respect model_api from the agent (seedance-2.0 when toggle is on)
         "model_api": kwargs.get("model_api", "veo-3.1-fast"),
     }
