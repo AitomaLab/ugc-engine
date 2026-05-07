@@ -5115,11 +5115,19 @@ class ManagedAgentClient:
         # Inject locale directive so conversational replies match the user's
         # UI language. Tool calls / JSON payloads stay English — the directive
         # is explicit about that so tool schemas are unaffected.
+        # Both EN and ES get explicit markers so switching mid-session overrides
+        # any prior-turn language preference the agent may have learned.
         if lang == "es":
             brief = (
                 "[LANG=es — Responde en español. Las llamadas a herramientas y los "
                 "payloads JSON deben permanecer en inglés; solo las respuestas "
                 "conversacionales al usuario son en español.]\n\n" + brief
+            )
+        else:
+            brief = (
+                "[LANG=en — Reply in English. All conversational responses to the "
+                "user must be in English, regardless of what language was used in "
+                "earlier turns of this session.]\n\n" + brief
             )
 
         # Resolve the current agent_id up front. Sessions on Anthropic's side
@@ -5417,6 +5425,22 @@ class ManagedAgentClient:
                         try:
                             print(f"[ManagedAgent] tool {name}({_summarize_input(tool_input, 120)})")
                             result_text = await fn(ctx, **tool_input)
+                            
+                            # Auto-confirm Quick Mode
+                            if "[QUICK_MODE=on]" in brief:
+                                try:
+                                    parsed = json.loads(result_text)
+                                    if isinstance(parsed, dict) and parsed.get("action") == "confirmation_required":
+                                        credits = parsed.get("credits", 0)
+                                        if isinstance(credits, (int, float)) and credits <= 100:
+                                            print(f"[ManagedAgent] Auto-confirming Quick Mode tool {name} (Cost: {credits})")
+                                            tool_input["confirmed"] = True
+                                            echo = parsed.get("echo", {})
+                                            tool_input.update(echo)
+                                            result_text = await fn(ctx, **tool_input)
+                                except Exception as inner_e:
+                                    print(f"[ManagedAgent] Quick mode auto-confirm parse error: {inner_e}")
+                            
                             return tool_use_id, result_text, False
                         except Exception as e:
                             return tool_use_id, json.dumps({"error": str(e)}), True
@@ -5492,13 +5516,6 @@ class ManagedAgentClient:
                         if confirm_total_credits > 0
                         else None
                     )
-
-                    if pending_confirmation and "[QUICK_MODE=on]" in brief and pending_confirmation["credits"] <= 100:
-                        # Quick mode active and cost is reasonable.
-                        # Do not emit the confirmation UI event, and do not break the loop.
-                        # The agent will immediately call confirmed=true in this same turn.
-                        print(f"[ManagedAgent] Quick mode auto-proceeding for {pending_confirmation['credits']} credits")
-                        pending_confirmation = None
 
                     if pending_confirmation:
                         yield {

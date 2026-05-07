@@ -1101,7 +1101,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         }
 
         try {
-            await streamAgent(text, projectId, onEvent, controller.signal, refsForRequest, useSeedance, lang, quickMode);
+            await streamAgent(text, projectId, onEvent, controller.signal, refsForRequest, useSeedance, proLanguage.toLowerCase() as 'en' | 'es', quickMode);
         } catch (err) {
             if ((err as Error).name === 'AbortError') {
                 updateLastAgentTurn((t) => ({ ...t, interrupted: true }));

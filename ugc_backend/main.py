@@ -1190,10 +1190,18 @@ def api_create_job(
         elif data.hook:
             script_text = data.hook
 
-        # 4. App clip selection — DISABLED (deprecated bulk campaign behavior)
-        # Digital products now have user-selected clips via the agent panel.
-        # The agent or frontend must explicitly set app_clip_id if needed.
-        # Random auto-selection was injecting unexpected app clips into videos.
+        # 4. App clip selection / validation
+        # If the agent passes an app_clip_id that doesn't belong to the product, or
+        # omits it for a digital product, auto-select a valid one to prevent hallucinations.
+        selected_clip_id = data.app_clip_id
+        if data.product_type == "digital" and data.product_id:
+            product_clips = list_app_clips_by_product(data.product_id)
+            if product_clips:
+                valid_clip_ids = {c["id"] for c in product_clips}
+                if not selected_clip_id or selected_clip_id not in valid_clip_ids:
+                    # Auto-select the first available clip for this product
+                    selected_clip_id = product_clips[0]["id"]
+                    print(f"      [Validation] Overrode app_clip_id to valid clip for product: {selected_clip_id}")
 
         # 5. Calculate Cost Estimate
         costs = cost_service.estimate_total_cost(
@@ -1230,6 +1238,8 @@ def api_create_job(
         job_data.update(costs)
         job_data["status"] = "pending"
         job_data["progress"] = 0
+        if selected_clip_id:
+            job_data["app_clip_id"] = selected_clip_id
 
         # Inject user_id and project_id if authenticated
         if user:
