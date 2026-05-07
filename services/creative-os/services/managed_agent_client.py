@@ -2437,10 +2437,53 @@ _SCRIPT_WORD_BUDGETS = {
 }
 
 
+def _budget_for_video(duration: int, product_type: str = "physical", app_clip_duration: int = 0) -> dict:
+    """Compute the script word-count budget for a given video shape.
+
+    Digital products end with an app-clip B-roll segment that carries no
+    dialogue, so only the Veo-driven seconds need word coverage. Without
+    accounting for the clip, the static budget tables incorrectly suggest
+    the user can fit a 30s-worth script into a 15s digital video that
+    actually has only ~8s of speech.
+
+    Args:
+        duration: total video length in seconds (e.g. 15, 30).
+        product_type: 'digital' | 'physical' (digital videos include an app
+            clip; physical videos use the full duration for dialogue).
+        app_clip_duration: length of the trailing app-clip B-roll for
+            digital videos (defaults to 0 / unknown — falls back to the
+            static physical-product budget).
+
+    Returns: dict with keys {min, max, ideal, scenes, per_scene}.
+    """
+    if product_type == "digital" and app_clip_duration > 0:
+        # Subtract the silent B-roll from the dialogue budget.
+        dialogue_seconds = max(1, duration - app_clip_duration)
+        # ~3 words/sec sustainable speech, ±30% range for natural variance.
+        ideal = round(dialogue_seconds * 3)
+        min_words = max(5, round(ideal * 0.7))
+        max_words = round(ideal * 1.4)
+        scenes = max(1, round(dialogue_seconds / 8))
+        per_scene_low = max(5, round(8 * 3 * 0.7))
+        per_scene_high = round(8 * 3 * 1.4)
+        return {
+            "min": min_words,
+            "max": max_words,
+            "ideal": ideal,
+            "scenes": scenes,
+            "per_scene": f"{per_scene_low}-{per_scene_high}",
+        }
+    # Physical products (or digital without a known clip duration) use the
+    # static table calibrated against the current pipeline.
+    return _SCRIPT_WORD_BUDGETS.get(duration, _SCRIPT_WORD_BUDGETS[15])
+
+
 def _validate_script_for_video(
     script: str,
     duration: int,
     video_language: str = "en",
+    product_type: str = "physical",
+    app_clip_duration: int = 0,
 ) -> dict:
     """Validate a user-provided script against the target video duration.
 
@@ -2452,7 +2495,7 @@ def _validate_script_for_video(
         issues (list[str]): Human-readable issues found
         suggestions (list[str]): Actionable suggestions for the user
     """
-    budget = _SCRIPT_WORD_BUDGETS.get(duration, _SCRIPT_WORD_BUDGETS[15])
+    budget = _budget_for_video(duration, product_type, app_clip_duration)
     words = script.split()
     word_count = len(words)
     issues = []
@@ -2571,9 +2614,25 @@ async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
     # they can fix the script without wasting credits on a video that
     # would have bad pacing or get cut off.
     user_hook = kwargs.get("hook", "").strip()
+    # Resolve app clip duration once (digital products only) so the script
+    # validator's word budget accounts for the trailing silent B-roll. The
+    # static budget table assumes 100% of `duration` is dialogue, which is
+    # wrong for digital products (the last 5-8s is the app walkthrough).
+    _app_clip_duration_s = 0
+    if product_type == "digital" and kwargs.get("app_clip_id") and not kwargs.get("confirmed"):
+        try:
+            _clip = await ctx.core().get_app_clip(kwargs["app_clip_id"])
+            _app_clip_duration_s = int(_clip.get("duration") or 0) if _clip else 0
+        except Exception as e:
+            print(f"[create_ugc_video] app clip lookup for budget failed (non-fatal): {e}")
+
     if user_hook and not kwargs.get("confirmed"):
         video_language = kwargs.get("video_language", "en")
-        validation = _validate_script_for_video(user_hook, duration, video_language)
+        validation = _validate_script_for_video(
+            user_hook, duration, video_language,
+            product_type=product_type,
+            app_clip_duration=_app_clip_duration_s,
+        )
         if not validation["valid"]:
             return json.dumps({
                 "script_validation": "failed",
@@ -2600,7 +2659,11 @@ async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
         # Include script validation summary in the confirmation if hook was provided
         extra_info = {}
         if user_hook:
-            validation = _validate_script_for_video(user_hook, duration, kwargs.get("video_language", "en"))
+            validation = _validate_script_for_video(
+                user_hook, duration, kwargs.get("video_language", "en"),
+                product_type=product_type,
+                app_clip_duration=_app_clip_duration_s,
+            )
             extra_info["script_status"] = "validated"
             extra_info["script_word_count"] = validation["word_count"]
             extra_info["script_notes"] = validation["suggestions"] if validation["suggestions"] else ["Script length is good for this duration."]
@@ -2611,6 +2674,20 @@ async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
             echo={k: v for k, v in kwargs.items() if k != "confirmed"},
             **extra_info,
         )
+
+    # Diagnostic: confirm the agent's tool-call payload as it arrived AFTER
+    # the cost-confirmation gate. If `hook_len=0` here for a user who provided
+    # a script in their brief, the agent dropped the hook between confirm and
+    # fire — that's an upstream system-prompt issue, not a pipeline bug. This
+    # log is the difference between debugging this in 30s vs. an hour.
+    print(
+        f"[create_ugc_video] post-confirm kwargs: "
+        f"hook_len={len(kwargs.get('hook') or '')}, "
+        f"script_id={kwargs.get('script_id')}, "
+        f"product_id={kwargs.get('product_id')}, "
+        f"video_language={kwargs.get('video_language', 'en')}, "
+        f"duration={duration}, product_type={product_type}"
+    )
 
     # Safety net: if the LLM forgot to run generate_scripts first, do it here so
     # the job pipeline never falls through to the random-library fallback.
@@ -4917,6 +4994,46 @@ def _summarize_result(result_text: str, max_len: int = 120) -> str:
     return s if len(s) <= max_len else s[: max_len - 1] + "…"
 
 
+# Common Spanish vs English stopword markers. Crude but effective for the
+# 99% case where a brief is unambiguously one language. Thresholds favour
+# letting the dropdown decide on short / ambiguous input (single-word
+# affirmations like "ok", numeric replies, etc.).
+_ES_MARKERS = (
+    " el ", " la ", " los ", " las ", " que ", " para ", " con ", " una ",
+    " uno ", " esto ", " esta ", " eres ", " sería ", " también ", " ahora ",
+    " cómo ", " qué ", " hola ", " puedes ", " puedo ", " quiero ", " hacer ",
+    " gracias ",
+)
+_EN_MARKERS = (
+    " the ", " a ", " an ", " is ", " are ", " for ", " with ", " this ",
+    " that ", " what ", " how ", " can ", " should ", " would ", " could ",
+    " want ", " thanks ", " hello ", " please ", " hey ",
+)
+
+
+def _detect_input_language(text: Optional[str]) -> Optional[str]:
+    """Return 'es' or 'en' when confident, otherwise None.
+
+    Used to make the per-turn LANG marker mirror the user's actual input
+    language rather than blindly obeying the EN/ES dropdown. The dropdown
+    becomes a fallback for ambiguous input (numbers, single-word commands)
+    and a default for new sessions.
+    """
+    if not text:
+        return None
+    # Pad with spaces so word-boundary substring checks work at start/end.
+    lower = " " + text.lower() + " "
+    es_hits = sum(1 for w in _ES_MARKERS if w in lower)
+    en_hits = sum(1 for w in _EN_MARKERS if w in lower)
+    # Require at least 2 markers AND a clear majority to avoid flipping
+    # languages on noisy short inputs.
+    if es_hits >= 2 and es_hits > en_hits:
+        return "es"
+    if en_hits >= 2 and en_hits > es_hits:
+        return "en"
+    return None
+
+
 # ── Client wrapper ────────────────────────────────────────────────────
 class ManagedAgentClient:
     """Async Anthropic Managed Agents client.
@@ -5113,21 +5230,30 @@ class ManagedAgentClient:
           - {"type": "error", "message": str}
         """
         # Inject locale directive so conversational replies match the user's
-        # UI language. Tool calls / JSON payloads stay English — the directive
-        # is explicit about that so tool schemas are unaffected.
-        # Both EN and ES get explicit markers so switching mid-session overrides
-        # any prior-turn language preference the agent may have learned.
-        if lang == "es":
+        # actual message language. Tool calls / JSON payloads stay English.
+        #
+        # The EN/ES dropdown is a default, NOT an absolute rule: when the
+        # user clearly types in a different language than the dropdown
+        # suggests, mirror their language. Otherwise users end up reading
+        # English replies after typing Spanish (and vice versa) just
+        # because they never flipped the dropdown — confusing UX.
+        # `_detect_input_language` returns 'es'/'en' only when confident;
+        # short / ambiguous input falls back to the dropdown.
+        _detected_lang = _detect_input_language(brief)
+        _effective_lang = _detected_lang or lang
+        if _effective_lang == "es":
             brief = (
-                "[LANG=es — Responde en español. Las llamadas a herramientas y los "
-                "payloads JSON deben permanecer en inglés; solo las respuestas "
+                "[LANG=es — Responde en español para coincidir con el idioma "
+                "del usuario. Las llamadas a herramientas y los payloads JSON "
+                "deben permanecer en inglés; solo las respuestas "
                 "conversacionales al usuario son en español.]\n\n" + brief
             )
         else:
             brief = (
-                "[LANG=en — Reply in English. All conversational responses to the "
-                "user must be in English, regardless of what language was used in "
-                "earlier turns of this session.]\n\n" + brief
+                "[LANG=en — Reply in English to match the user's message "
+                "language. All conversational responses to the user must be "
+                "in English. Tool calls / JSON payloads always stay English "
+                "regardless of conversational language.]\n\n" + brief
             )
 
         # Resolve the current agent_id up front. Sessions on Anthropic's side

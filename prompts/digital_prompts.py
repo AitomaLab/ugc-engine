@@ -246,18 +246,50 @@ def build_30s(dur, app_clip, ctx, product=None, influencer=None):
             f"I cannot stop using {brand}, it is genuinely that good, trust me you are going to love it.",
             f"Seriously, go check out {brand} right now, it is going to save you so much time and stress.",
         ]
-    
-    # Pad if necessary
-    while len(script_parts) < num_veo_scenes:
-        script_parts.append(fallbacks[len(script_parts) % len(fallbacks)])
+
+    # Identify whether this run carries a user-provided script. Strengthened
+    # vs. the prior check (which only excluded the literal "Check this out!"
+    # default) — any non-default-shape hook now counts as user content. This
+    # is the single source of truth for "trust the user's text" used both for
+    # padding and for the post-split validation below.
+    _hook_text = (ctx.get("hook") or "").strip()
+    _default_hooks = {
+        "",
+        "check this out!",
+        "okay you guys, i found this app and i am obsessed. you need to check it out.",
+    }
+    _is_user_script = bool(ctx.get("scene_dialogues")) or (
+        _hook_text and _hook_text.lower() not in _default_hooks
+    )
+
+    # Diagnostic: when the user reports a wrong-language video, these three
+    # lines in the production logs immediately show whether the user's hook
+    # arrived intact, whether the splitter produced sensible parts, and which
+    # branch the validation took. Cheap to keep in production.
+    print(f"      [build_30s] ctx['hook'] preview: {repr(_hook_text[:120])}")
+    print(f"      [build_30s] _is_user_script={_is_user_script}, video_language={_video_lang}, num_veo_scenes={num_veo_scenes}")
+    print(f"      [build_30s] script_parts ({len(script_parts)}): {[p[:60] for p in script_parts]}")
+
+    # Pad missing scenes with fallbacks ONLY when the user did not provide a
+    # script. With user content present we keep the splitter's output verbatim
+    # — short scenes are short (the influencer pauses); we never substitute.
+    if not _is_user_script:
+        while len(script_parts) < num_veo_scenes:
+            script_parts.append(fallbacks[len(script_parts) % len(fallbacks)])
+    else:
+        # If the splitter produced fewer parts than scenes, repeat the user's
+        # final part rather than introducing fallback text in a different
+        # language / voice. Keeps the audio coherent.
+        while len(script_parts) < num_veo_scenes and script_parts:
+            script_parts.append(script_parts[-1])
 
     # POST-SPLIT VALIDATION: Ensure time boundary (18-22 words ≈ 6-7s at 3 words/sec).
-    # Skip when the user provided a verbatim script (via ctx['scene_dialogues'] or
-    # a manual hook) — the word ranges are calibrated for AI-generated English and
-    # would silently replace user-confirmed non-English scripts with fallback text.
-    _is_user_script = bool(ctx.get("scene_dialogues")) or (
-        ctx.get("hook", "").strip() not in ("", "Check this out!")
-    )
+    # Skip ENTIRELY when the user provided a verbatim script — the word ranges
+    # are calibrated for AI-generated English and would otherwise silently
+    # replace user-confirmed non-English scripts with fallback text. The
+    # script-validation gate at the agent layer (_validate_script_for_video)
+    # already surfaced any length mismatch to the user before generation, and
+    # they explicitly accepted the trade-off (or chose to expand). Trust them.
     if not _is_user_script:
         MIN_WORDS = 18
         MAX_WORDS = 22
@@ -266,7 +298,7 @@ def build_30s(dur, app_clip, ctx, product=None, influencer=None):
             if word_count < MIN_WORDS or word_count > MAX_WORDS:
                 script_parts[idx] = fallbacks[idx % len(fallbacks)]
     else:
-        print(f"      [build_30s] User-provided script — skipping word-count validation")
+        print(f"      [build_30s] User-provided script — preserving {len(script_parts)} scenes verbatim")
 
     # Check if we can use composite image for Scene 1 (digital product with first frame)
     first_frame_url = app_clip.get("first_frame_url") if app_clip else None
