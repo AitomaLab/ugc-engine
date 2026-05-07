@@ -5104,13 +5104,13 @@ class ManagedAgentClient:
                 model=DEFAULT_MODEL,
                 name=AGENT_NAME,
                 description="Studio creative director — drives Creative OS image/animation/video tools.",
-                system=[
-                    {
-                        "type": "text",
-                        "text": SYSTEM_PROMPT,
-                        "cache_control": {"type": "ephemeral", "ttl": "1h"},
-                    },
-                ],
+                # NOTE: the beta Agents API requires `system` to be a plain
+                # string. The Messages-API style content-blocks list with
+                # `cache_control` is rejected with HTTP 400 ("value must be
+                # a string"). The Anthropic platform handles caching of the
+                # agent's system prompt internally; no client-side hint is
+                # needed. Do NOT replace this with a list/blocks structure.
+                system=SYSTEM_PROMPT,
                 tools=[
                     {"type": "agent_toolset_20260401"},
                     *_custom_tools_for_agent(),
