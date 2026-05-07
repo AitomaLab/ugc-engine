@@ -254,33 +254,56 @@ async def agent_stream(
         "(and `mute_audio_indices` if needed). Never emit ops text without a matching tool_use block.]"
     )
 
-    # Ref-sticky: if the current turn is edit-intent and the user did NOT
-    # attach a video this turn (the frontend clears attachments after each
-    # submit), look up the most recent video the user uploaded earlier in
-    # this thread and re-inject it as an implicit ref. That way a follow-up
-    # like "make it louder" / "try a different bed" doesn't make the agent
-    # call list_jobs and report "no videos in project".
+    # Ref carry-forward: the frontend only re-sends a ref on a follow-up
+    # turn when the user re-types the @-tag (AgentPanel.tsx). So follow-up
+    # messages like "opcion 1 mejor" or "ok dale" arrive with `refs=[]`
+    # even when the user @-mentioned the influencer / product / app_clip
+    # earlier in the same conversation. Without this carry-forward, the
+    # agent goes to fire `create_ugc_video`, has no IDs, and falls back to
+    # fuzzy `list_project_assets` matching that often misses the right
+    # asset ("I don't see Lucía or NAIARA in this project's assets").
+    #
+    # When the current turn lacks a ref of a given type (influencer,
+    # product, app_clip, image, video), walk backwards through prior user
+    # turns and re-attach the most recent ref of each missing type from
+    # the most recent prior user turn that had any. Subsumes the previous
+    # edit-intent-only sticky-video special case ("make it louder" /
+    # "try a different bed") — the generalized version covers it plus
+    # everything else.
     sticky_video_ref: Optional[AgentRef] = None
     has_video_ref = any(r.video_url for r in refs)
-    if is_edit_intent and not has_video_ref:
-        try:
-            _prior_thread = await get_thread(user_token, user_id, project_id)
-            _prior_turns_all: list[dict] = list((_prior_thread or {}).get("turns") or [])
-            for _past in reversed(_prior_turns_all):
-                if _past.get("role") != "user":
+    have_types: set[str] = {r.type for r in refs if getattr(r, "type", None)}
+    carried_refs: list[AgentRef] = []
+    try:
+        _prior_thread = await get_thread(user_token, user_id, project_id)
+        _prior_turns_all: list[dict] = list((_prior_thread or {}).get("turns") or [])
+        # Filter to AgentRef's known fields so unknown keys don't break validation.
+        _allowed = set(AgentRef.model_fields.keys())
+        for _past in reversed(_prior_turns_all):
+            if _past.get("role") != "user":
+                continue
+            for _pr in (_past.get("refs") or []):
+                t = _pr.get("type")
+                if not t or t in have_types:
                     continue
-                for _pr in (_past.get("refs") or []):
-                    if _pr.get("video_url"):
-                        # Filter to AgentRef's known fields so unknown keys don't break validation.
-                        _allowed = set(AgentRef.model_fields.keys())
-                        sticky_video_ref = AgentRef(**{k: v for k, v in _pr.items() if k in _allowed})
-                        break
-                if sticky_video_ref is not None:
-                    break
-        except Exception as _e:
-            print(f"[agent_stream] ref-sticky lookup failed: {_e}")
-        if sticky_video_ref is not None:
-            refs = list(refs) + [sticky_video_ref]
+                try:
+                    resurrected = AgentRef(**{k: v for k, v in _pr.items() if k in _allowed})
+                except Exception:
+                    continue
+                carried_refs.append(resurrected)
+                have_types.add(t)
+                if resurrected.video_url and not has_video_ref:
+                    sticky_video_ref = resurrected
+                    has_video_ref = True
+            # Most recent prior user turn wins; stop walking once we've
+            # processed it. Earlier turns rarely add anything that wasn't
+            # in the most recent one and risk pulling stale state.
+            break
+    except Exception as _e:
+        print(f"[agent_stream] prior-ref carry-forward failed: {_e}")
+    if carried_refs:
+        refs = list(refs) + carried_refs
+        print(f"[agent_stream] prior-ref carry-forward: re-attached {len(carried_refs)} ref(s) ({sorted(set(r.type for r in carried_refs if r.type))}) from prior user turn")
 
     if not refs:
         prefix_lines = [engine_marker, quick_mode_marker]
@@ -311,14 +334,17 @@ async def agent_stream(
                 parts.append(f"app_clip_id={r.app_clip_id}")
             if r.product_type:
                 parts.append(f"product_type={r.product_type}")
-            if sticky_video_ref is not None and r is sticky_video_ref:
-                parts.append("source=sticky_from_prior_turn")
+            if r in carried_refs:
+                # Tagged so the agent knows the user didn't re-type the
+                # @-mention this turn; we resurrected it from earlier in
+                # the thread.
+                parts.append("source=carried_from_prior_turn")
             lines.append("- " + ", ".join(parts))
         lines.append("")
         if sticky_video_ref is not None:
             lines.append(
                 "Note: the user did not attach a video this turn, but they uploaded one "
-                "earlier in this thread — it is re-included above as `source=sticky_from_prior_turn`. "
+                "earlier in this thread — it is re-included above as `source=carried_from_prior_turn`. "
                 "Use that video_url directly for this edit. Do NOT call list_project_assets or list_jobs."
             )
         lines.append(

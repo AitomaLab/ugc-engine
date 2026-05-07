@@ -5270,19 +5270,41 @@ class ManagedAgentClient:
         # Inject locale directive so conversational replies match the user's
         # actual message language. Tool calls / JSON payloads stay English.
         #
-        # The EN/ES dropdown is a default, NOT an absolute rule: when the
-        # user clearly types in a different language than the dropdown
-        # suggests, mirror their language. Otherwise users end up reading
-        # English replies after typing Spanish (and vice versa) just
-        # because they never flipped the dropdown — confusing UX.
+        # Re-injecting the LANG marker on EVERY turn is what flipped Spanish
+        # conversations to English when the user typed a short follow-up
+        # like "opcion 1 mejor" (no markers → fall back to a stale EN
+        # dropdown) or clicked the confirm button (auto-text "Confirmed —
+        # proceed with the pending generation now." matches ` with ` and
+        # ` the ` → detected as 'en'). Both cases overwrote a clearly
+        # established Spanish session.
         #
-        # The router (`agent.py`) already runs detection on the CLEAN brief
-        # (before memory-snapshot augmentation injects English markers) and
-        # passes the result here as `lang`. Trust that value when present;
-        # only fall back to local detection for direct callers that bypass
-        # the router. Detecting again on the augmented `brief` here would
-        # let the English memory preface flip 'es' → 'en'.
-        _effective_lang = lang or _detect_input_language(brief)
+        # New rules:
+        #   - First turn (no prior_turns): set the conversation language
+        #     from detection or the dropdown fallback (existing behavior).
+        #   - Subsequent turn with confident detection: trust the user's
+        #     current message even if the dropdown is stale.
+        #   - Subsequent turn with ambiguous detection (returns None):
+        #     skip injection entirely. Anthropic agent sessions maintain
+        #     conversation language naturally; re-injecting on every short
+        #     follow-up causes the flip-flop above.
+        _detected = _detect_input_language(brief)
+
+        # Frontend confirm button is hardcoded English regardless of user
+        # locale (AgentPanel.tsx). Don't trust it as a language signal.
+        _AUTO_BUTTON_TEXTS = {
+            "Confirmed — proceed with the pending generation now.",
+            "Confirmed - proceed with the pending generation now.",
+        }
+        if brief.strip() in _AUTO_BUTTON_TEXTS:
+            _detected = None
+
+        if not prior_turns:
+            _effective_lang = lang or _detected
+        elif _detected is not None:
+            _effective_lang = _detected
+        else:
+            _effective_lang = None
+
         if _effective_lang == "es":
             brief = (
                 "[LANG=es — Responde en español para coincidir con el idioma "
@@ -5290,13 +5312,15 @@ class ManagedAgentClient:
                 "deben permanecer en inglés; solo las respuestas "
                 "conversacionales al usuario son en español.]\n\n" + brief
             )
-        else:
+        elif _effective_lang == "en":
             brief = (
                 "[LANG=en — Reply in English to match the user's message "
                 "language. All conversational responses to the user must be "
                 "in English. Tool calls / JSON payloads always stay English "
                 "regardless of conversational language.]\n\n" + brief
             )
+        # else: no LANG injection — let the agent maintain the conversation
+        # language it already established.
 
         # Resolve the current agent_id up front. Sessions on Anthropic's side
         # are bound to an agent_id at creation — once tied, the session keeps
