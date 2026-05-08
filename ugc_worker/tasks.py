@@ -6,7 +6,7 @@ Uploads final videos to Supabase Storage.
 """
 from celery import Celery
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 load_dotenv(".env.saas")
@@ -92,11 +92,41 @@ def generate_ugc_video(self, job_id: str):
         if not job:
             raise RuntimeError(f"Job {job_id} not found in database")
 
-        # Idempotency guard: skip if already processing or done
+        # Idempotency guard: skip terminal success and active-processing
+        # states, but RECOVER stale-processing left by a preempted worker.
+        #
+        # Background: Modal preemption can kill a worker mid-pipeline. The
+        # killed run leaves status=processing in the DB, then Modal
+        # automatically retries the function with the same job_id. The old
+        # version of this guard treated 'processing' identically to
+        # 'success' and short-circuited the retry — leaving the job stuck
+        # forever while the wrapper falsely reported success.
+        #
+        # Heuristic: if updated_at is older than STALE_PROCESSING_MIN
+        # minutes, the previous run is dead (no other worker would have
+        # gone that long without bumping the timestamp during normal
+        # generation steps). Continue from scratch in that case. If the
+        # timestamp is fresh, another worker is genuinely running it —
+        # skip to avoid duplicate Kie/Suno calls and file races.
+        STALE_PROCESSING_MIN = 5
         current_status = (job.get("status") or "").lower()
-        if current_status in ("processing", "success", "complete", "completed"):
+        if current_status in ("success", "complete", "completed"):
             print(f"[SKIP] Job {job_id} already '{current_status}' — skipping duplicate run")
             return {"status": "skipped", "reason": f"already {current_status}", "job_id": job_id}
+        if current_status == "processing":
+            last_update_str = job.get("updated_at") or job.get("created_at")
+            age_min: float | None = None
+            if last_update_str:
+                try:
+                    last_update = datetime.fromisoformat(str(last_update_str).replace("Z", "+00:00"))
+                    age_min = (datetime.now(timezone.utc) - last_update).total_seconds() / 60.0
+                except Exception as _e:
+                    print(f"[RECOVER] Job {job_id} status=processing, could not parse updated_at={last_update_str!r}: {_e}; assuming stale")
+            if age_min is not None and age_min < STALE_PROCESSING_MIN:
+                print(f"[SKIP] Job {job_id} actively processing ({age_min:.1f} min old) — skipping duplicate run")
+                return {"status": "skipped", "reason": "actively processing", "job_id": job_id}
+            print(f"[RECOVER] Job {job_id} stale 'processing' (age={age_min}) — likely Modal preemption, restarting from scratch")
+            # fall through and re-execute the pipeline
 
         influencer = get_influencer(job["influencer_id"])
         if not influencer:

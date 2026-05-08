@@ -101,7 +101,11 @@ worker_image = (
 @app.function(
     image=worker_image,
     timeout=1800,          # 30 min max per video job
-    retries=1,             # Retry once on transient failures
+    retries=2,             # Retry up to 2× on Modal preemption / transient failures.
+                           # Starter-plan / spot capacity gets reclaimed often; one
+                           # retry isn't always enough. Pairs with the stale-
+                           # processing recovery in ugc_worker/tasks.py so a
+                           # preempted run resumes cleanly instead of stalling.
     cpu=2.0,               # 2 vCPUs for ffmpeg + Remotion
     memory=4096,           # 4 GB RAM — needed for Chromium + video rendering
 )
