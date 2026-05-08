@@ -263,47 +263,53 @@ async def agent_stream(
     # fuzzy `list_project_assets` matching that often misses the right
     # asset ("I don't see Lucía or NAIARA in this project's assets").
     #
-    # When the current turn lacks a ref of a given type (influencer,
-    # product, app_clip, image, video), walk backwards through prior user
-    # turns and re-attach the most recent ref of each missing type from
-    # the most recent prior user turn that had any. Subsumes the previous
-    # edit-intent-only sticky-video special case ("make it louder" /
-    # "try a different bed") — the generalized version covers it plus
-    # everything else.
+    # We ONLY carry forward when the current turn has zero refs of its
+    # own. If the user explicitly attached or @-mentioned anything this
+    # turn, treat it as a fresh task and trust their selection — silently
+    # merging in stale state from earlier in the thread otherwise mixes
+    # asset types (e.g. CeraVe lotion + a NAIARA app_clip from a prior
+    # Lucía-promoting-NAIARA video) and confuses the agent into either
+    # hallucinating a response or calling the wrong tool.
+    #
+    # This subsumes the previous edit-intent-only sticky-video special
+    # case ("make it louder" / "try a different bed") — those follow-ups
+    # arrive with refs=[] today, so they still benefit; explicit
+    # @-mention edits already carry the video URL on the current turn.
     sticky_video_ref: Optional[AgentRef] = None
     has_video_ref = any(r.video_url for r in refs)
-    have_types: set[str] = {r.type for r in refs if getattr(r, "type", None)}
     carried_refs: list[AgentRef] = []
-    try:
-        _prior_thread = await get_thread(user_token, user_id, project_id)
-        _prior_turns_all: list[dict] = list((_prior_thread or {}).get("turns") or [])
-        # Filter to AgentRef's known fields so unknown keys don't break validation.
-        _allowed = set(AgentRef.model_fields.keys())
-        for _past in reversed(_prior_turns_all):
-            if _past.get("role") != "user":
-                continue
-            for _pr in (_past.get("refs") or []):
-                t = _pr.get("type")
-                if not t or t in have_types:
+    if not refs:
+        try:
+            _prior_thread = await get_thread(user_token, user_id, project_id)
+            _prior_turns_all: list[dict] = list((_prior_thread or {}).get("turns") or [])
+            # Filter to AgentRef's known fields so unknown keys don't break validation.
+            _allowed = set(AgentRef.model_fields.keys())
+            seen_types: set[str] = set()
+            for _past in reversed(_prior_turns_all):
+                if _past.get("role") != "user":
                     continue
-                try:
-                    resurrected = AgentRef(**{k: v for k, v in _pr.items() if k in _allowed})
-                except Exception:
-                    continue
-                carried_refs.append(resurrected)
-                have_types.add(t)
-                if resurrected.video_url and not has_video_ref:
-                    sticky_video_ref = resurrected
-                    has_video_ref = True
-            # Most recent prior user turn wins; stop walking once we've
-            # processed it. Earlier turns rarely add anything that wasn't
-            # in the most recent one and risk pulling stale state.
-            break
-    except Exception as _e:
-        print(f"[agent_stream] prior-ref carry-forward failed: {_e}")
+                for _pr in (_past.get("refs") or []):
+                    t = _pr.get("type")
+                    if not t or t in seen_types:
+                        continue
+                    try:
+                        resurrected = AgentRef(**{k: v for k, v in _pr.items() if k in _allowed})
+                    except Exception:
+                        continue
+                    carried_refs.append(resurrected)
+                    seen_types.add(t)
+                    if resurrected.video_url and not has_video_ref:
+                        sticky_video_ref = resurrected
+                        has_video_ref = True
+                # Most recent prior user turn wins; stop walking once we've
+                # processed it. Earlier turns rarely add anything that wasn't
+                # in the most recent one and risk pulling stale state.
+                break
+        except Exception as _e:
+            print(f"[agent_stream] prior-ref carry-forward failed: {_e}")
     if carried_refs:
         refs = list(refs) + carried_refs
-        print(f"[agent_stream] prior-ref carry-forward: re-attached {len(carried_refs)} ref(s) ({sorted(set(r.type for r in carried_refs if r.type))}) from prior user turn")
+        print(f"[agent_stream] prior-ref carry-forward: re-attached {len(carried_refs)} ref(s) ({sorted(set(r.type for r in carried_refs if r.type))}) from prior user turn (current turn had no refs)")
 
     if not refs:
         prefix_lines = [engine_marker, quick_mode_marker]
