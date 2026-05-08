@@ -221,6 +221,35 @@ async def agent_stream(
         "[QUICK_MODE=on]" if data.quick_mode else "[QUICK_MODE=off]"
     )
 
+    # Detect the frontend's literal confirm-button text. When the user
+    # clicks "Confirm" on a cost preview card, the frontend sends this
+    # exact string as the user's next message. The agent is supposed to
+    # immediately re-fire the previously-previewed gated tool with
+    # confirmed=true and the same echo args — but Sonnet 4.6 sometimes
+    # hallucinates the post-confirm action ("Looks like there was a
+    # server-side hiccup on all 3 — want me to retry?") without ever
+    # emitting the tool_use. The SYSTEM_PROMPT's anti-hallucination rule
+    # (line 167) isn't always followed in practice. Inject a hard
+    # per-turn reinforcement when we see the confirm text.
+    _CONFIRM_BUTTON_TEXTS = {
+        "Confirmed — proceed with the pending generation now.",
+        "Confirmed - proceed with the pending generation now.",
+    }
+    is_post_confirm = brief.strip() in _CONFIRM_BUTTON_TEXTS
+    post_confirm_marker = (
+        "[POST-CONFIRM TURN — the user just clicked Confirm on the cost "
+        "preview card from the prior turn. You MUST emit a tool_use block "
+        "for the SAME gated tool you previewed last turn, with "
+        "confirmed=true and the SAME echo fields you received in the "
+        "confirmation_required payload (prompt, mode, count, "
+        "reference_image_urls, product_id, influencer_id, aspect_ratio, "
+        "etc. — copy them exactly). Do NOT respond with prose alone. "
+        "Do NOT report 'server-side hiccup', 'failure', or 'retry' — you "
+        "have not called the tool yet, so you cannot have failures to "
+        "report. Do NOT re-quote the cost. Do NOT call the tool again "
+        "with confirmed=false. Just fire the tool with confirmed=true.]"
+    ) if is_post_confirm else None
+
     # Edit-intent reminder — Claude has a strong pretrained pattern for emitting
     # `AI_EDIT_OPS` + an ops JSON array when asked to trim/edit/add music. That
     # format belongs to a DIFFERENT subsystem (the in-editor AI panel) and is
@@ -315,11 +344,15 @@ async def agent_stream(
         prefix_lines = [engine_marker, quick_mode_marker]
         if is_edit_intent:
             prefix_lines.append(edit_reminder)
+        if post_confirm_marker:
+            prefix_lines.append(post_confirm_marker)
         augmented_brief = "\n\n".join(prefix_lines + [augmented_brief])
     if refs:
         lines = [engine_marker, quick_mode_marker]
         if is_edit_intent:
             lines.append(edit_reminder)
+        if post_confirm_marker:
+            lines.append(post_confirm_marker)
         lines.append("")
         lines.append("[Referenced assets — these are the EXACT items the user is talking about]")
         for r in refs:

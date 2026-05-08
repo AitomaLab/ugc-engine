@@ -5093,13 +5093,28 @@ _TOOL_CALL_LEAK_RE = _re_module.compile(
 )
 
 # Pattern for "agent claims to dispatch tools but emits no tool_use".
-# Examples that should match: "Firing all 3 in parallel now.",
-# "Generating now…", "Launching the 3 images concurrently.", "Kicking
-# off all 5". Used by Layer 3 hallucination logging in _run_stream_impl.
+# Two failure shapes seen in production:
+#   1. "Firing all 3 in parallel now.", "Generating now…", "Launching
+#      the 3 images concurrently.", "Kicking off all 5".
+#   2. After a cost-preview confirmation, the agent fabricates a failure
+#      narrative without ever calling the tool: "Looks like there was a
+#      server-side hiccup on all 3 — want me to retry? It should go
+#      through on a second attempt." → no tool_use, just prose.
+# Used by Layer 3 hallucination logging in _run_stream_impl.
 _HALLUCINATED_ACTION_RE = _re_module.compile(
-    r"\b(firing|generating|launching|dispatching|kicking off|sending|"
-    r"creating)\b[^.]{0,80}\b(parallel|now|all\s+\d+|in\s+parallel|"
-    r"concurrently)\b",
+    r"(?:"
+    r"\b(?:firing|generating|launching|dispatching|kicking\s+off|sending|"
+    r"creating)\b[^.]{0,80}\b(?:parallel|now|all\s+\d+|in\s+parallel|"
+    r"concurrently)\b"
+    r"|"
+    r"\b(?:server[- ]side\s+hiccup|server[- ]side\s+(?:error|failure|"
+    r"issue))\b"
+    r"|"
+    r"\b(?:want\s+me\s+to\s+retry|should\s+go\s+through\s+on\s+a\s+"
+    r"second\s+attempt)\b"
+    r"|"
+    r"\b(?:all\s+\d+\s+failed|hiccup\s+on\s+all\s+\d+)\b"
+    r")",
     _re_module.IGNORECASE,
 )
 
