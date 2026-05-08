@@ -1890,6 +1890,53 @@ async def _tool_generate_image(ctx: ToolContext, **kwargs: Any) -> str:
             _record_artifact(ctx, {"type": "image", "url": single["image_url"], "shot_id": single.get("shot_id")})
         return json.dumps(single)
 
+    # Dedup: if the agent fires an identical count=N batch within the
+    # TTL window, return the already-queued shot_ids instead of
+    # generating another N shots. The original failure mode was the
+    # agent retrying ~11s after the first call because the result's
+    # status="failed" misled it (fixed below in the status taxonomy),
+    # but this guard also covers any future cause of duplicate fire.
+    import hashlib as _hashlib
+    import time as _time
+    _now = _time.time()
+    # Cheap eviction of expired entries.
+    for _expired_key in [_k for _k, _v in _GEN_IMAGE_DEDUP.items()
+                         if _now - _v["timestamp"] > _GEN_IMAGE_DEDUP_TTL]:
+        _GEN_IMAGE_DEDUP.pop(_expired_key, None)
+
+    _dedup_key = _hashlib.sha256(json.dumps({
+        "project": ctx.project_id,
+        "prompt": kwargs.get("prompt"),
+        "mode": kwargs.get("mode"),
+        "count": count,
+        "influencer_id": kwargs.get("influencer_id"),
+        "product_id": kwargs.get("product_id"),
+        "reference_image_urls": tuple(sorted(kwargs.get("reference_image_urls") or [])),
+        "aspect_ratio": kwargs.get("aspect_ratio"),
+    }, sort_keys=True).encode()).hexdigest()
+
+    if _dedup_key in _GEN_IMAGE_DEDUP:
+        cached = _GEN_IMAGE_DEDUP[_dedup_key]
+        age_s = _now - cached["timestamp"]
+        print(f"[_tool_generate_image] DEDUP hit: returning cached batch "
+              f"from {age_s:.1f}s ago (shot_ids={cached['shot_ids']})")
+        return json.dumps({
+            "status": "generating" if not cached.get("image_urls") else "success",
+            "image_urls": cached.get("image_urls", []),
+            "shot_ids": cached["shot_ids"],
+            "queued": max(0, len(cached["shot_ids"]) - len(cached.get("image_urls", []))),
+            "succeeded": len(cached.get("image_urls", [])),
+            "failed": 0,
+            "failures": [],
+            "requested": count,
+            "deduplicated": True,
+            "message": (
+                "An identical generate_image batch was already queued moments ago. "
+                "Reusing those shot_ids — DO NOT fire generate_image again. Tell the "
+                "user their images are generating and end your turn."
+            ),
+        })
+
     # Fan out N concurrent calls. NanoBanana is independent per-call, so
     # asyncio.gather lets all N run in parallel against the upstream model.
     print(f"[_tool_generate_image] fan-out: dispatching {count} concurrent generations")
@@ -1897,8 +1944,15 @@ async def _tool_generate_image(ctx: ToolContext, **kwargs: Any) -> str:
         *[_run_single() for _ in range(count)],
         return_exceptions=True,
     )
+
+    # Status taxonomy: a sub-call that returned a shot_id but no
+    # image_url is QUEUED, not failed. The route's background task
+    # populates image_url ~30-90s later. The previous aggregator
+    # conflated "no image_url yet" with "failed" and the agent retried,
+    # producing 6 shots when 3 were requested.
     image_urls: list[str] = []
-    shot_ids: list[str] = []
+    shot_ids_all: list[str] = []
+    queued_count = 0
     failures: list[str] = []
     for r in results:
         if isinstance(r, Exception):
@@ -1910,21 +1964,52 @@ async def _tool_generate_image(ctx: ToolContext, **kwargs: Any) -> str:
         if r.get("error"):
             failures.append(str(r["error"]))
             continue
-        url = r.get("image_url")
         sid = r.get("shot_id")
+        url = r.get("image_url")
+        if sid:
+            shot_ids_all.append(sid)
         if url:
             image_urls.append(url)
-            if sid:
-                shot_ids.append(sid)
             _record_artifact(ctx, {"type": "image", "url": url, "shot_id": sid})
+        elif sid:
+            # Queued: shot row exists, image_url will arrive via the
+            # route's background task.
+            queued_count += 1
+
+    if image_urls and not failures and queued_count == 0:
+        overall = "success"
+    elif image_urls:
+        overall = "partial"
+    elif queued_count and not failures:
+        overall = "generating"
+    else:
+        overall = "failed"
+
+    # Cache for dedup. Only cache success/generating outcomes — if
+    # everything failed, let a retry actually re-run.
+    if overall in ("success", "partial", "generating"):
+        _GEN_IMAGE_DEDUP[_dedup_key] = {
+            "timestamp": _now,
+            "shot_ids": shot_ids_all,
+            "image_urls": list(image_urls),
+        }
+
     return json.dumps({
-        "status": "success" if image_urls else "failed",
+        "status": overall,
         "image_urls": image_urls,
-        "shot_ids": shot_ids,
+        "shot_ids": shot_ids_all,
+        "queued": queued_count,
         "succeeded": len(image_urls),
         "failed": len(failures),
         "failures": failures[:3],
         "requested": count,
+        "message": (
+            f"All {count} images are generating in the background "
+            f"(shot_ids issued). They'll appear in the Images panel as "
+            f"each completes (~30-90s each). DO NOT call generate_image "
+            f"again for this batch — the work is already in flight. "
+            f"Tell the user their images are generating and end your turn."
+        ) if overall == "generating" else None,
     })
 
 
@@ -5102,6 +5187,20 @@ _TOOL_CALL_LEAK_RE = _re_module.compile(
     r"save_editor_state|render_edited_video|generate_video|create_ugc_video|"
     r"generate_music|splice_app_clip|extend_video|add_voiceover)\s*\([\s\S]*",
 )
+
+# Defense-in-depth dedup for `generate_image(count=N)` fan-out: when the
+# agent fires an identical multi-image batch within a short window
+# (production saw this as a 6-images-from-3-requested doubling, because
+# the first batch's status="generating" was misread as "failed" before
+# the status-taxonomy fix), return the previously-queued shot_ids
+# instead of fanning out a second time. Module-level dict keyed by a
+# hash of (project_id, prompt, mode, count, refs, ids, aspect_ratio).
+# Per-process; if creative-os ever scales to multiple replicas a second
+# replica racing against the first could still produce duplicates, but
+# the failure mode this addresses is a SAME-replica retry within ~10s.
+_GEN_IMAGE_DEDUP: dict[str, dict] = {}
+_GEN_IMAGE_DEDUP_TTL = 120  # seconds
+
 
 # Pattern for "agent claims to dispatch tools but emits no tool_use".
 # Two failure shapes seen in production:
