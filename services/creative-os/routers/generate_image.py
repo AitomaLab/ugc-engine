@@ -151,11 +151,26 @@ async def execute_image_generation(data: ExecuteRequest, user: dict = Depends(ge
 
             # Build influencer context for the template builder
             if influencer:
-                from scene_builder import _extract_visual_appearance
+                # `scene_builder` lives at the repo root and is normally
+                # made importable via main.py's sys.path setup. If the
+                # deployment doesn't include the repo root for some reason,
+                # fall back to a minimal in-line extraction so all 3
+                # fan-out calls don't blow up with ModuleNotFoundError.
+                try:
+                    from scene_builder import _extract_visual_appearance
+                    _visuals = _extract_visual_appearance(influencer)
+                except ImportError as _e:
+                    print(f"[Image Gen] scene_builder import failed ({_e}); using inline visual fallback")
+                    _full_desc = (
+                        influencer.get("visual_description")
+                        or influencer.get("description")
+                        or "casual style"
+                    )
+                    _visuals = (_full_desc or "casual style")[:250]
                 ctx = {
                     "age": influencer.get("age", "25-year-old"),
                     "gender": influencer.get("gender", "Female"),
-                    "visuals": _extract_visual_appearance(influencer),
+                    "visuals": _visuals,
                     "setting": (influencer.get("setting") or "").strip()
                         or "natural environment matching the background visible in the reference image",
                     "product": product,

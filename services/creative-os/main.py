@@ -12,6 +12,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 # Ensure service directory is on the path for local imports
 sys.path.insert(0, str(Path(__file__).parent))
+# Also expose the repo root so shared modules at the top level (e.g.
+# `scene_builder.py`, used by routers/generate_image.py for visual
+# extraction) are importable from the deployed Railway service. Without
+# this, `from scene_builder import _extract_visual_appearance` raises
+# ModuleNotFoundError under cwd=services/creative-os and PYTHONPATH=.,
+# and every UGC image generation that has an influencer fails silently
+# in fan-out with no actual generation taking place.
+_repo_root = Path(__file__).parent.parent.parent
+if _repo_root.exists():
+    sys.path.insert(0, str(_repo_root))
 
 # Load env
 from env_loader import load_env

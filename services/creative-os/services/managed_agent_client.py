@@ -1864,9 +1864,20 @@ async def _tool_generate_image(ctx: ToolContext, **kwargs: Any) -> str:
             req = ExecuteRequest(**base_exec_kwargs)
             result = await execute_image_generation(req, user=user)  # type: ignore[arg-type]
         except Exception as e:
-            return {"error": f"generate_image failed: {e}"}
+            # Print the actual exception + traceback so Railway logs
+            # surface the root cause when fan-out reports "failed".
+            # Without this, the agent sees "generate_image failed: ..."
+            # but ops can't tell what actually broke.
+            import traceback as _tb
+            print(f"[_tool_generate_image] sub-call FAILED: {type(e).__name__}: {e}")
+            _tb.print_exc()
+            return {"error": f"generate_image failed: {type(e).__name__}: {e}"}
         shots = result.get("shots") or []
         first = shots[0] if shots else {}
+        if not first.get("image_url"):
+            # Success path returned no image - log explicitly so we
+            # don't silently drop a "succeeded with no output" result.
+            print(f"[_tool_generate_image] sub-call returned no image_url. result.status={result.get('status')!r} shots_count={len(shots)}")
         return {
             "shot_id": first.get("id"),
             "image_url": first.get("image_url"),
