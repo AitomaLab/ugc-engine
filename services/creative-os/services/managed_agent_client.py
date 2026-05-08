@@ -387,6 +387,7 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
    Only fall back to `product_id` / `influencer_id` when the user @-mentioned an existing DB asset; for raw uploads (upload_* tags) those IDs do not exist.
    IMPORTANT: `reference_image_urls` / `reference_video_urls` are ONLY for `upload_*` tags. For @-mentioned DB entities (products / influencers / app clips), forward the IDs (`product_id`, `influencer_id`, `app_clip_id`) and NOTHING else — the pipeline resolves every image / video URL server-side. Mixing IDs with explicit URLs causes duplicate references and face-swap artifacts.
 9. UGC mode does NOT require a registered product. If the user provides uploaded images (upload_* refs), generation can proceed with just the raw image URLs. However, you MUST FIRST follow the **MANDATORY PRE-FLIGHT** check above: offer the user the option to save the uploaded image as a product/model (via `[[SAVE_OR_GENERATE:...]]` marker) before starting any generation. If the user clicks "Generate Now" or says to proceed without saving, call `generate_image(mode="ugc", reference_image_urls=[...])` directly using the raw URLs.
+9b. MULTI-IMAGE GENERATION — when the user asks for multiple images in one breath ("3 images in different angles", "5 variations", "create 4 different poses", "haz 3 imágenes"), call `generate_image` ONCE with `count=N` and a prompt that bakes the variation into the description ("different angle", "varied pose", "alternate composition"). The server fans out N concurrent NanoBanana calls and returns all `image_urls` together in one tool result — you summarize all of them in a single reply. Do NOT emit N parallel `tool_use` blocks for `generate_image` and do NOT write narrative prose like "Firing all 3 in parallel now" without a matching tool_use — that pattern has caused production hallucinations where the agent describes the action without actually executing it. The cost confirmation is bundled: the first (unconfirmed) call previews `per_image × count` credits, then the confirmed call dispatches all N in parallel. Range: count ≤ 6.
 10. ASPECT RATIO — MANDATORY before gated generation. Before calling `generate_image` or `generate_video` with `confirmed=true`, you MUST know the aspect ratio. If the user's brief already specifies it ("vertical", "9:16", "horizontal", "16:9", "square", "1:1", "for TikTok", "for YouTube", "for Instagram feed", "landscape", "portrait"), use it directly. For images, '1:1' is available for Instagram feed posts. Otherwise you MUST ask the user BEFORE presenting the cost confirmation: ask the question in one short sentence, then append the literal marker `[[ASPECT_BUTTONS]]` on the last line of your message. The frontend detects this marker and renders clickable Vertical / Horizontal buttons for the user. When the user replies with their choice, THEN show the cost confirmation, THEN call the tool with `confirmed=true` and `aspect_ratio="9:16"` or `"16:9"` (or `"1:1"` for images). Never skip this step for gated generation. Do NOT include the marker when the aspect is already known.
 10b. LANGUAGE — for video clips (`generate_video`), pass `language="es"` when the user requests Spanish / Latin dialogue. Default is English. Seedance 2.0 modes have full bilingual EN/ES support.
 11. NO RANDOM INFLUENCER / PRODUCT — for cinematic / scene / b-roll prompts that do not mention a specific person or product (e.g. "rooftop chase", "sunset over a city", "close-up of a coffee cup"), you MUST call `generate_video` WITHOUT `influencer_id` and WITHOUT `product_id`. Never auto-attach an influencer or product "to be safe" — the pipeline will generate the scene from the prompt alone, which is what the user wants. Only pass `influencer_id` / `product_id` when the user @-mentioned that asset or explicitly named them in the brief.
@@ -598,6 +599,21 @@ def _custom_tools_for_agent() -> list[dict]:
                         "type": "string",
                         "enum": ["2k", "4k"],
                         "description": "Image resolution quality. Default '4k'. Use '2k' for faster generation when speed matters more than resolution.",
+                    },
+                    "count": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 6,
+                        "description": (
+                            "Number of images to generate concurrently from the same prompt and references "
+                            "(default 1, max 6). USE THIS when the user asks for multiple variants — e.g. "
+                            "\"3 images in different angles\" → count=3 with a prompt that mentions \"different angle, "
+                            "varied composition\". The server fires N concurrent NanoBanana calls and returns all "
+                            "image_urls in a single response. ALWAYS prefer count=N over emitting N separate parallel "
+                            "tool_use blocks — the single-call dispatch is more reliable and avoids the agent "
+                            "hallucinating action without actually firing the calls. Cost confirmation is bundled: "
+                            "the first (unconfirmed) call previews credits = per_image × count."
+                        ),
                     },
                     "confirmed": {"type": "boolean", "description": confirmed_desc},
                 },
@@ -1800,17 +1816,36 @@ async def _tool_generate_image(ctx: ToolContext, **kwargs: Any) -> str:
     if not ctx.project_id:
         return json.dumps({"error": "project_id is required to generate images"})
 
+    # Clamp count to [1, 6]. The server fans out concurrently via
+    # asyncio.gather when count > 1 (see below). This avoids relying on
+    # the agent to correctly emit N parallel tool_use blocks — a known
+    # failure mode where the agent says "Firing all 3 in parallel now"
+    # without actually emitting any tool_use, leaving the user staring
+    # at "No images yet" forever.
+    raw_count = kwargs.get("count", 1)
+    try:
+        count = int(raw_count) if raw_count is not None else 1
+    except (TypeError, ValueError):
+        count = 1
+    count = max(1, min(6, count))
+
     # Cost confirmation gate — first call previews credits, doesn't spend.
     if not kwargs.get("confirmed"):
-        credits = _credits_for_op("generate_image", {})
+        per = _credits_for_op("generate_image", {})
+        credits = per * count
+        summary = (
+            f"Generate {count} still images concurrently (mode={kwargs.get('mode')})"
+            if count > 1 else
+            f"Generate 1 still image (mode={kwargs.get('mode')})"
+        )
         return _confirmation_payload(
             operation="generate_image",
             credits=credits,
-            summary=f"Generate 1 still image (mode={kwargs.get('mode')})",
+            summary=summary,
             echo={k: v for k, v in kwargs.items() if k != "confirmed"},
         )
 
-    exec_kwargs: dict = dict(
+    base_exec_kwargs: dict = dict(
         prompt=kwargs["prompt"],
         mode=kwargs["mode"],
         project_id=ctx.project_id,
@@ -1819,23 +1854,67 @@ async def _tool_generate_image(ctx: ToolContext, **kwargs: Any) -> str:
         reference_image_urls=kwargs.get("reference_image_urls") or None,
     )
     if kwargs.get("aspect_ratio"):
-        exec_kwargs["aspect_ratio"] = kwargs["aspect_ratio"]
+        base_exec_kwargs["aspect_ratio"] = kwargs["aspect_ratio"]
     if kwargs.get("quality"):
-        exec_kwargs["quality"] = kwargs["quality"]
-    req = ExecuteRequest(**exec_kwargs)
+        base_exec_kwargs["quality"] = kwargs["quality"]
     user = {"token": ctx.user_token, "id": "agent"}
-    try:
-        result = await execute_image_generation(req, user=user)  # type: ignore[arg-type]
-    except Exception as e:
-        return json.dumps({"error": f"generate_image failed: {e}"})
 
-    shots = result.get("shots") or []
-    first = shots[0] if shots else {}
-    image_url = first.get("image_url")
-    shot_id = first.get("id")
-    if image_url:
-        _record_artifact(ctx, {"type": "image", "url": image_url, "shot_id": shot_id})
-    return json.dumps({"shot_id": shot_id, "image_url": image_url, "status": result.get("status")})
+    async def _run_single() -> dict:
+        try:
+            req = ExecuteRequest(**base_exec_kwargs)
+            result = await execute_image_generation(req, user=user)  # type: ignore[arg-type]
+        except Exception as e:
+            return {"error": f"generate_image failed: {e}"}
+        shots = result.get("shots") or []
+        first = shots[0] if shots else {}
+        return {
+            "shot_id": first.get("id"),
+            "image_url": first.get("image_url"),
+            "status": result.get("status"),
+        }
+
+    if count == 1:
+        single = await _run_single()
+        if single.get("image_url"):
+            _record_artifact(ctx, {"type": "image", "url": single["image_url"], "shot_id": single.get("shot_id")})
+        return json.dumps(single)
+
+    # Fan out N concurrent calls. NanoBanana is independent per-call, so
+    # asyncio.gather lets all N run in parallel against the upstream model.
+    print(f"[_tool_generate_image] fan-out: dispatching {count} concurrent generations")
+    results = await asyncio.gather(
+        *[_run_single() for _ in range(count)],
+        return_exceptions=True,
+    )
+    image_urls: list[str] = []
+    shot_ids: list[str] = []
+    failures: list[str] = []
+    for r in results:
+        if isinstance(r, Exception):
+            failures.append(repr(r))
+            continue
+        if not isinstance(r, dict):
+            failures.append(f"unexpected result type: {type(r).__name__}")
+            continue
+        if r.get("error"):
+            failures.append(str(r["error"]))
+            continue
+        url = r.get("image_url")
+        sid = r.get("shot_id")
+        if url:
+            image_urls.append(url)
+            if sid:
+                shot_ids.append(sid)
+            _record_artifact(ctx, {"type": "image", "url": url, "shot_id": sid})
+    return json.dumps({
+        "status": "success" if image_urls else "failed",
+        "image_urls": image_urls,
+        "shot_ids": shot_ids,
+        "succeeded": len(image_urls),
+        "failed": len(failures),
+        "failures": failures[:3],
+        "requested": count,
+    })
 
 
 async def _tool_animate_image(ctx: ToolContext, **kwargs: Any) -> str:
@@ -5013,6 +5092,17 @@ _TOOL_CALL_LEAK_RE = _re_module.compile(
     r"generate_music|splice_app_clip|extend_video|add_voiceover)\s*\([\s\S]*",
 )
 
+# Pattern for "agent claims to dispatch tools but emits no tool_use".
+# Examples that should match: "Firing all 3 in parallel now.",
+# "Generating now…", "Launching the 3 images concurrently.", "Kicking
+# off all 5". Used by Layer 3 hallucination logging in _run_stream_impl.
+_HALLUCINATED_ACTION_RE = _re_module.compile(
+    r"\b(firing|generating|launching|dispatching|kicking off|sending|"
+    r"creating)\b[^.]{0,80}\b(parallel|now|all\s+\d+|in\s+parallel|"
+    r"concurrently)\b",
+    _re_module.IGNORECASE,
+)
+
 
 def _strip_ai_edit_ops_leak(text: str) -> str:
     text = _AI_EDIT_OPS_LEAK_RE.sub("", text)
@@ -5532,6 +5622,12 @@ class ManagedAgentClient:
                 pending_tool_calls: list[Any] = []
                 hit_limit = False
                 emitted_text_this_pass = False
+                # Layer 3 (hallucinated-action detection): collect every text
+                # bubble emitted in THIS stream pass so we can flag the case
+                # where the agent says "Firing all 3 in parallel now" but
+                # produces zero tool_use blocks. Reset per-pass; we want to
+                # detect the pattern at the level of one assistant response.
+                messages_this_pass: list[str] = []
                 _session_error_retried = False
 
                 async for ev in stream:
@@ -5557,6 +5653,7 @@ class ManagedAgentClient:
                                 if not p:
                                     continue
                                 emitted_text_this_pass = True
+                                messages_this_pass.append(p)
                                 yield {"type": "agent_message", "text": p}
 
                     elif ev_type == "agent.custom_tool_use":
@@ -5603,6 +5700,23 @@ class ManagedAgentClient:
 
                 if hit_limit:
                     return
+
+                # Layer 3 (hallucinated-action detection): if the agent
+                # emitted text containing action-verb prose ("Firing all 3
+                # in parallel now") but produced ZERO tool_use blocks AND
+                # has nothing queued for execution, the model talked itself
+                # into describing the action without doing it. Log so the
+                # failure is visible in Railway logs even when the user
+                # only sees the chat bubble.
+                if not pending_tool_calls and messages_this_pass:
+                    for _msg in messages_this_pass:
+                        if _HALLUCINATED_ACTION_RE.search(_msg):
+                            print(
+                                f"[ManagedAgent] HALLUCINATED ACTION (session={session_id}): "
+                                f"agent emitted action prose with zero tool_use this pass. "
+                                f"text={_msg!r}"
+                            )
+                            break
 
                 # After the stream pass, execute all collected tool calls concurrently.
                 if pending_tool_calls:
