@@ -4143,16 +4143,20 @@ async def _tool_splice_app_clip(ctx: ToolContext, **kwargs: Any) -> str:
 
     job_id = kwargs.get("job_id")
     app_clip_id = kwargs.get("app_clip_id")
+    print(f"[Splice] start job_id={job_id} app_clip_id={app_clip_id}")
     if not job_id or not app_clip_id:
+        print("[Splice] FAIL: missing job_id or app_clip_id")
         return json.dumps({"error": "job_id and app_clip_id are required"})
 
     try:
         job = await ctx.core().get_job_status(job_id)
     except Exception as e:
+        print(f"[Splice] FAIL: get_job_status: {e}")
         return json.dumps({"error": f"get_job_status failed: {e}", "job_id": job_id})
 
     primary_url = job.get("final_video_url")
     if not primary_url:
+        print(f"[Splice] FAIL: job has no final_video_url (status={job.get('status')})")
         return json.dumps({
             "error": f"job {job_id} has no final_video_url — is it complete?",
             "job_id": job_id,
@@ -4162,32 +4166,47 @@ async def _tool_splice_app_clip(ctx: ToolContext, **kwargs: Any) -> str:
     try:
         app_clip = await ctx.core().get_app_clip(app_clip_id)
     except Exception as e:
+        print(f"[Splice] FAIL: get_app_clip: {e}")
         return json.dumps({"error": f"get_app_clip failed: {e}"})
 
     broll_url = app_clip.get("video_url") if app_clip else None
     if not broll_url:
+        print(f"[Splice] FAIL: app clip {app_clip_id} has no video_url")
         return json.dumps({"error": f"app clip {app_clip_id} has no video_url"})
 
+    print(f"[Splice] concat primary={primary_url[:80]}... broll={broll_url[:80]}...")
     try:
         from utils.video_concat import concat_videos_matched
         concat_path = await _asyncio.to_thread(
             concat_videos_matched, primary_url, broll_url
         )
+        print(f"[Splice] concat OK: {concat_path}")
     except Exception as e:
+        import traceback as _tb
+        print(f"[Splice] FAIL: concat: {e}\n{_tb.format_exc()}")
         return json.dumps({"error": f"concat failed: {e}", "job_id": job_id})
 
     timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
     storage_filename = f"spliced_{job_id[:8]}_{timestamp}.mp4"
     try:
-        from ugc_db.db_manager import get_supabase
-        sb = get_supabase()
+        # Use direct supabase client (creative-os service does not have ugc_db
+        # on its Python path — see [main.py:141] for the same pattern).
+        import os as _os
+        from supabase import create_client as _create_client
+        sb = _create_client(
+            _os.getenv("SUPABASE_URL"),
+            _os.getenv("SUPABASE_SERVICE_KEY") or _os.getenv("SUPABASE_ANON_KEY"),
+        )
         with open(concat_path, "rb") as f:
             sb.storage.from_("generated-videos").upload(
                 storage_filename, f,
-                file_options={"content-type": "video/mp4"},
+                file_options={"content-type": "video/mp4", "upsert": "true"},
             )
         final_url = sb.storage.from_("generated-videos").get_public_url(storage_filename)
+        print(f"[Splice] upload OK: {final_url[:100]}...")
     except Exception as e:
+        import traceback as _tb
+        print(f"[Splice] FAIL: upload: {e}\n{_tb.format_exc()}")
         return json.dumps({"error": f"upload failed: {e}", "job_id": job_id})
 
     try:
