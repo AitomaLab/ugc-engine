@@ -168,7 +168,7 @@ Gated tools cost real credits. You MUST get explicit user confirmation before sp
 
 ⚠️ NEVER QUOTE CREDITS FROM MEMORY. Every credit number you show the user MUST come from a tool result in the CURRENT turn — either the `confirmation_required` payload of a gated tool (`confirmed=false`) or an `estimate_credits` response. Do not calculate costs yourself, do not recall prices from earlier in the session, do not guess. If you don't have a fresh tool result, call one of those tools first, THEN present the number. Quoting a wrong number and then silently correcting it on the next turn destroys user trust.
 
-⚠️ ONE QUOTE, ONE CONFIRM, ONE FIRE. After you present a cost and the user agrees, call the gated tool(s) with `confirmed=true` IMMEDIATELY in the next turn. Do NOT re-call `estimate_credits` "to double-check", do NOT call the gated tool with `confirmed=false` again "to lock in the cost", do NOT re-present the same cost with different wording and ask again. **Specifically forbidden after a confirmation reply (the literal text "Confirmed — proceed with the pending generation now." OR plain "yes / sí / vale / dale / ok / proceed / adelante"): do NOT emit any prose summary of what you're about to do, do NOT restate the credits, do NOT ask "¿Quieres que proceda?" / "Shall I proceed?" / any equivalent re-confirmation. Your ONLY response to a confirmation must be the tool_use block with `confirmed=true` — no narration before it.** That forces the user to confirm twice and wastes their turn. The ONLY exception: if the user's confirmation included a change that affects the cost (e.g. "yes, but make it 10s instead of 5s"), you MUST re-estimate because the parameters changed — state that explicitly ("10s changes the cost to X credits, proceed?") and end turn. Otherwise, fire silently.
+⚠️ ONE QUOTE, ONE CONFIRM, ONE FIRE. After you present a cost and the user agrees, call the gated tool(s) with `confirmed=true` IMMEDIATELY in the next turn. Do NOT re-call `estimate_credits` "to double-check", do NOT call the gated tool with `confirmed=false` again "to lock in the cost", do NOT re-present the same cost with different wording and ask again. **Specifically forbidden after a confirmation reply (the literal text "Confirmed — proceed with the pending generation now.", its Spanish equivalent "Confirmado — procede con la generación pendiente ahora.", OR plain "yes / sí / vale / dale / ok / proceed / adelante"): do NOT emit any prose summary of what you're about to do, do NOT restate the credits, do NOT ask "¿Quieres que proceda?" / "Shall I proceed?" / any equivalent re-confirmation. Your ONLY response to a confirmation must be the tool_use block with `confirmed=true` — no narration before it.** That forces the user to confirm twice and wastes their turn. The ONLY exception: if the user's confirmation included a change that affects the cost (e.g. "yes, but make it 10s instead of 5s"), you MUST re-estimate because the parameters changed — state that explicitly ("10s changes the cost to X credits, proceed?") and end turn. Otherwise, fire silently.
 
 ⚠️ RETRIES / RE-FIRES. When the user asks to re-run, retry, or re-fire a previously-failed generation ("re-fire those cinematics", "try those two again", "redo"), treat it as a fresh gated call: `confirmed=false` ONCE to get the real cost from the tool, present it, end turn. When they confirm, fire `confirmed=true`. Do not quote from memory "that was 44 credits earlier" — always pull the number from a fresh tool result.
 
@@ -5548,11 +5548,20 @@ class ManagedAgentClient:
         #     follow-up causes the flip-flop above.
         _detected = _detect_input_language(brief)
 
-        # Frontend confirm button is hardcoded English regardless of user
-        # locale (AgentPanel.tsx). Don't trust it as a language signal.
+        # Frontend confirm/cancel buttons are now localized (en + es) in
+        # AgentPanel.tsx. Don't trust their text as a language signal — the
+        # user clicking a button isn't actually composing in either language.
         _AUTO_BUTTON_TEXTS = {
+            # English (legacy + em-dash and regular dash variants)
             "Confirmed — proceed with the pending generation now.",
             "Confirmed - proceed with the pending generation now.",
+            "Cancel that — don't proceed.",
+            "Cancel that - don't proceed.",
+            # Spanish (em-dash and regular dash variants)
+            "Confirmado — procede con la generación pendiente ahora.",
+            "Confirmado - procede con la generación pendiente ahora.",
+            "Cancela eso — no procedas.",
+            "Cancela eso - no procedas.",
         }
         if brief.strip() in _AUTO_BUTTON_TEXTS:
             _detected = None

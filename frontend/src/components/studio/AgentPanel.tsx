@@ -3033,12 +3033,22 @@ function AnimatedText({ text, refMap, speedCharsPerSec = 60 }: { text: string; r
 }
 
 function CostConfirmChip({ pending, active, onQuickReply }: { pending: { credits: number; summaries: string[] }; active: boolean; onQuickReply?: (text: string) => void }) {
-    const { t } = useTranslation();
+    const { t, lang } = useTranslation();
     const handleConfirm = () => {
-        if (active && onQuickReply) onQuickReply('Confirmed — proceed with the pending generation now.');
+        // Send the confirmation reply in the user's UI language so it doesn't
+        // visually break a Spanish conversation. Both phrasings are recognized
+        // by the backend's _AUTO_BUTTON_TEXTS exclusion set so language
+        // detection still skips this turn (managed_agent_client.py).
+        const confirmText = lang === 'es'
+            ? 'Confirmado — procede con la generación pendiente ahora.'
+            : 'Confirmed — proceed with the pending generation now.';
+        if (active && onQuickReply) onQuickReply(confirmText);
     };
     const handleCancel = () => {
-        if (active && onQuickReply) onQuickReply("Cancel that — don't proceed.");
+        const cancelText = lang === 'es'
+            ? 'Cancela eso — no procedas.'
+            : "Cancel that — don't proceed.";
+        if (active && onQuickReply) onQuickReply(cancelText);
     };
     return (
         <div
