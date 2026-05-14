@@ -9,6 +9,46 @@ import re
 
 
 # ---------------------------------------------------------------------------
+# Spanish accent line for Veo voice_type (Spain vs Latin America)
+# ---------------------------------------------------------------------------
+def spanish_accent_line(code) -> str:
+    """Return the `voice_type:` accent description for a Spanish video.
+
+    `code`: "spain" / "es-es" / "castilian" / "castellano" → Castilian (Spain),
+    anything else → neutral LATAM. Free-form influencer accent strings also
+    accepted via substring match.
+    """
+    if not code:
+        norm = ""
+    else:
+        norm = str(code).lower()
+    is_spain = (
+        "spain" in norm
+        or "españa" in norm
+        or "espana" in norm
+        or "castilian" in norm
+        or "castellano" in norm
+        or norm in ("es-es", "es_es")
+    )
+    if is_spain:
+        return (
+            "native CASTILIAN Spanish from SPAIN (Madrid speaker, NOT Latin American) — "
+            "use peninsular DISTINCIÓN pronunciation: the letters c (before e/i) and z must "
+            "sound like English 'th' — say 'gra-THIAS' not 'gra-SIAS', 'THIU-dad' not "
+            "'SIU-dad', 'cora-THON' not 'cora-SON', 'deli-THIO-sas' not 'deli-SIO-sas'; "
+            "use VOSOTROS conjugations for plural-you, never ustedes; "
+            "Spain vocabulary ('plátano' not 'banana', 'móvil' not 'celular', "
+            "'ordenador' not 'computadora', 'vale' not 'okey'); "
+            "speaking entirely in Spanish from Spain"
+        )
+    return (
+        "neutral Latin American Spanish (Mexican/Colombian baseline), seseo "
+        "pronunciation (c/z sound like 's', NOT like 'th'), use ustedes for "
+        "plural-you, speaking entirely in Spanish"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Number-to-words expansion (0-999)
 # ---------------------------------------------------------------------------
 _NUMBER_WORDS = {
