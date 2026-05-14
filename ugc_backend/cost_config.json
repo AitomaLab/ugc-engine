@@ -1,32 +1,65 @@
 {
+    "_note": "Real WaveSpeed marketplace costs as of 2026-05-07. Veo is flat-rate PER VIDEO, not per-second.",
     "elevenlabs": {
-        "cost_per_character": 0.0003
+        "cost_per_character": 0.00018
+    },
+    "wavespeed": {
+        "seedance_2": {
+            "480p": { "i2v_per_s": 0.0575, "t2v_per_s": 0.095 },
+            "720p": { "i2v_per_s": 0.125,  "t2v_per_s": 0.205 },
+            "1080p": { "i2v_per_s": 0.31,  "t2v_per_s": 0.51 }
+        },
+        "veo31": {
+            "lite":    { "720p": 0.15,  "1080p": 0.175, "4k": 0.75 },
+            "fast":    { "720p": 0.30,  "1080p": 0.325, "4k": 0.90 },
+            "quality": { "720p": 1.25,  "1080p": 1.275, "4k": 1.85 }
+        },
+        "veo31_extend": {
+            "fast": 0.30,
+            "quality": 1.25
+        },
+        "kling3": {
+            "standard": { "no_audio_per_s": 0.07, "with_audio_per_s": 0.10 },
+            "pro":      { "no_audio_per_s": 0.09, "with_audio_per_s": 0.135 },
+            "4k":       { "per_s": 0.335 }
+        },
+        "nano_banana_pro": {
+            "1k": 0.09,
+            "2k": 0.09,
+            "4k": 0.12
+        },
+        "infinitalk_audio": {
+            "cost_per_second": 0.022
+        }
     },
     "kie_ai": {
+        "_note": "Legacy shape kept for backward compat with cost_service.py estimate_total_cost().",
         "models": {
-            "seedance-1.5-pro": {
-                "cost_per_second": 0.019
-            },
             "seedance-2.0": {
-                "cost_per_second": 0.019
+                "cost_per_second": 0.125
+            },
+            "seedance-1.5-pro": {
+                "cost_per_second": 0.125
             },
             "kling-2.6": {
-                "cost_per_second": 0.018
+                "cost_per_second": 0.10
             },
             "veo-3.1-fast": {
-                "cost_per_second": 0.020
+                "cost_per_second": 0.04,
+                "_note": "Approximation: real cost is $0.325 flat per video; using $0.04/s as proxy for 8s avg clip"
             },
             "nano_banana_pro": {
-                "cost_per_image": 0.10
+                "cost_per_image": 0.09
             },
             "veo-3.1": {
-                "cost_per_second": 0.025
+                "cost_per_second": 0.16,
+                "_note": "Approximation: real cost is $1.275 flat per video (Quality 1080p); using $0.16/s proxy"
             },
             "infinitalk-audio": {
                 "cost_per_second": 0.022
             },
             "default": {
-                "cost_per_second": 0.019
+                "cost_per_second": 0.125
             }
         },
         "silent_models": [

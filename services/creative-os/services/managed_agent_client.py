@@ -5513,8 +5513,22 @@ class ManagedAgentClient:
         if brief.strip() in _AUTO_BUTTON_TEXTS:
             _detected = None
 
-        if not prior_turns:
-            _effective_lang = lang or _detected
+        # Language resolution priority:
+        #   1. Explicit `lang` from the frontend — the source of truth. The
+        #      frontend already combines (a) the SaaS UI toggle and (b) a
+        #      per-turn Spanish detector on the user's prompt. If it sends a
+        #      value, we honor it ALWAYS (including mid-session) so the agent
+        #      can't drift back to English on a short follow-up like
+        #      "ok" / "vamos con la opcion 2" / "1".
+        #   2. Backend per-turn detection — only used when the frontend sent
+        #      no preference (older clients, or programmatic callers).
+        # Critically, we always inject SOME LANG marker once we know the
+        # language, even on ambiguous turns. Anthropic agent sessions can
+        # otherwise drift after a few turns of mixed-content context.
+        if lang in ("es", "en"):
+            _effective_lang = lang
+        elif not prior_turns:
+            _effective_lang = _detected
         elif _detected is not None:
             _effective_lang = _detected
         else:
@@ -5522,17 +5536,26 @@ class ManagedAgentClient:
 
         if _effective_lang == "es":
             brief = (
-                "[LANG=es — Responde en español para coincidir con el idioma "
-                "del usuario. Las llamadas a herramientas y los payloads JSON "
-                "deben permanecer en inglés; solo las respuestas "
-                "conversacionales al usuario son en español.]\n\n" + brief
+                "[LANG=es — TODA tu respuesta al usuario debe estar en "
+                "español, sin excepciones. Esto incluye narración, "
+                "preámbulos, transiciones, comentarios sobre lo que vas a "
+                "hacer, descripciones, listas, encabezados — TODO el texto "
+                "que el usuario lee. NUNCA mezcles inglés en la respuesta "
+                "conversacional, ni siquiera frases cortas de relleno tipo "
+                "'Going with…', 'Let me…', 'Got it', 'Sure'. Si el usuario "
+                "te ha hablado en español alguna vez, mantén el español "
+                "para todo el resto de la conversación. Las llamadas a "
+                "herramientas y los payloads JSON sí permanecen en inglés "
+                "(eso es interno y no se muestra al usuario).]\n\n" + brief
             )
         elif _effective_lang == "en":
             brief = (
-                "[LANG=en — Reply in English to match the user's message "
-                "language. All conversational responses to the user must be "
-                "in English. Tool calls / JSON payloads always stay English "
-                "regardless of conversational language.]\n\n" + brief
+                "[LANG=en — Your ENTIRE reply to the user must be in "
+                "English, no exceptions. This includes narration, "
+                "preambles, transitions, descriptions, lists, headers — "
+                "every line of text the user reads. Tool calls / JSON "
+                "payloads stay English regardless (they are internal).]\n\n"
+                + brief
             )
         # else: no LANG injection — let the agent maintain the conversation
         # language it already established.

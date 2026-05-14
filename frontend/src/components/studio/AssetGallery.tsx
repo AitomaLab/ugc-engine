@@ -6,6 +6,21 @@ import { ImageEditModal } from './ImageEditModal';
 import { VideoDetailModal } from './VideoDetailModal';
 import { useTranslation } from '@/lib/i18n';
 
+/**
+ * Rewrite a Supabase storage object URL to the on-the-fly render endpoint
+ * so card thumbnails get a small webp instead of the full-resolution original.
+ * Pass-through for non-Supabase URLs.
+ */
+function thumbUrl(url: string | null | undefined, width: number): string {
+    if (!url) return url || '';
+    if (url.includes('/storage/v1/object/public/')) {
+        const rewritten = url.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/');
+        const sep = rewritten.includes('?') ? '&' : '?';
+        return `${rewritten}${sep}width=${width}&quality=70&resize=cover`;
+    }
+    return url;
+}
+
 /** Extract file extension from URL path or Content-Type header */
 function getFileExtension(url: string, contentType: string | null, fallbackType: 'images' | 'videos'): string {
     // 1. Try to get from URL path (most reliable for Supabase storage)
@@ -205,10 +220,10 @@ export function AssetGallery({ assets, type, loading, projectId, onRefresh, onAn
                     )}
                 </svg>
                 <p style={{ color: '#4A5578', fontSize: '15px', fontWeight: 500, margin: '0 0 4px' }}>
-                    No {type} yet
+                    {t(type === 'images' ? 'creativeOs.gallery.emptyImagesTitle' : 'creativeOs.gallery.emptyVideosTitle')}
                 </p>
                 <p style={{ color: '#8A93B0', fontSize: '13px', margin: 0 }}>
-                    Use the Create Bar below to generate your first {type === 'images' ? 'image' : 'video'}
+                    {t(type === 'images' ? 'creativeOs.gallery.emptyImagesHint' : 'creativeOs.gallery.emptyVideosHint')}
                 </p>
             </div>
         );
@@ -483,7 +498,9 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
             {imageUrl && (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                    src={imageUrl}
+                    src={thumbUrl(imageUrl, 480)}
+                    srcSet={`${thumbUrl(imageUrl, 320)} 320w, ${thumbUrl(imageUrl, 480)} 480w, ${thumbUrl(imageUrl, 640)} 640w`}
+                    sizes="(max-width: 600px) 50vw, 240px"
                     alt=""
                     loading="lazy"
                     decoding="async"

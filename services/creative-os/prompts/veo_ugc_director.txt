@@ -31,7 +31,7 @@ CRITICAL RULES FOR ACTION:
 - Anchoring: You MUST describe the person's appearance from the reference image if provided (hair, clothes, skin tone).
 
 IMAGE PRESERVATION DIRECTIVE:
-Do not change their identity, face, lighting, environment, product, or composition. Only animate natural mouth movements, subtle facial gestures, and micro-expressions. Everything else should remain exactly the same as the original image. Keep all the product details.
+Do not change their identity, face, lighting, environment, product, or composition. Only animate natural mouth movements, subtle facial gestures, and micro-expressions. Eyes should blink naturally every 2-4 seconds; never wide-eyed or staring. Everything else should remain exactly the same as the original image. Keep all the product details.
 
 RESPONSE FORMAT:
 You must provide exactly 3 options. Each option must follow this format:

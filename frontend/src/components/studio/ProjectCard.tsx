@@ -4,6 +4,22 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { useTranslation } from '@/lib/i18n';
 
+/**
+ * Rewrite a Supabase public-storage URL to the on-the-fly image render
+ * endpoint so the CDN ships a small webp instead of the multi-MB original.
+ * Falls through unchanged for non-Supabase URLs.
+ */
+function thumbUrl(url: string, width: number): string {
+    if (!url) return url;
+    // /storage/v1/object/public/<bucket>/<path>  →  /storage/v1/render/image/public/<bucket>/<path>?...
+    if (url.includes('/storage/v1/object/public/')) {
+        const rewritten = url.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/');
+        const sep = rewritten.includes('?') ? '&' : '?';
+        return `${rewritten}${sep}width=${width}&quality=70&resize=cover`;
+    }
+    return url;
+}
+
 interface PreviewAsset {
     url: string;
     type: 'image' | 'video';
@@ -161,9 +177,12 @@ export function ProjectCard({ project }: ProjectCardProps) {
             ) : (
                 /* eslint-disable-next-line @next/next/no-img-element */
                 <img
-                    src={asset.url}
+                    src={thumbUrl(asset.url, 480)}
+                    srcSet={`${thumbUrl(asset.url, 320)} 320w, ${thumbUrl(asset.url, 480)} 480w, ${thumbUrl(asset.url, 640)} 640w`}
+                    sizes="(max-width: 600px) 50vw, 320px"
                     alt=""
                     loading="lazy"
+                    decoding="async"
                     onError={() => handleImgError(asset.url)}
                     style={{
                         width: '100%',

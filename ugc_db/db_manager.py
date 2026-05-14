@@ -649,40 +649,53 @@ def add_credits(user_id: str, amount: int, tx_type: str, description: str, metad
 
 def seed_default_influencers(user_id: str, project_id: str):
     """
-    Auto-populates a new/empty project with the 18 base template influencers.
-    Finds the admin project (the one that owns 'Meg') and clones its influencers,
-    excluding Meg, Max, and Naiara as requested.
+    Auto-populates a new/empty project with the base template influencers.
+    Finds the admin project (the one that owns the 'Lila' template row) and
+    clones its influencers, excluding deprecated entries.
+
+    Anchor history: this used to look up 'Meg', but that row was removed from
+    production. 'Lila' is the universal sentinel present in every template
+    project (104 templates / project as of 2026-05) and is the stable anchor.
     """
     sb = get_supabase()
-    
-    # Locate the admin project by finding where 'Meg' lives
-    admin_inf = sb.table("influencers").select("project_id").eq("name", "Meg").limit(1).execute().data
+
+    # Locate the admin project by finding where the 'Lila' template lives.
+    admin_inf = sb.table("influencers").select("project_id").eq("name", "Lila").limit(1).execute().data
     if not admin_inf or not admin_inf[0].get("project_id"):
         return
-        
+
     admin_pid = admin_inf[0]["project_id"]
-    
+
     # Don't seed if this IS the admin project querying itself
     if project_id == admin_pid:
         return
-        
+
+    # Idempotency guard: if ANY influencer already exists in this user's
+    # project, skip the seed entirely. Two concurrent callers (e.g. the
+    # onboarding modal + the project agent panel both firing /influencers
+    # on a fresh login) would otherwise each insert a fresh batch of 26
+    # templates, leaving 2–4× duplicates of every name (Mateo×4, Lila×4 …).
+    existing = sb.table("influencers").select("id").eq("user_id", user_id).eq("project_id", project_id).limit(1).execute().data
+    if existing:
+        return
+
     template_infs = sb.table("influencers").select("*").eq("project_id", admin_pid).execute().data
-    
+
     exclude_names = {"meg", "max", "naiara"}
     clones = []
-    
+
     for inf in template_infs:
         inf_name = inf.get("name", "")
         if inf_name.lower() in exclude_names:
             continue
-            
+
         clone = dict(inf)
         clone.pop("id", None)
         clone.pop("created_at", None)
         clone["user_id"] = user_id
         clone["project_id"] = project_id
         clones.append(clone)
-        
+
     if clones:
         sb.table("influencers").insert(clones).execute()
 
@@ -690,7 +703,13 @@ def list_influencers_scoped(user_id: str, project_id: str):
     sb = get_supabase()
     data = sb.table("influencers").select("*").eq("user_id", user_id).eq("project_id", project_id).execute().data
     if not data:
-        # If the project has NO influencers, automatically seed the default templates
+        # If the project has NO influencers, automatically seed the default templates.
+        # Concurrent callers (onboarding modal + agent panel + /influencers page
+        # often fire at the same time on a fresh login) would each see 0 rows
+        # and each seed a fresh batch — leaving 2-4× duplicates. The seeder is
+        # now idempotent (checks again under the same query) so this can no
+        # longer compound, but we still avoid the extra insert work when a
+        # concurrent caller has already populated the project.
         seed_default_influencers(user_id, project_id)
         # Fetch again after seeding
         data = sb.table("influencers").select("*").eq("user_id", user_id).eq("project_id", project_id).execute().data
@@ -804,6 +823,152 @@ def get_notifications(user_id: str, limit: int = 20):
             "timestamp": s.get("created_at"),
             "video_url": None,
         })
+
+    # --- Product Shots (images + animations) ---
+    # `product_shots` is scoped through `products.user_id`. We pull the user's
+    # product ids first so the `in_` filter stays inside the Supabase service
+    # client's normal pattern (no embedded resource expansion needed).
+    user_products = (
+        sb.table("products")
+        .select("id")
+        .eq("user_id", user_id)
+        .execute()
+        .data
+    )
+    user_product_ids = [p["id"] for p in (user_products or []) if p.get("id")]
+    shots = []
+    if user_product_ids:
+        shots = (
+            sb.table("product_shots")
+            .select("id,status,image_url,video_url,error_message,created_at,updated_at")
+            .in_("product_id", user_product_ids)
+            .in_("status", ["image_completed", "animation_completed", "failed"])
+            .order("updated_at", desc=True)
+            .limit(limit)
+            .execute()
+            .data
+        )
+    # Use the `job_success` / `job_failed` types so the Header toast logic
+    # (frontend Header.tsx ~line 262) fires the same way it does for videos.
+    # The toast string ("Image Ready" vs "Video Ready") is selected from
+    # `n.message?.includes('image')` in the frontend, so the message must
+    # carry the keyword.
+    for shot in (shots or []):
+        status = shot.get("status")
+        if status == "image_completed":
+            title = "Image Ready"
+            ntype = "job_success"
+            message = "Your image is ready"
+            video_url = None
+        elif status == "animation_completed":
+            title = "Animation Ready"
+            ntype = "job_success"
+            # Word "video" so the toast picks toast.videoReady (animations are videos).
+            message = "Your animated video is ready"
+            video_url = shot.get("video_url")
+        else:  # failed
+            title = "Generation Failed"
+            ntype = "job_failed"
+            err = shot.get("error_message") or "Unknown error"
+            # Word "image" so the toast picks toast.generationFailed with the
+            # right context for image flows.
+            message = f"Image generation failed: {err[:80]}"
+            video_url = None
+        notifications.append({
+            "id": f"shot_{shot['id']}",
+            "type": ntype,
+            "title": title,
+            "message": message,
+            "timestamp": shot.get("updated_at") or shot.get("created_at"),
+            "video_url": video_url,
+            "image_url": shot.get("image_url") if status == "image_completed" else None,
+        })
+
+    # --- Async-Agent Image Jobs (services/async_agent module) ---
+    # Wrapped defensively because migration 030_add_async_agent_jobs.sql may
+    # not be applied on every environment yet. A missing table must not break
+    # the entire notifications endpoint.
+    try:
+        async_image_jobs = (
+            sb.table("async_image_jobs")
+            .select("id,status,image_url,prompt,error,created_at,updated_at")
+            .eq("user_id", user_id)
+            .in_("status", ["success", "failed"])
+            .order("updated_at", desc=True)
+            .limit(limit)
+            .execute()
+            .data
+        )
+    except Exception as e:
+        # PGRST205 (table not found) is the expected case when migration 030
+        # hasn't run; anything else gets logged but still fails open.
+        if "async_image_jobs" not in str(e):
+            print(f"[get_notifications] async_image_jobs query failed: {e}")
+        async_image_jobs = []
+    for j in (async_image_jobs or []):
+        is_success = j.get("status") == "success"
+        if is_success:
+            notifications.append({
+                "id": f"async_image_{j['id']}",
+                "type": "job_success",
+                "title": "Image Ready",
+                "message": "Your image is ready",
+                "timestamp": j.get("updated_at") or j.get("created_at"),
+                "video_url": None,
+                "image_url": j.get("image_url"),
+            })
+        else:
+            err = j.get("error") or "Unknown error"
+            notifications.append({
+                "id": f"async_image_{j['id']}",
+                "type": "job_failed",
+                "title": "Generation Failed",
+                "message": f"Image generation failed: {err[:80]}",
+                "timestamp": j.get("updated_at") or j.get("created_at"),
+                "video_url": None,
+                "image_url": None,
+            })
+
+    # --- Async-Agent Video Jobs (services/async_agent module) ---
+    # Same defensive wrap as async_image_jobs above — migration 030 may not
+    # be applied yet on this environment.
+    try:
+        async_video_jobs = (
+            sb.table("async_video_jobs")
+            .select("id,status,artifact_url,tool_name,error,created_at,updated_at")
+            .eq("user_id", user_id)
+            .in_("status", ["success", "failed"])
+            .order("updated_at", desc=True)
+            .limit(limit)
+            .execute()
+            .data
+        )
+    except Exception as e:
+        if "async_video_jobs" not in str(e):
+            print(f"[get_notifications] async_video_jobs query failed: {e}")
+        async_video_jobs = []
+    for j in (async_video_jobs or []):
+        is_success = j.get("status") == "success"
+        name = j.get("tool_name") or "Video"
+        if is_success:
+            notifications.append({
+                "id": f"async_video_{j['id']}",
+                "type": "job_success",
+                "title": "Video Ready",
+                "message": f"{name} completed successfully",
+                "timestamp": j.get("updated_at") or j.get("created_at"),
+                "video_url": j.get("artifact_url"),
+            })
+        else:
+            err = j.get("error") or "Unknown error"
+            notifications.append({
+                "id": f"async_video_{j['id']}",
+                "type": "job_failed",
+                "title": "Generation Failed",
+                "message": f"{name} failed: {err[:80]}",
+                "timestamp": j.get("updated_at") or j.get("created_at"),
+                "video_url": None,
+            })
 
     # Sort all notifications by timestamp DESC
     notifications.sort(key=lambda n: n.get("timestamp") or "", reverse=True)

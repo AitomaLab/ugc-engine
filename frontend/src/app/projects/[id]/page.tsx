@@ -137,20 +137,78 @@ export default function ProjectContainerPage() {
         if (!session || !projectId) return;
         if (!silent) setLoading(true);
         try {
-            const [project, imgs, vids] = await Promise.all([
-                creativeFetch<any>(`/creative-os/projects/${projectId}`),
-                creativeFetch<any[]>(`/creative-os/projects/${projectId}/assets/images`),
-                creativeFetch<any[]>(`/creative-os/projects/${projectId}/assets/videos`),
-            ]);
-            setProjectName(project.name || 'Project');
-            setImages(imgs);
-            setVideos(vids);
+            // Single merged endpoint — builds product/influencer lookup maps
+            // once on the backend instead of 3x. Cuts open-project from
+            // ~5-10s to ~1-2s on projects with many assets.
+            const full = await creativeFetch<{
+                project: any;
+                images: any[];
+                videos: any[];
+            }>(`/creative-os/projects/${projectId}/full`);
+            setProjectName(full.project?.name || 'Project');
+            setImages(full.images || []);
+            setVideos(full.videos || []);
         } catch (err) {
             console.error('Failed to fetch assets:', err);
         } finally {
             if (!silent) setLoading(false);
         }
     }, [session, projectId]);
+
+    // Lightweight polling: only refresh status/preview for in-flight assets,
+    // never re-pull the full project. Merges the small status payload back
+    // into the cached lists.
+    const pollInFlight = useCallback(async () => {
+        if (!session || !projectId) return;
+        const imageIds = images.filter(a => {
+            const s = (a.status || '').toLowerCase();
+            return s.includes('pending') || s.includes('processing') || s.includes('generating');
+        }).map(a => a.id).filter(Boolean);
+        const videoIds = videos.filter(a => {
+            const s = (a.status || '').toLowerCase();
+            return s.includes('pending') || s.includes('processing') || s.includes('generating');
+        }).map(a => a.id).filter(Boolean);
+        if (imageIds.length === 0 && videoIds.length === 0) return;
+
+        try {
+            const status = await creativeFetch<{
+                images: any[];
+                videos: any[];
+            }>(`/creative-os/projects/${projectId}/jobs-status`, {
+                method: 'POST',
+                body: JSON.stringify({ image_ids: imageIds, video_ids: videoIds }),
+            });
+
+            const mergeBy = <T extends { id?: string }>(prev: T[], updates: T[]): T[] => {
+                if (!updates?.length) return prev;
+                const map = new Map(updates.map(u => [u.id, u]));
+                return prev.map(p => {
+                    const u = map.get(p.id);
+                    return u ? { ...p, ...u } : p;
+                });
+            };
+
+            let anyTransitionedToSuccess = false;
+            for (const v of (status.videos || [])) {
+                if ((v.status || '').toLowerCase() === 'success') anyTransitionedToSuccess = true;
+            }
+            for (const im of (status.images || [])) {
+                if (!(im.status || '').toLowerCase().match(/pending|processing|generating/)) anyTransitionedToSuccess = true;
+            }
+
+            setImages(prev => mergeBy(prev, status.images || []));
+            setVideos(prev => mergeBy(prev, status.videos || []));
+
+            // When any in-flight job finishes, do ONE full refetch to pull
+            // enriched fields (product_name, mode, etc.) that the lightweight
+            // status endpoint omits.
+            if (anyTransitionedToSuccess) {
+                fetchAssets(true);
+            }
+        } catch (err) {
+            console.error('Status poll failed:', err);
+        }
+    }, [session, projectId, images, videos, fetchAssets]);
 
     // Initial fetch
     useEffect(() => {
@@ -209,10 +267,10 @@ export default function ProjectContainerPage() {
         if (hasPending) {
             pollRef.current = setInterval(() => {
                 if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
-                fetchAssets(true);
+                pollInFlight();
             }, 5000);
             const onVisible = () => {
-                if (document.visibilityState === 'visible') fetchAssets(true);
+                if (document.visibilityState === 'visible') pollInFlight();
             };
             document.addEventListener('visibilitychange', onVisible);
             return () => {
@@ -227,7 +285,7 @@ export default function ProjectContainerPage() {
         return () => {
             if (pollRef.current) clearInterval(pollRef.current);
         };
-    }, [images, videos, fetchAssets]);
+    }, [images, videos, pollInFlight]);
 
     // Reset filters when switching tabs
     useEffect(() => {
@@ -448,8 +506,8 @@ export default function ProjectContainerPage() {
                 </button>
             )}
 
-            {/* Create Bar Toggle */}
-            {isWide && (
+            {/* Create Bar Toggle — hidden: all creation flows now run through the agent chat. */}
+            {false && isWide && (
                 <button
                     onClick={() => setCreateBarOpen(!createBarOpen)}
                     title={createBarOpen ? t('creativeOs.project.bottomPanelHide') : t('creativeOs.project.bottomPanelShow')}
@@ -575,13 +633,14 @@ export default function ProjectContainerPage() {
     if (!isWide) {
         return (
             <div style={{
-                padding: `32px 32px ${createBarOpen ? '140px' : '32px'}`,
+                // Create Bar hidden — padding-bottom no longer reserves space for it.
+                padding: '32px 32px 32px',
                 maxWidth: '1200px',
                 margin: '0 auto',
             }}>
                 {projectHeaderBar}
                 {galleryBlock}
-                {createBarOpen && createBarBlock}
+                {false && createBarOpen && createBarBlock}
                 <AgentPanel ref={agentRef} projectId={projectId} jobId={selectedJobId} onArtifact={() => fetchAssets(true)} onStateChange={setAgentState} initialBrief={initialBrief || undefined} initialRefs={initialRefs} initialUseSeedance={initialUseSeedance} onJobStart={(kind) => { setActiveTab(kind === 'video' ? 'videos' : 'images'); startJobRefetchBurst(); }} />
             </div>
         );
@@ -636,11 +695,12 @@ export default function ProjectContainerPage() {
                 }}>
                     <div style={{
                         flex: 1, overflowY: 'auto',
-                        padding: `24px 28px ${createBarOpen ? '160px' : '32px'}`,
+                        // Create Bar hidden — gallery extends to the bottom.
+                        padding: '24px 28px 32px',
                     }}>
                         {galleryBlock}
                     </div>
-                    {createBarOpen && (
+                    {false && createBarOpen && (
                         <div style={{ flexShrink: 0, zIndex: 10 }}>
                             {createBarBlock}
                         </div>

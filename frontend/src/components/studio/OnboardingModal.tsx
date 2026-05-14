@@ -102,13 +102,28 @@ export function OnboardingModal({ onComplete, onSkip }: OnboardingModalProps) {
             try {
                 const [prods, infs] = await Promise.all([
                     apiFetch<RealProduct[]>('/api/products', { skipProjectScope: true }).catch(() => []),
-                    apiFetch<RealInfluencer[]>('/influencers', { skipProjectScope: true }).catch(() => []),
+                    // Do NOT skip project scope here — the project-scoped influencer
+                    // endpoint triggers the auto-seed in list_influencers_scoped
+                    // (db_manager.py) which clones the 18 template influencers
+                    // (Mateo, Lexi, Amelie, …) into the user's default project on
+                    // first read. The skip-scope branch in main.py doesn't
+                    // auto-seed, which is why brand-new users saw an empty list.
+                    apiFetch<RealInfluencer[]>('/influencers').catch(() => []),
                 ]);
                 if (cancelled) return;
                 // Fall back to template products when user has none
                 const finalProducts = (prods || []).length > 0 ? (prods || []).slice(0, 3) : TEMPLATE_PRODUCTS;
                 setProducts(finalProducts);
-                setInfluencers((infs || []).slice(0, 3));
+
+                // Pick the curated template trio for first-time users. If the
+                // user has built up their own roster, fall back to the first
+                // three of theirs (mirrors the prior behavior).
+                const TEMPLATE_NAMES = ['Mateo', 'Lexi', 'Amelie'];
+                const all = infs || [];
+                const templates = TEMPLATE_NAMES
+                    .map(n => all.find(i => (i.name || '').toLowerCase() === n.toLowerCase()))
+                    .filter((i): i is RealInfluencer => !!i);
+                setInfluencers(templates.length > 0 ? templates : all.slice(0, 3));
             } catch (err) {
                 console.warn('Onboarding data load failed:', err);
             } finally {

@@ -104,6 +104,7 @@ export interface Notification {
     message: string;
     timestamp: string;
     video_url?: string | null;
+    image_url?: string | null;
 }
 
 export interface ProductShot {

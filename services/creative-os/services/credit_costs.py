@@ -6,8 +6,8 @@ where ugc_backend is not available. Keep in sync with the original.
 """
 
 CREDIT_COSTS = {
-    ("digital", 15): 39,
-    ("digital", 30): 77,
+    ("digital", 15): 95,     # was 39 — raised to cover Seedance 720P i2v at $0.125/s
+    ("digital", 30): 190,    # was 77 — raised proportionally
     ("physical", 15): 100,
     ("physical", 30): 199,
     "cinematic_image_1k": 13,
@@ -17,7 +17,7 @@ CREDIT_COSTS = {
     "creative_os_image": 5,
     "animate_image_5s": 25,
     "video_clip_ugc_per_s": 6,
-    "video_clip_cinematic_per_s": 5,
+    "video_clip_cinematic_per_s": 8,     # Kling 3.0 Std w/ audio ($0.10/s) — was 5, raised for margin
     "video_clip_clone_per_s": 8,
     "video_clip_seedance_with_ref_per_s": 16,
     "video_clip_seedance_no_ref_per_s": 27,

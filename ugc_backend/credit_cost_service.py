@@ -7,10 +7,11 @@ This is SEPARATE from cost_service.py which calculates internal COGS/API costs.
 
 
 # Fixed credit costs — from the Aitoma Studio pricing document
+# Updated 2026-05-07 with real WaveSpeed COGS to ensure positive margins.
 CREDIT_COSTS = {
-    # Video generation
-    ("digital", 15): 39,
-    ("digital", 30): 77,
+    # Video generation (full UGC pipeline)
+    ("digital", 15): 95,     # was 39 — raised to cover Seedance 720P i2v at $0.125/s
+    ("digital", 30): 190,    # was 77 — raised proportionally
     ("physical", 15): 100,
     ("physical", 30): 199,
     # Cinematic product shots
@@ -23,11 +24,11 @@ CREDIT_COSTS = {
     # Creative OS — animate still → 5s clip (Kling 3.0)
     "animate_image_5s": 25,
     # Creative OS — text-to-video clips (per-second pricing)
-    "video_clip_ugc_per_s": 6,           # Veo 3.1 Fast (UGC mode)
-    "video_clip_cinematic_per_s": 5,     # Kling 3.0 (cinematic_video mode)
+    "video_clip_ugc_per_s": 6,           # Veo 3.1 Fast (UGC mode) — flat $0.325/video
+    "video_clip_cinematic_per_s": 8,     # Kling 3.0 Std w/ audio ($0.10/s) — was 5, raised for margin
     "video_clip_clone_per_s": 8,         # InfiniTalk (ai_clone mode, lip-sync)
-    "video_clip_seedance_with_ref_per_s": 16,  # Seedance 2.0 Fast 720p i2v (with ref image/video)
-    "video_clip_seedance_no_ref_per_s": 27,    # Seedance 2.0 Fast 720p t2v (no reference)
+    "video_clip_seedance_with_ref_per_s": 16,  # Seedance 2.0 Fast 720p i2v ($0.125/s)
+    "video_clip_seedance_no_ref_per_s": 27,    # Seedance 2.0 Fast 720p t2v ($0.205/s)
     # AI Clone full videos (lip-synced talking head, separate pipeline)
     ("clone", 15): 90,
     ("clone", 30): 180,

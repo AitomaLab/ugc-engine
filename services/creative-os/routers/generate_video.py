@@ -2107,7 +2107,7 @@ async def _run_ugc_clip_pipeline(
                 "setting": "natural environment",
                 "accent": "neutral English",
                 "tone": "Enthusiastic",
-                "energy_level": "High",
+                "energy_level": "Medium",
             }
             user_selected_influencer = True
             has_reference_image = False
@@ -2175,7 +2175,7 @@ async def _run_ugc_clip_pipeline(
                 if product_type == "digital" and digital_device == "phone":
                     nano_prompt = (
                         f"action: character holding a smartphone facing the camera in portrait orientation "
-                        f"with an excited expression, casually showing the app on screen\n"
+                        f"with a relaxed, naturally engaged expression, casually showing the app on screen\n"
                         f"device: modern smartphone held vertically, phone screen fills the frame from the "
                         f"phone's perspective; the phone screen displays the provided app interface EXACTLY as "
                         f"shown in the reference image — pixel-perfect, do NOT redraw or reinterpret UI, keep "
@@ -2212,7 +2212,7 @@ async def _run_ugc_clip_pipeline(
                     )
                 else:
                     nano_prompt = (
-                        f"action: character holding the product naturally at chest level with an excited expression, "
+                        f"action: character holding the product naturally at chest level with a relaxed, naturally engaged expression, "
                         f"casually presenting the product to the camera\n"
                         f"anatomy: exactly one person with exactly two arms and two hands, "
                         f"one hand explicitly holds the product, other arm rests naturally TO THE PERSON'S SIDE\n"
@@ -2298,14 +2298,13 @@ async def _run_ugc_clip_pipeline(
             visuals_str = _sanitize_influencer_description(raw_desc, inf_name)
             accent_str = influencer.get("accent", "neutral English")
             tone_str = influencer.get("tone", "Enthusiastic").lower()
-            energy_str = influencer.get("energy_level", "High").lower()
             setting_str = influencer.get("setting", "") or "natural environment matching the background visible in the reference image"
 
             if data.language == "es":
                 accent_str = "native Spanish accent, speaking entirely in Spanish"
 
             # Use enhanced action if available, else fallback to template
-            final_action = action_direction if action_direction else "person holds product at chest level showing it to camera, excited expression, eye contact"
+            final_action = action_direction if action_direction else "person holds product at chest level showing it to camera, natural relaxed expression, soft eye contact with regular blinking"
 
             veo_prompt = (
                 f"dialogue: {script_text}\n"
@@ -2313,7 +2312,7 @@ async def _run_ugc_clip_pipeline(
                 f"character: {age_str} {gender_str} named {inf_name}, {visuals_str}, detailed realistic complexion with fine natural imperfections, unretouched raw look\n"
                 f"camera: amateur iPhone selfie video, slightly uneven framing, handheld\n"
                 f"setting: {setting_str}, natural lighting\n"
-                f"emotion: {energy_str}, genuine excitement\n"
+                f"emotion: warm and natural, genuine but understated, calm relaxed face with regular natural blinking every 2-4 seconds, soft relaxed eyelids (NOT wide-eyed)\n"
                 f"voice_type: clear confident pronunciation, casual, {tone_str}, conversational {accent_str}, consistent medium-fast pacing\n"
                 f"style: raw UGC, candid, not polished\n"
                 f"motion_constraint: all movements must be slow, natural, and physically realistic like a real human — "
@@ -2328,12 +2327,14 @@ async def _run_ugc_clip_pipeline(
                 f"negative: no auditory hallucinations, no filler words, no repeated words, no stuttering, no repeated syllables, "
                 f"no artificial smoothing, no plastic CGI appearance, no extra limbs, no extra fingers, no mutated hands, "
                 f"no teleporting objects, no instant actions, no phantom eating, no objects appearing from nowhere, "
-                f"no oversized products, no physically impossible movements"
+                f"no oversized products, no physically impossible movements, "
+                f"no wide-eyed stare, no bulging eyes, no unblinking gaze, no frozen surprised expression, "
+                f"no over-exaggerated facial expression, no startled look, no permanently raised eyebrows"
             )
         else:
             # No influencer selected — build prompt from user's input + reference image context
             accent_line = "native Spanish accent, speaking entirely in Spanish" if data.language == "es" else "neutral English accent"
-            final_action = action_direction if action_direction else "person speaking directly to camera, casual and excited, holding product if visible in reference"
+            final_action = action_direction if action_direction else "person speaking directly to camera, casual and naturally engaging, relaxed face with regular natural blinking, holding product if visible in reference"
 
             if composite_url:
                 # Reference image uploaded: instruct Veo to match the person in it
@@ -2348,6 +2349,8 @@ async def _run_ugc_clip_pipeline(
                     f"speech_constraint: speak ONLY the exact dialogue words provided, crystal-clear pronunciation, "
                     f"no stuttering, no auditory hallucinations, MUST finish speaking 1 second before video ends\n"
                     f"negative: no auditory hallucinations, no filler words, no stuttering, no extra limbs, "
+                    f"no wide-eyed stare, no bulging eyes, no unblinking gaze, no frozen surprised expression, "
+                    f"no over-exaggerated facial expression, no startled look, no permanently raised eyebrows, "
                     f"do NOT use a different person than the reference image"
                 )
             else:
@@ -2359,7 +2362,9 @@ async def _run_ugc_clip_pipeline(
                     f"voice_type: clear confident pronunciation, casual, conversational {accent_line}, consistent medium-fast pacing\n"
                     f"speech_constraint: speak ONLY the exact dialogue words provided, crystal-clear pronunciation, "
                     f"no stuttering, no auditory hallucinations\n"
-                    f"negative: no auditory hallucinations, no filler words, no stuttering, no extra limbs"
+                    f"negative: no auditory hallucinations, no filler words, no stuttering, no extra limbs, "
+                    f"no wide-eyed stare, no bulging eyes, no unblinking gaze, no frozen surprised expression, "
+                    f"no over-exaggerated facial expression, no startled look, no permanently raised eyebrows"
                 )
 
         print(f"[UGC Clip] Veo prompt ({len(veo_prompt)} chars): {veo_prompt[:120]}...")

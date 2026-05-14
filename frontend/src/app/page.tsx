@@ -779,40 +779,125 @@ export default function StudioPage() {
               border: '1px solid rgba(51,122,255,0.10)',
               boxShadow: '0 4px 32px rgba(51,122,255,0.08)',
             }}>
-              {/* Attached file chips */}
+              {/* Attached file chips — thumbnail previews (mirrors project AgentPanel) */}
               {attachments.length > 0 && (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', padding: '16px 24px 0' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', padding: '16px 24px 0' }}>
                   {attachments.map((a) => {
                     const isError = a.status === 'error';
                     const isUploading = a.status === 'uploading';
+                    const isVideo = a.type === 'video';
+                    const thumb = a.previewUrl || a.url;
                     return (
-                      <span key={a.id} style={{
-                        display: 'inline-flex', alignItems: 'center', gap: '6px',
-                        padding: '4px 10px', borderRadius: '8px',
-                        background: isError ? 'rgba(229,62,62,0.08)' : 'rgba(51,122,255,0.08)',
-                        border: isError ? '1px solid rgba(229,62,62,0.25)' : '1px solid transparent',
-                        color: isError ? '#C53030' : '#337AFF',
-                        fontSize: '12px', fontWeight: 600,
-                      }}>
-                        {isUploading && (
-                          <span style={{
-                            width: '10px', height: '10px', borderRadius: '50%',
-                            border: '2px solid rgba(51,122,255,0.25)',
-                            borderTopColor: '#337AFF',
-                            animation: 'spin 0.8s linear infinite',
-                            display: 'inline-block',
-                          }} />
+                      <div
+                        key={a.id}
+                        title={a.name}
+                        style={{
+                          position: 'relative',
+                          width: '56px', height: '56px',
+                          borderRadius: '10px',
+                          overflow: 'hidden',
+                          background: '#EEF2F8',
+                          border: isError ? '1px solid rgba(229,62,62,0.55)' : '1px solid rgba(51,122,255,0.18)',
+                          flexShrink: 0,
+                        }}
+                      >
+                        {thumb && !isError ? (
+                          isVideo ? (
+                            <video
+                              src={thumb}
+                              muted
+                              playsInline
+                              preload="metadata"
+                              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                            />
+                          ) : (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={thumb}
+                              alt={a.name}
+                              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                            />
+                          )
+                        ) : (
+                          <div style={{
+                            width: '100%', height: '100%',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            fontSize: '10px', fontWeight: 700, letterSpacing: '0.4px',
+                            color: isError ? '#C53030' : '#8A93B0',
+                            textTransform: 'uppercase',
+                          }}>
+                            {a.type}
+                          </div>
                         )}
-                        <span style={{ textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.4px', opacity: 0.7 }}>
-                          {a.type}
-                        </span>
-                        <span>{a.name}</span>
-                        {isError && <span title={a.error} style={{ opacity: 0.8 }}>failed</span>}
+
+                        {/* Video play badge */}
+                        {isVideo && thumb && !isUploading && !isError && (
+                          <div style={{
+                            position: 'absolute',
+                            bottom: '3px', right: '3px',
+                            width: '16px', height: '16px',
+                            borderRadius: '4px',
+                            background: 'rgba(0,0,0,0.55)',
+                            backdropFilter: 'blur(4px)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          }}>
+                            <svg viewBox="0 0 24 24" style={{ width: '9px', height: '9px', fill: 'white' }}>
+                              <polygon points="5,3 19,12 5,21" />
+                            </svg>
+                          </div>
+                        )}
+
+                        {/* Uploading overlay */}
+                        {isUploading && (
+                          <div style={{
+                            position: 'absolute', inset: 0,
+                            background: 'rgba(13,27,62,0.45)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          }}>
+                            <span style={{
+                              width: '16px', height: '16px', borderRadius: '50%',
+                              border: '2px solid rgba(255,255,255,0.35)',
+                              borderTopColor: '#FFFFFF',
+                              animation: 'spin 0.8s linear infinite',
+                              display: 'inline-block',
+                            }} />
+                          </div>
+                        )}
+
+                        {/* Error overlay */}
+                        {isError && (
+                          <div title={a.error} style={{
+                            position: 'absolute', left: 0, right: 0, bottom: 0,
+                            background: 'rgba(229,62,62,0.85)',
+                            color: 'white',
+                            fontSize: '9px', fontWeight: 700, letterSpacing: '0.3px',
+                            textAlign: 'center',
+                            padding: '2px 0',
+                            textTransform: 'uppercase',
+                          }}>
+                            failed
+                          </div>
+                        )}
+
+                        {/* Remove button */}
                         <button
                           onClick={() => removeAttachment(a.id)}
-                          style={{ background: 'none', border: 'none', color: '#8A93B0', cursor: 'pointer', fontSize: '14px', lineHeight: 1, padding: 0 }}
+                          aria-label="Remove attachment"
+                          style={{
+                            position: 'absolute',
+                            top: '3px', right: '3px',
+                            width: '18px', height: '18px',
+                            borderRadius: '50%',
+                            border: 'none',
+                            background: 'rgba(0,0,0,0.65)',
+                            color: 'white',
+                            cursor: 'pointer',
+                            fontSize: '12px', lineHeight: 1,
+                            padding: 0,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          }}
                         >×</button>
-                      </span>
+                      </div>
                     );
                   })}
                 </div>

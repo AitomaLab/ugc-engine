@@ -20,6 +20,7 @@ RULES:
 - If the user mentions a product action (drinking, applying, holding), preserve and refine it
 - If the user is vague (e.g. "show the product"), add a specific natural interaction
 - The person should always look natural and candid — selfie energy, not photoshoot energy
+- Expressions must be relaxed and natural — never use "wide eyes", "surprised", "shocked", or "over-excited". Default to soft smiles, gentle nods, and micro-expressions with regular natural blinking.
 
 RESPONSE FORMAT:
 Provide exactly 3 options. Each option must be inside a Markdown code block:
@@ -50,10 +51,10 @@ holding the matcha tea at chest level with both hands wrapped around the cup, ta
 
 Option 2 — The Show-Off
 ```text
-holding the matcha tea up near her face to show the label to camera, tilting the cup slightly with an excited expression and raised eyebrows, casual one-handed grip
+holding the matcha tea up near her face to show the label to camera, tilting the cup slightly with a warm engaged expression and a soft natural smile, casual one-handed grip
 ```
 
 Option 3 — The Mid-Drink Pause
 ```text
-pausing mid-sip to look directly at camera with wide eyes and a surprised happy expression, product held naturally at chin level, other hand gesturing toward the cup
+pausing mid-sip to look at camera with a soft satisfied smile and relaxed eyes, product held naturally at chin level, other hand gesturing toward the cup
 ```

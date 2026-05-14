@@ -23,6 +23,7 @@ import ProductModal from '@/components/ui/ProductModal';
 import { InfluencerModal } from '@/app/library/InfluencerModal';
 import { FEATURE_AGENTPANEL_EDITOR_ROUTING } from '@/editor/flags';
 import { classifyEditorAgentRoute } from '@/editor-agent/route-intent';
+import { parseAiEditOps, stripAiEditBlockForDisplay } from '@/editor/action-row/apply-ai-operations';
 
 export interface AgentPanelHandle {
     useSeedance: boolean;
@@ -91,6 +92,47 @@ interface AttachedFile {
     error?: string;
     tag?: string;          // @upload_xxx tag (set when ready)
 }
+
+// ── Chat queue: snapshot of every per-turn setting captured at enqueue time
+// so a message that fires later carries the settings the user had when they
+// hit send, not whatever they tweaked while waiting.
+interface ProSnapshot {
+    useSeedance: boolean;
+    quickMode: boolean;
+    proStripOpen: boolean;
+    proType: 'image' | 'video';
+    proMode: string;
+    proAspectRatio: string;
+    proQuality: string;
+    proLanguage: string;
+    proClipLength: number;
+    proMultiShot: boolean;
+    proMultiShotLength: number;
+    proVideoLength: number;
+}
+
+interface QueuedMessage {
+    id: string;
+    text: string;
+    refs: AgentRef[];
+    proSnapshot: ProSnapshot;
+    queuedAt: number;
+    // Bumped each time a dequeue attempt of this item gets rejected with
+    // 409 (backend lock still held). Capped — see RunOverride below.
+    retries?: number;
+}
+
+interface RunOverride {
+    text: string;
+    refs: AgentRef[];
+    proSnapshot: ProSnapshot;
+    retries?: number;
+}
+
+// Max number of times we'll re-enqueue at head and retry a single message
+// after a 409 from the backend. After this, the queue is paused with a
+// surfaced error so the user can intervene.
+const QUEUE_MAX_RETRIES = 2;
 
 function slugify(s: string): string {
     return (s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
@@ -256,6 +298,32 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
     const [attachments, setAttachments] = useState<AttachedFile[]>([]);
     const [useSeedance, setUseSeedance] = useState(initialUseSeedance ?? false);
 
+    // ── Chat queue ──────────────────────────────────────────────────────
+    // Sends issued while a turn is in flight are pushed here and auto-fire
+    // one at a time as each turn ends. queuePaused is set when the user
+    // stops the active turn or a hard error fires; user explicitly resumes.
+    const [queue, setQueue] = useState<QueuedMessage[]>([]);
+    const [queuePaused, setQueuePaused] = useState(false);
+    const queuePausedRef = useRef(false);
+    const queueRef = useRef<QueuedMessage[]>([]);
+    const dequeueTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    useEffect(() => { queuePausedRef.current = queuePaused; }, [queuePaused]);
+    useEffect(() => { queueRef.current = queue; }, [queue]);
+    // Auto-clear pause when the queue empties so a fresh send after a clean
+    // user-stop fires immediately instead of getting trapped in pause state.
+    useEffect(() => {
+        if (queue.length === 0 && queuePaused) setQueuePaused(false);
+    }, [queue.length, queuePaused]);
+    // Cancel any pending dequeue timer on unmount.
+    useEffect(() => {
+        return () => {
+            if (dequeueTimerRef.current) {
+                clearTimeout(dequeueTimerRef.current);
+                dequeueTimerRef.current = null;
+            }
+        };
+    }, []);
+
     // ── Quick Mode ──────────────────────────────────────────────────────
     const [quickMode, setQuickMode] = useState(() => {
         if (typeof window === 'undefined') return true;
@@ -279,7 +347,14 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
     const [proMode, setProMode] = useState('cinematic_video');
     const [proAspectRatio, setProAspectRatio] = useState('9:16');
     const [proQuality, setProQuality] = useState('4K');
-    const [proLanguage, setProLanguage] = useState('EN');
+    // Initialize from the global SaaS UI language toggle so a user with
+    // their app set to Spanish gets Spanish agent replies on first prompt,
+    // not English. Synced on subsequent toggle changes via the useEffect
+    // below. The pro-strip dropdown can still override per-turn.
+    const [proLanguage, setProLanguage] = useState<string>(() => (lang || 'en').toUpperCase());
+    useEffect(() => {
+        setProLanguage((lang || 'en').toUpperCase());
+    }, [lang]);
     const [proClipLength, setProClipLength] = useState(5);
     const [proMultiShot, setProMultiShot] = useState(false);
     const [proMultiShotLength, setProMultiShotLength] = useState(10);
@@ -496,6 +571,13 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         setInfluencers([]);
         setProjectImages([]);
         setProjectVideos([]);
+        // Drop any queued messages — they belong to the previous project.
+        setQueue([]);
+        setQueuePaused(false);
+        if (dequeueTimerRef.current) {
+            clearTimeout(dequeueTimerRef.current);
+            dequeueTimerRef.current = null;
+        }
     }, [projectId]);
 
     const mentionItems = useMemo<MentionItem[]>(() => {
@@ -541,21 +623,27 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                 },
             });
         }
-        const seenInfluencerIds = new Set<string>();
+        // Deduplicate influencers by slugified name, NOT by id. The auto-seed
+        // (seed_default_influencers in db_manager.py) clones template rows with
+        // fresh UUIDs per project, so id-based dedup leaves duplicates of the
+        // same logical model (e.g. 4× Mateo). Slugified-name dedup collapses
+        // them and prefers the first row with an image_url so the chip thumb
+        // is never blank.
+        const seenInfluencerTags = new Set<string>();
         for (const inf of influencers) {
-            // Deduplicate: same influencer may appear in multiple projects
-            if (inf.id && seenInfluencerIds.has(inf.id)) continue;
-            if (inf.id) seenInfluencerIds.add(inf.id);
             const name = inf.name || 'model';
+            const tag = slugify(name);
+            if (seenInfluencerTags.has(tag)) continue;
+            seenInfluencerTags.add(tag);
             const extraViews = Array.isArray(inf.character_views) ? inf.character_views.filter(Boolean) : [];
             const views = inf.image_url ? [inf.image_url, ...extraViews.filter((v: string) => v !== inf.image_url)] : extraViews;
             items.push({
                 type: 'influencer',
-                tag: slugify(name),
+                tag,
                 name,
                 image_url: inf.image_url,
                 views: views.length > 1 ? views : undefined,
-                ref: { type: 'influencer', tag: slugify(name), name, id: inf.id, image_url: inf.image_url },
+                ref: { type: 'influencer', tag, name, id: inf.id, image_url: inf.image_url },
             });
         }
         for (const img of projectImages) {
@@ -707,7 +795,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
     useEffect(() => {
         const el = scrollerRef.current;
         if (el) el.scrollTop = el.scrollHeight;
-    }, [turns, activity, hydrating]);
+    }, [turns, activity, hydrating, queue.length, queuePaused]);
 
     // Cancel reconnect polling on unmount so we don't leak timers.
     useEffect(() => {
@@ -720,69 +808,158 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         };
     }, []);
 
-    const handleRun = useCallback(async (overrideText?: string) => {
-        const text = (overrideText || brief).trim();
-        const readyAttachments = attachments.filter((a) => a.status === 'ready' && a.url);
-        const stillUploading = attachments.some((a) => a.status === 'uploading');
-        if (stillUploading) {
-            setError(t('creativeOs.agent.uploadWait'));
-            return;
-        }
-        if ((!text && readyAttachments.length === 0) || running) return;
+    const handleRun = useCallback(async (invocation?: string | RunOverride) => {
+        // invocation can be:
+        //   undefined / string (legacy) — fire from current composer state
+        //   RunOverride (object)        — forced fire from a queued item; bypass enqueue
+        const isForced = !!(invocation && typeof invocation === 'object');
+        const override: RunOverride | null = isForced ? (invocation as RunOverride) : null;
+        const overrideText = typeof invocation === 'string' ? invocation : undefined;
 
-        // Build refs payload from active mentions that are still present in
-        // the final text (user may have deleted a tag manually).
-        const refsForRequest: AgentRef[] = [];
-        const seenIds = new Set<string>();
-        for (const [tag, ref] of activeRefs.entries()) {
-            if (text.includes(`@${tag}`) || initialRefTagsRef.current.has(tag)) {
-                refsForRequest.push(ref);
-                if (ref.id) seenIds.add(ref.id);
+        let text: string;
+        let refsForRequest: AgentRef[];
+        let pro: ProSnapshot;
+
+        if (override) {
+            text = override.text;
+            refsForRequest = [...override.refs];
+            pro = override.proSnapshot;
+        } else {
+            text = (overrideText || brief).trim();
+            const readyAttachments = attachments.filter((a) => a.status === 'ready' && a.url);
+            const stillUploading = attachments.some((a) => a.status === 'uploading');
+            if (stillUploading) {
+                setError(t('creativeOs.agent.uploadWait'));
+                return;
             }
-        }
-        // Always include initialRefs (survives stale activeRefs closures)
-        for (const ref of initialRefsArrayRef.current) {
-            if (ref.id && !seenIds.has(ref.id)) {
-                refsForRequest.push(ref);
-                seenIds.add(ref.id);
-            }
-        }
-        // Include uploaded attachments as refs (always sent — user explicitly attached them).
-        for (const att of readyAttachments) {
-            const ref: AgentRef = {
-                type: att.type,
-                tag: att.tag || `upload_${att.id.slice(0, 8)}`,
-                name: att.name,
-                ...(att.type === 'image'
-                    ? { image_url: att.url }
-                    : { video_url: att.url }),
+            if (!text && readyAttachments.length === 0) return;
+
+            // Snapshot pro settings now so a queued message keeps them.
+            pro = {
+                useSeedance, quickMode, proStripOpen, proType, proMode, proAspectRatio,
+                proQuality, proLanguage, proClipLength, proMultiShot, proMultiShotLength,
+                proVideoLength,
             };
-            refsForRequest.push(ref);
+
+            // Build refs payload from active mentions that are still present in
+            // the final text (user may have deleted a tag manually).
+            refsForRequest = [];
+            const seenIds = new Set<string>();
+            for (const [tag, ref] of activeRefs.entries()) {
+                if (text.includes(`@${tag}`) || initialRefTagsRef.current.has(tag)) {
+                    refsForRequest.push(ref);
+                    if (ref.id) seenIds.add(ref.id);
+                }
+            }
+            // Always include initialRefs (survives stale activeRefs closures)
+            for (const ref of initialRefsArrayRef.current) {
+                if (ref.id && !seenIds.has(ref.id)) {
+                    refsForRequest.push(ref);
+                    seenIds.add(ref.id);
+                }
+            }
+            // Include uploaded attachments as refs (always sent — user explicitly attached them).
+            for (const att of readyAttachments) {
+                const ref: AgentRef = {
+                    type: att.type,
+                    tag: att.tag || `upload_${att.id.slice(0, 8)}`,
+                    name: att.name,
+                    ...(att.type === 'image'
+                        ? { image_url: att.url }
+                        : { video_url: att.url }),
+                };
+                refsForRequest.push(ref);
+            }
+
+            // ── Auto-attach current video for music/soundtrack intents ──
+            // When the user says "add music" on a project page with a
+            // selected video, the managed agent's combine_videos tool needs
+            // the target video URL as a ref to know which clip to remix.
+            // Without this, the agent would either ask which video, or guess.
+            // We only inject when the user hasn't already attached a video
+            // ref themselves (via @-mention or upload).
+            const isMusicIntent = /\b(add|put|drop|include|swap|replace|change|background|bg)\b[^.!?]{0,40}\b(music|soundtrack|bgm|score|audio)\b|\bsound\s*track\b/i.test(text);
+            const hasVideoRef = refsForRequest.some((r) => r.type === 'video');
+            if (isMusicIntent && !hasVideoRef && jobId) {
+                try {
+                    const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+                    const tok = (await supabase.auth.getSession()).data.session?.access_token;
+                    const jobRes = await fetch(`${apiBase}/jobs/${jobId}`, {
+                        headers: tok ? { Authorization: `Bearer ${tok}` } : {},
+                    });
+                    if (jobRes.ok) {
+                        const job = await jobRes.json();
+                        const videoUrl = job.final_video_url || job.video_url;
+                        if (videoUrl) {
+                            const baseName = job.campaign_name || job.product_name || 'current_video';
+                            refsForRequest.push({
+                                type: 'video',
+                                tag: `${slugify(baseName)}_${String(jobId).slice(0, 8)}`,
+                                name: baseName,
+                                job_id: String(jobId),
+                                video_url: videoUrl,
+                            });
+                        }
+                    }
+                } catch (err) {
+                    console.warn('Auto-attach current video for music intent failed:', err);
+                }
+            }
+
+            // ── Enqueue path ────────────────────────────────────────────
+            // If a turn is already running, the queue is paused, or the
+            // queue is non-empty (waiting to dequeue), push this send
+            // onto the tail and clear the composer. Auto-fire happens on
+            // the next `done` event.
+            if (running || queuePaused || queue.length > 0) {
+                const queued: QueuedMessage = {
+                    id: (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
+                        ? crypto.randomUUID()
+                        : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                    text,
+                    refs: refsForRequest,
+                    proSnapshot: pro,
+                    queuedAt: Date.now(),
+                };
+                setQueue((q) => [...q, queued]);
+                setBrief('');
+                setActiveRefs(new Map());
+                initialRefsArrayRef.current = [];
+                setAttachments((prev) => {
+                    for (const a of prev) {
+                        if (a.previewUrl) URL.revokeObjectURL(a.previewUrl);
+                    }
+                    return [];
+                });
+                setMentionOpen(false);
+                return;
+            }
         }
 
         // ── Pro Strip: inject user-configured settings as a hidden preface ──
         let settingsPreface = '';
-        if (proStripOpen) {
-            const parts = [`mode=${proMode}`, `aspect_ratio=${proAspectRatio}`];
-            if (proType === 'image') {
-                parts.push(`quality=${proQuality.toLowerCase()}`);
+        if (pro.proStripOpen) {
+            const parts = [`mode=${pro.proMode}`, `aspect_ratio=${pro.proAspectRatio}`];
+            if (pro.proType === 'image') {
+                parts.push(`quality=${pro.proQuality.toLowerCase()}`);
             } else {
-                parts.push(`language=${proLanguage.toLowerCase()}`);
-                if (proMultiShot && proMode === 'cinematic_video') {
+                parts.push(`language=${pro.proLanguage.toLowerCase()}`);
+                if (pro.proMultiShot && pro.proMode === 'cinematic_video') {
                     parts.push('multi_shot_mode=true');
-                    parts.push(`clip_length=${proMultiShotLength}`);
-                } else if (proMultiShot && proMode === 'ugc') {
+                    parts.push(`clip_length=${pro.proMultiShotLength}`);
+                } else if (pro.proMultiShot && pro.proMode === 'ugc') {
                     parts.push('full_video_mode=true');
-                    parts.push(`clip_length=${proVideoLength}`);
+                    parts.push(`clip_length=${pro.proVideoLength}`);
                 } else {
-                    parts.push(`clip_length=${proClipLength}`);
+                    parts.push(`clip_length=${pro.proClipLength}`);
                 }
             }
             settingsPreface = `[User settings] ${parts.join(', ')}\n`;
         }
 
-        const finalText = (settingsPreface + (text || (readyAttachments.length > 0
-            ? `(uploaded ${readyAttachments.length} file${readyAttachments.length === 1 ? '' : 's'})`
+        const fileRefCount = refsForRequest.filter((r) => r.type === 'image' || r.type === 'video').length;
+        const finalText = (settingsPreface + (text || (fileRefCount > 0
+            ? `(uploaded ${fileRefCount} file${fileRefCount === 1 ? '' : 's'})`
             : ''))).trim();
 
         // Strip hidden instruction markers from the displayed text
@@ -803,16 +980,20 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             ts: Date.now() + 1,
         };
         setTurns((prev) => [...prev, userTurn, placeholder]);
-        setBrief('');
-        setActiveRefs(new Map());
-        initialRefsArrayRef.current = [];
-        // Clear attachments (revoke object URLs first)
-        setAttachments((prev) => {
-            for (const a of prev) {
-                if (a.previewUrl) URL.revokeObjectURL(a.previewUrl);
-            }
-            return [];
-        });
+        if (!override) {
+            // Composer state is owned by the user; only clear it when this
+            // call originated from the composer. Queued items already had
+            // their composer state cleared at enqueue time.
+            setBrief('');
+            setActiveRefs(new Map());
+            initialRefsArrayRef.current = [];
+            setAttachments((prev) => {
+                for (const a of prev) {
+                    if (a.previewUrl) URL.revokeObjectURL(a.previewUrl);
+                }
+                return [];
+            });
+        }
         setMentionOpen(false);
         setError(null);
         setRunning(true);
@@ -1031,6 +1212,14 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     setActivityStartedAt(null);
                     abortRef.current = null;
                     onArtifact?.(); // final refresh — pick up anything generated
+                    // Auto-fire the next queued message after the lock-release
+                    // safety margin. If the agent's last turn left a confirm
+                    // chip pending, scheduleDequeue is harmless — but the user
+                    // typically wants to act on the chip first; the queue will
+                    // dequeue naturally after their Confirm/Cancel turn ends.
+                    if (!queuePausedRef.current && queueRef.current.length > 0) {
+                        scheduleDequeue();
+                    }
                     break;
                 }
                 case 'interrupted':
@@ -1039,6 +1228,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     setActivity('');
                     setActivityStartedAt(null);
                     abortRef.current = null;
+                    if (queueRef.current.length > 0) setQueuePaused(true);
                     break;
                 case 'disconnected':
                     // Silently fall back to polling the persisted thread so
@@ -1053,6 +1243,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     setActivity('');
                     setActivityStartedAt(null);
                     abortRef.current = null;
+                    if (queueRef.current.length > 0) setQueuePaused(true);
                     break;
             }
         };
@@ -1087,7 +1278,21 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     throw new Error(errBody.error || `Editor AI request failed (${aiRes.status})`);
                 }
                 const { text: replyText } = (await aiRes.json()) as { text: string };
-                updateLastAgentTurn((t) => ({ ...t, text: replyText }));
+                // Always strip the AI_EDIT_OPS protocol block and any leaked
+                // JSON/tool-call fragments — these are internal machinery,
+                // never user-facing chat. Belt-and-braces: stripAiEditBlock
+                // handles the canonical marker form, scrubAgentText catches
+                // anything stylistically odd the LLM might emit.
+                const cleanText = scrubAgentText(stripAiEditBlockForDisplay(replyText));
+                const ops = parseAiEditOps(replyText);
+                const finalText = ops && ops.length > 0
+                    ? `${cleanText}\n\nI've prepared this edit — open the video in the editor to apply it.`
+                    : cleanText;
+                updateLastAgentTurn((t) => ({
+                    ...t,
+                    text: finalText,
+                    editorCta: ops && ops.length > 0 && jobId ? { jobId } : undefined,
+                }));
             } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
                 setError(msg);
@@ -1101,20 +1306,64 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         }
 
         try {
-            await streamAgent(text, projectId, onEvent, controller.signal, refsForRequest, useSeedance, proLanguage.toLowerCase() as 'en' | 'es', quickMode);
+            // Per-turn language: default to the dropdown (already synced to
+            // the SaaS UI toggle), but auto-flip to ES if the user's prompt
+            // is clearly Spanish even when their preference is EN. We never
+            // flip the other way — an English user typing one Spanish word
+            // shouldn't get a fully-Spanish reply. Tokens like ñ, á-í-ó-ú,
+            // or distinctly Spanish stopwords trigger the override.
+            const SPANISH_HINT = /[ñáéíóúü¿¡]|\b(crear?|crea|hacer|haz|hola|gracias|por\s+favor|porque|para|donde|cuando|como|qu[eé]|cu[aá]ndo|d[oó]nde|c[oó]mo|el|la|los|las|una?|del?|y|o|pero|con|sin|sobre|hacia|hasta|desde|esto|esta|estos|estas|este|esa|ese|aqu[ií]|all[ií]|m[ií]|tu|su|nuestro|vuestro|muy|m[aá]s|menos|tambi[eé]n|ahora|antes|despu[eé]s|siempre|nunca)\b/i;
+            const detectedLang: 'en' | 'es' =
+                pro.proLanguage.toLowerCase() === 'es' || SPANISH_HINT.test(text)
+                    ? 'es'
+                    : 'en';
+            await streamAgent(text, projectId, onEvent, controller.signal, refsForRequest, pro.useSeedance, detectedLang, pro.quickMode);
         } catch (err) {
             if ((err as Error).name === 'AbortError') {
                 updateLastAgentTurn((t) => ({ ...t, interrupted: true }));
+                // User stopped — pause the queue if it has pending items.
+                if (queueRef.current.length > 0) setQueuePaused(true);
             } else {
                 const msg = err instanceof Error ? err.message : String(err);
                 // 409 concurrency guard — stream never started. Rewind the
-                // optimistic user + placeholder turns and surface the error.
+                // optimistic user + placeholder turns; if this fire came
+                // from a queued dequeue we transparently re-enqueue and
+                // retry with a longer delay before giving up.
                 if (msg.includes('already running')) {
                     setTurns((prev) => prev.slice(0, -2));
-                    setError(msg);
+                    if (override) {
+                        const nextRetries = (override.retries ?? 0) + 1;
+                        const requeue: QueuedMessage = {
+                            id: (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
+                                ? crypto.randomUUID()
+                                : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                            text: override.text,
+                            refs: override.refs,
+                            proSnapshot: override.proSnapshot,
+                            queuedAt: Date.now(),
+                            retries: nextRetries,
+                        };
+                        // Put back at the head so order is preserved.
+                        setQueue((q) => [requeue, ...q]);
+                        if (nextRetries <= QUEUE_MAX_RETRIES) {
+                            // Backend lock probably still releasing — back off
+                            // and try again. No error pill yet.
+                            scheduleDequeue(1000);
+                        } else {
+                            // Give up retrying. Pause the queue and surface
+                            // the error so the user can investigate / resume.
+                            setError(msg);
+                            setQueuePaused(true);
+                        }
+                    } else {
+                        // Direct user send hit 409 (rare) — show the error.
+                        setError(msg);
+                        if (queueRef.current.length > 0) setQueuePaused(true);
+                    }
                 } else if (msg.includes('Agent stream error:') || msg.includes('401') || msg.includes('403') || msg.includes('400')) {
                     // Hard server errors deserve a visible message.
                     setError(msg);
+                    if (queueRef.current.length > 0) setQueuePaused(true);
                 } else {
                     // Transient connection failure — silently fall back to
                     // polling the persisted thread. No red error pill.
@@ -1130,7 +1379,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             setActivityStartedAt(null);
             abortRef.current = null;
         }
-    }, [brief, running, projectId, onArtifact, activeRefs, attachments, onSubmitOverride, useSeedance, jobId, quickMode, proStripOpen, proMode, proAspectRatio, proQuality, proLanguage, proClipLength, proMultiShot, proMultiShotLength, proVideoLength, proType]);
+    }, [brief, running, projectId, onArtifact, activeRefs, attachments, onSubmitOverride, useSeedance, jobId, quickMode, proStripOpen, proMode, proAspectRatio, proQuality, proLanguage, proClipLength, proMultiShot, proMultiShotLength, proVideoLength, proType, queue.length, queuePaused]);
 
     // Phase 2: fire handleRun AFTER hydration completes (hydrating: true → false)
     // This ensures the panel is fully initialized before auto-submitting.
@@ -1143,6 +1392,65 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             handleRun(text);
         }
     }, [hydrating, handleRun]);
+
+    // Latest-handleRun ref so the SSE done handler (whose closure is captured
+    // at run-start time) can dispatch the next queued message against the
+    // current state, not a stale snapshot.
+    const handleRunRef = useRef(handleRun);
+    useEffect(() => { handleRunRef.current = handleRun; }, [handleRun]);
+
+    // Pull the head of the queue and fire it as a forced override. The
+    // setTimeout delay is the safety margin for the backend's per-project
+    // lock to release: the SSE stream emits `done` BEFORE the FastAPI
+    // `async with lock:` block exits (the finally writes back to Supabase
+    // first), so we must wait long enough to clear that. 500ms is the
+    // conservative default; on a 409 we re-enqueue and retry with a longer
+    // delay (see handleRun's catch path).
+    //
+    // CRITICAL: keep side effects (handleRun dispatch) OUT of the setQueue
+    // updater. React 18 StrictMode invokes updaters twice to catch impure
+    // logic; if we fired handleRun inside the updater, the queued message
+    // would dispatch twice and the user would see two duplicate turns.
+    const scheduleDequeue = useCallback((delayMs: number = 500) => {
+        if (dequeueTimerRef.current) {
+            clearTimeout(dequeueTimerRef.current);
+            dequeueTimerRef.current = null;
+        }
+        dequeueTimerRef.current = setTimeout(() => {
+            dequeueTimerRef.current = null;
+            if (queuePausedRef.current) return;
+            const head = queueRef.current[0];
+            if (!head) return;
+            // Atomically slice the head off the queue. Pure updater — safe
+            // under StrictMode double-invocation.
+            setQueue((q) => (q.length > 0 && q[0].id === head.id ? q.slice(1) : q));
+            // Dispatch ONCE, outside the setState updater.
+            handleRunRef.current?.({
+                text: head.text,
+                refs: head.refs,
+                proSnapshot: head.proSnapshot,
+                retries: head.retries ?? 0,
+            });
+        }, delayMs);
+    }, []);
+
+    const removeQueuedMessage = useCallback((id: string) => {
+        setQueue((q) => q.filter((item) => item.id !== id));
+    }, []);
+
+    const clearQueue = useCallback(() => {
+        setQueue([]);
+        setQueuePaused(false);
+        if (dequeueTimerRef.current) {
+            clearTimeout(dequeueTimerRef.current);
+            dequeueTimerRef.current = null;
+        }
+    }, []);
+
+    const resumeQueue = useCallback(() => {
+        setQueuePaused(false);
+        scheduleDequeue();
+    }, [scheduleDequeue]);
 
     // ── @ mention input handlers ────────────────────────────────────────
     const handleBriefChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -1619,6 +1927,160 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                             </div>
                         )}
 
+                        {queue.length > 0 && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                {queuePaused && (
+                                    <div
+                                        style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'space-between',
+                                            gap: '8px',
+                                            padding: '8px 12px',
+                                            background: 'rgba(255,176,32,0.08)',
+                                            border: '1px solid rgba(255,176,32,0.25)',
+                                            borderRadius: '8px',
+                                            fontSize: '12px',
+                                            color: '#8A5C00',
+                                        }}
+                                    >
+                                        <span style={{ fontWeight: 600 }}>
+                                            {t('creativeOs.agent.queuePaused').replace('{n}', String(queue.length))}
+                                        </span>
+                                        <span style={{ display: 'flex', gap: '6px' }}>
+                                            <button
+                                                onClick={resumeQueue}
+                                                style={{
+                                                    height: '24px',
+                                                    padding: '0 10px',
+                                                    borderRadius: '6px',
+                                                    border: '1px solid rgba(51,122,255,0.3)',
+                                                    background: 'rgba(51,122,255,0.08)',
+                                                    color: '#337AFF',
+                                                    fontSize: '11px',
+                                                    fontWeight: 600,
+                                                    cursor: 'pointer',
+                                                }}
+                                            >
+                                                {t('creativeOs.agent.queueResume')}
+                                            </button>
+                                            <button
+                                                onClick={clearQueue}
+                                                style={{
+                                                    height: '24px',
+                                                    padding: '0 10px',
+                                                    borderRadius: '6px',
+                                                    border: '1px solid rgba(13,27,62,0.12)',
+                                                    background: 'white',
+                                                    color: '#4A5578',
+                                                    fontSize: '11px',
+                                                    fontWeight: 600,
+                                                    cursor: 'pointer',
+                                                }}
+                                            >
+                                                {t('creativeOs.agent.queueClear')}
+                                            </button>
+                                        </span>
+                                    </div>
+                                )}
+                                {queue.map((item, idx) => {
+                                    const fileRefs = item.refs.filter((r) => r.type === 'image' || r.type === 'video');
+                                    return (
+                                        <div
+                                            key={item.id}
+                                            style={{
+                                                display: 'flex',
+                                                alignSelf: 'flex-end',
+                                                maxWidth: '85%',
+                                                padding: '8px 12px',
+                                                borderRadius: '12px',
+                                                background: 'rgba(13,27,62,0.04)',
+                                                border: '1px dashed rgba(13,27,62,0.18)',
+                                                fontSize: '13px',
+                                                color: '#0D1B3E',
+                                                opacity: 0.65,
+                                                position: 'relative',
+                                                gap: '8px',
+                                                alignItems: 'flex-start',
+                                            }}
+                                            title={t('creativeOs.agent.queuePosition')
+                                                .replace('{i}', String(idx + 1))
+                                                .replace('{n}', String(queue.length))}
+                                        >
+                                            <svg
+                                                viewBox="0 0 24 24"
+                                                style={{
+                                                    width: '14px',
+                                                    height: '14px',
+                                                    fill: 'none',
+                                                    stroke: '#8A93B0',
+                                                    strokeWidth: 2,
+                                                    strokeLinecap: 'round',
+                                                    strokeLinejoin: 'round',
+                                                    flexShrink: 0,
+                                                    marginTop: '2px',
+                                                }}
+                                            >
+                                                <circle cx="12" cy="12" r="10" />
+                                                <polyline points="12 6 12 12 16 14" />
+                                            </svg>
+                                            <div style={{ flex: 1, minWidth: 0 }}>
+                                                {item.text && (
+                                                    <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                                                        {item.text}
+                                                    </div>
+                                                )}
+                                                {fileRefs.length > 0 && (
+                                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: item.text ? '6px' : 0 }}>
+                                                        {fileRefs.map((r) => {
+                                                            const url = r.image_url || r.video_url;
+                                                            return (
+                                                                <div
+                                                                    key={r.tag}
+                                                                    style={{
+                                                                        width: '32px',
+                                                                        height: '32px',
+                                                                        borderRadius: '4px',
+                                                                        background: '#E5E9F2',
+                                                                        backgroundImage: url ? `url(${url})` : undefined,
+                                                                        backgroundSize: 'cover',
+                                                                        backgroundPosition: 'center',
+                                                                        flexShrink: 0,
+                                                                    }}
+                                                                />
+                                                            );
+                                                        })}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <button
+                                                onClick={() => removeQueuedMessage(item.id)}
+                                                title={t('creativeOs.agent.queueRemove')}
+                                                style={{
+                                                    width: '20px',
+                                                    height: '20px',
+                                                    borderRadius: '50%',
+                                                    border: 'none',
+                                                    background: 'rgba(13,27,62,0.06)',
+                                                    color: '#4A5578',
+                                                    cursor: 'pointer',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center',
+                                                    fontSize: '14px',
+                                                    lineHeight: 1,
+                                                    padding: 0,
+                                                    flexShrink: 0,
+                                                }}
+                                            >
+                                                ×
+                                            </button>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+
                         {error && (
                             <div
                                 style={{
@@ -1771,7 +2233,6 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                 onKeyDown={handleBriefKeyDown}
                                 onFocus={() => { if (!mentionsLoaded) loadMentionData(); }}
                                 placeholder={t('creativeOs.agent.composerPlaceholder')}
-                                disabled={running}
                                 rows={3}
                                 style={{
                                     width: '100%',
@@ -1786,7 +2247,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                     color: '#0D1B3E',
                                     resize: 'none',
                                     outline: 'none',
-                                    background: running ? 'rgba(13,27,62,0.03)' : 'white',
+                                    background: 'white',
                                     display: 'block',
                                 }}
                             />
@@ -1795,7 +2256,6 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                     setHistoryOpen(false);
                                     setMenuOpen((v) => !v);
                                 }}
-                                disabled={running}
                                 title={t('creativeOs.agent.addAttachmentMenu')}
                                 style={{
                                     position: 'absolute',
@@ -1805,8 +2265,8 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                     height: '30px',
                                     borderRadius: '8px',
                                     border: '1px solid rgba(13,27,62,0.12)',
-                                    background: running ? 'rgba(13,27,62,0.03)' : 'white',
-                                    cursor: running ? 'not-allowed' : 'pointer',
+                                    background: 'white',
+                                    cursor: 'pointer',
                                     color: '#337AFF',
                                     display: 'flex',
                                     alignItems: 'center',
@@ -1953,7 +2413,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                     )}
                                 </button>
                             )}
-                            {running ? (
+                            {running && (
                                 <button
                                     onClick={handleStop}
                                     title={t('creativeOs.agent.stop')}
@@ -1974,15 +2434,23 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                 >
                                     {t('creativeOs.agent.stop')}
                                 </button>
-                            ) : (() => {
+                            )}
+                            {!running && (() => {
                                 const hasReadyAttachments = attachments.some((a) => a.status === 'ready');
                                 const uploading = attachments.some((a) => a.status === 'uploading');
                                 const canSend = (brief.trim() !== '' || hasReadyAttachments) && !uploading;
+                                // The send arrow is only shown while idle. While the
+                                // agent is running, the red Stop pill occupies the
+                                // right edge by itself — previously the send button
+                                // slid to right:46 to allow queuing mid-turn but the
+                                // wider Stop pill visually overlapped the gray arrow.
                                 return (
                                     <button
                                         onClick={() => handleRun()}
                                         disabled={!canSend}
-                                        title={uploading ? t('creativeOs.agent.uploading') : t('creativeOs.agent.send')}
+                                        title={uploading
+                                            ? t('creativeOs.agent.uploading')
+                                            : t('creativeOs.agent.send')}
                                         style={{
                                             position: 'absolute',
                                             right: '8px',
@@ -2007,6 +2475,30 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                             <line x1="12" y1="19" x2="12" y2="5" />
                                             <polyline points="5 12 12 5 19 12" />
                                         </svg>
+                                        {queue.length > 0 && (
+                                            <span
+                                                style={{
+                                                    position: 'absolute',
+                                                    top: '-4px',
+                                                    right: '-4px',
+                                                    minWidth: '16px',
+                                                    height: '16px',
+                                                    padding: '0 4px',
+                                                    borderRadius: '8px',
+                                                    background: '#0D1B3E',
+                                                    color: 'white',
+                                                    fontSize: '10px',
+                                                    fontWeight: 700,
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center',
+                                                    border: '1.5px solid white',
+                                                    fontVariantNumeric: 'tabular-nums',
+                                                }}
+                                            >
+                                                {queue.length}
+                                            </span>
+                                        )}
                                     </button>
                                 );
                             })()}
@@ -2608,18 +3100,19 @@ function CostConfirmChip({ pending, active, onQuickReply }: { pending: { credits
     );
 }
 
-const THINKING_MESSAGES = [
-    'Analyzing your request…',
-    'Reviewing your assets…',
-    'Planning the best approach…',
-    'Preparing your creative…',
-    'Almost ready…',
+const THINKING_MESSAGE_KEYS = [
+    'creativeOs.agent.thinkingAnalyzingRequest',
+    'creativeOs.agent.thinkingReviewingAssets',
+    'creativeOs.agent.thinkingPlanningApproach',
+    'creativeOs.agent.thinkingPreparingCreative',
+    'creativeOs.agent.thinkingAlmostReady',
 ];
 
 /** Animated thinking indicator with rotating status messages.
  *  Replaces the plain 3-dot indicator to give immediate, engaging feedback
  *  while the Anthropic API processes (which can take 10-20s). */
 function ThinkingIndicator() {
+    const { t } = useTranslation();
     const [msgIdx, setMsgIdx] = useState(0);
     const [fade, setFade] = useState(true);
 
@@ -2627,7 +3120,7 @@ function ThinkingIndicator() {
         const interval = setInterval(() => {
             setFade(false); // fade out
             setTimeout(() => {
-                setMsgIdx((prev) => (prev + 1) % THINKING_MESSAGES.length);
+                setMsgIdx((prev) => (prev + 1) % THINKING_MESSAGE_KEYS.length);
                 setFade(true); // fade in
             }, 300);
         }, 3000);
@@ -2663,7 +3156,7 @@ function ThinkingIndicator() {
                     lineHeight: 1.3,
                 }}
             >
-                {THINKING_MESSAGES[msgIdx]}
+                {t(THINKING_MESSAGE_KEYS[msgIdx])}
             </span>
         </div>
     );
@@ -2975,6 +3468,31 @@ function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspec
                     >
                         {t('creativeOs.agent.stopped')}
                     </div>
+                )}
+
+                {turn.editorCta?.jobId && !isUser && (
+                    <a
+                        href={`/editor/${turn.editorCta.jobId}`}
+                        style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            marginTop: '10px',
+                            padding: '6px 12px',
+                            borderRadius: '8px',
+                            background: 'linear-gradient(135deg, #337AFF 0%, #5B8FFF 100%)',
+                            color: 'white',
+                            fontSize: '12px',
+                            fontWeight: 600,
+                            textDecoration: 'none',
+                            boxShadow: '0 1px 3px rgba(51,122,255,0.25)',
+                        }}
+                    >
+                        <svg viewBox="0 0 24 24" style={{ width: '12px', height: '12px', fill: 'none', stroke: 'currentColor', strokeWidth: '2.4', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
+                            <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+                        </svg>
+                        Open in editor
+                    </a>
                 )}
             </div>
         </div>

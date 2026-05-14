@@ -229,6 +229,10 @@ export interface AgentTurn {
     refs?: AgentRef[];
     interrupted?: boolean;
     pendingConfirmation?: AgentPendingConfirmation;
+    // Optional CTA shown under the bubble when the assistant prepared
+    // editor ops that couldn't be auto-applied from the project agent panel.
+    // Renders as an "Open in editor" button that navigates to /editor/{jobId}.
+    editorCta?: { jobId: string };
     ts: number;
 }
 

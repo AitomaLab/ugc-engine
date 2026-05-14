@@ -45,8 +45,15 @@ const EDIT_KEYWORDS = [
 	'remove captions',
 	'caption this',
 	'caption the video',
-	'add music',
-	'background music',
+	// "add music" / "background music" intentionally NOT in this list. The
+	// managed agent's combine_videos(music_prompt=...) tool is the working,
+	// production path for adding a soundtrack to a finished video (Suno V4
+	// generation + ffmpeg mix), and is what the original video-generation
+	// pipeline uses. Routing music intents to the editor-AI module instead
+	// produced an AI_EDIT_OPS marker that only the in-editor side panel can
+	// apply, and the editor's /api/editor/music endpoint hangs on the same
+	// 8-minute synchronous Suno poll. See AgentPanel handleRun for the auto
+	// video-ref injection that gives the managed agent the right context.
 	'add text',
 	'change text',
 	'set text',

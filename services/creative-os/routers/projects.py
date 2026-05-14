@@ -6,6 +6,7 @@ Enriches project list with recent asset previews.
 """
 import asyncio
 import os
+import time
 from typing import Optional
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -20,15 +21,54 @@ class GenerateNameRequest(BaseModel):
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
-# ── Internal helpers for fetching project-scoped images & videos ─────────
+# ── In-process TTL cache for user-level lookups ──────────────────────────
+# Products and influencers change infrequently relative to read traffic but
+# are pulled on almost every project endpoint. A 30s TTL bounded by the
+# user's auth token absorbs the typical UI burst (project list → open project
+# → poll) into a single upstream call while staying fresh enough that newly
+# added influencers/products appear within half a minute.
+_CACHE_TTL_SECONDS = 30
+_user_cache: dict[tuple[str, str], tuple[float, object]] = {}
+
+
+def _cache_key(token: str, kind: str) -> tuple[str, str]:
+    # Token suffix is enough to dedupe across users without storing the full secret as a hash.
+    return (token[-32:] if token else "", kind)
+
+
+async def _cached(token: str, kind: str, loader):
+    key = _cache_key(token, kind)
+    now = time.time()
+    cached = _user_cache.get(key)
+    if cached and (now - cached[0]) < _CACHE_TTL_SECONDS:
+        return cached[1]
+    value = await loader()
+    _user_cache[key] = (now, value)
+    # Best-effort size cap to avoid unbounded growth in long-lived processes.
+    if len(_user_cache) > 5000:
+        for k in list(_user_cache.keys())[:1000]:
+            _user_cache.pop(k, None)
+    return value
+
+
+async def _cached_list_products(client: CoreAPIClient) -> list:
+    try:
+        return await _cached(client.token, "products", client.list_products) or []
+    except Exception:
+        return []
+
 
 async def _build_influencer_map(client: CoreAPIClient) -> dict:
-    """Build an {id: name} lookup from the user's influencers. Cached per request."""
-    try:
-        influencers = await client.list_influencers()
-        return {inf["id"]: inf.get("name", "") for inf in influencers}
-    except Exception:
-        return {}
+    """Build an {id: name} lookup from the user's influencers. TTL-cached across
+    requests so back-to-back project endpoints in a single page load don't each
+    re-pull the influencer list."""
+    async def _loader():
+        try:
+            influencers = await client.list_influencers()
+            return {inf["id"]: inf.get("name", "") for inf in influencers}
+        except Exception:
+            return {}
+    return await _cached(client.token, "influencer_map", _loader)
 
 
 def _mode_label_from_model_api(model_api: str) -> str:
@@ -59,7 +99,11 @@ def _mode_label_from_shot_type(shot_type: str) -> str:
     return shot_type.replace("_", " ").title()
 
 
-async def _fetch_project_images(client: CoreAPIClient, influencer_map: dict | None = None) -> list:
+async def _fetch_project_images(
+    client: CoreAPIClient,
+    influencer_map: dict | None = None,
+    products: list | None = None,
+) -> list:
     """Fetch all generated images (product shots) for the current project scope.
     Uses 2 fast queries: 1) get product IDs, 2) batch-fetch all shots in one Supabase call.
     Also includes standalone shots (no product_id) that have project_id set directly.
@@ -81,8 +125,11 @@ async def _fetch_project_images(client: CoreAPIClient, influencer_map: dict | No
     supabase_url = os.getenv("SUPABASE_URL")
     anon_key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
 
-    # 1. Get product IDs for this project (fast — single core API call)
-    products = await client.list_products()
+    # 1. Get product IDs for this project (fast — single core API call).
+    # The caller can pass a pre-fetched products list to avoid a duplicate
+    # round-trip when this helper is invoked alongside _fetch_project_videos.
+    if products is None:
+        products = await _cached_list_products(client)
     product_ids = [p["id"] for p in products] if products else []
 
     # Build influencer map if not passed
@@ -169,7 +216,11 @@ async def _fetch_project_images(client: CoreAPIClient, influencer_map: dict | No
     return all_shots
 
 
-async def _fetch_project_videos(client: CoreAPIClient, influencer_map: dict | None = None) -> list:
+async def _fetch_project_videos(
+    client: CoreAPIClient,
+    influencer_map: dict | None = None,
+    products: list | None = None,
+) -> list:
     """Fetch all videos (completed + processing) for the current project scope.
 
     Enriches each job with:
@@ -183,9 +234,10 @@ async def _fetch_project_videos(client: CoreAPIClient, influencer_map: dict | No
     if influencer_map is None:
         influencer_map = await _build_influencer_map(client)
 
-    # Build product map {id: name}
+    # Build product map {id: name}. Reuse caller-supplied list when given.
     try:
-        products = await client.list_products()
+        if products is None:
+            products = await _cached_list_products(client)
         product_map = {p["id"]: p.get("name", "") for p in products} if products else {}
     except Exception:
         product_map = {}
@@ -354,7 +406,12 @@ async def _bulk_project_previews(
         except Exception:
             return []
 
-    async def _fetch_all_shots(product_ids: list[str]) -> list:
+    async def _fetch_all_shots() -> list:
+        # Single bulk query: every shot that matters for the cards has project_id
+        # set on the row directly (backfilled by migration 023 and enforced for
+        # all new shots). The prior dual-query (also filtering by product_id IN
+        # (...)) returned heavily overlapping rows and doubled Supabase load
+        # for no incremental coverage.
         if not (supabase_url and anon_key):
             return []
         headers = {
@@ -363,9 +420,9 @@ async def _bulk_project_previews(
             "Content-Type": "application/json",
         }
         import httpx as _httpx
-        async with _httpx.AsyncClient(timeout=15.0) as http:
-            fetches = [
-                http.get(
+        try:
+            async with _httpx.AsyncClient(timeout=15.0) as http:
+                resp = await http.get(
                     f"{supabase_url}/rest/v1/product_shots",
                     headers=headers,
                     params={
@@ -374,38 +431,22 @@ async def _bulk_project_previews(
                         "limit": "500",
                     },
                 )
-            ]
-            if product_ids:
-                fetches.append(http.get(
-                    f"{supabase_url}/rest/v1/product_shots",
-                    headers=headers,
-                    params={
-                        "product_id": f"in.({','.join(product_ids)})",
-                        "order": "created_at.desc",
-                        "limit": "500",
-                    },
-                ))
-            results = await asyncio.gather(*fetches, return_exceptions=True)
-            merged: list = []
-            seen: set = set()
-            for resp in results:
-                if isinstance(resp, Exception) or resp.status_code != 200:
-                    continue
-                for row in (resp.json() or []):
-                    rid = row.get("id")
-                    if rid and rid not in seen:
-                        seen.add(rid)
-                        merged.append(row)
-            merged.sort(key=lambda s: s.get("created_at") or "", reverse=True)
-            return merged
+                if resp.status_code != 200:
+                    return []
+                return resp.json() or []
+        except Exception:
+            return []
 
-    jobs, products = await asyncio.gather(_fetch_all_jobs(), _fetch_all_products())
+    jobs, products, shots = await asyncio.gather(
+        _fetch_all_jobs(),
+        _fetch_all_products(),
+        _fetch_all_shots(),
+    )
     product_to_project: dict[str, str] = {
         p["id"]: p.get("project_id")
         for p in (products or [])
         if p.get("id") and p.get("project_id") in out
     }
-    shots = await _fetch_all_shots(list(product_to_project.keys()))
 
     # Bucket shots by project_id (already sorted newest-first).
     for shot in shots:
@@ -656,6 +697,134 @@ async def get_project(project_id: str, user: dict = Depends(get_current_user)):
     }
 
     return project
+
+
+@router.get("/{project_id}/full")
+async def get_project_full(project_id: str, user: dict = Depends(get_current_user)):
+    """One-shot endpoint that returns project metadata + all image + video assets.
+
+    Builds the products and influencers lookup maps exactly once and shares them
+    across both asset fetchers — collapses what was 3 frontend requests (each
+    rebuilding the same maps) into a single request with 2-3 underlying
+    Supabase calls.
+
+    Response shape: { project: {...}, images: [...], videos: [...] }
+    """
+    client = CoreAPIClient(token=user["token"], project_id=project_id)
+
+    # Build shared lookups once — these were previously fetched twice
+    # (once for images, once for videos).
+    influencer_map_task = _build_influencer_map(client)
+    products_task = _cached_list_products(client)
+    influencer_map, products = await asyncio.gather(
+        influencer_map_task,
+        products_task,
+        return_exceptions=True,
+    )
+    if isinstance(influencer_map, Exception):
+        influencer_map = {}
+    if isinstance(products, Exception):
+        products = []
+
+    project, images, videos = await asyncio.gather(
+        client.get_project(project_id),
+        _fetch_project_images(client, influencer_map=influencer_map, products=products),
+        _fetch_project_videos(client, influencer_map=influencer_map, products=products),
+    )
+
+    if not project:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    completed_videos = [v for v in videos if v.get("status") == "success"]
+    project["asset_counts"] = {
+        "images": len(images),
+        "videos": len(completed_videos),
+    }
+
+    return {"project": project, "images": images, "videos": videos}
+
+
+@router.post("/{project_id}/jobs-status")
+async def project_jobs_status(
+    project_id: str,
+    data: dict,
+    user: dict = Depends(get_current_user),
+):
+    """Lightweight polling endpoint: given a list of in-flight image/job IDs,
+    return only their current status + progress + preview URLs.
+
+    Body: { "image_ids": [...], "video_ids": [...] }
+    Response: {
+        "images": [{id, status, status_message, progress, preview_url, image_url}, ...],
+        "videos": [{id, status, status_message, progress, preview_url, final_video_url}, ...],
+    }
+
+    Replaces the prior pattern of re-fetching the entire project payload every
+    5 seconds. One Supabase REST query per asset type, only the columns the UI
+    needs, no enrichment / no products / no influencer lookup.
+    """
+    from pathlib import Path
+    from env_loader import load_env
+    load_env(Path(__file__))
+
+    image_ids = [str(i) for i in (data.get("image_ids") or []) if i]
+    video_ids = [str(i) for i in (data.get("video_ids") or []) if i]
+    if not image_ids and not video_ids:
+        return {"images": [], "videos": []}
+
+    supabase_url = os.getenv("SUPABASE_URL")
+    anon_key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+    if not (supabase_url and anon_key):
+        return {"images": [], "videos": []}
+
+    headers = {
+        "apikey": anon_key,
+        "Authorization": f"Bearer {user['token']}",
+        "Content-Type": "application/json",
+    }
+
+    import httpx as _httpx
+    async with _httpx.AsyncClient(timeout=10.0) as http:
+        fetches = []
+        if image_ids:
+            fetches.append(http.get(
+                f"{supabase_url}/rest/v1/product_shots",
+                headers=headers,
+                params={
+                    "id": f"in.({','.join(image_ids)})",
+                    "select": "id,status,status_message,progress,preview_url,image_url",
+                },
+            ))
+        else:
+            fetches.append(None)
+        if video_ids:
+            fetches.append(http.get(
+                f"{supabase_url}/rest/v1/video_jobs",
+                headers=headers,
+                params={
+                    "id": f"in.({','.join(video_ids)})",
+                    "select": "id,status,status_message,progress,preview_url,preview_type,final_video_url,thumbnail_url",
+                },
+            ))
+        else:
+            fetches.append(None)
+        results = await asyncio.gather(
+            *[f for f in fetches if f is not None],
+            return_exceptions=True,
+        )
+
+    out: dict = {"images": [], "videos": []}
+    idx = 0
+    if image_ids:
+        r = results[idx]; idx += 1
+        if not isinstance(r, Exception) and r.status_code == 200:
+            out["images"] = r.json() or []
+    if video_ids:
+        r = results[idx]
+        if not isinstance(r, Exception) and r.status_code == 200:
+            out["videos"] = r.json() or []
+    return out
 
 
 @router.delete("/{project_id}")

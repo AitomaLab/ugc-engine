@@ -2517,8 +2517,8 @@ def api_get_notifications(limit: int = Query(default=20, le=50), user: dict = De
 def api_get_credit_costs():
     """Return the full credit cost table for frontend display."""
     return {
-        "digital_15s": 39,
-        "digital_30s": 77,
+        "digital_15s": 95,
+        "digital_30s": 190,
         "physical_15s": 100,
         "physical_30s": 199,
         "cinematic_image_1k": 13,
