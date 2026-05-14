@@ -132,6 +132,10 @@ class VideoGenerateRequest(BaseModel):
     influencer_id: Optional[str] = None
     reference_image_url: Optional[str] = None  # Generated image to use as first frame
     language: str = "en"
+    # Spanish accent subtype: "spain" (Castilian / peninsular) or "latam"
+    # (neutral Latin American). Only consulted when language == "es".
+    # Falls back to the influencer's stored `accent` field when omitted.
+    language_accent: Optional[str] = None
     clip_length: int = 5  # seconds
     full_video_mode: bool = False
     video_length: int = 15  # 15 or 30 (only when full_video_mode=True)
@@ -195,6 +199,7 @@ async def _create_video_job_record(
             "length": duration,
             "campaign_name": _derive_asset_name(prompt),
             "video_language": data.language,
+            "language_accent": getattr(data, "language_accent", None),
             "subtitles_enabled": data.captions,
             "music_enabled": data.background_music,
             "hook": prompt[:500],
@@ -394,6 +399,7 @@ async def generate_ai_script(data: AIScriptRequest, user: dict = Depends(get_cur
                     influencer_id=influencer_id,
                     product_type=product_type,
                     video_language=data.language,
+                    language_accent=getattr(data, "language_accent", None),
                     context=data.context if data.context else None,
                 )
                 script_json = result.get("script_json", {})
@@ -420,6 +426,7 @@ async def generate_ai_script(data: AIScriptRequest, user: dict = Depends(get_cur
                     product_type=product_type,
                     output_format="legacy",
                     video_language=data.language,
+                    language_accent=getattr(data, "language_accent", None),
                     context=data.context if data.context else None,
                 )
                 generated = result.get("script", "")
@@ -644,6 +651,7 @@ async def _generate_seedance_video(
             "length": data.clip_length,
             "campaign_name": _derive_asset_name(data.prompt),
             "video_language": data.language,
+            "language_accent": getattr(data, "language_accent", None),
             "subtitles_enabled": False,
             "music_enabled": False,
             "hook": (data.prompt or "")[:500],
@@ -990,6 +998,7 @@ async def _generate_kling_video(
             "length": data.clip_length,
             "campaign_name": _derive_asset_name(data.prompt),
             "video_language": data.language,
+            "language_accent": getattr(data, "language_accent", None),
             "subtitles_enabled": False,
             "music_enabled": False,
             "hook": data.prompt[:500] if data.prompt else "",
@@ -1814,6 +1823,7 @@ async def _generate_ugc_clip(
             "length": data.clip_length,
             "campaign_name": _derive_asset_name(data.prompt),
             "video_language": data.language,
+            "language_accent": getattr(data, "language_accent", None),
             "subtitles_enabled": False,
             "music_enabled": False,
             "hook": data.prompt[:500] if data.prompt else "",
@@ -2301,7 +2311,12 @@ async def _run_ugc_clip_pipeline(
             setting_str = influencer.get("setting", "") or "natural environment matching the background visible in the reference image"
 
             if data.language == "es":
-                accent_str = "native Spanish accent, speaking entirely in Spanish"
+                from prompts import spanish_accent_line
+                # Honor explicit data.language_accent (spain/latam) when set,
+                # else fall back to the influencer's stored accent string.
+                accent_str = spanish_accent_line(
+                    getattr(data, "language_accent", None) or influencer.get("accent")
+                )
 
             # Use enhanced action if available, else fallback to template
             final_action = action_direction if action_direction else "person holds product at chest level showing it to camera, natural relaxed expression, soft eye contact with regular blinking"
@@ -2333,7 +2348,11 @@ async def _run_ugc_clip_pipeline(
             )
         else:
             # No influencer selected — build prompt from user's input + reference image context
-            accent_line = "native Spanish accent, speaking entirely in Spanish" if data.language == "es" else "neutral English accent"
+            if data.language == "es":
+                from prompts import spanish_accent_line
+                accent_line = spanish_accent_line(getattr(data, "language_accent", None))
+            else:
+                accent_line = "neutral English accent"
             final_action = action_direction if action_direction else "person speaking directly to camera, casual and naturally engaging, relaxed face with regular natural blinking, holding product if visible in reference"
 
             if composite_url:
@@ -2593,10 +2612,15 @@ def _build_extend_prompt(ctx: dict, user_continuation: Optional[str]) -> str:
 
     dialogue = sanitize_dialogue(user_continuation) if user_continuation else ""
 
-    accent_line = (
-        "native Spanish accent, speaking entirely in Spanish"
-        if language == "es" else "neutral English accent, speaking entirely in English"
-    )
+    if language == "es":
+        from prompts import spanish_accent_line
+        # ctx may carry language_accent (passed through from the agent tool)
+        # or fall back to the influencer's stored accent string.
+        accent_line = spanish_accent_line(
+            ctx.get("language_accent") or (influencer.get("accent") if influencer else None)
+        )
+    else:
+        accent_line = "neutral English accent, speaking entirely in English"
 
     parts: list[str] = []
     if dialogue:

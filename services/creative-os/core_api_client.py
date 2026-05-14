@@ -278,6 +278,7 @@ class CoreAPIClient:
         video_language: str = "en",
         model_api: str = "veo-3.1-fast",
         context: str = None,
+        language_accent: Optional[str] = None,
     ) -> dict:
         payload = {
             "product_id": product_id,
@@ -291,6 +292,8 @@ class CoreAPIClient:
             payload["influencer_id"] = influencer_id
         if context:
             payload["context"] = context
+        if language_accent:
+            payload["language_accent"] = language_accent
         # Script generation uses a 3-call prompt chain — may take 30-60s
         async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.request(
@@ -338,6 +341,7 @@ class CoreAPIClient:
         context: Optional[str] = None,
         video_language: str = "en",
         model_api: str = "veo-3.1-fast",
+        language_accent: Optional[str] = None,
     ) -> dict:
         payload = {
             "product_id": product_id,
@@ -351,6 +355,8 @@ class CoreAPIClient:
             payload["influencer_id"] = influencer_id
         if context:
             payload["context"] = context
+        if language_accent:
+            payload["language_accent"] = language_accent
         async with httpx.AsyncClient(timeout=180.0) as client:
             resp = await client.request(
                 "POST",

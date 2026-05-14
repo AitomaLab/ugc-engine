@@ -357,16 +357,21 @@ def run_generation_pipeline(
                 print(f"      [EXTEND] Extending with Scene {idx}: {ext_scene['name']}")
 
                 extension_prompt = ext_scene.get("video_animation_prompt") or ext_scene.get("prompt", "")
+                # Pass the previous scene's video URL so the Wavespeed-primary
+                # path (WAVESPEED_PRIMARY=true) can use video-extend, which
+                # takes a URL not a Kie task id. Kie fallback still uses task_id.
                 result = generate_scenes.extend_video_with_retry(
                     task_id=current_task_id,
                     prompt=extension_prompt,
                     seed=ext_scene.get("seed"),
+                    video_url=current_video_url,
                 )
                 # The returned video contains ONLY the new extension segment
                 chunk_idx_path = output_dir / f"extended_chunk_{idx-1}.mp4"
                 generate_scenes.download_video(result["videoUrl"], chunk_idx_path)
                 extend_chunks.append(chunk_idx_path)
                 current_task_id = result["taskId"]
+                current_video_url = result["videoUrl"]
                 print(f"      [EXTEND] Scene {idx} extended successfully")
 
                 # Preview: upload extended scene video

@@ -284,6 +284,10 @@ def generate_ugc_video(self, job_id: str):
             "subtitle_placement": job.get("subtitle_placement", "middle"),
             # i18n: video generation language (defaults to English)
             "video_language": job.get("video_language", "en"),
+            # Spanish accent subtype: "spain" / "latam" — only consulted
+            # when video_language == "es"; spanish_accent_line() in
+            # prompts/__init__.py picks the right Veo voice_type wording.
+            "language_accent": job.get("language_accent"),
         }
 
         # ── Trace hook provenance for debugging ──

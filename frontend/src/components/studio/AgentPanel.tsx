@@ -3173,6 +3173,7 @@ function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspec
     // historical turns they reflect the user's selection (filled vs. muted).
     const rawText = turn.text || '';
     const hasAspectMarker = !isUser && rawText.includes('[[ASPECT_BUTTONS]]');
+    const hasAccentMarker = !isUser && rawText.includes('[[SPANISH_ACCENT_BUTTONS]]');
 
     // Detect [[SAVE_OR_GENERATE:image_url=...&type=product|influencer]] marker
     const saveOrGenMatch = !isUser ? rawText.match(/\[\[SAVE_OR_GENERATE:image_url=([^&]+)&type=(product|influencer)\]\]/) : null;
@@ -3180,19 +3181,24 @@ function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspec
     const saveOrGenType = (saveOrGenMatch?.[2] || 'product') as 'product' | 'influencer';
     const hasSaveOrGenMarker = !!saveOrGenMatch;
 
-    // Strip both markers from display text
+    // Strip all markers from display text
     let displayText = rawText;
     if (hasAspectMarker) displayText = displayText.replace(/\s*\[\[ASPECT_BUTTONS\]\]\s*/g, '').trim();
+    if (hasAccentMarker) displayText = displayText.replace(/\s*\[\[SPANISH_ACCENT_BUTTONS\]\]\s*/g, '').trim();
     if (hasSaveOrGenMarker) displayText = displayText.replace(/\s*\[\[SAVE_OR_GENERATE:[^\]]+\]\]\s*/g, '').trim();
 
     // Save-or-generate modal state
     const [showSaveModal, setShowSaveModal] = useState(false);
     const [saveChoice, setSaveChoice] = useState<'save' | 'generate' | null>(null);
+    // Spanish-accent quick-reply choice (per-turn — once user picks, buttons
+    // freeze visually so the active turn shows their selection).
+    const [selectedAccent, setSelectedAccent] = useState<'spain' | 'latam' | null>(null);
 
     const aspectButtonsActive = hasAspectMarker && !!isLast && !!onQuickReply && !selectedAspect;
+    const accentButtonsActive = hasAccentMarker && !!isLast && !!onQuickReply && !selectedAccent;
     const saveOrGenActive = hasSaveOrGenMarker && !!isLast && !!onQuickReply && !saveChoice;
     const confirmChipActive = !!turn.pendingConfirmation && !!isLast && !!onQuickReply;
-    const hasContent = !!displayText || !!turn.artifacts?.length || turn.interrupted || hasRefPreviews || hasAspectMarker || hasSaveOrGenMarker || !!turn.pendingConfirmation;
+    const hasContent = !!displayText || !!turn.artifacts?.length || turn.interrupted || hasRefPreviews || hasAspectMarker || hasAccentMarker || hasSaveOrGenMarker || !!turn.pendingConfirmation;
     // While a run is active, show a placeholder "…" bubble (three breathing
     // dots) in place of the empty agent turn so the UI never looks frozen
     // while waiting for the first `agent_message`. Historical empty turns
@@ -3307,6 +3313,48 @@ function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspec
                                         fontSize: '13px',
                                         fontWeight: 500,
                                         cursor: aspectButtonsActive ? 'pointer' : 'default',
+                                    }}
+                                >
+                                    {label}
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
+
+                {hasAccentMarker && (
+                    <div style={{ display: 'flex', gap: '8px', marginTop: displayText ? '10px' : 0, flexWrap: 'wrap' }}>
+                        {(['spain', 'latam'] as const).map((kind) => {
+                            const label = kind === 'spain'
+                                ? t('creativeOs.agent.accentSpain')
+                                : t('creativeOs.agent.accentLatam');
+                            const isSelected = selectedAccent === kind;
+                            const muted = !!selectedAccent && !isSelected;
+                            return (
+                                <button
+                                    key={kind}
+                                    type="button"
+                                    disabled={!accentButtonsActive}
+                                    onClick={() => {
+                                        if (!accentButtonsActive) return;
+                                        setSelectedAccent(kind);
+                                        onQuickReply?.(label);
+                                    }}
+                                    style={{
+                                        padding: '6px 14px',
+                                        borderRadius: '8px',
+                                        border: isSelected
+                                            ? '1px solid #337AFF'
+                                            : '1px solid rgba(51,122,255,0.15)',
+                                        background: isSelected
+                                            ? 'linear-gradient(135deg, #337AFF 0%, #5B8FFF 100%)'
+                                            : muted
+                                                ? 'rgba(51,122,255,0.03)'
+                                                : 'white',
+                                        color: isSelected ? 'white' : muted ? '#8A93B0' : '#337AFF',
+                                        fontSize: '13px',
+                                        fontWeight: 500,
+                                        cursor: accentButtonsActive ? 'pointer' : 'default',
                                     }}
                                 >
                                     {label}

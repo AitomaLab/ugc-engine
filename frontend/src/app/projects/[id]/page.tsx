@@ -41,15 +41,17 @@ function modeLabel(api?: string): string {
 
 /* ── Responsive hook: split layout only on >=1024px viewports ─── */
 function useIsWide(): boolean {
-    const [isWide, setIsWide] = useState<boolean>(() => {
-        if (typeof window === 'undefined') return true; // SSR: assume desktop
-        return window.matchMedia('(min-width: 1024px)').matches;
-    });
+    // Always start from the SSR default (true = desktop) so the first client
+    // render matches the server-rendered HTML — reading window.matchMedia in
+    // the useState initializer caused a React hydration mismatch on narrow
+    // viewports. The real viewport check runs in useEffect after mount.
+    const [isWide, setIsWide] = useState<boolean>(true);
     useEffect(() => {
         if (typeof window === 'undefined') return;
         const mq = window.matchMedia('(min-width: 1024px)');
+        // Sync the actual value once on mount, then keep listening for changes.
+        setIsWide(mq.matches);
         const onChange = (e: MediaQueryListEvent) => setIsWide(e.matches);
-        // matchMedia listeners use addEventListener in modern browsers.
         mq.addEventListener('change', onChange);
         return () => mq.removeEventListener('change', onChange);
     }, []);
@@ -506,26 +508,19 @@ export default function ProjectContainerPage() {
                 </button>
             )}
 
-            {/* Create Bar Toggle — hidden: all creation flows now run through the agent chat. */}
-            {false && isWide && (
-                <button
-                    onClick={() => setCreateBarOpen(!createBarOpen)}
-                    title={createBarOpen ? t('creativeOs.project.bottomPanelHide') : t('creativeOs.project.bottomPanelShow')}
-                    style={{
-                        width: '26px', height: '26px', borderRadius: '6px', border: 'none',
-                        background: createBarOpen ? 'rgba(51,122,255,0.08)' : 'transparent',
-                        cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        transition: 'all 0.15s', color: createBarOpen ? '#337AFF' : '#8A93B0', flexShrink: 0,
-                    }}
-                    onMouseEnter={e => { if (!createBarOpen) e.currentTarget.style.background = 'rgba(51,122,255,0.08)'; }}
-                    onMouseLeave={e => { if (!createBarOpen) e.currentTarget.style.background = 'transparent'; }}
-                >
-                    <svg viewBox="0 0 24 24" style={{ width: '16px', height: '16px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
-                        <rect x="3" y="4" width="18" height="16" rx="2" />
-                        <line x1="3" y1="15" x2="21" y2="15" />
-                    </svg>
-                </button>
-            )}
+            {/*
+              Create Bar Toggle — REMOVED FROM UI.
+              All creation flows run through the agent chat now. The button JSX
+              was previously gated with `{false && isWide && (...)}` which still
+              left the SVG/button definition in the parsed component tree and
+              caused a React hydration mismatch on this page. Removing the JSX
+              entirely eliminates the divergence.
+
+              To re-enable: copy the agent-panel toggle button block right above
+              this comment, swap `agentOpen` → `createBarOpen`, the title key to
+              `creativeOs.project.bottomPanel{Hide,Show}`, and the SVG to the
+              horizontal-line variant (rect + line at y=15).
+            */}
             </div>
 
             {/* Right section: Tabs and filters (Gallery column header) */}

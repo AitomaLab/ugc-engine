@@ -168,7 +168,7 @@ Gated tools cost real credits. You MUST get explicit user confirmation before sp
 
 ⚠️ NEVER QUOTE CREDITS FROM MEMORY. Every credit number you show the user MUST come from a tool result in the CURRENT turn — either the `confirmation_required` payload of a gated tool (`confirmed=false`) or an `estimate_credits` response. Do not calculate costs yourself, do not recall prices from earlier in the session, do not guess. If you don't have a fresh tool result, call one of those tools first, THEN present the number. Quoting a wrong number and then silently correcting it on the next turn destroys user trust.
 
-⚠️ ONE QUOTE, ONE CONFIRM, ONE FIRE. After you present a cost and the user agrees, call the gated tool(s) with `confirmed=true` IMMEDIATELY in the next turn. Do NOT re-call `estimate_credits` "to double-check", do NOT call the gated tool with `confirmed=false` again "to lock in the cost", do NOT re-present the same cost with different wording and ask again. That forces the user to confirm twice and wastes their turn. The ONLY exception: if the user's confirmation included a change that affects the cost (e.g. "yes, but make it 10s instead of 5s"), you MUST re-estimate because the parameters changed — state that explicitly ("10s changes the cost to X credits, proceed?") and end turn. Otherwise, fire.
+⚠️ ONE QUOTE, ONE CONFIRM, ONE FIRE. After you present a cost and the user agrees, call the gated tool(s) with `confirmed=true` IMMEDIATELY in the next turn. Do NOT re-call `estimate_credits` "to double-check", do NOT call the gated tool with `confirmed=false` again "to lock in the cost", do NOT re-present the same cost with different wording and ask again. **Specifically forbidden after a confirmation reply (the literal text "Confirmed — proceed with the pending generation now." OR plain "yes / sí / vale / dale / ok / proceed / adelante"): do NOT emit any prose summary of what you're about to do, do NOT restate the credits, do NOT ask "¿Quieres que proceda?" / "Shall I proceed?" / any equivalent re-confirmation. Your ONLY response to a confirmation must be the tool_use block with `confirmed=true` — no narration before it.** That forces the user to confirm twice and wastes their turn. The ONLY exception: if the user's confirmation included a change that affects the cost (e.g. "yes, but make it 10s instead of 5s"), you MUST re-estimate because the parameters changed — state that explicitly ("10s changes the cost to X credits, proceed?") and end turn. Otherwise, fire silently.
 
 ⚠️ RETRIES / RE-FIRES. When the user asks to re-run, retry, or re-fire a previously-failed generation ("re-fire those cinematics", "try those two again", "redo"), treat it as a fresh gated call: `confirmed=false` ONCE to get the real cost from the tool, present it, end turn. When they confirm, fire `confirmed=true`. Do not quote from memory "that was 44 credits earlier" — always pull the number from a fresh tool result.
 
@@ -390,6 +390,10 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
 9b. MULTI-IMAGE GENERATION — when the user asks for multiple images in one breath ("3 images in different angles", "5 variations", "create 4 different poses", "haz 3 imágenes"), call `generate_image` ONCE with `count=N` and a prompt that bakes the variation into the description ("different angle", "varied pose", "alternate composition"). The server fans out N concurrent NanoBanana calls and returns all `image_urls` together in one tool result — you summarize all of them in a single reply. Do NOT emit N parallel `tool_use` blocks for `generate_image` and do NOT write narrative prose like "Firing all 3 in parallel now" without a matching tool_use — that pattern has caused production hallucinations where the agent describes the action without actually executing it. The cost confirmation is bundled: the first (unconfirmed) call previews `per_image × count` credits, then the confirmed call dispatches all N in parallel. Range: count ≤ 6.
 10. ASPECT RATIO — MANDATORY before gated generation. Before calling `generate_image` or `generate_video` with `confirmed=true`, you MUST know the aspect ratio. If the user's brief already specifies it ("vertical", "9:16", "horizontal", "16:9", "square", "1:1", "for TikTok", "for YouTube", "for Instagram feed", "landscape", "portrait"), use it directly. For images, '1:1' is available for Instagram feed posts. Otherwise you MUST ask the user BEFORE presenting the cost confirmation: ask the question in one short sentence, then append the literal marker `[[ASPECT_BUTTONS]]` on the last line of your message. The frontend detects this marker and renders clickable Vertical / Horizontal buttons for the user. When the user replies with their choice, THEN show the cost confirmation, THEN call the tool with `confirmed=true` and `aspect_ratio="9:16"` or `"16:9"` (or `"1:1"` for images). Never skip this step for gated generation. Do NOT include the marker when the aspect is already known.
 10b. LANGUAGE — for video clips (`generate_video`), pass `language="es"` when the user requests Spanish / Latin dialogue. Default is English. Seedance 2.0 modes have full bilingual EN/ES support.
+10c. SPANISH ACCENT — MANDATORY when `language="es"` (or `video_language="es"`). Veo defaults to neutral Latin American Spanish whenever you don't specify, so you MUST resolve the accent BEFORE calling any video tool with `confirmed=true`:
+  - If the user's brief already names it ("en castellano", "español de España", "acento de Madrid", "Castilian", "from Spain", "peninsular", "vosotros" → `spain`; "latinoamericano", "neutro", "mexicano", "argentino", "colombiano", "LATAM" → `latam`), use it directly without asking.
+  - If the attached influencer's stored `accent` field already contains "Spain" or "Castilian" (substring, case-insensitive), use `language_accent="spain"` directly. If it contains "Mexican" / "Colombian" / "Argentine" / "Latin", use `latam`. Don't re-ask.
+  - Otherwise you MUST ask the user BEFORE the cost confirmation: ONE short sentence in Spanish (e.g. "¿Qué acento de español prefieres para el video?"), then append the literal marker `[[SPANISH_ACCENT_BUTTONS]]` on the last line of your message. The frontend renders España (Castellano) / Latinoamérica buttons. When the user replies, THEN show the cost confirmation, THEN call the tool with `confirmed=true` AND `language_accent="spain"` or `"latam"`. Never skip this step. Do NOT include the marker when the accent is already known. Mirrors the ASPECT_BUTTONS rule in pattern but is a separate question — both must be resolved before generation.
 11. NO RANDOM INFLUENCER / PRODUCT — for cinematic / scene / b-roll prompts that do not mention a specific person or product (e.g. "rooftop chase", "sunset over a city", "close-up of a coffee cup"), you MUST call `generate_video` WITHOUT `influencer_id` and WITHOUT `product_id`. Never auto-attach an influencer or product "to be safe" — the pipeline will generate the scene from the prompt alone, which is what the user wants. Only pass `influencer_id` / `product_id` when the user @-mentioned that asset or explicitly named them in the brief.
 12. DIGITAL PRODUCTS — when the user @-mentions a digital product (app / SaaS / software), the `[Referenced assets]` preface includes both `product_id=...` AND `app_clip_id=...` (the specific clip the user picked from the shot modal). You MUST forward BOTH to `generate_video` along with `product_type='digital'`. The pipeline renders the generated clip (composited inside a phone for 9:16 / a computer for 16:9). Then — **in the SAME turn, immediately after `generate_video` returns status=success** — you MUST chain `splice_app_clip(job_id=<returned_job_id>, app_clip_id=<same_app_clip_id>)` to append the app clip walkthrough as B-roll with a dissolve transition. Present the splice step in natural language ("Your cinematic is ready — now splicing the app clip as B-roll...") so the user knows what's happening during the ~1-2 min splice. This two-step flow applies to ALL modes (ugc, cinematic_video, seedance_2_ugc, seedance_2_cinematic, seedance_2_product). Do NOT call `combine_videos` for the app-clip splice — that's what `splice_app_clip` is for. `combine_videos` is only for stitching two *independently generated* videos the user explicitly asked to combine. Never call `list_app_clips` to pick a clip manually — the preface already tells you which one. NEVER pass the app clip's first_frame_url (or any URL derived from the clip) as `reference_image_url` / `reference_image_urls` / `reference_video_urls` — the Seedance pipeline uses the clip's VIDEO as a reference server-side. Forwarding a URL in addition to `app_clip_id` causes duplicate references."""
 
@@ -724,6 +728,18 @@ def _custom_tools_for_agent() -> list[dict]:
                         "type": "string",
                         "enum": ["en", "es"],
                         "description": "Language for dialogue/script generation. Default 'en'. Use 'es' for Spanish.",
+                    },
+                    "language_accent": {
+                        "type": "string",
+                        "enum": ["spain", "latam"],
+                        "description": (
+                            "Spanish accent subtype — REQUIRED when language='es'. "
+                            "'spain' = Castilian / peninsular (España, distinción 'th' for c/z, vosotros). "
+                            "'latam' = neutral Latin American (Mexican/Colombian baseline, seseo). "
+                            "Veo defaults to LATAM if unspecified, so you MUST ask the user before calling "
+                            "with confirmed=true unless they already stated it OR the attached influencer's "
+                            "stored accent already implies it. Ignored when language!='es'."
+                        ),
                     },
                     "multi_shot_mode": {
                         "type": "boolean",
@@ -1104,6 +1120,15 @@ def _custom_tools_for_agent() -> list[dict]:
                     "context": {"type": "string", "description": "Creative direction or style notes for AI script generation (only used when generate_scripts auto-generates a script). Do NOT put the user's actual script text here — that goes in hook. Example: 'energetic tone, focus on health benefits'."},
                     "campaign_name": {"type": "string"},
                     "video_language": {"type": "string"},
+                    "language_accent": {
+                        "type": "string",
+                        "enum": ["spain", "latam"],
+                        "description": (
+                            "Spanish accent subtype — REQUIRED when video_language='es'. "
+                            "'spain' = Castilian / peninsular. 'latam' = neutral Latin American. "
+                            "Ask the user via [[SPANISH_ACCENT_BUTTONS]] if not specified."
+                        ),
+                    },
                     "subtitles_enabled": {"type": "boolean", "description": "Burn word-timed subtitles into the final video during initial generation. Default: false — the bare video delivers fast and captions are offered as a follow-up via caption_video. Set to true ONLY when the user explicitly asks for captions baked into the first delivery (e.g. 'create a UGC video with captions', 'with subtitles')."},
                     "music_enabled": {"type": "boolean", "description": "Mix a generated background music bed under the dialogue during initial generation. Default: false — the bare video delivers fast and music is offered as a follow-up via combine_videos(music_prompt=...). Set to true ONLY when the user explicitly asks for music baked into the first delivery (e.g. 'create a UGC video with background music')."},
                     "app_clip_id": {"type": "string", "description": "ID of the app clip (screen recording) to include in the video. For digital products, this enables the NanoBanana composite pipeline (influencer holding device with app on screen)."},
@@ -1130,6 +1155,15 @@ def _custom_tools_for_agent() -> list[dict]:
                     "product_id": {"type": "string"},
                     "product_type": {"type": "string", "enum": ["physical", "digital"]},
                     "video_language": {"type": "string"},
+                    "language_accent": {
+                        "type": "string",
+                        "enum": ["spain", "latam"],
+                        "description": (
+                            "Spanish accent subtype — REQUIRED when video_language='es'. "
+                            "'spain' = Castilian / peninsular. 'latam' = neutral Latin American. "
+                            "Ask the user via [[SPANISH_ACCENT_BUTTONS]] if not specified."
+                        ),
+                    },
                     "subtitles_enabled": {"type": "boolean"},
                     "confirmed": {"type": "boolean", "description": confirmed_desc},
                 },
@@ -1155,6 +1189,15 @@ def _custom_tools_for_agent() -> list[dict]:
                     "product_id": {"type": "string"},
                     "campaign_name": {"type": "string"},
                     "video_language": {"type": "string"},
+                    "language_accent": {
+                        "type": "string",
+                        "enum": ["spain", "latam"],
+                        "description": (
+                            "Spanish accent subtype — REQUIRED when video_language='es'. "
+                            "'spain' = Castilian / peninsular. 'latam' = neutral Latin American. "
+                            "Ask the user via [[SPANISH_ACCENT_BUTTONS]] if not specified."
+                        ),
+                    },
                     "subtitles_enabled": {"type": "boolean"},
                     "music_enabled": {"type": "boolean"},
                     "confirmed": {"type": "boolean", "description": confirmed_desc},
@@ -2167,6 +2210,7 @@ async def _tool_generate_video(ctx: ToolContext, **kwargs: Any) -> str:
         reference_video_urls=kwargs.get("reference_video_urls") or None,
         clip_length=kwargs.get("clip_length", 5),
         language=kwargs.get("language", "en"),
+        language_accent=kwargs.get("language_accent") or None,
         multi_shot_mode=bool(kwargs.get("multi_shot_mode", False)),
         aspect_ratio=kwargs.get("aspect_ratio") or None,
         product_type=kwargs.get("product_type") or None,

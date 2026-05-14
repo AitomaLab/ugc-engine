@@ -1031,6 +1031,7 @@ class ScriptGenerateRequest(BaseModel):
     methodology: Optional[str] = None      # Force a specific methodology
     context: Optional[str] = None          # Additional user instructions
     video_language: str = "en"             # 'en' or 'es' — defaults to English
+    language_accent: Optional[str] = None  # 'spain' | 'latam' — only consulted when es
     model_api: str = ""                    # AI model (e.g. "seedance-2.0") for adapted word counts
 
 @app.post("/api/scripts/generate")
@@ -1098,6 +1099,7 @@ def api_generate_script(data: ScriptGenerateRequest):
                 influencer_data=influencer_data,
                 model_api=data.model_api,
                 video_language=data.video_language,
+                language_accent=data.language_accent,
                 context=data.context or "",
             )
         else:

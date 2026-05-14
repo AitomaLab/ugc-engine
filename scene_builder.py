@@ -222,6 +222,9 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=Non
         "consistency_seed": random.randint(10000, 99999),
         "setting": setting or "natural environment matching the background visible in the reference image",
         "video_language": content_row.get("video_language", "en"),
+        # Optional Spanish accent subtype ("spain" / "latam") forwarded from the
+        # agent. Consumed by spanish_accent_line() in the prompt builders.
+        "language_accent": content_row.get("language_accent"),
     }
 
     # Dynamic Influencer Variation: override setting if a variation_prompt was

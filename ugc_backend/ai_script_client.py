@@ -349,7 +349,7 @@ class AIScriptClient:
     # Two-Step Persona Pipeline (Private Methods)
     # ------------------------------------------------------------------
 
-    def _generate_raw_script(self, product_analysis: Dict[str, Any], influencer_data: Dict[str, Any], duration: int, video_language: str = "en", model_api: str = "", context: str = "") -> str:
+    def _generate_raw_script(self, product_analysis: Dict[str, Any], influencer_data: Dict[str, Any], duration: int, video_language: str = "en", model_api: str = "", context: str = "", language_accent: Optional[str] = None) -> str:
         """Step 1: Generate a persona-driven raw script using influencer context.
 
         Supports all durations:
@@ -414,9 +414,33 @@ class AIScriptClient:
                 .replace("{{speech_seconds}}", str(clip_cfg["speech_seconds"]))
             )
 
-        # i18n: Inject language directive
+        # i18n: Inject language directive. When language_accent is set, force
+        # the script to use Spain or Latin American vocabulary so the speech
+        # synthesis has matching word choices to anchor on — Veo's voice
+        # model otherwise defaults to LATAM regardless of the voice_type cue.
         if video_language == "es":
-            system_prompt += "\n\nLANGUAGE OVERRIDE: You MUST write the ENTIRE script in Spanish. Use natural Latin American or Spain Spanish. All dialogue must be in Spanish."
+            _accent = (language_accent or "").lower()
+            if "spain" in _accent or "castilian" in _accent or "castellano" in _accent:
+                system_prompt += (
+                    "\n\nLANGUAGE OVERRIDE: Write the ENTIRE script in CASTILIAN "
+                    "SPANISH FROM SPAIN (España), NOT Latin American. STRICT vocabulary "
+                    "rules: use 'plátano' (never 'banana'), 'móvil' (never 'celular'), "
+                    "'ordenador' (never 'computadora'), 'coche' (never 'carro'), "
+                    "'vale' / 'genial' (never 'okey' / 'padre'), 'tío/tía' for casual "
+                    "address. Use VOSOTROS conjugations for plural-you (e.g. 'probadlo', "
+                    "'sois', 'tenéis'), never 'ustedes / pruébenlo / son / tienen'. "
+                    "Naturally include words that exercise distinción (c before e/i, and "
+                    "z) so the spoken accent reads as peninsular: e.g. 'gracias', "
+                    "'delicioso', 'corazón', 'fácil', 'cinco'. Sound like a real person "
+                    "from Madrid talking to their phone."
+                )
+            else:
+                system_prompt += (
+                    "\n\nLANGUAGE OVERRIDE: Write the ENTIRE script in NEUTRAL LATIN "
+                    "AMERICAN SPANISH (Mexican/Colombian baseline). Use 'ustedes' for "
+                    "plural-you. Avoid Spain-only words (no 'vosotros', 'móvil', "
+                    "'ordenador', 'coche', 'tío'). All dialogue in Spanish."
+                )
 
         # Adjust user prompt based on mode
         if is_clip:
@@ -481,6 +505,7 @@ class AIScriptClient:
         model_api: str = "",
         video_language: str = "en",
         context: str = "",
+        language_accent: Optional[str] = None,
     ) -> str:
         """
         Generates a compelling UGC script for a physical product.
@@ -509,7 +534,7 @@ class AIScriptClient:
         if influencer_data and influencer_data.get("name"):
             try:
                 print("      [AIScript] Generating persona-driven script (single-step)...")
-                raw_script = self._generate_raw_script(product_analysis, influencer_data, duration, video_language=video_language, model_api=model_api, context=context)
+                raw_script = self._generate_raw_script(product_analysis, influencer_data, duration, video_language=video_language, model_api=model_api, context=context, language_accent=language_accent)
                 try:
                     safe_raw = raw_script.encode('ascii', 'ignore').decode('ascii')
                     print(f"      [AIScript] Script: {safe_raw[:80]}...")

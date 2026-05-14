@@ -2,7 +2,7 @@
 Prompt builder for Digital Products (App Clips).
 """
 import config
-from prompts import sanitize_dialogue
+from prompts import sanitize_dialogue, spanish_accent_line
 
 def generate_ultra_prompt(scene_type, ctx, script_override=None, is_last_scene=False):
     """
@@ -14,11 +14,15 @@ def generate_ultra_prompt(scene_type, ctx, script_override=None, is_last_scene=F
     # Environment: use influencer-specific setting from ctx, fall back to reference image match
     env = ctx.get("setting", "natural environment matching the background visible in the reference image")
 
-    # i18n: override accent for Spanish videos — affects voice_type in all Veo prompts
+    # i18n: override accent for Spanish videos — affects voice_type in all Veo prompts.
+    # Honor caller-provided `language_accent` (spain / latam) when set, else
+    # fall back to the influencer's stored accent string. Helper picks
+    # Castilian vs LATAM wording — see prompts/__init__.py.
     video_language = ctx.get('video_language', 'en')
     if video_language == 'es':
-        # Mutate a local copy of accent for this prompt; ctx itself stays unchanged
-        accent_override = 'native Spanish accent, speaking entirely in Spanish'
+        accent_override = spanish_accent_line(
+            ctx.get('language_accent') or ctx.get('accent')
+        )
     else:
         accent_override = ctx.get('accent', 'neutral English')
     # Use accent_override below instead of ctx['accent'] for voice_type
@@ -180,7 +184,7 @@ def build_30s(dur, app_clip, ctx, product=None, influencer=None):
 
     # i18n: override accent for Spanish videos
     _video_lang = ctx.get('video_language', 'en')
-    _accent = 'native Spanish accent, speaking entirely in Spanish' if _video_lang == 'es' else ctx.get('accent', 'neutral English')
+    _accent = spanish_accent_line(ctx.get('language_accent') or ctx.get('accent')) if _video_lang == 'es' else ctx.get('accent', 'neutral English')
 
     # Determine how many Veo scenes based on app clip duration
     clip_duration = (app_clip.get("duration") or 8) if app_clip else 0
@@ -577,7 +581,7 @@ def build_digital_unified(influencer: dict, product: dict, app_clip: dict, durat
 
     # i18n: override accent for Spanish videos
     _video_lang = ctx.get('video_language', 'en')
-    _accent = 'native Spanish accent, speaking entirely in Spanish' if _video_lang == 'es' else ctx.get('accent', 'neutral English')
+    _accent = spanish_accent_line(ctx.get('language_accent') or ctx.get('accent')) if _video_lang == 'es' else ctx.get('accent', 'neutral English')
 
     # Determine device type from visual_description
     visual_desc = product.get("visual_description") or {}

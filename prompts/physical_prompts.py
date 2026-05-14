@@ -3,7 +3,7 @@ Prompt builder for Physical Products (Cosmetics, Bottles).
 """
 import random
 import config
-from prompts import sanitize_dialogue
+from prompts import sanitize_dialogue, spanish_accent_line
 
 
 def build_scene_1_veo_prompt(ctx, script_part, product_desc="product", is_last_scene=False):
@@ -15,10 +15,15 @@ def build_scene_1_veo_prompt(ctx, script_part, product_desc="product", is_last_s
     accent_str = ctx.get('accent', 'neutral English')
     tone_str = ctx.get('tone', 'Enthusiastic').lower()
     setting_str = ctx.get('setting', 'natural environment matching the background visible in the reference image')
-    # i18n: override accent for Spanish videos
+    # i18n: override accent for Spanish videos. Honor caller-provided
+    # `language_accent` (spain / latam) when set, else fall back to the
+    # influencer's stored accent string. spanish_accent_line picks Castilian
+    # vs LATAM wording — see prompts/__init__.py.
     video_language = ctx.get('video_language', 'en')
     if video_language == 'es':
-        accent_str = 'native Spanish accent, speaking entirely in Spanish'
+        accent_str = spanish_accent_line(
+            ctx.get('language_accent') or ctx.get('accent')
+        )
 
     dialogue = sanitize_dialogue(script_part) if script_part else "oh my god you guys have to see this"
 
@@ -234,6 +239,7 @@ def build_physical_product_scenes(fields, influencer, product, durations, ctx, m
             video_duration = int(str(fields.get("Length", "15s")).replace("s", ""))
             model_api = fields.get("model_api", "")
             video_language = fields.get("video_language", "en")
+            language_accent = fields.get("language_accent")
             client = AIScriptClient()
             script = client.generate_physical_product_script(
                 product_analysis=product_analysis,
@@ -241,6 +247,7 @@ def build_physical_product_scenes(fields, influencer, product, durations, ctx, m
                 influencer_data=influencer,
                 model_api=model_api,
                 video_language=video_language,
+                language_accent=language_accent,
             )
             print(f"      [Script] AI persona-generated: {script[:60]}...")
         except Exception as e:

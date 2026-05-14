@@ -462,6 +462,22 @@ class ProviderRouter:
         if not os.getenv("WAVESPEED_API_KEY", ""):
             return "kie"
 
+        # When WAVESPEED_PRIMARY=true, route Veo work to Wavespeed first
+        # whenever it's healthy. Kie remains the fallback. This is the
+        # production preference because Kie's Veo 3.1 endpoints have been
+        # unreliable (frequent 500s mid-render). Set WAVESPEED_PRIMARY=false
+        # to revert to the cost-optimized Kie-first behavior.
+        wavespeed_primary = (os.getenv("USE_WAVESPEED_PRIMARY") or os.getenv("WAVESPEED_PRIMARY") or "true").lower() == "true"
+        if wavespeed_primary:
+            health = self.probe_health(model_family)
+            ws_healthy, _ = health.get("wavespeed", (False, 0))
+            if ws_healthy:
+                print(f"      [Router] ──────────────────────────────────────────")
+                print(f"      [Router] WAVESPEED_PRIMARY=true → routing to WaveSpeed")
+                print(f"      [Router] ──────────────────────────────────────────")
+                return "wavespeed"
+            # Wavespeed down — fall through to existing Kie/probe logic.
+
         # ── Step 1: Pre-flight health probes ──
         health = self.probe_health(model_family)
         kie_healthy, kie_ms = health.get("kie", (True, 0))
@@ -520,13 +536,13 @@ class ProviderRouter:
 provider_router = ProviderRouter(probe_timeout=3.0, cache_ttl=60, window_seconds=600)
 
 
-def generate_video_wavespeed(prompt, reference_image_url=None, duration=8):
+def generate_video_wavespeed(prompt, reference_image_url=None, duration=8, aspect_ratio="9:16"):
     """
     Generate video using WaveSpeed's Veo 3.1 API.
 
     Supports:
-      - reference-to-video (image + prompt → video)
-      - text-to-video (prompt only → video)
+      - image-to-video (image + prompt → video) via the FAST variant
+      - text-to-video (prompt only → video) via the FAST variant
 
     Returns:
         dict with 'taskId' (str) and 'videoUrl' (str).
@@ -535,22 +551,32 @@ def generate_video_wavespeed(prompt, reference_image_url=None, duration=8):
     if not WAVESPEED_API_KEY:
         raise RuntimeError("WAVESPEED_API_KEY not set — cannot use WaveSpeed")
 
+    # Wavespeed Veo Fast accepts only 9:16 or 16:9. Default to vertical UGC.
+    ar = aspect_ratio if aspect_ratio in ("9:16", "16:9") else "9:16"
+
     ws_headers = {
         "Authorization": f"Bearer {WAVESPEED_API_KEY}",
         "Content-Type": "application/json",
     }
 
     if reference_image_url:
-        # ── Reference-to-video (image-to-video) ──
-        endpoint = "https://api.wavespeed.ai/api/v3/google/veo3.1/reference-to-video"
+        # ── image-to-video (FAST) ──
+        # Switched from `google/veo3.1/reference-to-video` (full quality) to
+        # `google/veo3.1-fast/image-to-video` so the fallback matches the
+        # primary Kie path's quality/speed tier and so that aspect_ratio is
+        # actually honored — the legacy reference-to-video endpoint inherited
+        # aspect from the input image and produced 16:9 outputs even when we
+        # requested 9:16.
+        endpoint = "https://api.wavespeed.ai/api/v3/google/veo3.1-fast/image-to-video"
+        # Legacy: "https://api.wavespeed.ai/api/v3/google/veo3.1/reference-to-video"
         payload = {
-            "images": [reference_image_url],
+            "image": reference_image_url,  # singular for image-to-video (was "images" array)
             "prompt": prompt,
-            "aspect_ratio": "9:16",
+            "aspect_ratio": ar,
             "resolution": "720p",
             "generate_audio": True,
         }
-        print(f"      [WaveSpeed] Using reference-to-video with image")
+        print(f"      [WaveSpeed] Using veo3.1-fast image-to-video (aspect={ar})")
     else:
         # ── Text-to-video ──
         endpoint = "https://api.wavespeed.ai/api/v3/google/veo3.1-fast/text-to-video"
@@ -559,12 +585,12 @@ def generate_video_wavespeed(prompt, reference_image_url=None, duration=8):
             ws_duration = 8
         payload = {
             "prompt": prompt,
-            "aspect_ratio": "9:16",
+            "aspect_ratio": ar,
             "duration": ws_duration,
             "resolution": "720p",
             "generate_audio": True,
         }
-        print(f"      [WaveSpeed] Using text-to-video (duration={ws_duration}s)")
+        print(f"      [WaveSpeed] Using veo3.1-fast text-to-video (duration={ws_duration}s, aspect={ar})")
 
     payload["negative_prompt"] = (
         "no auditory hallucinations, no filler words, no stuttering, "
@@ -684,7 +710,10 @@ def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, 
             else:
                 # WaveSpeed gets full timeout (it's the fallback, no next option)
                 print(f"      [Router] → Sending job to WaveSpeed ($1.20/clip)...")
-                result = generate_video_wavespeed(prompt, reference_image_url, duration)
+                result = generate_video_wavespeed(
+                    prompt, reference_image_url, duration,
+                    aspect_ratio=aspect_ratio or "9:16",
+                )
 
             # ✅ Success — record and return
             provider_router.record(f"{provider}_veo", True)
@@ -812,12 +841,153 @@ def extend_video(task_id, prompt, seed=None, model="veo-3.1-fast"):
     raise RuntimeError("Veo Extend generation timed out after 20 minutes")
 
 
-def extend_video_with_retry(task_id, prompt, seed=None, model="veo-3.1-fast", max_retries=3):
+def _lean_extend_prompt(structured_prompt: str) -> str:
+    """Convert our heavy structured Veo generation prompt into a lean
+    continuation prompt suitable for Wavespeed's video-extend endpoint.
+
+    Background: the full-UGC pipeline builds prompts in the per-scene Veo
+    GENERATION format (`build_scene_N_veo_prompt` in prompts/physical_prompts.py)
+    which includes character/product/setting recap blocks plus strong "stay
+    exactly the same" language. Kie's task-id extend tolerates this because it
+    treats the prompt as guidance for the appended segment only. Wavespeed's
+    video-extend, in contrast, already has the source video as visual context
+    and re-renders more literally — so the "stay identical to Scene 1" recap
+    crushes any new dialogue/motion and Veo just replays the prior scene.
+
+    This helper extracts only the parts that describe the NEW segment:
+    dialogue, action, and the speech constraints. Drops the character /
+    product / setting / camera / style recap (already visible in the source
+    video) and the negative prompt (we re-add a much shorter one).
+    """
+    if not structured_prompt:
+        return structured_prompt
+
+    blocks: dict[str, str] = {}
+    for line in structured_prompt.split("\n"):
+        if ":" in line:
+            key, _, val = line.partition(":")
+            blocks[key.strip().lower()] = val.strip()
+
+    # If the prompt isn't in our structured format, fall through unchanged so
+    # ad-hoc callers (e.g. agent extend tool) still get their text passed.
+    if not any(k in blocks for k in ("dialogue", "action")):
+        return structured_prompt
+
+    parts: list[str] = [
+        "Continue the scene seamlessly from the source video. Same person, "
+        "same product, same setting, same wardrobe and lighting — those are "
+        "already visible in the input video, do NOT redescribe them, do NOT "
+        "restart the scene from the beginning."
+    ]
+    if blocks.get("dialogue"):
+        parts.append(f"New dialogue: {blocks['dialogue']}")
+    if blocks.get("action"):
+        # Strip recap-style "exactly the same / Scene 1" phrasing — keep only
+        # the new motion beats.
+        action = blocks["action"]
+        for redact in (
+            "person continues exactly the same pose and position as previous shot, ",
+            "still holding product at the exact same height and angle as Scene 1, ",
+            "product remains fully visible throughout, ",
+        ):
+            action = action.replace(redact, "")
+        parts.append(f"New action this segment: {action.strip(', ').strip()}.")
+    if blocks.get("speech_constraint"):
+        parts.append(f"Speech: {blocks['speech_constraint']}")
+    parts.append(
+        "Negative: no auditory hallucinations, no stuttering, no replaying "
+        "Scene 1, no looping the previous beat."
+    )
+    return "\n".join(parts)
+
+
+def _extend_video_wavespeed(video_url: str, prompt: str, seed=None) -> dict:
+    """Extend a Veo video via Wavespeed's video-extend endpoint.
+
+    Wavespeed's extend takes the previous scene's VIDEO URL (not a Kie task id),
+    inherits the source's aspect/resolution, and returns ONLY the extension
+    segment (just like Kie's extend does for our pipeline).
+    """
+    if not os.getenv("WAVESPEED_API_KEY", ""):
+        raise RuntimeError("WAVESPEED_API_KEY not set — cannot use Wavespeed extend")
+    if not video_url:
+        raise RuntimeError("Wavespeed extend: video URL is required")
+
+    # Wavespeed video-extend re-renders too literally for our heavy generation
+    # prompt format — strip the recap, keep only what's NEW for this segment.
+    lean_prompt = _lean_extend_prompt(prompt)
+    if lean_prompt != prompt:
+        print(f"      [WaveSpeed] Lean extend prompt ({len(lean_prompt)} chars, was {len(prompt)})")
+    prompt = lean_prompt
+
+    endpoint = "https://api.wavespeed.ai/api/v3/google/veo3.1-fast/video-extend"
+    headers = {
+        "Authorization": f"Bearer {os.getenv('WAVESPEED_API_KEY', '')}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "video": video_url,
+        "prompt": prompt or "",
+        "resolution": "720p",
+    }
+    if seed is not None:
+        payload["seed"] = int(seed)
+
+    print(f"      [WaveSpeed] Submitting extend to {endpoint}")
+    resp = requests.post(endpoint, headers=headers, json=payload, timeout=60)
+    if resp.status_code != 200:
+        raise RuntimeError(f"WaveSpeed extend submit error ({resp.status_code}): {resp.text[:300]}")
+    api = resp.json()
+    data = api.get("data", api)
+    pred_id = data.get("id")
+    if not pred_id:
+        raise RuntimeError(f"WaveSpeed extend no prediction id: {str(api)[:300]}")
+    status_url = data.get("urls", {}).get("get") or f"https://api.wavespeed.ai/api/v3/predictions/{pred_id}/result"
+    print(f"      [WaveSpeed] Extend task: {pred_id}")
+
+    for i in range(120):  # 20 minutes max
+        time.sleep(10 if i < 30 else 20)
+        try:
+            r = requests.get(status_url, headers=headers, timeout=20)
+            j = r.json().get("data", r.json())
+        except Exception as e:
+            print(f"      [WaveSpeed] Poll error: {e}")
+            continue
+        status = (j.get("status") or "").lower()
+        if status in ("completed", "succeeded", "success"):
+            outputs = j.get("outputs") or []
+            url = outputs[0] if outputs else None
+            if url:
+                print(f"      ✨ Extend ready via WaveSpeed")
+                return {"taskId": pred_id, "videoUrl": url}
+            raise RuntimeError("WaveSpeed extend completed with no output URL")
+        if status in ("failed", "error", "canceled"):
+            raise RuntimeError(f"WaveSpeed extend failed: {j.get('error') or j}")
+    raise RuntimeError("WaveSpeed extend timed out after 20 min")
+
+
+def extend_video_with_retry(task_id, prompt, seed=None, model="veo-3.1-fast", max_retries=3, video_url: str = None):
     """
     Extend video with automatic retry on transient errors.
     Retries on: 500 errors, internal errors, timeouts, and unknown generation errors.
+
+    Provider routing:
+      - WAVESPEED_PRIMARY=true (default): try Wavespeed extend first using
+        `video_url` (the previous scene's MP4 URL). Falls back to Kie if
+        Wavespeed fails or `video_url` is missing.
+      - WAVESPEED_PRIMARY=false: legacy Kie-only path.
     """
     RETRIABLE_PATTERNS = ("500", "internal error", "unknown generation error", "timed out", "timeout")
+
+    wavespeed_primary = (os.getenv("USE_WAVESPEED_PRIMARY") or os.getenv("WAVESPEED_PRIMARY") or "true").lower() == "true"
+    if wavespeed_primary and video_url:
+        try:
+            print(f"      [Router] WAVESPEED_PRIMARY=true → extending via Wavespeed")
+            return _extend_video_wavespeed(video_url, prompt, seed=seed)
+        except RuntimeError as e:
+            print(f"      [Router] Wavespeed extend failed: {e} — falling back to Kie")
+            # fall through to Kie path
+
     for attempt in range(max_retries):
         try:
             return extend_video(task_id, prompt, seed, model)
@@ -1167,9 +1337,73 @@ def generate_composite_image_with_retry(scene: dict, influencer: dict, product: 
             raise
 
 
+def _generate_composite_wavespeed(scene: dict, aspect_ratio: str = "9:16") -> str:
+    """Generate the composite via Wavespeed's Nano Banana Pro endpoint.
+
+    Returns the resulting image URL on success. Raises RuntimeError on failure
+    so the caller can fall back to Kie.
+    """
+    if not os.getenv("WAVESPEED_API_KEY", ""):
+        raise RuntimeError("WAVESPEED_API_KEY not set — cannot use Wavespeed nano-banana")
+
+    final_prompt = scene.get("nano_banana_prompt") or scene.get("prompt") or ""
+    images = [u for u in (scene.get("reference_image_url"), scene.get("product_image_url")) if u]
+    if not images or not final_prompt:
+        raise RuntimeError("Wavespeed nano-banana: missing prompt or reference images")
+
+    ar = aspect_ratio if aspect_ratio in ("9:16", "16:9", "1:1", "3:4", "4:3") else "9:16"
+
+    endpoint = "https://api.wavespeed.ai/api/v3/google/nano-banana-pro/edit"
+    headers = {
+        "Authorization": f"Bearer {os.getenv('WAVESPEED_API_KEY', '')}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "images": images,
+        "prompt": final_prompt,
+        "aspect_ratio": ar,
+        "resolution": "2k",
+        "output_format": "png",
+    }
+    print(f"      [WaveSpeed] Submitting composite to {endpoint} (aspect={ar}, refs={len(images)})")
+
+    resp = requests.post(endpoint, headers=headers, json=payload, timeout=60)
+    if resp.status_code != 200:
+        raise RuntimeError(f"WaveSpeed nano-banana submit error ({resp.status_code}): {resp.text[:300]}")
+    api = resp.json()
+    data = api.get("data", api)
+    pred_id = data.get("id")
+    if not pred_id:
+        raise RuntimeError(f"WaveSpeed nano-banana no prediction id: {str(api)[:300]}")
+    status_url = data.get("urls", {}).get("get") or f"https://api.wavespeed.ai/api/v3/predictions/{pred_id}/result"
+    print(f"      [WaveSpeed] Composite task: {pred_id}")
+
+    # Poll up to 5 minutes
+    for i in range(30):
+        time.sleep(10)
+        try:
+            r = requests.get(status_url, headers=headers, timeout=20)
+            j = r.json().get("data", r.json())
+        except Exception as e:
+            print(f"      [WaveSpeed] Poll error: {e}")
+            continue
+        status = (j.get("status") or "").lower()
+        if status in ("completed", "succeeded", "success"):
+            outputs = j.get("outputs") or []
+            url = outputs[0] if outputs else None
+            if url:
+                print(f"      ✨ Composite ready via WaveSpeed ({(i + 1) * 10}s)")
+                return url
+            raise RuntimeError("WaveSpeed nano-banana completed but no output URL")
+        if status in ("failed", "error", "canceled"):
+            raise RuntimeError(f"WaveSpeed nano-banana failed: {j.get('error') or j}")
+    raise RuntimeError("WaveSpeed nano-banana timed out after 5 min")
+
+
 def generate_composite_image(scene: dict, influencer: dict, product: dict, seed: int = None, aspect_ratio: str = "9:16") -> str:
     """
-    Calls Nano Banana Pro API to generate a composite image.
+    Calls Nano Banana Pro to generate a composite image. Wavespeed primary
+    (per WAVESPEED_PRIMARY env, default true) with Kie.ai fallback.
     Uses the dedicated prompt from scene builder.
 
     `aspect_ratio` must match the downstream video aspect ("9:16" or "16:9")
@@ -1178,6 +1412,14 @@ def generate_composite_image(scene: dict, influencer: dict, product: dict, seed:
     print("   🖼️ Generating composite image with Nano Banana Pro...")
     if seed:
         print(f"      🌱 Using Seed: {seed}")
+
+    # Wavespeed primary path (production default)
+    if (os.getenv("USE_WAVESPEED_PRIMARY") or os.getenv("WAVESPEED_PRIMARY") or "true").lower() == "true":
+        try:
+            return _generate_composite_wavespeed(scene, aspect_ratio=aspect_ratio)
+        except RuntimeError as e:
+            print(f"      [Router] WaveSpeed nano-banana failed: {e} — falling back to Kie.ai")
+            # fall through to Kie path below
     
     # Nano Banana Endpoint (assuming generic create task endpoint)
     endpoint = f"{config.KIE_API_URL}/api/v1/jobs/createTask"

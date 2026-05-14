@@ -277,7 +277,11 @@ def generate_video(
 # ---------------------------------------------------------------------------
 WAVESPEED_API_URL = "https://api.wavespeed.ai/api/v3"
 WAVESPEED_VEO_I2V_ENDPOINT = os.getenv(
-    "WAVESPEED_VEO_I2V_ENDPOINT", f"{WAVESPEED_API_URL}/google/veo3.1/reference-to-video"
+    # Standardized on the FAST variant — same tier as the primary Kie path
+    # and the only Wavespeed Veo endpoint that honors aspect_ratio reliably.
+    # Legacy default was f"{WAVESPEED_API_URL}/google/veo3.1/reference-to-video"
+    # which produced 16:9 outputs even when 9:16 was requested.
+    "WAVESPEED_VEO_I2V_ENDPOINT", f"{WAVESPEED_API_URL}/google/veo3.1-fast/image-to-video"
 )
 WAVESPEED_VEO_T2V_ENDPOINT = os.getenv(
     "WAVESPEED_VEO_T2V_ENDPOINT", f"{WAVESPEED_API_URL}/google/veo3.1-fast/text-to-video"
@@ -369,7 +373,7 @@ def _wavespeed_submit_and_poll(endpoint: str, payload: dict, label: str, max_pol
     raise RuntimeError(f"WaveSpeed {label} timed out after {max_poll_seconds}s")
 
 
-def generate_video_wavespeed(prompt, reference_image_url=None, duration=8, family="veo"):
+def generate_video_wavespeed(prompt, reference_image_url=None, duration=8, family="veo", aspect_ratio="9:16"):
     """Generate a video via WaveSpeed for Veo / Kling / Seedance families.
 
     Returns {"taskId": ..., "videoUrl": ...} on success.
@@ -377,6 +381,9 @@ def generate_video_wavespeed(prompt, reference_image_url=None, duration=8, famil
     """
     if not os.getenv("WAVESPEED_API_KEY"):
         raise RuntimeError("WAVESPEED_API_KEY not set")
+
+    # Wavespeed Veo Fast accepts only 9:16 or 16:9. Default to vertical UGC.
+    ar = aspect_ratio if aspect_ratio in ("9:16", "16:9") else "9:16"
 
     if family == "kling":
         if not reference_image_url:
@@ -417,10 +424,12 @@ def generate_video_wavespeed(prompt, reference_image_url=None, duration=8, famil
     if reference_image_url:
         if not WAVESPEED_VEO_I2V_ENDPOINT:
             raise RuntimeError("WAVESPEED_VEO_I2V_ENDPOINT not configured")
+        # FAST image-to-video takes a singular `image` (not `images` array)
+        # — the legacy `reference-to-video` shape was wrong for this endpoint.
         payload = {
-            "images": [reference_image_url],
+            "image": reference_image_url,
             "prompt": prompt,
-            "aspect_ratio": "9:16",
+            "aspect_ratio": ar,
             "resolution": "720p",
             "generate_audio": True,
             "negative_prompt": negative,
@@ -434,7 +443,7 @@ def generate_video_wavespeed(prompt, reference_image_url=None, duration=8, famil
         ws_duration = 8
     payload = {
         "prompt": prompt,
-        "aspect_ratio": "9:16",
+        "aspect_ratio": ar,
         "duration": ws_duration,
         "resolution": "720p",
         "generate_audio": True,
@@ -613,7 +622,10 @@ def generate_video_with_retry(
     if os.getenv("WAVESPEED_API_KEY"):
         try:
             print(f"      [Router] Falling back to WaveSpeed for family={family}")
-            return generate_video_wavespeed(prompt, reference_image_url, duration, family)
+            return generate_video_wavespeed(
+                prompt, reference_image_url, duration, family,
+                aspect_ratio=aspect_ratio or "9:16",
+            )
         except RuntimeError as ws_err:
             print(f"      [Router] WaveSpeed also failed: {ws_err}")
     if last_error:
