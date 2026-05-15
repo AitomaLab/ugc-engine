@@ -9,6 +9,34 @@ import re
 
 
 # ---------------------------------------------------------------------------
+# Spain-detection from free-form script text
+# ---------------------------------------------------------------------------
+def _detect_spain_from_text(text) -> bool:
+    """Heuristic: does this text look like it was written for a Spain speaker?
+
+    Used by the create_ugc_video tool as a fallback when the agent forgot
+    to forward language_accent — if the script contains unambiguous Spain
+    signals we set it server-side rather than letting the job row stay
+    NULL (which would default to LATAM in the downstream prompt builder).
+    """
+    if not text:
+        return False
+    t = str(text).lower()
+    if "€" in t:
+        return True
+    if any(w in t for w in (
+        "vosotros", "vosotras",
+        " vale", " móvil", " movil", " ordenador", " plátano", " platano",
+        " gilipollas", " coche", " zumo",
+    )):
+        return True
+    import re as _re
+    if _re.search(r"\b\w+(áis|éis|íais|isteis)\b", t):
+        return True
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Spanish accent line for Veo voice_type (Spain vs Latin America)
 # ---------------------------------------------------------------------------
 def spanish_accent_line(code) -> str:

@@ -64,14 +64,26 @@ def spanish_accent_line(code, hint_text=None) -> str:
         or "castellano" in norm
         or norm in ("es-es", "es_es")
     )
-    # Safety net: if the explicit `code` field is missing/blank but the
-    # script text itself carries unambiguous Spain signals (€ symbol,
-    # vosotros, peninsular vocab), prefer Castilian over the LATAM
-    # default. This catches jobs where the agent forgot to forward
-    # language_accent or the user typed prose like "spanish from spain"
-    # instead of clicking the picker.
-    if not is_spain and not norm and _detect_spain_from_text(hint_text):
+    # Detect explicit LATAM markers separately so we know whether to trust
+    # the `code` field as a deliberate LATAM choice vs treating it as a
+    # generic non-Spanish accent string ("neutral English") that should
+    # NOT block the safety net.
+    is_latam_explicit = any(w in norm for w in (
+        "latam", "latin", "mexican", "colombian", "argentine",
+        "argentino", "peruvian", "es-419",
+    ))
+    # Safety net: when there's no explicit Spain/LATAM marker (the
+    # influencer's stored accent might just say "neutral English" or be
+    # blank), fall back to detecting Spain signals from the script text
+    # itself. Catches the very common case where the agent forgets to
+    # forward language_accent OR the user typed Spain in prose without
+    # clicking the picker. Earlier check `not norm` was too strict — it
+    # only fired when the code arg was completely empty, but the call
+    # site does `ctx.get('language_accent') or ctx.get('accent')` so the
+    # arg is almost never empty.
+    if not is_spain and not is_latam_explicit and _detect_spain_from_text(hint_text):
         is_spain = True
+        print(f"      [spanish_accent_line] safety net fired: detected Spain from script text (code={code!r})")
     if is_spain:
         # Note: do NOT prefix with another label like "VOICE:" — this string
         # is wrapped inside `voice_type: …` by the prompt builders and a

@@ -2934,8 +2934,26 @@ async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
         f"script_id={kwargs.get('script_id')}, "
         f"product_id={kwargs.get('product_id')}, "
         f"video_language={kwargs.get('video_language', 'en')}, "
+        f"language_accent={kwargs.get('language_accent')!r}, "  # Fix 2: see whether the agent forwarded it
         f"duration={duration}, product_type={product_type}"
     )
+
+    # Fix 3: belt-and-suspenders override. If the agent forgot to forward
+    # language_accent but the script clearly contains Spain signals (€, vosotros,
+    # peninsular vocab), set it server-side so the worker writes the correct
+    # value to the job row instead of NULL → LATAM default downstream.
+    if (
+        kwargs.get("video_language") == "es"
+        and not kwargs.get("language_accent")
+        and kwargs.get("hook")
+    ):
+        try:
+            from prompts import _detect_spain_from_text
+            if _detect_spain_from_text(kwargs["hook"]):
+                kwargs["language_accent"] = "spain"
+                print(f"[create_ugc_video] auto-set language_accent='spain' from script signals (agent forgot to forward)")
+        except Exception as e:
+            print(f"[create_ugc_video] script-text accent detection failed (non-fatal): {e}")
 
     # Safety net: if the LLM forgot to run generate_scripts first, do it here so
     # the job pipeline never falls through to the random-library fallback.
