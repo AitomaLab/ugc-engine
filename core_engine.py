@@ -357,15 +357,35 @@ def run_generation_pipeline(
                 print(f"      [EXTEND] Extending with Scene {idx}: {ext_scene['name']}")
 
                 extension_prompt = ext_scene.get("video_animation_prompt") or ext_scene.get("prompt", "")
-                # Pass the previous scene's video URL so the Wavespeed-primary
-                # path (WAVESPEED_PRIMARY=true) can use video-extend, which
-                # takes a URL not a Kie task id. Kie fallback still uses task_id.
-                result = generate_scenes.extend_video_with_retry(
-                    task_id=current_task_id,
-                    prompt=extension_prompt,
-                    seed=ext_scene.get("seed"),
-                    video_url=current_video_url,
-                )
+                # Digital products: extend via image-to-video pinned on the
+                # PRIOR scene's last frame. Wavespeed video-extend has no
+                # access to the original NanoBanana composite, so the phone
+                # screen UI drifts to a random image mid-video. Re-running
+                # i2v with the last frame keeps the app interface, character
+                # pose and lighting locked across scenes.
+                # Physical products keep video-extend (no on-screen UI to pin).
+                aspect_ratio = fields.get("aspect_ratio") or "9:16"
+                if product_type == "digital":
+                    prior_chunk_path = extend_chunks[-1]
+                    result = generate_scenes.extend_via_lastframe_with_retry(
+                        prior_video_path=prior_chunk_path,
+                        prompt=extension_prompt,
+                        job_id=output_dir.name,
+                        scene_idx=idx,
+                        seed=ext_scene.get("seed"),
+                        aspect_ratio=aspect_ratio,
+                    )
+                else:
+                    # Pass the previous scene's video URL so the Wavespeed-
+                    # primary path (WAVESPEED_PRIMARY=true) can use
+                    # video-extend, which takes a URL not a Kie task id.
+                    # Kie fallback still uses task_id.
+                    result = generate_scenes.extend_video_with_retry(
+                        task_id=current_task_id,
+                        prompt=extension_prompt,
+                        seed=ext_scene.get("seed"),
+                        video_url=current_video_url,
+                    )
                 # The returned video contains ONLY the new extension segment
                 chunk_idx_path = output_dir / f"extended_chunk_{idx-1}.mp4"
                 generate_scenes.download_video(result["videoUrl"], chunk_idx_path)

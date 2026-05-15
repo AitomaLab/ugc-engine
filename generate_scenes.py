@@ -966,6 +966,98 @@ def _extend_video_wavespeed(video_url: str, prompt: str, seed=None) -> dict:
     raise RuntimeError("WaveSpeed extend timed out after 20 min")
 
 
+def _extract_last_frame_to_supabase(video_path, job_id: str, scene_idx: int) -> str:
+    """Extract the final frame of a local MP4, upload it to Supabase storage,
+    and return its public URL.
+
+    Used by the digital-product extend chain (extend_via_lastframe_with_retry)
+    so each next scene can be generated via image-to-video pinned on the prior
+    scene's last frame — preserving phone-screen UI, character pose, lighting,
+    and wardrobe across cuts. ffmpeg is bundled into the Modal image already.
+    """
+    import subprocess, tempfile, os
+    from pathlib import Path as _P
+    import storage_helper as _sh
+
+    video_path = _P(video_path)
+    tmp = _P(tempfile.mkdtemp(prefix="lastframe_"))
+    out_jpg = tmp / f"scene_{scene_idx}_lastframe.jpg"
+    # `-sseof -0.04` seeks to 40ms before EOF — fastest way to grab the
+    # final frame without decoding the whole clip. `-q:v 2` is high-quality
+    # JPEG (Veo i2v needs sharp input to keep app-UI text readable).
+    cmd = [
+        "ffmpeg", "-y", "-sseof", "-0.04",
+        "-i", str(video_path),
+        "-frames:v", "1", "-q:v", "2",
+        str(out_jpg),
+    ]
+    proc = subprocess.run(cmd, capture_output=True)
+    if proc.returncode != 0 or not out_jpg.exists():
+        # Fallback: re-decode with positive seek slightly before end via ffprobe duration.
+        # Some Wavespeed outputs have edit lists ffmpeg's -sseof can't navigate.
+        try:
+            dur_proc = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", str(video_path)],
+                capture_output=True, text=True, check=True,
+            )
+            dur = float(dur_proc.stdout.strip())
+        except Exception:
+            dur = 7.5  # Wavespeed fast clips are ~8s; bias slightly inside
+        retry = subprocess.run(
+            ["ffmpeg", "-y", "-ss", f"{max(0.1, dur - 0.05):.3f}",
+             "-i", str(video_path), "-frames:v", "1", "-q:v", "2", str(out_jpg)],
+            capture_output=True,
+        )
+        if retry.returncode != 0 or not out_jpg.exists():
+            raise RuntimeError(
+                f"ffmpeg lastframe extract failed: {(proc.stderr or b'')[-300:].decode('utf-8', errors='ignore')}"
+            )
+
+    dest = f"scene-frames/{job_id}/scene_{scene_idx}_lastframe.jpg"
+    url = _sh.upload_to_supabase_storage(str(out_jpg), "generated-videos", dest)
+    print(f"      [EXTEND-i2v] Extracted last frame: {dest}")
+    return url
+
+
+def extend_via_lastframe_with_retry(
+    prior_video_path,
+    prompt: str,
+    job_id: str,
+    scene_idx: int,
+    seed=None,
+    aspect_ratio: str = "9:16",
+    max_retries: int = 3,
+) -> dict:
+    """Extend a multi-scene video via image-to-video pinned on the prior
+    scene's last frame, instead of Wavespeed video-extend.
+
+    Used for digital-product UGC (where the phone screen UI from the
+    composite must NOT drift across scenes — video-extend re-imagines it).
+    The last frame already contains the correct character pose, app UI
+    state, lighting and wardrobe, so the next clip starts from that exact
+    visual state.
+
+    Returns {'taskId', 'videoUrl'} matching extend_video_with_retry.
+    """
+    last_err = None
+    for attempt in range(max_retries):
+        try:
+            frame_url = _extract_last_frame_to_supabase(prior_video_path, job_id, scene_idx)
+            print(f"      [EXTEND-i2v] Submitting scene {scene_idx} as image-to-video (lastframe URL set)")
+            return generate_video_wavespeed(
+                prompt=prompt,
+                reference_image_url=frame_url,
+                aspect_ratio=aspect_ratio,
+            )
+        except Exception as e:
+            last_err = e
+            print(f"      [EXTEND-i2v] Attempt {attempt + 1}/{max_retries} failed: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(5 * (attempt + 1))
+    raise RuntimeError(f"extend_via_lastframe failed after {max_retries} attempts: {last_err}")
+
+
 def extend_video_with_retry(task_id, prompt, seed=None, model="veo-3.1-fast", max_retries=3, video_url: str = None):
     """
     Extend video with automatic retry on transient errors.
