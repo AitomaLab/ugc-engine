@@ -125,8 +125,52 @@ def _number_to_words(n: int) -> str:
     return str(n)
 
 
+def _looks_spanish(text: str) -> bool:
+    """Cheap signal: does this text look like Spanish?
+
+    We use this to skip the English-only number-to-words expansion below
+    when running inside a Spanish dialogue — Veo pronounces "80 euros" or
+    "80€" correctly in Spanish on its own, but if we expand to "eighty
+    euros" inside Spanish text the model briefly switches language and
+    the audio destabilizes.
+    """
+    if not text:
+        return False
+    t = str(text).lower()
+    # Diacritics or ñ
+    if any(ch in t for ch in "áéíóúñ¿¡"):
+        return True
+    # Common Spanish stop words / short markers
+    spanish_markers = {
+        " la ", " el ", " los ", " las ", " que ", " una ", " uno ",
+        " para ", " con ", " sin ", " pero ", " esta ", " esto ", " esa ",
+        " del ", " por ", " muy ", " más ", " mas ", " sin ",
+    }
+    padded = f" {t} "
+    if any(m in padded for m in spanish_markers):
+        return True
+    return False
+
+
 def _expand_numbers_and_symbols(text: str) -> str:
-    """Expand numbers with symbols into spoken-word equivalents before sanitization."""
+    """Expand numbers with symbols into spoken-word equivalents before sanitization.
+
+    English-only by default. When the surrounding text looks Spanish
+    (_looks_spanish), we localize currency symbols to the Spanish word
+    ("80€" -> "80 euros") but leave digits intact — Veo pronounces digits
+    correctly in Spanish on its own. Without this guard, calling the
+    English expansion mid-Spanish-sentence injects "eighty euros", Veo
+    briefly switches languages, and the audio destabilizes.
+    """
+    if _looks_spanish(text):
+        text = re.sub(r"(\d+)\s*€", lambda m: f"{m.group(1)} euros", text)
+        text = re.sub(r"€\s*(\d+)", lambda m: f"{m.group(1)} euros", text)
+        text = re.sub(r"(\d+)\s*\$", lambda m: f"{m.group(1)} dólares", text)
+        text = re.sub(r"\$\s*(\d+)", lambda m: f"{m.group(1)} dólares", text)
+        text = re.sub(r"(\d+)\s*£", lambda m: f"{m.group(1)} libras", text)
+        text = re.sub(r"£\s*(\d+)", lambda m: f"{m.group(1)} libras", text)
+        text = re.sub(r"(\d+)\s*%", lambda m: f"{m.group(1)} por ciento", text)
+        return text
     # 23% -> twenty-three percent
     text = re.sub(r"(\d+)%", lambda m: f"{_number_to_words(int(m.group(1)))} percent", text)
     # $10 -> ten dollars

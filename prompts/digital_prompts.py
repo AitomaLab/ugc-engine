@@ -126,40 +126,98 @@ def build_15s(dur, app_clip, ctx):
 
 
 def _split_items_proportionally(items, num_veo_scenes, ctx):
-    """Split sentences or words proportionally based on AI scene durations."""
+    """Split a list of words (or sentences) into N scenes by WORD COUNT,
+    snapping to sentence boundaries when one is nearby.
+
+    Previous behavior split by ITEM COUNT proportional to scene durations,
+    which produced massively uneven scenes when the input was sentences of
+    very different lengths (a 6-word sentence + a 29-word sentence both
+    counted as "1 item"). The result was a 6-word scene with 7 seconds of
+    Veo-invented filler hallucinations and a 29-word scene that had to
+    rush at >3.5 words/sec and degraded badly.
+
+    New algorithm:
+      1. Flatten everything to a word list (joining sentences with the
+         original punctuation preserved).
+      2. Compute target words per scene = total_words / num_scenes,
+         weighted by per-scene duration (Veo = equal 8s, Seedance varies).
+      3. Walk the word list; once we've collected ~target words for the
+         current scene, snap forward/back to the nearest sentence-ending
+         punctuation (.!?) within ±20% of target. If no boundary is
+         within tolerance, break mid-sentence rather than ship a wildly
+         imbalanced split.
+    """
     ai_durations = []
     model_api = ctx.get("model_api", "")
-    
+
     if "seedance" in model_api.lower():
         import config
         s_cfg = config.get_seedance_durations("30s", "digital")
         for sc in s_cfg["scenes"]:
-            if sc.get("has_video_input") is not None:  # It's an AI scene
+            if sc.get("has_video_input") is not None:
                 ai_durations.append(sc["duration"])
         ai_durations = ai_durations[:num_veo_scenes]
     else:
-        # Veo uses equal splits, typically 8s each
         ai_durations = [8] * num_veo_scenes
-
-    # Fallback to equal weights if config doesn't match
     while len(ai_durations) < num_veo_scenes:
         ai_durations.append(8)
-        
-    total_ai_dur = sum(ai_durations)
-    if total_ai_dur == 0:
-        total_ai_dur = 1
+
+    total_ai_dur = sum(ai_durations) or 1
+
+    # Reconstruct the raw text and split into words preserving punctuation.
+    full_text = " ".join(items).strip()
+    if not full_text:
+        return [""] * num_veo_scenes
+    words = full_text.split()
+    total_words = len(words)
+    if total_words == 0:
+        return [""] * num_veo_scenes
+
+    # If we only have a handful of words for many scenes, fall back to
+    # roughly equal slices — sentence-boundary snapping is meaningless.
+    if total_words < num_veo_scenes * 3:
+        parts = []
+        chunk = max(1, total_words // num_veo_scenes)
+        for i in range(num_veo_scenes):
+            start = i * chunk
+            end = start + chunk if i < num_veo_scenes - 1 else total_words
+            parts.append(" ".join(words[start:end]))
+        return parts
+
+    # Per-scene word targets weighted by duration.
+    targets = [int(round(total_words * (d / total_ai_dur))) for d in ai_durations]
+    # Distribute rounding remainder so targets sum to total_words.
+    while sum(targets) < total_words:
+        targets[targets.index(min(targets))] += 1
+    while sum(targets) > total_words:
+        targets[targets.index(max(targets))] -= 1
 
     parts = []
-    start_idx = 0
+    cursor = 0
     for i in range(num_veo_scenes):
         if i == num_veo_scenes - 1:
-            chunk = " ".join(items[start_idx:])
-        else:
-            weight = ai_durations[i] / total_ai_dur
-            chunk_len = max(1, int(round(len(items) * weight)))
-            chunk = " ".join(items[start_idx:start_idx + chunk_len])
-            start_idx += chunk_len
-        parts.append(chunk)
+            parts.append(" ".join(words[cursor:]))
+            break
+        target = targets[i]
+        boundary = cursor + target  # default break point
+        # Look for a sentence-ending word within ±20% of target
+        tolerance = max(2, int(target * 0.2))
+        best = None
+        for offset in range(-tolerance, tolerance + 1):
+            candidate = cursor + target + offset
+            if candidate <= cursor or candidate >= total_words:
+                continue
+            # word at index `candidate - 1` is the last word of the chunk;
+            # if it ends with .!? (after stripping closing quotes/parens)
+            # treat it as a clean sentence boundary.
+            tail = words[candidate - 1].rstrip('"\')]')
+            if tail and tail[-1] in ".!?":
+                if best is None or abs(offset) < abs(best - cursor - target):
+                    best = candidate
+        if best is not None:
+            boundary = best
+        parts.append(" ".join(words[cursor:boundary]))
+        cursor = boundary
     return parts
 
 
@@ -387,7 +445,7 @@ def build_30s(dur, app_clip, ctx, product=None, influencer=None):
             f"voice_type: casual, conversational {_accent}, {ctx['tone'].lower()} tone\n"
             f"audio: character speaks clearly and audibly\n"
             f"style: raw authentic TikTok/Reels UGC, candid, not polished\n"
-            f"speech_constraint: speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, speak at a relaxed unhurried natural pace filling the full duration of the video, do not rush\n"
+            f"speech_constraint: speak ONLY the exact dialogue words provided — do NOT add, invent, paraphrase, or improvise ANY additional words, syllables, filler sounds (uh, um, eh), or made-up vocabulary; if the dialogue ends before the clip's full duration, character must STAY COMPLETELY SILENT (mouth closed, no sound) for the remaining time rather than fabricate words to fill silence; crystal-clear pronunciation, absolutely no stuttering, no duplicate syllables, no auditory hallucinations; pace is relaxed and natural\n"
             f"negative: no airbrushed skin, no studio lighting, no camera panning, no scene wipe, no transitions, "
             f"no extra fingers, no silent video, no mutated hands, no stuttering, "
             f"no subtitles, no captions, no text overlays, no burned-in text, no on-screen text, no words rendered on screen, "
@@ -431,9 +489,9 @@ def build_30s(dur, app_clip, ctx, product=None, influencer=None):
         # Extension scene: prompt includes device context so Veo maintains it
         env = ctx.get("setting", "natural environment matching the background visible in the reference image")
         if is_scene_2_last:
-            speech_constraint = "speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, speaking pace is consistent, MUST finish speaking all words entirely 1.5 seconds before the end of the video, character remains completely silent and just smiles warmly during the final 1.5 seconds"
+            speech_constraint = "speak ONLY the exact dialogue words provided — do NOT add, invent, paraphrase, or improvise ANY additional words, syllables, filler sounds, or made-up vocabulary even if the dialogue ends early; crystal-clear pronunciation, absolutely no stuttering, no duplicate syllables, no auditory hallucinations; pace is consistent; MUST finish speaking all words entirely 1.5 seconds before the end of the video, character then remains COMPLETELY SILENT (mouth closed, no sound) and just smiles warmly during the final 1.5+ seconds — never invent words to fill the trailing silence"
         else:
-            speech_constraint = "speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, speak at a relaxed unhurried natural pace filling the full duration of the video, do not rush"
+            speech_constraint = "speak ONLY the exact dialogue words provided — do NOT add, invent, paraphrase, or improvise ANY additional words, syllables, filler sounds (uh, um, eh), or made-up vocabulary; if the dialogue ends before the clip's full duration, character must STAY COMPLETELY SILENT (mouth closed, no sound) for the remaining time rather than fabricate words to fill silence; crystal-clear pronunciation, absolutely no stuttering, no duplicate syllables, no auditory hallucinations; pace is relaxed and natural"
 
         veo_prompt_with_device = (
                 f"dialogue: {script_text}\n"
