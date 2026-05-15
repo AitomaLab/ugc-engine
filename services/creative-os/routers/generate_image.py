@@ -1329,13 +1329,38 @@ async def generate_identity(
             if not raw or refusal2:
                 raise ValueError("GPT-4o declined to analyze this image. Please try a different reference photo.")
 
-        # Extract JSON (may be wrapped in markdown fences when not using json_object mode)
+        # Extract JSON. Two failure modes to handle:
+        #   (a) GPT wraps JSON in ```json fences``` (when json_object mode is off)
+        #   (b) GPT returns a polite prose refusal with no `refusal` field set —
+        #       a short, non-JSON answer to "describe this person" is almost
+        #       always a soft refusal we should surface as 422, not crash on
+        #       the JSONDecodeError.
         cleaned = raw.strip()
         if cleaned.startswith("```"):
-            # Strip ```json ... ``` wrapper
             lines = cleaned.split("\n")
             cleaned = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-        result = json.loads(cleaned)
+        try:
+            result = json.loads(cleaned)
+        except json.JSONDecodeError:
+            # Try to fish a {...} block out of prose before giving up.
+            import re as _re
+            m = _re.search(r"\{.*\}", cleaned, _re.DOTALL)
+            if m:
+                try:
+                    result = json.loads(m.group(0))
+                except json.JSONDecodeError:
+                    result = None
+            else:
+                result = None
+            if result is None:
+                # Treat as soft refusal — short non-JSON answers to a
+                # describe-this-person prompt are nearly always content-policy
+                # refusals dressed up as prose.
+                print(f"[Generate Identity] Non-JSON response (likely soft refusal): {cleaned[:200]}")
+                raise ValueError(
+                    "GPT-4o declined to analyze this image (returned a non-JSON response). "
+                    "Please try a different reference photo — front-facing, well-lit, no text overlays."
+                )
 
         description = result.get("description", "")
         nano_prompt = result.get("nano_banana_prompt", "")

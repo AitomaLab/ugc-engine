@@ -171,7 +171,17 @@ export function InfluencerModal({ isOpen, onClose, initialData, onSave, defaultI
             }
         } catch (err) {
             console.error('Generate identity failed:', err);
-            alert('Failed to generate identity. Please try again.');
+            // Surface the backend's `detail` field (set on every HTTPException
+            // in routers/generate_image.py) so the user can tell a content
+            // refusal apart from a transient server error. Falls back to the
+            // generic message when the error has no detail (network / timeout).
+            const detail =
+                (err as { body?: { detail?: string }; message?: string })?.body?.detail
+                ?? (err as { message?: string })?.message
+                ?? '';
+            alert(detail
+                ? `Failed to generate identity: ${detail}`
+                : 'Failed to generate identity. Please try again.');
         } finally {
             setGeneratingIdentity(false);
         }
