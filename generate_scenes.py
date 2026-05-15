@@ -653,7 +653,7 @@ def generate_video_wavespeed(prompt, reference_image_url=None, duration=8, aspec
     raise RuntimeError("WaveSpeed Veo 3.1 generation timed out after 20 minutes")
 
 
-def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, first_frame_url=None, return_last_frame=False, duration=12, max_retries=3, kling_elements=None, multi_prompt=None, aspect_ratio=None):
+def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, first_frame_url=None, return_last_frame=False, duration=12, max_retries=3, kling_elements=None, multi_prompt=None, aspect_ratio=None, force_kie: bool = False):
     """
     Smart video generation with pre-flight health routing.
 
@@ -685,8 +685,18 @@ def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, 
                 raise
 
     # ── Veo models: pre-flight health probe → smart routing ──
-    primary = provider_router.choose_provider(family)
-    secondary = "wavespeed" if primary == "kie" else "kie"
+    # `force_kie=True` overrides the env-based router. Used by digital-product
+    # UGC scene chains where Kie's stateful extend (taskId-based continuation)
+    # is mandatory — Wavespeed's stateless video-extend re-imagines the
+    # character / phone screen on every scene because it loses access to the
+    # original NanoBanana composite.
+    if force_kie:
+        primary = "kie"
+        secondary = "wavespeed"
+        print(f"      [Router] force_kie=True → bypassing Wavespeed primary")
+    else:
+        primary = provider_router.choose_provider(family)
+        secondary = "wavespeed" if primary == "kie" else "kie"
 
     has_wavespeed = bool(os.getenv("WAVESPEED_API_KEY", ""))
     providers_to_try = [primary]
@@ -1058,7 +1068,7 @@ def extend_via_lastframe_with_retry(
     raise RuntimeError(f"extend_via_lastframe failed after {max_retries} attempts: {last_err}")
 
 
-def extend_video_with_retry(task_id, prompt, seed=None, model="veo-3.1-fast", max_retries=3, video_url: str = None):
+def extend_video_with_retry(task_id, prompt, seed=None, model="veo-3.1-fast", max_retries=3, video_url: str = None, force_kie: bool = False):
     """
     Extend video with automatic retry on transient errors.
     Retries on: 500 errors, internal errors, timeouts, and unknown generation errors.
@@ -1071,7 +1081,18 @@ def extend_video_with_retry(task_id, prompt, seed=None, model="veo-3.1-fast", ma
     """
     RETRIABLE_PATTERNS = ("500", "internal error", "unknown generation error", "timed out", "timeout")
 
-    wavespeed_primary = (os.getenv("USE_WAVESPEED_PRIMARY") or os.getenv("WAVESPEED_PRIMARY") or "true").lower() == "true"
+    # `force_kie=True` overrides WAVESPEED_PRIMARY. Used by digital-product
+    # UGC chains where the original Kie task_id MUST be reused so Veo gets
+    # back the same composite/seed/embeddings (true continuation). Wavespeed's
+    # video-extend is stateless — it re-imagines the character / phone screen
+    # because it only sees the prior video file, not the original generation
+    # state. See plan: kie-extend-for-digital.
+    wavespeed_primary = (
+        not force_kie
+        and (os.getenv("USE_WAVESPEED_PRIMARY") or os.getenv("WAVESPEED_PRIMARY") or "true").lower() == "true"
+    )
+    if force_kie:
+        print(f"      [Router] force_kie=True → extending via Kie (taskId={task_id[:8] if task_id else 'NONE'}...)")
     if wavespeed_primary and video_url:
         try:
             print(f"      [Router] WAVESPEED_PRIMARY=true → extending via Wavespeed")
@@ -1598,9 +1619,14 @@ def generate_composite_image(scene: dict, influencer: dict, product: dict, seed:
     raise RuntimeError("Nano Banana generation timed out")
 
 
-def animate_image(image_url: str, scene: dict) -> dict:
+def animate_image(image_url: str, scene: dict, force_kie: bool = False) -> dict:
     """Calls Veo 3.1 to animate a composite image.
-    Returns dict with 'taskId' and 'videoUrl' keys."""
+
+    `force_kie=True` routes scene 1 to Kie so the chain's downstream
+    extend calls can reuse the Kie task_id for stateful continuation
+    (digital-product UGC). Wavespeed scene 1 -> Kie extend doesn't work
+    because Kie can't extend a Wavespeed task_id.
+    """
     print("   [ANIM] Animating composite image with Veo 3.1...")
 
     # Use the script part as the prompt for animation
@@ -1609,7 +1635,8 @@ def animate_image(image_url: str, scene: dict) -> dict:
     result = generate_video_with_retry(
         prompt=prompt,
         reference_image_url=image_url,
-        model_api="veo-3.1-fast"
+        model_api="veo-3.1-fast",
+        force_kie=force_kie,
     )
     return result
 

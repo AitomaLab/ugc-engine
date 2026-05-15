@@ -323,9 +323,15 @@ def run_generation_pipeline(
                 # Preview: show composite image immediately
                 if status_callback:
                     status_callback(f"Gen: Animating Scene (1/{len(scenes)})", preview_url=composite_url, preview_type="image")
+                # Digital products: route scene 1 to Kie so the downstream
+                # extend chain can reuse the Kie task_id for stateful
+                # continuation (Wavespeed extend is stateless and re-imagines
+                # the character + phone UI on every scene).
+                _force_kie_for_chain = (product_type == "digital")
                 result = generate_scenes.animate_image(
                     image_url=composite_url,
-                    scene=scene_1
+                    scene=scene_1,
+                    force_kie=_force_kie_for_chain,
                 )
                 current_task_id = result["taskId"]
                 current_video_url = result["videoUrl"]
@@ -357,35 +363,22 @@ def run_generation_pipeline(
                 print(f"      [EXTEND] Extending with Scene {idx}: {ext_scene['name']}")
 
                 extension_prompt = ext_scene.get("video_animation_prompt") or ext_scene.get("prompt", "")
-                # Digital products: extend via image-to-video pinned on the
-                # PRIOR scene's last frame. Wavespeed video-extend has no
-                # access to the original NanoBanana composite, so the phone
-                # screen UI drifts to a random image mid-video. Re-running
-                # i2v with the last frame keeps the app interface, character
-                # pose and lighting locked across scenes.
-                # Physical products keep video-extend (no on-screen UI to pin).
-                aspect_ratio = fields.get("aspect_ratio") or "9:16"
-                if product_type == "digital":
-                    prior_chunk_path = extend_chunks[-1]
-                    result = generate_scenes.extend_via_lastframe_with_retry(
-                        prior_video_path=prior_chunk_path,
-                        prompt=extension_prompt,
-                        job_id=output_dir.name,
-                        scene_idx=idx,
-                        seed=ext_scene.get("seed"),
-                        aspect_ratio=aspect_ratio,
-                    )
-                else:
-                    # Pass the previous scene's video URL so the Wavespeed-
-                    # primary path (WAVESPEED_PRIMARY=true) can use
-                    # video-extend, which takes a URL not a Kie task id.
-                    # Kie fallback still uses task_id.
-                    result = generate_scenes.extend_video_with_retry(
-                        task_id=current_task_id,
-                        prompt=extension_prompt,
-                        seed=ext_scene.get("seed"),
-                        video_url=current_video_url,
-                    )
+                # Digital products: force Kie for the entire extend chain.
+                # Kie's extend is STATEFUL — it reuses the original generation's
+                # composite/seed/embeddings via task_id, so the character +
+                # phone UI stay pinned across scenes. Wavespeed's extend is
+                # stateless (only sees the prior video file), causing the
+                # character and phone screen to drift / hallucinate.
+                # Physical products keep Wavespeed-primary with video-extend
+                # — no on-screen UI to pin and continuity is acceptable there.
+                _force_kie = (product_type == "digital")
+                result = generate_scenes.extend_video_with_retry(
+                    task_id=current_task_id,
+                    prompt=extension_prompt,
+                    seed=ext_scene.get("seed"),
+                    video_url=current_video_url,
+                    force_kie=_force_kie,
+                )
                 # The returned video contains ONLY the new extension segment
                 chunk_idx_path = output_dir / f"extended_chunk_{idx-1}.mp4"
                 generate_scenes.download_video(result["videoUrl"], chunk_idx_path)
