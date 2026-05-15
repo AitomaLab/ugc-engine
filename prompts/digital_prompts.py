@@ -336,7 +336,7 @@ def build_30s(dur, app_clip, ctx, product=None, influencer=None):
         device_str = "iPhone" if is_mobile else "laptop screen"
         product_name = product.get("name") or product.get("brand_name") or "the app"
         device_action = (
-            "standing naturally in front of the camera, PHYSICALLY holding an iPhone in one hand with the FRONT screen facing directly toward the camera and viewer, pointing at the phone screen with the other hand"
+            "standing naturally in front of the camera, PHYSICALLY holding an iPhone in one hand with the FRONT screen facing directly toward the camera and viewer, the other hand resting naturally at the side or holding the phone steady from below — DO NOT touch, tap, swipe or interact with the phone screen at any point"
             if is_mobile else
             "sitting at a desk, pointing at a laptop screen facing the camera"
         )
@@ -379,17 +379,20 @@ def build_30s(dur, app_clip, ctx, product=None, influencer=None):
             f"genuine excited expression, maintains eye contact with camera\n"
             f"character: {ctx['age']} {ctx['gender'].lower()}, {ctx['visuals']}, "
             f"natural skin texture with visible pores, not airbrushed\n"
-            f"device: the {device_str} is PHYSICALLY held by the character, the FRONT screen faces the camera, the screen is fully visible to the viewer showing the app interface from the provided product image physically ON the screen of the device, the app interface is NOT floating in mid-air\n"
+            f"device: the {device_str} is PHYSICALLY held by the character, the FRONT screen faces the camera, the screen is fully visible to the viewer showing the app interface from the provided product image physically ON the screen of the device, the app interface is NOT floating in mid-air, the screen content is COMPLETELY STATIC throughout the clip — IDENTICAL pixel content from frame 1 to the final frame, character must NOT touch, tap, swipe, scroll or interact with the screen, the app UI must NOT change, transition, animate, navigate, or update at any point\n"
             f"camera: amateur UGC video, stationary POV camera, character does NOT hold the filming camera, locked camera, NO camera movement, NO panning\n"
             f"setting: {env}, slightly blurry background\n"
-            f"emotion: genuine excitement, authentic discovery reaction\n"
+            f"emotion: warm and natural, calm relaxed face with regular natural blinking every 2-4 seconds, soft eye contact (NOT wide-eyed, NOT a frozen surprised expression)\n"
             f"voice_type: casual, conversational {_accent}, {ctx['tone'].lower()} tone\n"
             f"audio: character speaks clearly and audibly\n"
             f"style: raw authentic TikTok/Reels UGC, candid, not polished\n"
             f"speech_constraint: speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, speak at a relaxed unhurried natural pace filling the full duration of the video, do not rush\n"
             f"negative: no airbrushed skin, no studio lighting, no camera panning, no scene wipe, no transitions, "
             f"no extra fingers, no silent video, no mutated hands, no stuttering, "
-            f"no subtitles, no captions, no text overlays, no burned-in text, no on-screen text, no words rendered on screen"
+            f"no subtitles, no captions, no text overlays, no burned-in text, no on-screen text, no words rendered on screen, "
+            f"no screen content changes, no UI transitions, no app navigation, no screen taps, no swipes, no scrolling, "
+            f"no different app screen, no replacing the visible app interface, no morphing the screen content, "
+            f"no wide-eyed stare, no bulging eyes, no unblinking gaze, no frozen surprised expression"
         )
 
         scenes.append({

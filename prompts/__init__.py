@@ -94,7 +94,13 @@ def _expand_numbers_and_symbols(text: str) -> str:
     # $10 -> ten dollars
     text = re.sub(r"\$(\d+)", lambda m: f"{_number_to_words(int(m.group(1)))} dollars", text)
     # €10 -> ten euros
-    text = re.sub(r"\u20ac(\d+)", lambda m: f"{_number_to_words(int(m.group(1)))} euros", text)
+    text = re.sub(r"\u20ac\s*(\d+)", lambda m: f"{_number_to_words(int(m.group(1)))} euros", text)
+    # 10\u20ac -> ten euros (Spanish/European usage trails the symbol \u2014 without
+    # this branch "80\u20ac" became "80" after sanitize stripped the symbol,
+    # leaving an unfinished sentence Veo stumbled over.)
+    text = re.sub(r"(\d+)\s*\u20ac", lambda m: f"{_number_to_words(int(m.group(1)))} euros", text)
+    # 10$ trailing (rare in English, common in casual writing)
+    text = re.sub(r"(\d+)\s*\$", lambda m: f"{_number_to_words(int(m.group(1)))} dollars", text)
     # #1 -> number one
     text = re.sub(r"#(\d+)", lambda m: f"number {_number_to_words(int(m.group(1)))}", text)
     return text
