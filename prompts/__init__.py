@@ -7,7 +7,37 @@ import re
 # ---------------------------------------------------------------------------
 # Spanish accent line for Veo voice_type (Spain vs Latin America)
 # ---------------------------------------------------------------------------
-def spanish_accent_line(code) -> str:
+def _detect_spain_from_text(text) -> bool:
+    """Heuristic: does this text look like it was written by/for a Spain
+    speaker? Used as a safety net when the explicit `language_accent`
+    field is missing — we'd rather pick Castilian over LATAM when there
+    are unambiguous Spain signals in the script itself.
+
+    Triggers on:
+      - € symbol (only Eurozone Spanish-speaking country is Spain)
+      - vosotros / -áis / -éis verb conjugations (Spain-only)
+      - Spain vocabulary: vale, móvil, ordenador, plátano, gilipollas,
+        coche (LATAM uses "carro"), zumo (LATAM uses "jugo")
+    """
+    if not text:
+        return False
+    t = str(text).lower()
+    if "€" in t:
+        return True
+    if any(w in t for w in (
+        "vosotros", "vosotras",
+        " vale", " móvil", " movil", " ordenador", " plátano", " platano",
+        " gilipollas", " coche", " zumo",
+    )):
+        return True
+    # Conjugation suffixes that only appear in vosotros forms
+    import re as _re
+    if _re.search(r"\b\w+(áis|éis|íais|isteis)\b", t):
+        return True
+    return False
+
+
+def spanish_accent_line(code, hint_text=None) -> str:
     """Return the `voice_type:` accent description for a Spanish video.
 
     Veo 3.1 defaults to neutral Latin American Spanish whenever the prompt
@@ -34,6 +64,14 @@ def spanish_accent_line(code) -> str:
         or "castellano" in norm
         or norm in ("es-es", "es_es")
     )
+    # Safety net: if the explicit `code` field is missing/blank but the
+    # script text itself carries unambiguous Spain signals (€ symbol,
+    # vosotros, peninsular vocab), prefer Castilian over the LATAM
+    # default. This catches jobs where the agent forgot to forward
+    # language_accent or the user typed prose like "spanish from spain"
+    # instead of clicking the picker.
+    if not is_spain and not norm and _detect_spain_from_text(hint_text):
+        is_spain = True
     if is_spain:
         # Note: do NOT prefix with another label like "VOICE:" — this string
         # is wrapped inside `voice_type: …` by the prompt builders and a

@@ -22,7 +22,8 @@ def build_scene_1_veo_prompt(ctx, script_part, product_desc="product", is_last_s
     video_language = ctx.get('video_language', 'en')
     if video_language == 'es':
         accent_str = spanish_accent_line(
-            ctx.get('language_accent') or ctx.get('accent')
+            ctx.get('language_accent') or ctx.get('accent'),
+            hint_text=script_part or ctx.get('hook'),
         )
 
     dialogue = sanitize_dialogue(script_part) if script_part else "oh my god you guys have to see this"

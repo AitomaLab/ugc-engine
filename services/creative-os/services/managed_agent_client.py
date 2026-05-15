@@ -2977,6 +2977,12 @@ async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
         "hook": kwargs.get("hook"),
         "campaign_name": kwargs.get("campaign_name"),
         "video_language": kwargs.get("video_language", "en"),
+        # Spanish accent subtype ("spain" / "latam") — forwarded into the
+        # job row so spanish_accent_line() in the prompt builders picks
+        # Castilian wording instead of the LATAM default. Without this
+        # line the agent's argument was being silently dropped before
+        # insert (every job ended up with language_accent=NULL).
+        "language_accent": kwargs.get("language_accent"),
         # Default OFF so the bare assembled video delivers fast (~5-7 min)
         # instead of waiting on Suno music (~2 min) and Whisper + Remotion
         # caption burn (~5-8 min) before showing the user anything. The
@@ -3055,6 +3061,7 @@ async def _tool_create_clone_video(ctx: ToolContext, **kwargs: Any) -> str:
         "product_id": kwargs.get("product_id"),
         "product_type": kwargs.get("product_type", "physical"),
         "video_language": kwargs.get("video_language", "en"),
+        "language_accent": kwargs.get("language_accent"),
         "subtitles_enabled": kwargs.get("subtitles_enabled", True),
         "project_id": ctx.project_id,
     }
@@ -3130,6 +3137,7 @@ async def _tool_create_bulk_campaign(ctx: ToolContext, **kwargs: Any) -> str:
         "product_id": kwargs.get("product_id"),
         "campaign_name": kwargs.get("campaign_name"),
         "video_language": kwargs.get("video_language", "en"),
+        "language_accent": kwargs.get("language_accent"),
         "subtitles_enabled": kwargs.get("subtitles_enabled", True),
         "music_enabled": kwargs.get("music_enabled", True),
     }
