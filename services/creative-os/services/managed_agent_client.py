@@ -287,17 +287,20 @@ You MUST do this check BEFORE starting any generation. Do NOT skip it.
 
 **Full UGC video (15-30s)**: list_project_assets → check if the user supplied their own script/dialogue text.
   - **User provided script**: When the user wrote actual dialogue lines (hook, body, CTA, or any spoken text), pass ALL of it verbatim as the `hook` argument to generate_video or create_ugc_video. The `hook` field carries the user's EXACT spoken words — NEVER paraphrase, rewrite, or embellish the user's dialogue. Put your visual/action direction in the `prompt` field instead. The pipeline will use `hook` as-is for the character's speech and enhance only the visual direction from `prompt`.
-  - **Script length auto-validation**: The create_ugc_video and generate_video tools automatically validate the hook's word count against the target duration BEFORE charging credits. If validation fails, the tool returns a `script_validation: "failed"` response with issues, suggestions, and the ideal word budget. When you receive this:
-    1. Present the issue to the user clearly (e.g. "Your script is 15 words, but a 30s video needs 45-100 words").
-    2. Suggest 2-3 alternative scripts that preserve the user's core message but adjust the length to fit. Each suggestion should be close to the `budget.ideal` word count.
-    3. Ask the user to pick one, adjust their script, or confirm they want to proceed as-is (note: short scripts cause dead silence, long scripts cause rushing/cutoff).
-    4. Once the user provides an adjusted script or confirms, call the tool again with the updated hook.
-    Word count guidelines for reference (the tool enforces these):
+  - **Script length auto-validation — DO NOT pre-judge from memory.** The create_ugc_video / generate_video tools validate the hook's word count against the target duration server-side BEFORE charging credits. **You MUST NOT** make any assertion about whether a script "fits" a duration before calling the tool — the math depends on `product_type` (digital videos end in a silent app-clip B-roll, so the dialogue budget is much smaller than for physical) and `app_clip_duration`, neither of which you can compute reliably. Always call the tool with `confirmed=false` first; trust its `script_validation` response over your own estimate.
+    Word count guidelines (the tool enforces the exact numbers; these are for your reasoning only):
     - 5s clip → 10-18 words (ideal ~14)
     - 8s clip → 18-28 words (ideal ~22)
-    - 10s clip → 22-35 words (ideal ~28)
-    - 15s video → 30-50 words (ideal ~40, split across 2 scenes)
-    - 30s video → 45-100 words (ideal ~70, split across 3-4 scenes)
+    - 15s **physical** video → 30-50 words (ideal ~40, 2 spoken Veo scenes)
+    - 15s **digital** video → ~15-30 words (ideal ~22, ONLY 1 spoken Veo scene of ~8s — the rest is the user's silent app-clip footage)
+    - 30s **physical** video → 45-100 words (ideal ~70, 3-4 spoken Veo scenes)
+    - 30s **digital** video → 45-66 words (ideal ~55, 3 spoken Veo scenes of ~8s each + silent app-clip tail)
+    When validation FAILS, follow this auto-escalation logic instead of immediately asking the user to choose:
+    1. **Script too long for the requested duration** → check the next-larger viable duration on the SAME product type. If the script fits there, propose ONE clear option ("Tu guion son 47 palabras — entra perfectamente en un video de 30s, ¿quieres que use 30s en lugar de 15s?") and end your turn. Do NOT also offer to trim — the user will decide if they prefer to trim by replying.
+    2. **Script too long even for 30s** → present a trimmed version (~budget.ideal words) AND mention the option to keep the original at 30s knowing it will rush. Ask which to use.
+    3. **Script too short** → suggest extending it (with 2-3 specific additions like a benefit or CTA) OR using a shorter duration if one exists.
+    4. **Script just slightly off (within ~5 words of min/max)** → proceed as-is and mention it as a side note in the cost confirmation, don't block on it.
+    Once the user chooses, call the tool again with the agreed hook + duration. NEVER show the user contradictory word-count statements in successive messages — if you got it wrong, just present the corrected option without re-stating the wrong one.
   - **No script provided, but clear direction**: If the user gave a creative brief (e.g. "make a video about the health benefits") but no actual dialogue, call `generate_scripts(product_id, duration, influencer_id, context=<user's brief>)` FIRST to produce a script, then pass the generated hook + scene dialogues (newline-joined) as the `hook` argument.
   - **No script AND no clear direction**: If the user's request is vague about what the character should say (e.g. "make a 30s UGC video for this product"), you MUST ask before generating: "What should [influencer name] say in the video? Do you have a specific script, or should I write one based on the product?" End your turn and wait for the answer. Do NOT silently generate a random script — the user needs to guide the content.
   Then call create_ugc_video (gated). Wait for completion, then confirm in plain text.
