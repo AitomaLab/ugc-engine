@@ -954,7 +954,11 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     parts.push(`clip_length=${pro.proClipLength}`);
                 }
             }
-            settingsPreface = `[User settings] ${parts.join(', ')}\n`;
+            // Wrap the entire preface in one bracket so the displayText scrubber
+            // (regex /\s*\[[^\]]*\]\s*/g below) removes it from the user's
+            // chat bubble. Otherwise only "[User settings]" gets stripped and
+            // the raw "mode=…, aspect_ratio=…" leaks into the visible message.
+            settingsPreface = `[User settings: ${parts.join(', ')}]\n`;
         }
 
         const fileRefCount = refsForRequest.filter((r) => r.type === 'image' || r.type === 'video').length;
