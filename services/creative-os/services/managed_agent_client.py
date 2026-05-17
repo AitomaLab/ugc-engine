@@ -1696,6 +1696,9 @@ class ToolContext:
     session_id: Optional[str] = None
     user_lang: str = "en"  # "en" or "es" — detected from brief, used to localize chips + Haiku output
 
+    def core(self) -> CoreAPIClient:
+        return CoreAPIClient(token=self.user_token, project_id=self.project_id)
+
 
 _ES_HINTS = (
     "á","é","í","ó","ú","ñ","¿","¡","ü",
@@ -1713,9 +1716,6 @@ def _detect_user_lang(text: str) -> str:
     t = text.lower()[:400]
     hits = sum(1 for h in _ES_HINTS if h in t)
     return "es" if hits >= 2 else "en"
-
-    def core(self) -> CoreAPIClient:
-        return CoreAPIClient(token=self.user_token, project_id=self.project_id)
 
 
 # ── Tool implementations (unchanged from v1) ──────────────────────────
