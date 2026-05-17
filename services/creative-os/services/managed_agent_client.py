@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1718,6 +1719,83 @@ def _detect_user_lang(text: str) -> str:
     return "es" if hits >= 2 else "en"
 
 
+_MULTI_SCENE_RE = re.compile(
+    r"\b(\d+|ten|fifteen|twenty|diez|quince|veinte)\b.{0,30}(scenes?|poses?|images?|shots?|looks?|settings?|outfits?|escenas?|poses?|im[áa]genes|tomas|estilos)",
+    re.IGNORECASE,
+)
+_MULTI_SCENE_WORDS = (
+    "different", "differents", "various", "varied", "unique", "distinct", "each in a different",
+    "diferentes", "distintas", "variadas", "cada uno", "cada una",
+)
+
+
+def _is_umbrella_multi_scene_prompt(prompt: str, count: int) -> bool:
+    if count <= 1 or not prompt:
+        return False
+    p = prompt.lower()
+    if any(w in p for w in _MULTI_SCENE_WORDS):
+        return True
+    return bool(_MULTI_SCENE_RE.search(prompt))
+
+
+_GRID_SUPPRESSION_SUFFIX = (
+    "\n\nONE single full-frame scene only — NO grid, NO collage, NO contact sheet, "
+    "NO multi-panel layout, NO split-screen. Render as a single uncropped photograph "
+    "filling the entire image."
+)
+
+
+async def _expand_image_prompts_via_haiku(
+    *, prompt: str, count: int, user_lang: str = "en",
+) -> Optional[list[str]]:
+    """Split an umbrella multi-scene image brief into N distinct per-image
+    prompts via one Haiku call. Returns None on any failure so the caller can
+    fall back to the umbrella prompt + grid-suppression suffix."""
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        return None
+    try:
+        from anthropic import AsyncAnthropic
+        client = AsyncAnthropic()
+    except Exception as e:
+        print(f"[generate_image] umbrella-split skipped: anthropic init failed: {e}")
+        return None
+    system = (
+        f"You expand a single umbrella image brief into EXACTLY {count} distinct, fully self-contained "
+        "per-image prompts. Each prompt describes ONE scene (location + pose + lighting + mood + framing) "
+        "for a single image. NEVER reference 'a series of', 'a collage of', 'multiple variations', "
+        "'a grid of', 'each image', or any other prompt in the set. Each prompt stands alone as if it "
+        "were the only image being generated. Preserve any subject identity (e.g. influencer name) in "
+        f"every prompt. Output STRICT JSON: a single array of {count} strings, no prose, no markdown."
+        + (" Write each prompt in Spanish (es-ES)." if user_lang == "es" else " Write each prompt in English.")
+    )
+    try:
+        resp = await asyncio.wait_for(
+            client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=2500,
+                system=system,
+                messages=[{"role": "user", "content": f"UMBRELLA BRIEF:\n{prompt[:1500]}\n\nReturn {count} distinct per-image prompts as JSON array."}],
+            ),
+            timeout=20.0,
+        )
+        text = "".join(getattr(b, "text", "") for b in resp.content).strip()
+        if text.startswith("```"):
+            text = text.split("```", 2)[1]
+            if text.lower().startswith("json"):
+                text = text[4:].lstrip()
+            if "```" in text:
+                text = text.split("```", 1)[0]
+        prompts = json.loads(text)
+        if not isinstance(prompts, list) or len(prompts) != count or not all(isinstance(p, str) and p.strip() for p in prompts):
+            print(f"[generate_image] umbrella-split returned unexpected shape (len={len(prompts) if isinstance(prompts, list) else 'n/a'}), discarding")
+            return None
+        return [p.strip() for p in prompts]
+    except Exception as e:
+        print(f"[generate_image] umbrella-split failed ({type(e).__name__}: {e})")
+        return None
+
+
 # ── Tool implementations (unchanged from v1) ──────────────────────────
 async def _tool_list_project_assets(ctx: ToolContext, **_: Any) -> str:
     # Use a project-unscoped client for products & influencers so the agent
@@ -2134,9 +2212,12 @@ async def _tool_generate_image(ctx: ToolContext, **kwargs: Any) -> str:
         base_exec_kwargs["quality"] = kwargs["quality"]
     user = {"token": ctx.user_token, "id": "agent"}
 
-    async def _run_single() -> dict:
+    async def _run_single(prompt_override: Optional[str] = None) -> dict:
         try:
-            req = ExecuteRequest(**base_exec_kwargs)
+            _kw = dict(base_exec_kwargs)
+            if prompt_override:
+                _kw["prompt"] = prompt_override
+            req = ExecuteRequest(**_kw)
             result = await execute_image_generation(req, user=user)  # type: ignore[arg-type]
         except Exception as e:
             # Print the actual exception + traceback so Railway logs
@@ -2212,13 +2293,35 @@ async def _tool_generate_image(ctx: ToolContext, **kwargs: Any) -> str:
             ),
         })
 
+    # Per-scene prompt expansion. When the user asks for "10 different
+    # scenes" of an influencer, NanoBanana Pro reads the umbrella prompt
+    # as a contact-sheet directive and renders each output as a grid. Split
+    # the umbrella into N distinct per-image prompts via one Haiku call.
+    per_scene_prompts: Optional[list[str]] = None
+    _umb_prompt = kwargs.get("prompt") or ""
+    if _is_umbrella_multi_scene_prompt(_umb_prompt, count):
+        print(f"[_tool_generate_image] umbrella-multi-scene detected (count={count}) — splitting via Haiku")
+        per_scene_prompts = await _expand_image_prompts_via_haiku(
+            prompt=_umb_prompt, count=count, user_lang=ctx.user_lang,
+        )
+        if per_scene_prompts:
+            print(f"[_tool_generate_image] umbrella-split OK: {count} distinct per-scene prompts generated")
+        else:
+            print(f"[_tool_generate_image] umbrella-split unavailable — falling back to umbrella prompt + grid-suppression suffix")
+
+    # Always append grid-suppression suffix as belt-and-suspenders so even the
+    # umbrella-fallback path doesn't render contact sheets.
+    def _with_suffix(p: str) -> str:
+        return p if _GRID_SUPPRESSION_SUFFIX.strip()[:30] in p else p + _GRID_SUPPRESSION_SUFFIX
+
     # Fan out N concurrent calls. NanoBanana is independent per-call, so
     # asyncio.gather lets all N run in parallel against the upstream model.
     print(f"[_tool_generate_image] fan-out: dispatching {count} concurrent generations")
-    results = await asyncio.gather(
-        *[_run_single() for _ in range(count)],
-        return_exceptions=True,
-    )
+    if per_scene_prompts:
+        _coros = [_run_single(prompt_override=_with_suffix(per_scene_prompts[i])) for i in range(count)]
+    else:
+        _coros = [_run_single(prompt_override=_with_suffix(_umb_prompt)) for _ in range(count)]
+    results = await asyncio.gather(*_coros, return_exceptions=True)
 
     # Status taxonomy: a sub-call that returned a shot_id but no
     # image_url is QUEUED, not failed. The route's background task
@@ -6212,6 +6315,44 @@ class ManagedAgentClient:
         # block after a cost confirmation despite the system-prompt rule.
         # Process-local; cleared after fire / cancel / reset.
         self._pending_confirmations: dict[str, dict] = {}
+        # Fallback mirror keyed by (user_token, project_id) so a Confirm click can
+        # still find its pending entry when Anthropic invalidates the session
+        # between the cost-chip turn and the confirm turn (real production hit:
+        # session went stale → new session created → _pending_confirmations[session_id]
+        # was empty → auto-fire couldn't recover → user saw chat freeze). 10-min TTL.
+        # Value shape: {**entry, "_stash_ts": float}
+        self._pending_confirmations_by_project: dict[tuple[str, str], dict] = {}
+
+    def _stash_pending_confirmation(
+        self,
+        *,
+        session_id: Optional[str],
+        user_token: Optional[str],
+        project_id: Optional[str],
+        entry: dict,
+    ) -> None:
+        """Write to both the session-keyed dict AND the (user_token, project_id)
+        mirror so a Confirm click after a session reset can still recover."""
+        import time as _t
+        if session_id:
+            self._pending_confirmations[session_id] = entry
+        if user_token and project_id:
+            self._pending_confirmations_by_project[(user_token, project_id)] = {
+                **entry, "_stash_ts": _t.time(),
+            }
+
+    def _clear_pending_confirmation(
+        self,
+        *,
+        session_id: Optional[str],
+        user_token: Optional[str] = None,
+        project_id: Optional[str] = None,
+    ) -> None:
+        """Clear from both stores after auto-fire / cancel."""
+        if session_id:
+            self._pending_confirmations.pop(session_id, None)
+        if user_token and project_id:
+            self._pending_confirmations_by_project.pop((user_token, project_id), None)
         # Idempotency cache for gated tools — prevents the LLM from re-firing the
         # same stage twice within 60s (real production hit: after a storyboard
         # finished, user typed "go" intending to advance; the agent re-fired the
@@ -6500,10 +6641,23 @@ class ManagedAgentClient:
         )
         print(f"[stream_impl] confirm={_is_confirm_click} cancel={_is_cancel_click} stripped_brief_tail={_stripped_brief[-100:]!r}")
         _pending = self._pending_confirmations.get(session_id) if session_id else None
+        # Fallback: when session was reset/invalidated between cost-chip and confirm
+        # turns, try the (user_token, project_id) mirror so the Confirm click still
+        # works. 10-min TTL prevents stale auto-fires from prior days.
+        if _pending is None and (_is_confirm_click or _is_cancel_click) and project_id and user_token:
+            import time as _t
+            _proj_key = (user_token, project_id)
+            _proj_pending = self._pending_confirmations_by_project.get(_proj_key)
+            if _proj_pending and (_t.time() - _proj_pending.get("_stash_ts", 0)) < 600:
+                print(f"[auto-fire] recovered pending entry via (user_token, project_id) fallback — session was reset to {session_id}")
+                _pending = {k: v for k, v in _proj_pending.items() if k != "_stash_ts"}
+            elif _proj_pending:
+                # Too old — evict.
+                self._pending_confirmations_by_project.pop(_proj_key, None)
 
         if _is_cancel_click and _pending and session_id:
             print(f"[ManagedAgent] auto-cancel: clearing pending {_pending.get('tool_name')!r}")
-            self._pending_confirmations.pop(session_id, None)
+            self._clear_pending_confirmation(session_id=session_id, user_token=user_token, project_id=project_id)
             _cancel_lang = _detect_user_lang(brief)
             yield {"type": "agent_message", "text": ("Cancelado. Avísame cuando quieras intentarlo de nuevo." if _cancel_lang == "es" else "Cancelled. Let me know when you want to try again.")}
             yield {"type": "done", "session_id": session_id}
@@ -6514,7 +6668,7 @@ class ManagedAgentClient:
             base_input = dict(_pending.get("next_call") or {})
             base_input["confirmed"] = True
             print(f"[ManagedAgent] auto-fire: re-invoking {tool_name!r} with confirmed=true (LLM bypass)")
-            self._pending_confirmations.pop(session_id, None)
+            self._clear_pending_confirmation(session_id=session_id, user_token=user_token, project_id=project_id)
 
             fn = TOOL_DISPATCH.get(tool_name) if tool_name else None
             if not fn:
@@ -6619,12 +6773,15 @@ class ManagedAgentClient:
                     _chain_parsed = None
 
                 if isinstance(_chain_parsed, dict) and _chain_parsed.get("action") == "confirmation_required":
-                    self._pending_confirmations[session_id] = {
-                        "tool_name": tool_name,
-                        "next_call": _chain_parsed.get("next_call") or _chain_input,
-                        "credits": _chain_parsed.get("credits"),
-                        "summary": _chain_parsed.get("summary"),
-                    }
+                    self._stash_pending_confirmation(
+                        session_id=session_id, user_token=user_token, project_id=project_id,
+                        entry={
+                            "tool_name": tool_name,
+                            "next_call": _chain_parsed.get("next_call") or _chain_input,
+                            "credits": _chain_parsed.get("credits"),
+                            "summary": _chain_parsed.get("summary"),
+                        },
+                    )
                     # Skip beats narration — the storyboard image itself
                     # already shows scene/action/sound per panel. Surface the
                     # animate cost chip directly.
@@ -6648,12 +6805,15 @@ class ManagedAgentClient:
                 # through to the normal narration path below.
 
             if isinstance(af_parsed, dict) and af_parsed.get("action") == "confirmation_required":
-                self._pending_confirmations[session_id] = {
-                    "tool_name": tool_name,
-                    "next_call": af_parsed.get("next_call") or {},
-                    "credits": af_parsed.get("credits"),
-                    "summary": af_parsed.get("summary"),
-                }
+                self._stash_pending_confirmation(
+                    session_id=session_id, user_token=user_token, project_id=project_id,
+                    entry={
+                        "tool_name": tool_name,
+                        "next_call": af_parsed.get("next_call") or {},
+                        "credits": af_parsed.get("credits"),
+                        "summary": af_parsed.get("summary"),
+                    },
+                )
                 credits = af_parsed.get("credits", 0)
                 summary = af_parsed.get("summary") or af_parsed.get("operation") or "next step"
                 yield {
@@ -7260,7 +7420,10 @@ class ManagedAgentClient:
                         # Stash for the server-side auto-fire safety net so the next turn's
                         # Confirm-button reply bypasses the LLM and re-fires the tool directly.
                         if _stashed_pending and _stashed_pending.get("tool_name") and session_id:
-                            self._pending_confirmations[session_id] = _stashed_pending
+                            self._stash_pending_confirmation(
+                                session_id=session_id, user_token=user_token, project_id=project_id,
+                                entry=_stashed_pending,
+                            )
                             print(f"[ManagedAgent] stashed pending confirmation: {_stashed_pending['tool_name']} ({_stashed_pending.get('credits')} cr)")
                         yield {
                             "type": "confirmation_pending",
