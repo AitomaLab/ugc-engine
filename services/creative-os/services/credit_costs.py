@@ -31,7 +31,28 @@ CREDIT_COSTS = {
     "wavespeed_video_extend_per_s": 6,
     "wavespeed_text_to_image": 5,
     "wavespeed_alt_versions_pair": 10,
+    # Cinematic Ads (Fal AI: GPT Image 2 + Seedance 2.0 Pro, always 720p)
+    "cinematic_storyboard": 4,
+    "cinematic_animate_720p_5s":  32,
+    "cinematic_animate_720p_10s": 64,
+    "cinematic_animate_720p_15s": 96,
+    "cinematic_broll_720p_5s": 32,
+    "cinematic_product_macro_720p_5s": 32,
 }
+
+
+def get_cinematic_ad_credit_cost(stage: str, duration_seconds: int = 15) -> int:
+    if stage == "animate":
+        key = f"cinematic_animate_720p_{int(duration_seconds)}s"
+        return CREDIT_COSTS.get(key, CREDIT_COSTS["cinematic_animate_720p_15s"])
+    key = {
+        "storyboard": "cinematic_storyboard",
+        "broll": "cinematic_broll_720p_5s",
+        "product_macro": "cinematic_product_macro_720p_5s",
+    }.get(stage)
+    if not key:
+        raise ValueError(f"No cinematic-ad credit cost defined for stage: {stage}")
+    return CREDIT_COSTS[key]
 
 
 def get_creative_os_image_credit_cost() -> int:

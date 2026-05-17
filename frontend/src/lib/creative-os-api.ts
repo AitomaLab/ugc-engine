@@ -247,6 +247,7 @@ export type AgentStreamEvent =
     | { type: 'tool_call'; name: string; input_summary: string; mode?: string | null; tool_use_id: string }
     | { type: 'tool_result'; tool_use_id: string; summary: string; is_error: boolean }
     | { type: 'artifact'; artifact: AgentArtifact }
+    | { type: 'artifact_pending'; pending_id: string; kind: 'image' | 'video'; label: string; stage?: string; tool_name?: string; eta_seconds?: number }
     | { type: 'confirmation_pending'; credits: number; summaries: string[] }
     | { type: 'done'; session_id: string }
     | { type: 'interrupted' }

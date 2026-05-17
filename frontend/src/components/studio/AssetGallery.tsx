@@ -195,11 +195,18 @@ export function AssetGallery({ assets, type, loading, projectId, onRefresh, onAn
     if (assets.length === 0) {
         return (
             <div style={{
-                textAlign: 'center',
-                padding: '80px 20px',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flex: 1,
+                minHeight: 0,
+                height: '100%',
                 borderRadius: '16px',
                 background: 'rgba(255,255,255,0.5)',
                 border: '1px dashed rgba(51,122,255,0.15)',
+                padding: '24px 28px',
+                boxSizing: 'border-box',
             }}>
                 <svg viewBox="0 0 24 24" style={{
                     width: '48px',
@@ -207,8 +214,7 @@ export function AssetGallery({ assets, type, loading, projectId, onRefresh, onAn
                     fill: 'none',
                     stroke: '#8A93B0',
                     strokeWidth: '1.2',
-                    margin: '0 auto 16px',
-                    display: 'block',
+                    marginBottom: '16px',
                 }}>
                     {type === 'images' ? (
                         <path d="M4 16l4.586-4.586a2 2 0 0 1 2.828 0L16 16m-2-2l1.586-1.586a2 2 0 0 1 2.828 0L20 14m-6-6h.01M6 20h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2z" />

@@ -702,6 +702,12 @@ async def _generate_seedance_video(
     #
     # For physical products (no app_clip): fall back to product + influencer
     # images as before.
+    #
+    # PRIORITY RULE: when the agent provides explicit `reference_image_urls`,
+    # those are the images the user selected in the chat — they are
+    # authoritative. Skip DB auto-fetch of product/influencer images to
+    # avoid using a different image than the user intended (e.g. a generated
+    # hero_front product shot vs. the original uploaded product photo).
     ref_images: list[str] = []
     ref_videos: list[str] = []
     app_clip = None
@@ -716,33 +722,36 @@ async def _generate_seedance_video(
         except Exception as e:
             print(f"[Seedance] WARNING: app clip fetch failed: {e}")
 
-    if data.influencer_id:
-        try:
-            inf = await client.get_influencer(data.influencer_id)
-            if inf and inf.get("image_url"):
-                ref_images.append(inf["image_url"])
-        except Exception as e:
-            print(f"[Seedance] WARNING: influencer fetch failed: {e}")
+    has_explicit_refs = bool(data.reference_image_urls)
 
-    # Only fall back to product / bare ref image when NO app clip is set.
-    if not app_clip:
-        if data.product_id:
-            try:
-                product = await client.get_product(data.product_id)
-                if product and product.get("image_url"):
-                    ref_images.append(product["image_url"])
-            except Exception as e:
-                print(f"[Seedance] WARNING: product fetch failed: {e}")
-        if not ref_images and data.reference_image_url:
-            ref_images.append(data.reference_image_url)
-
-    # Merge explicit URLs from the agent, deduped. Drop the app clip's
-    # first_frame_url if the agent passed it — the video reference covers it.
-    if data.reference_image_urls:
+    if has_explicit_refs:
+        # Agent provided exact image URLs — use them directly.
         for u in data.reference_image_urls:
-            if not u or u in ref_images or u == app_clip_first_frame:
-                continue
-            ref_images.append(u)
+            if u and u not in ref_images and u != app_clip_first_frame:
+                ref_images.append(u)
+        print(f"[Seedance] Using {len(ref_images)} agent-provided reference image(s) (skipping DB auto-fetch)")
+    else:
+        # No explicit URLs — fall back to DB resolution.
+        if data.influencer_id:
+            try:
+                inf = await client.get_influencer(data.influencer_id)
+                if inf and inf.get("image_url"):
+                    ref_images.append(inf["image_url"])
+            except Exception as e:
+                print(f"[Seedance] WARNING: influencer fetch failed: {e}")
+
+        # Only fall back to product / bare ref image when NO app clip is set.
+        if not app_clip:
+            if data.product_id:
+                try:
+                    product = await client.get_product(data.product_id)
+                    if product and product.get("image_url"):
+                        ref_images.append(product["image_url"])
+                except Exception as e:
+                    print(f"[Seedance] WARNING: product fetch failed: {e}")
+            if not ref_images and data.reference_image_url:
+                ref_images.append(data.reference_image_url)
+
     if data.reference_video_urls:
         for u in data.reference_video_urls:
             if u and u not in ref_videos:
@@ -796,11 +805,133 @@ async def _run_seedance_clip_pipeline(
     # refetch the app clip so the post-generation B-roll concat step below has
     # access to the walkthrough video_url.
     app_clip = None
+    clip_orientation = None
     if data.app_clip_id:
         try:
             app_clip = await client_sync.get_app_clip(data.app_clip_id)
+            if app_clip:
+                # Detect phone vs laptop for composite framing
+                from utils.video_concat import probe_orientation
+                probe_src = app_clip.get("video_url") or app_clip.get("first_frame_url")
+                if probe_src:
+                    clip_orientation = await asyncio.to_thread(probe_orientation, probe_src)
+                    print(f"[Seedance] App clip orientation: {clip_orientation}")
         except Exception as e:
             print(f"[Seedance] WARNING: Failed to fetch app clip {data.app_clip_id}: {e}")
+
+    # ── Composite-first for digital products ──
+    # When we have an app clip + influencer, generate a NanoBanana composite
+    # (influencer holding phone/laptop with the app UI) BEFORE Seedance.
+    # This gives Seedance a pixel-perfect starting frame as @Image1 instead
+    # of relying on it to infer the phone-in-hand composition from separate
+    # references (which often gets the spatial relationship wrong).
+    if app_clip and data.influencer_id and reference_image_urls:
+        try:
+            await _update_video_job_via_api(token, project_id, job_id, {
+                "status_message": "Creating composite image...",
+                "progress": 3,
+            })
+
+            # Fetch influencer for composite context
+            influencer = await client_sync.get_influencer(data.influencer_id)
+            if influencer and influencer.get("image_url") and app_clip.get("first_frame_url"):
+                digital_device = clip_orientation if clip_orientation in ("phone", "laptop") else "phone"
+
+                # Build composite prompt — mirrors the UGC pipeline's digital product logic
+                inf_setting = influencer.get("setting", "") or "natural environment"
+                if digital_device == "phone":
+                    nano_prompt = (
+                        f"action: character holding a smartphone facing the camera in portrait orientation "
+                        f"with a relaxed, naturally engaged expression, casually showing the app on screen\n"
+                        f"device: modern smartphone held vertically, phone screen fills the frame from the "
+                        f"phone's perspective; the phone screen displays the provided app interface EXACTLY as "
+                        f"shown in the reference image — pixel-perfect, do NOT redraw or reinterpret UI, keep "
+                        f"all text, icons, layout, colors identical\n"
+                        f"anatomy: exactly one person with exactly two arms and two hands, "
+                        f"one hand explicitly holds the phone, other arm rests naturally TO THE PERSON'S SIDE\n"
+                        f"character: infer exact appearance from reference image, preserve facial features and skin tone, "
+                        f"detailed realistic complexion with fine natural imperfections, unretouched raw look\n"
+                        f"setting: {inf_setting}, natural lighting\n"
+                        f"camera: amateur iPhone selfie, slightly uneven framing\n"
+                        f"style: candid UGC look, no filters, photorealistic, high detail, raw unedited photo quality\n"
+                        f"negative: no artificial smoothing, no plastic CGI appearance, no third arm, no third hand, "
+                        f"no extra limbs, no extra fingers, no studio backdrop, no geometric distortion, "
+                        f"no mutated hands, no floating limbs, disconnected limbs, mutation, "
+                        f"no arm crossing screen, no unnatural arm position, no altered UI, no made-up UI elements"
+                    )
+                else:
+                    nano_prompt = (
+                        f"action: character seated at a desk in front of a laptop or desktop monitor with an "
+                        f"engaged expression, casually presenting the app on-screen\n"
+                        f"device: laptop or desktop monitor in landscape orientation facing the camera at a "
+                        f"natural angle; the screen displays the provided app interface EXACTLY as shown in "
+                        f"the reference image — pixel-perfect, do NOT redraw or reinterpret UI, keep all text, "
+                        f"icons, layout, colors identical\n"
+                        f"anatomy: exactly one person with exactly two arms and two hands, hands resting near "
+                        f"the keyboard or gesturing naturally toward the screen\n"
+                        f"character: infer exact appearance from reference image, preserve facial features and skin tone, "
+                        f"detailed realistic complexion with fine natural imperfections, unretouched raw look\n"
+                        f"setting: {inf_setting}, natural lighting\n"
+                        f"camera: amateur iPhone capture, slightly uneven framing\n"
+                        f"style: candid UGC look, no filters, photorealistic, high detail, raw unedited photo quality\n"
+                        f"negative: no artificial smoothing, no plastic CGI appearance, no extra limbs, no extra fingers, "
+                        f"no studio backdrop, no geometric distortion, no altered UI, no made-up UI elements"
+                    )
+
+                scene = {
+                    "nano_banana_prompt": nano_prompt,
+                    "reference_image_url": influencer.get("image_url", ""),
+                    "product_image_url": app_clip["first_frame_url"],
+                }
+                product_dict = {
+                    "name": "app UI",
+                    "image_url": app_clip["first_frame_url"],
+                }
+
+                composite_aspect = data.aspect_ratio or "9:16"
+                print(f"[Seedance] Generating NanoBanana composite for digital product (device={digital_device}, aspect={composite_aspect})...")
+
+                import random
+                global_seed = random.randint(0, 2**32 - 1)
+                composite_url = await asyncio.to_thread(
+                    generate_scenes.generate_composite_image_with_retry,
+                    scene=scene,
+                    influencer=influencer,
+                    product=product_dict,
+                    seed=global_seed,
+                    aspect_ratio=composite_aspect,
+                )
+                print(f"[Seedance] Digital product composite ready: {composite_url[:80]}...")
+
+                # KIE Seedance: reference_image_urls and first_frame_url are
+                # MUTUALLY EXCLUSIVE. For digital product composites, use
+                # first_frame_url — it forces Seedance to start from the exact
+                # composite frame (influencer + device + app UI), preserving
+                # the phone screen content faithfully.
+                #
+                # Clear reference_image_urls so KIE doesn't reject with:
+                # "The reference image and the first and last frames are
+                #  mutually exclusive, and only one scene can be selected"
+                #
+                # Also clear reference_video_urls: the composite already
+                # embeds the app UI, and low-res app clips trigger Seedance's
+                # r2v pixel-count rejection (≥409600 px required). The actual
+                # walkthrough video is spliced as B-roll in post-processing.
+                reference_image_urls = []
+                reference_video_urls = []
+                data.reference_image_url = composite_url  # used as first_frame_url below
+
+                await _update_video_job_via_api(token, project_id, job_id, {
+                    "status_message": "Composite ready, enhancing prompt...",
+                    "progress": 5,
+                    "preview_url": composite_url,
+                    "preview_type": "image",
+                })
+            else:
+                print("[Seedance] Skipping composite: influencer or app clip first_frame missing")
+        except Exception as e:
+            print(f"[Seedance] Digital product composite failed (non-fatal, using raw refs): {e}")
+            # Fall through — Seedance will use the raw influencer + video refs
 
     try:
         await _update_video_job_via_api(token, project_id, job_id, {
@@ -815,8 +946,10 @@ async def _run_seedance_clip_pipeline(
         try:
             from services.prompt_enhancer import enhance_prompt
             enhance_context = {"duration": data.clip_length, "has_reference": bool(reference_image_urls or reference_video_urls)}
+            # Pass all reference images so the enhancer can map @image_1, @image_2, etc.
             if reference_image_urls:
-                enhance_context["image_url"] = reference_image_urls[0]
+                enhance_context["image_urls"] = reference_image_urls
+                enhance_context["image_url"] = reference_image_urls[0]  # backward compat for vision input
             enhanced = await enhance_prompt(
                 user_prompt=data.prompt,
                 mode=data.mode,
@@ -852,40 +985,68 @@ async def _run_seedance_clip_pipeline(
                 structured_prompt += f'\nAudio: Dialogue: "{user_dialogue}"'
                 print(f"[Seedance] Appended user dialogue (no existing Dialogue pattern found)")
 
-        # Safety net: ensure reference bindings are present. Without them,
-        # Seedance treats the references as loose style guides and
-        # hallucinates on-screen content.
-        if reference_video_urls and "@Video1" not in structured_prompt:
+        # Safety net: ensure @ImageN / @VideoN reference bindings are
+        # present (KIE API format). Without them, Seedance treats the
+        # references as loose style guides and hallucinates on-screen content.
+        if reference_video_urls and "@Video" not in structured_prompt:
             structured_prompt += (
-                "\n\nIMPORTANT: The app interface shown in @Video1 must be rendered with exact "
-                "visual fidelity — preserve its layout, typography, colors, and any visible UI "
-                "text from @Video1. Do not invent screen content."
+                "\n\nVideo reference provided: @Video1 — "
+                "faithfully preserve the interface, typography, colors, and any "
+                "visible text from @Video1. Do not invent screen content."
             )
             print("[Seedance] Injected @Video1 binding (not found in enhanced prompt)")
-        if reference_image_urls and "@Image1" not in structured_prompt:
-            subject = "person" if reference_video_urls else "product"
-            if subject == "person":
-                structured_prompt += (
-                    "\n\nIMPORTANT: The person shown in @Image1 must be rendered with exact "
-                    "facial likeness — preserve their features, skin tone, and hair from @Image1. "
-                    "Do not invent a different face."
-                )
-            else:
-                structured_prompt += (
-                    "\n\nIMPORTANT: The product shown in @Image1 must be rendered with exact visual "
-                    "fidelity — preserve all text, logos, typography, and spelling from @Image1. "
-                    "Do not hallucinate or alter any text on the product."
-                )
-            print(f"[Seedance] Injected @Image1 binding (subject={subject})")
+        if reference_image_urls and "@Image" not in structured_prompt:
+            # Inject bindings for ALL reference images, not just the first
+            binding_lines = []
+            for idx, _url in enumerate(reference_image_urls, 1):
+                subject = "person" if reference_video_urls and idx == 1 else "product"
+                if subject == "person":
+                    binding_lines.append(
+                        f"@Image{idx} — preserve exact facial identity: "
+                        f"features, skin tone, and hair of @Image{idx}."
+                    )
+                else:
+                    binding_lines.append(
+                        f"@Image{idx} — preserve text, logos, typography, and "
+                        f"exact spelling of @Image{idx}. Do not alter the product."
+                    )
+            structured_prompt += (
+                "\n\nImage references provided:\n" +
+                "\n".join(binding_lines)
+            )
+            print(f"[Seedance] Injected @Image1..@Image{len(reference_image_urls)} bindings")
+
+        # ── Strip markdown code fences ──
+        # GPT-4o's Seedance Director sometimes wraps its output in
+        # ```markdown ... ``` fences. KIE treats those as literal text
+        # and returns 501. Strip them before submission.
+        import re as _re_fence
+        structured_prompt = _re_fence.sub(
+            r'^```(?:markdown|text)?\s*\n', '', structured_prompt
+        )
+        structured_prompt = _re_fence.sub(r'\n```\s*$', '', structured_prompt)
+        structured_prompt = structured_prompt.strip()
 
         await _update_video_job_via_api(token, project_id, job_id, {
             "status_message": "Generating Seedance video...",
             "progress": 10,
         })
 
+        # For digital product composites, pass the composite as first_frame_url
+        # so Seedance starts from the exact composition.
+        # NOTE: reference_image_urls is empty at this point (cleared above to
+        # avoid KIE's "mutually exclusive" error) — check data.reference_image_url
+        # which was set to composite_url in the composite step.
+        seedance_first_frame = None
+        if data.app_clip_id and data.reference_image_url:
+            seedance_first_frame = data.reference_image_url
+            print(f"[Seedance] Using composite as first_frame_url for digital product: {seedance_first_frame[:80]}...")
+
         print(
             f"[Seedance] ref_images={reference_image_urls or []} "
-            f"ref_videos={reference_video_urls or []} duration={data.clip_length}s "
+            f"ref_videos={reference_video_urls or []} "
+            f"first_frame={'YES' if seedance_first_frame else 'no'} "
+            f"duration={data.clip_length}s "
             f"aspect={data.aspect_ratio or '9:16'} prompt_len={len(structured_prompt)}",
             flush=True,
         )
@@ -897,6 +1058,7 @@ async def _run_seedance_clip_pipeline(
                 duration=data.clip_length,
                 reference_image_urls=reference_image_urls or None,
                 reference_video_urls=reference_video_urls or None,
+                first_frame_url=seedance_first_frame,
                 aspect_ratio=data.aspect_ratio or "9:16",
             )
 

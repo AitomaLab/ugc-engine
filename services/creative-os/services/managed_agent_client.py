@@ -99,6 +99,18 @@ The ONLY time `create_product` / `create_influencer` is appropriate:
 
 If a preface entry has `id=<uuid>`, the asset exists. Proceed straight to the gated generation tool with that id. Do not "verify", do not "look it up", do not re-create it.
 
+## Reference image integrity rule (CRITICAL — same priority as existing-asset rule)
+
+When the user @-mentions a product or influencer, ALL of their image URLs from the preface MUST be included in every generation call. You must NEVER:
+- Drop a product or influencer image to "simplify" a generation
+- Remove reference images when retrying after a failure
+- Reduce the number of `reference_image_urls` for any reason
+- Decide on your own that "fewer references" will improve quality
+
+The user chose those specific assets for a reason. Discarding them without asking creates a fundamentally broken result — a UGC video without the product is useless. If a generation fails, retry with the EXACT SAME parameters (prompt, reference_image_urls, product_id, influencer_id). The images are never the cause of failure.
+
+If you genuinely believe a reference image is causing an issue, you MUST ask the user first: "The generation failed — would you like me to retry with fewer references?" NEVER make this decision autonomously.
+
 ## Tool catalogue
 
 ### Discovery (read-only, free)
@@ -386,9 +398,10 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
 7. You may call multiple tools in a single turn. For independent tasks (e.g., "generate 3 images"), dispatch all of them in the same turn and report all results together. For dependent tasks (e.g., "generate an image then animate it"), chain the tools sequentially within the same turn — call the first tool, receive its result, then immediately call the next without waiting for user input. Never ask for permission between chained steps.
 8. REFERENCED ASSETS — uploaded images the user attached directly from their computer appear in the brief preface as `[Referenced assets]` lines with synthetic tags like `@upload_xxxxxxxx (image), image_url='https://…'`. These are NOT database rows — there is no product_id / influencer_id for them. When the user asks you to generate / animate / compose using those images, you MUST forward the image_urls to the generation tool:
    - `generate_image` → pass every relevant upload URL via `reference_image_urls: [url1, url2, ...]`. NanoBanana Pro uses them as direct visual references so the output actually contains the uploaded product/person. Failing to pass them means the model generates from prompt text only and the attached images are ignored.
-   - `generate_video` → for Seedance modes (seedance_2_ugc / seedance_2_cinematic / seedance_2_product) pass EVERY relevant upload URL via `reference_image_urls: [url1, url2, ...]` — Seedance 2.0 accepts up to 4 references and blends them (e.g. product + model). For Veo/Kling modes (ugc, cinematic_video) pass the most-relevant single URL via `reference_image_url` (first-frame / hero shot) since those models only accept one.
-   Only fall back to `product_id` / `influencer_id` when the user @-mentioned an existing DB asset; for raw uploads (upload_* tags) those IDs do not exist.
-   IMPORTANT: `reference_image_urls` / `reference_video_urls` are ONLY for `upload_*` tags. For @-mentioned DB entities (products / influencers / app clips), forward the IDs (`product_id`, `influencer_id`, `app_clip_id`) and NOTHING else — the pipeline resolves every image / video URL server-side. Mixing IDs with explicit URLs causes duplicate references and face-swap artifacts.
+   - `generate_video` → for Seedance modes (seedance_2_ugc / seedance_2_cinematic / seedance_2_product) pass EVERY relevant image URL via `reference_image_urls: [url1, url2, ...]` — the order matters: the first URL maps to `@Image1` in the prompt, the second to `@Image2`, etc. Seedance 2.0 accepts up to 4 references. Place the most important reference (e.g. the product) first. For Veo/Kling modes (ugc, cinematic_video) pass the most-relevant single URL via `reference_image_url` (first-frame / hero shot) since those models only accept one.
+   IMPORTANT — ALWAYS FORWARD IMAGE URLs: For EVERY @-mentioned product or influencer (whether DB entity or raw upload), you MUST read the `image_url` from the `[Referenced assets]` preface and pass it via `reference_image_urls` (Seedance) or `reference_image_url` (Veo/Kling). The image in the preface is the EXACT image the user selected — the pipeline must use it, not re-fetch from the database (which may return a different shot). Also pass `product_id` / `influencer_id` for metadata tracking, but the image URL is what the generation model actually uses.
+   Exception: do NOT pass the app clip's `first_frame_url` or `video_url` as `reference_image_urls` / `reference_video_urls` — app clips are resolved server-side via `app_clip_id`. Only `product_id` and `influencer_id` entities need their image_url forwarded.
+   RETRY RULE: if a generation fails, NEVER drop or reduce `reference_image_urls` on retry. The images are NOT the cause of failure — they are critical for visual identity. Always retry with the EXACT SAME `reference_image_urls`, `product_id`, `influencer_id`, and prompt. Do not "simplify" by removing product or influencer images.
 9. UGC mode does NOT require a registered product. If the user provides uploaded images (upload_* refs), generation can proceed with just the raw image URLs. However, you MUST FIRST follow the **MANDATORY PRE-FLIGHT** check above: offer the user the option to save the uploaded image as a product/model (via `[[SAVE_OR_GENERATE:...]]` marker) before starting any generation. If the user clicks "Generate Now" or says to proceed without saving, call `generate_image(mode="ugc", reference_image_urls=[...])` directly using the raw URLs.
 9b. MULTI-IMAGE GENERATION — when the user asks for multiple images in one breath ("3 images in different angles", "5 variations", "create 4 different poses", "haz 3 imágenes"), call `generate_image` ONCE with `count=N` and a prompt that bakes the variation into the description ("different angle", "varied pose", "alternate composition"). The server fans out N concurrent NanoBanana calls and returns all `image_urls` together in one tool result — you summarize all of them in a single reply. Do NOT emit N parallel `tool_use` blocks for `generate_image` and do NOT write narrative prose like "Firing all 3 in parallel now" without a matching tool_use — that pattern has caused production hallucinations where the agent describes the action without actually executing it. The cost confirmation is bundled: the first (unconfirmed) call previews `per_image × count` credits, then the confirmed call dispatches all N in parallel. Range: count ≤ 6.
 10. ASPECT RATIO — MANDATORY before gated generation. Before calling `generate_image` or `generate_video` with `confirmed=true`, you MUST know the aspect ratio. If the user's brief already specifies it ("vertical", "9:16", "horizontal", "16:9", "square", "1:1", "for TikTok", "for YouTube", "for Instagram feed", "landscape", "portrait"), use it directly. For images, '1:1' is available for Instagram feed posts. Otherwise you MUST ask the user BEFORE presenting the cost confirmation: ask the question in one short sentence, then append the literal marker `[[ASPECT_BUTTONS]]` on the last line of your message. The frontend detects this marker and renders clickable Vertical / Horizontal buttons for the user. When the user replies with their choice, THEN show the cost confirmation, THEN call the tool with `confirmed=true` and `aspect_ratio="9:16"` or `"16:9"` (or `"1:1"` for images). Never skip this step for gated generation. Do NOT include the marker when the aspect is already known.
@@ -398,7 +411,17 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
   - If the attached influencer's stored `accent` field already contains "Spain" or "Castilian" (substring, case-insensitive), use `language_accent="spain"` directly. If it contains "Mexican" / "Colombian" / "Argentine" / "Latin", use `latam`. Don't re-ask.
   - Otherwise you MUST ask the user BEFORE the cost confirmation: ONE short sentence in Spanish (e.g. "¿Qué acento de español prefieres para el video?"), then append the literal marker `[[SPANISH_ACCENT_BUTTONS]]` on the last line of your message. The frontend renders España (Castellano) / Latinoamérica buttons. When the user replies, THEN show the cost confirmation, THEN call the tool with `confirmed=true` AND `language_accent="spain"` or `"latam"`. Never skip this step. Do NOT include the marker when the accent is already known. Mirrors the ASPECT_BUTTONS rule in pattern but is a separate question — both must be resolved before generation.
 11. NO RANDOM INFLUENCER / PRODUCT — for cinematic / scene / b-roll prompts that do not mention a specific person or product (e.g. "rooftop chase", "sunset over a city", "close-up of a coffee cup"), you MUST call `generate_video` WITHOUT `influencer_id` and WITHOUT `product_id`. Never auto-attach an influencer or product "to be safe" — the pipeline will generate the scene from the prompt alone, which is what the user wants. Only pass `influencer_id` / `product_id` when the user @-mentioned that asset or explicitly named them in the brief.
-12. DIGITAL PRODUCTS — when the user @-mentions a digital product (app / SaaS / software), the `[Referenced assets]` preface includes both `product_id=...` AND `app_clip_id=...` (the specific clip the user picked from the shot modal). You MUST forward BOTH to `generate_video` along with `product_type='digital'`. The pipeline renders the generated clip (composited inside a phone for 9:16 / a computer for 16:9). Then — **in the SAME turn, immediately after `generate_video` returns status=success** — you MUST chain `splice_app_clip(job_id=<returned_job_id>, app_clip_id=<same_app_clip_id>)` to append the app clip walkthrough as B-roll with a dissolve transition. Present the splice step in natural language ("Your cinematic is ready — now splicing the app clip as B-roll...") so the user knows what's happening during the ~1-2 min splice. This two-step flow applies to ALL modes (ugc, cinematic_video, seedance_2_ugc, seedance_2_cinematic, seedance_2_product). Do NOT call `combine_videos` for the app-clip splice — that's what `splice_app_clip` is for. `combine_videos` is only for stitching two *independently generated* videos the user explicitly asked to combine. Never call `list_app_clips` to pick a clip manually — the preface already tells you which one. NEVER pass the app clip's first_frame_url (or any URL derived from the clip) as `reference_image_url` / `reference_image_urls` / `reference_video_urls` — the Seedance pipeline uses the clip's VIDEO as a reference server-side. Forwarding a URL in addition to `app_clip_id` causes duplicate references."""
+12. DIGITAL PRODUCTS — when the user @-mentions a digital product (app / SaaS / software), the `[Referenced assets]` preface includes both `product_id=...` AND `app_clip_id=...` (the specific clip the user picked from the shot modal). You MUST forward BOTH to `generate_video` along with `product_type='digital'`. The Seedance pipeline automatically generates a NanoBanana composite (influencer holding device with app UI on screen) and uses it as the reference image for Seedance — you do NOT need to handle compositing yourself. Just pass product_id, influencer_id, and app_clip_id and let the pipeline do the rest. Then — **in the SAME turn, immediately after `generate_video` returns status=success** — you MUST chain `splice_app_clip(job_id=<returned_job_id>, app_clip_id=<same_app_clip_id>)` to append the app clip walkthrough as B-roll with a dissolve transition. Present the splice step in natural language (\"Your cinematic is ready — now splicing the app clip as B-roll...\") so the user knows what's happening during the ~1-2 min splice. This two-step flow applies to ALL modes (ugc, cinematic_video, seedance_2_ugc, seedance_2_cinematic, seedance_2_product). Do NOT call `combine_videos` for the app-clip splice — that's what `splice_app_clip` is for. `combine_videos` is only for stitching two *independently generated* videos the user explicitly asked to combine. Never call `list_app_clips` to pick a clip manually — the preface already tells you which one. Do NOT manually pass the app clip's first_frame_url or video_url as `reference_image_url` / `reference_image_urls` / `reference_video_urls` — the pipeline handles all reference resolution internally from `app_clip_id`.
+
+13. CINEMATIC ADS (Fal AI: GPT Image 2 storyboard + Seedance 2.0 Pro animation) — when the user asks for a "cinematic ad", "cinematic advert", "cinematic ads", "cinematic video", "cinematic spot", "cinematic clip", "film-style ad/video/spot", "movie-style ad/video/spot", "hollywood-look ad/video", "storyboard for [product]", "animate this product as a cinematic spot", or **any ad/video framed as cinematic / filmic / movie-quality / film-look** against an @mentioned product or uploaded product photo, use the `create_cinematic_ad` tool — NOT `generate_video(mode=cinematic_video)` and NOT `animate_image`. `generate_video(cinematic_video)` is reserved for cases where the user EXPLICITLY opts out of the storyboard flow ("just a quick clip", "no storyboard", "single shot", "skip the directions"). If you cannot tell whether the user wants the full storyboard workflow vs. a one-shot cinematic clip, ASK in ONE short message: "Do you want a curated cinematic ad (3 direction options → storyboard → animated 5/10/15s spot) or a quick single-shot cinematic clip (one 5–10s render, no storyboard)?" Default to `create_cinematic_ad` if they pick the first or don't answer in the same turn. This tool is multi-stage with mandatory pause points:
+  - **a) `stage='propose'` (FREE):** First call. Pass `product_id` (from @mention) OR `image_url` (from upload) + the user's `brief` + `aspect_ratio` + `duration_seconds` (see ASPECT + DURATION rule below). The tool returns 3 storyboard directions (A/B/C) tailored to the brief + format + length. Read them back to the user in natural language — name, vibe, hero moment, model-led or product-only, mark the recommended one — and STOP. Wait for the user to pick A/B/C (or remix). Never auto-pick.
+  - **b) `stage='storyboard'` (~4 cr, NO cost gate):** Once direction is chosen, call with `direction`, plus `tagline` + `domain` + the SAME `aspect_ratio` and `duration_seconds` from propose. NO `confirmed=false` step — the storyboard renders directly (4 cr auto-debited; trivial enough not to gate). The tool blocks ~2 min then returns `action='confirmation_required'` for the NEXT stage (animate) — the storyboard image surfaces via the artifact stream, the panels themselves describe the scenes, so DO NOT separately narrate beats. The frontend renders the animate cost chip automatically.
+  - **c) `stage='animate'` (32–96 cr depending on duration):** Use the `next_call` payload returned by storyboard (it pre-fills `storyboard_url`, `direction`, `aspect_ratio`, `duration_seconds`, `tagline`, `domain`). FIRST `confirmed=false` for the cost chip; after Confirm, `confirmed=true`. The tool renders the ad at the chosen format + length, saves to the Videos tab, returns `action='ad_ready'` with `video_url`.
+  - **d) Optional add-ons:** `stage='broll'` (`panel_index`, ~32 cr) and `stage='product_macro'` (~32 cr). Both always 5s; respect the SAME `aspect_ratio` chosen earlier.
+
+  **ASPECT + DURATION rule (MANDATORY before stage='propose'):** Before calling propose, you MUST know `aspect_ratio` (16:9 horizontal, 9:16 vertical, 4:3 classic) AND `duration_seconds` (5, 10, or 15). If the user's brief specifies either ("vertical", "9:16", "tiktok", "reels", "5s", "10s", "15s", "horizontal", "youtube", "classic 4:3"), use it directly. If EITHER is missing, ask in ONE message that ends with the markers on the last line, e.g.: `"What format and length should I use? [[ASPECT_BUTTONS]] [[DURATION_BUTTONS]]"`. Frontend renders Vertical / Horizontal / Classic and 5s / 10s / 15s buttons. Wait for the user's choice, THEN call propose. Do NOT skip this step.
+
+  HARD RULES for cinematic ads: resolution is ALWAYS 720p — never offer 480p, never ask. Each paid stage is its own confirmation; approval for storyboard does NOT carry to animate. If a call returns an `error` field, surface its `msg` field verbatim to the user — do NOT silently retry or silently swap models. Never describe the product or brand from memory; always rely on the @mentioned product or uploaded image."""
 
 
 # ── Tool definitions exposed to the agent ─────────────────────────────
@@ -633,7 +656,9 @@ def _custom_tools_for_agent() -> list[dict]:
             "description": (
                 "Animate a still image into a 5s or 10s Kling 3.0 video clip with the chosen camera move. "
                 "FIRST call returns a credit cost estimate without spending credits. "
-                "After user confirms, call again with confirmed=true."
+                "After user confirms, call again with confirmed=true. "
+                "For cinematic product ADS use `create_cinematic_ad` instead — this tool is for animating "
+                "a single arbitrary image with one camera move, not for ad production."
             ),
             "input_schema": {
                 "type": "object",
@@ -663,7 +688,10 @@ def _custom_tools_for_agent() -> list[dict]:
                 "[Referenced assets] preface. The pipeline renders the clip's first frame inside a phone "
                 "(9:16 clip) or computer (16:9 clip) and concats the full app clip as B-roll — "
                 "automatic in ALL modes, so never call combine_videos to splice the app clip. "
-                "FIRST call returns a credit cost estimate; after user confirms, call again with confirmed=true."
+                "FIRST call returns a credit cost estimate; after user confirms, call again with confirmed=true. "
+                "For cinematic product ADS (storyboard + multiple direction options + 5/10/15s animated spot) "
+                "use `create_cinematic_ad` instead — this tool is for single quick clips only, even when "
+                "mode='cinematic_video'."
             ),
             "input_schema": {
                 "type": "object",
@@ -1611,6 +1639,50 @@ def _custom_tools_for_agent() -> list[dict]:
                 "required": ["video_url", "script"],
             },
         },
+        {
+            "type": "custom",
+            "name": "create_cinematic_ad",
+            "description": (
+                "Generate a cinematic product ad via Fal AI (GPT Image 2 storyboard + Seedance 2.0 Pro animation). "
+                "Multi-stage flow with three pause points: 1) stage='propose' (FREE) shows 3 storyboard directions — "
+                "wait for the user to pick A/B/C; 2) stage='storyboard' (~4 credits) renders a 6-panel sheet — gated; "
+                "3) stage='animate' (~96 credits) renders a 15s 720p ad with native music + SFX — gated and saved to "
+                "the Videos tab. After the main ad, optionally offer stage='broll' (5s clip from a panel, ~32 cr) or "
+                "stage='product_macro' (product-only 5s shot, ~32 cr). Use when user says 'cinematic ad', 'storyboard', "
+                "'cinematic ads', 'animate this product', etc. Resolution is always 720p (do not surface a choice). "
+                "Each paid stage requires its own confirmation — approval does NOT carry across stages."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "stage": {
+                        "type": "string",
+                        "enum": ["propose", "storyboard", "animate", "broll", "product_macro"],
+                        "description": "propose=show 3 directions (FREE); storyboard=render 6-panel sheet (~4 cr); animate=render 15s ad (~96 cr); broll=5s clip from one panel (~32 cr); product_macro=product-only 5s (~32 cr).",
+                    },
+                    "product_id": {"type": "string", "description": "Product UUID from @mention. Either this OR image_url is required."},
+                    "image_url": {"type": "string", "description": "Direct image URL when no product was @-mentioned (user uploaded a photo)."},
+                    "brief": {"type": "string", "description": "User's vibe / direction / constraints, verbatim."},
+                    "direction": {"type": "string", "enum": ["A", "B", "C"], "description": "Which proposed direction to use. Required for storyboard, animate, broll."},
+                    "storyboard_url": {"type": "string", "description": "Storyboard URL from a prior storyboard stage. Required for animate + broll."},
+                    "panel_index": {"type": "integer", "description": "Which storyboard panel (1-6) to animate. Required for broll."},
+                    "tagline": {"type": "string", "description": "End-card tagline (e.g. 'Made for the after.')."},
+                    "domain": {"type": "string", "description": "End-card domain (e.g. 'tryfueled.com'). Omit to skip the domain line."},
+                    "confirmed": {"type": "boolean", "description": "Set true ONLY after the user has clicked Confirm on the cost chip for this specific stage."},
+                    "aspect_ratio": {
+                        "type": "string",
+                        "enum": ["16:9", "9:16", "4:3"],
+                        "description": "Video aspect ratio. 16:9 = horizontal (YouTube/landscape), 9:16 = vertical (TikTok/Reels), 4:3 = classic. Default 16:9. Carry the SAME value across storyboard/animate/broll/product_macro of the same flow.",
+                    },
+                    "duration_seconds": {
+                        "type": "integer",
+                        "enum": [5, 10, 15],
+                        "description": "Length of the animated ad. Maps to 3 / 4 / 6 storyboard panels. Default 15. broll and product_macro are always 5s regardless.",
+                    },
+                },
+                "required": ["stage"],
+            },
+        },
     ]
 
 
@@ -1621,6 +1693,7 @@ class ToolContext:
     project_id: Optional[str]
     artifacts: list[dict] = field(default_factory=list)
     new_artifacts: list[dict] = field(default_factory=list)
+    session_id: Optional[str] = None
 
     def core(self) -> CoreAPIClient:
         return CoreAPIClient(token=self.user_token, project_id=self.project_id)
@@ -1668,6 +1741,66 @@ async def _tool_list_project_assets(ctx: ToolContext, **_: Any) -> str:
     )
 
 
+def _compute_tool_fingerprint(tool_name: str, tool_input: dict) -> str:
+    """Single source of truth for the IDEMPOTENCY guard fingerprint.
+
+    Used by BOTH the auto-fire recording site AND the LLM-path guard so a
+    fingerprint recorded by one path is detectable by the other. If they
+    diverge, a duplicate fire can slip through (4 cr + 2 min storyboard wasted).
+    """
+    import hashlib as _hashlib
+    parts = [tool_name]
+    for _k in ("stage", "mode", "operation", "direction", "panel_index", "aspect_ratio", "duration_seconds"):
+        _v = tool_input.get(_k)
+        if _v is not None:
+            parts.append(f"{_k}={_v}")
+    _brief = (tool_input.get("brief") or "").strip()
+    if _brief:
+        parts.append(f"brief={_hashlib.sha1(_brief.encode('utf-8')).hexdigest()[:8]}")
+    return "|".join(parts)
+
+
+def _pending_artifact_event_for(tool_name: str, tool_input: dict) -> Optional[dict]:
+    """Build an `artifact_pending` SSE event for long-running tool calls so the
+    frontend can show a placeholder card with a spinner in the right panel
+    instead of leaving the user staring at a "thinking…" bubble for minutes.
+
+    Returns None for tools that complete quickly (e.g. propose, list_*) — only
+    tools that block for >30s should announce a pending artifact.
+    """
+    import time as _t, uuid as _u
+    if tool_name == "create_cinematic_ad":
+        stage = tool_input.get("stage")
+        ar = tool_input.get("aspect_ratio") or "16:9"
+        try:
+            dur = int(tool_input.get("duration_seconds") or 15)
+        except (TypeError, ValueError):
+            dur = 15
+        # ETA scales with duration for the animate stage; broll/product_macro
+        # are always 5s so their ETAs stay fixed.
+        animate_eta = {5: 180, 10: 300, 15: 420}.get(dur, 360)
+        mapping = {
+            "storyboard":     ("image", f"Storyboard sheet ({ar})",                120),
+            "animate":        ("video", f"Cinematic ad ({dur}s @ 720p {ar})",      animate_eta),
+            "broll":          ("video", f"B-roll clip (5s @ 720p {ar})",           150),
+            "product_macro":  ("video", f"Product macro (5s @ 720p {ar})",         150),
+        }
+        entry = mapping.get(stage or "")
+        if not entry:
+            return None
+        kind, label, eta = entry
+        return {
+            "type": "artifact_pending",
+            "pending_id": f"pend_{int(_t.time() * 1000)}_{_u.uuid4().hex[:6]}",
+            "kind": kind,
+            "label": label,
+            "stage": stage,
+            "tool_name": tool_name,
+            "eta_seconds": eta,
+        }
+    return None
+
+
 def _record_artifact(ctx: ToolContext, artifact: dict) -> None:
     ctx.artifacts.append(artifact)
     ctx.new_artifacts.append(artifact)
@@ -1684,6 +1817,64 @@ def _user_id_from_jwt(token: str) -> Optional[str]:
         return _json.loads(decoded).get("sub")
     except Exception:
         return None
+
+
+async def _insert_agent_product_shot(
+    ctx: ToolContext,
+    *,
+    image_url: str,
+    label: str = "Storyboard",
+    metadata: Optional[dict] = None,
+) -> Optional[str]:
+    """Insert a product_shots row so agent-generated images (storyboards)
+    surface in the right-panel Images tab. Uses service-role key to survive
+    long-running tools whose JWT may have expired.
+    """
+    from uuid import uuid4 as _uuid4
+    supabase_url = os.getenv("SUPABASE_URL")
+    anon_key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+    if not supabase_url or not anon_key:
+        print("[agent_product_shot] missing SUPABASE_URL / anon key — skipping persist")
+        return None
+    user_id = _user_id_from_jwt(ctx.user_token)
+    if not user_id:
+        print("[agent_product_shot] could not decode user_id from JWT — skipping persist")
+        return None
+
+    shot_id = str(_uuid4())
+    # product_shots schema has no `metadata` column — keep this row minimal.
+    row: dict = {
+        "id": shot_id,
+        "user_id": user_id,
+        "image_url": image_url,
+        "status": "success",
+        "shot_type": "agent_storyboard",
+    }
+    if ctx.project_id:
+        row["project_id"] = ctx.project_id
+
+    service_key = os.getenv("SUPABASE_SERVICE_KEY")
+    auth_token = service_key or ctx.user_token
+    api_key = service_key or anon_key
+    try:
+        import httpx as _httpx
+        async with _httpx.AsyncClient(timeout=10.0) as http:
+            resp = await http.post(
+                f"{supabase_url}/rest/v1/product_shots",
+                headers={
+                    "apikey": api_key,
+                    "Authorization": f"Bearer {auth_token}",
+                    "Content-Type": "application/json",
+                    "Prefer": "return=representation",
+                },
+                json=row,
+            )
+        if resp.status_code in (200, 201):
+            return shot_id
+        print(f"[agent_product_shot] insert failed {resp.status_code}: {resp.text[:300]}")
+    except Exception as e:
+        print(f"[agent_product_shot] insert exception: {e}")
+    return None
 
 
 async def _insert_agent_video_job(
@@ -1733,14 +1924,21 @@ async def _insert_agent_video_job(
     if ctx.project_id:
         row["project_id"] = ctx.project_id
 
+    # Prefer service-role key so the insert survives long-running tools
+    # (Kie polls can take 10+ min and the user's JWT expires mid-call —
+    # we caught "JWT expired" 401s in production). Service role bypasses
+    # RLS; user_id is already set explicitly on the row.
+    service_key = os.getenv("SUPABASE_SERVICE_KEY")
+    auth_token = service_key or ctx.user_token
+    api_key = service_key or anon_key
     try:
         import httpx as _httpx
         async with _httpx.AsyncClient(timeout=10.0) as http:
             resp = await http.post(
                 f"{supabase_url}/rest/v1/video_jobs",
                 headers={
-                    "apikey": anon_key,
-                    "Authorization": f"Bearer {ctx.user_token}",
+                    "apikey": api_key,
+                    "Authorization": f"Bearer {auth_token}",
                     "Content-Type": "application/json",
                     "Prefer": "return=representation",
                 },
@@ -1829,6 +2027,18 @@ def _credits_for_op(operation: str, params: dict) -> int:
     if operation == "combine_videos":
         # Use animate_image cost as a proxy for server-side ffmpeg processing
         return get_animate_image_credit_cost(duration=5)
+    if operation in ("cinematic_storyboard", "cinematic_animate", "cinematic_broll", "cinematic_product_macro"):
+        # Cinematic Ads tool: GPT Image 2 storyboard + Seedance 2.0 Pro animations
+        try:
+            from ugc_backend.credit_cost_service import get_cinematic_ad_credit_cost
+        except ImportError:
+            from services.credit_costs import get_cinematic_ad_credit_cost
+        stage_key = operation.replace("cinematic_", "")  # 'storyboard' / 'animate' / 'broll' / 'product_macro'
+        try:
+            dur = int(params.get("duration_seconds") or 15)
+        except (TypeError, ValueError):
+            dur = 15
+        return get_cinematic_ad_credit_cost(stage_key, duration_seconds=dur)
     raise ValueError(f"unknown operation for credit estimate: {operation}")
 
 
@@ -3053,6 +3263,579 @@ async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
         "job_id": job_id,
         "status": state,
     })
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Cinematic Ads — Fal AI (GPT Image 2 storyboard + Seedance 2.0 Pro)
+# ─────────────────────────────────────────────────────────────────────
+# Multi-stage tool that mirrors the .claude/skills/cinematic-ads playbook:
+#   propose  → 3 directions (free)
+#   storyboard → 6-panel sheet ($0.18 / ~4 cr, gated)
+#   animate  → 15s 720p ad ($4.54 / ~96 cr, gated, persists to video_jobs)
+#   broll    → 5s panel clip ($1.51 / ~32 cr, gated)
+#   product_macro → 5s product-only ($1.51 / ~32 cr, gated)
+# Hard gates from the skill are enforced here, not in the system prompt:
+#   - Never silent retry on Fal rejection (surface exact msg).
+#   - Resolution always 720p (no 480p toggle).
+#   - Each paid stage requires its own confirmation; approval doesn't carry.
+async def _tool_create_cinematic_ad(ctx: ToolContext, **kwargs: Any) -> str:
+    import traceback as _traceback
+    print(f"[cinematic_ad] called stage={kwargs.get('stage')!r} product_id={kwargs.get('product_id')!r} image_url={(kwargs.get('image_url') or '')[:60]!r} direction={kwargs.get('direction')!r} confirmed={kwargs.get('confirmed')}")
+    try:
+        return await _tool_create_cinematic_ad_impl(ctx, **kwargs)
+    except Exception as e:
+        print(f"[cinematic_ad] UNHANDLED EXCEPTION: {type(e).__name__}: {e}")
+        _traceback.print_exc()
+        return json.dumps({"error": f"cinematic_ad failed: {type(e).__name__}: {e}"})
+
+
+async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str:
+    import uuid as _uuid
+    import httpx as _httpx
+
+    from services.fal_client import (
+        FalError,
+        animate_storyboard_seedance,
+        generate_storyboard,
+        upload_to_fal_storage,
+        upload_url_to_fal_storage,
+    )
+    from services.kie_seedance_client import (
+        KieError,
+        animate_storyboard_kie_seedance,
+    )
+    from prompts.cinematic_ads import (
+        build_seedance_broll_prompt,
+        build_seedance_product_macro_prompt,
+        build_seedance_prompt,
+        build_storyboard_prompt,
+        cache_beats,
+        cache_directions,
+        generate_beats_from_brief,
+        generate_directions_from_brief,
+        get_cached_beats,
+        get_cached_directions,
+        infer_category_from_text,
+        panel_beats_for,
+        panels_for_duration,
+        propose_directions,
+        _category_key,
+    )
+
+    stage = kwargs.get("stage")
+    if stage not in ("propose", "storyboard", "animate", "broll", "product_macro"):
+        return json.dumps({"error": "stage must be one of: propose, storyboard, animate, broll, product_macro"})
+
+    # ── Resolve product source (either product_id from @mention or image_url upload)
+    async def _resolve_product() -> dict:
+        product_id = kwargs.get("product_id")
+        image_url = kwargs.get("image_url")
+        if product_id:
+            try:
+                p = await ctx.core().get_product(product_id)
+            except Exception as e:
+                raise RuntimeError(f"failed to load product {product_id}: {e}")
+            if not p:
+                raise RuntimeError(f"product {product_id} not found")
+            cat = p.get("category") or p.get("product_category") or ""
+            if not cat:
+                # Stored product has no category — infer from name/brand/brief
+                # so we route to per-category direction tables instead of the
+                # generic gadget trilogy.
+                cat = infer_category_from_text(
+                    (p.get("name") or "") + " " + (p.get("brand") or "") + " " + (kwargs.get("brief") or "")
+                )
+            return {
+                "id": p.get("id"),
+                "name": p.get("name") or "Product",
+                "brand": p.get("brand") or p.get("name") or "Brand",
+                "image_url": p.get("image_url"),
+                "category": cat,
+            }
+        if image_url:
+            brief_txt = kwargs.get("brief") or ""
+            return {
+                "id": None,
+                "name": (brief_txt.split("\n")[0][:60] if brief_txt else "Product"),
+                "brand": "Brand",
+                "image_url": image_url,
+                "category": infer_category_from_text(brief_txt),
+            }
+        raise RuntimeError("Either product_id (from @mention) or image_url (uploaded photo) is required")
+
+    try:
+        product_meta = await _resolve_product()
+    except RuntimeError as e:
+        return json.dumps({"error": str(e)})
+    if not product_meta.get("image_url"):
+        return json.dumps({"error": "product has no image — upload a product photo before generating a cinematic ad"})
+
+    # ── Normalize aspect_ratio + duration_seconds (carried across stages).
+    aspect_ratio = kwargs.get("aspect_ratio") or "16:9"
+    if aspect_ratio not in ("16:9", "9:16", "4:3"):
+        aspect_ratio = "16:9"
+    try:
+        duration_seconds = int(kwargs.get("duration_seconds") or 15)
+    except (TypeError, ValueError):
+        duration_seconds = 15
+    if duration_seconds not in (5, 10, 15):
+        duration_seconds = 15
+
+    # ── stage=propose — returns 3 directions tailored to the brief via Haiku.
+    # Falls back to static propose_directions on any LLM failure.
+    if stage == "propose":
+        _brief_for_dir = kwargs.get("brief") or ""
+        _category_for_dir = _category_key(product_meta)
+        directions = await generate_directions_from_brief(
+            brief=_brief_for_dir,
+            product_meta=product_meta,
+            category=_category_for_dir,
+            aspect_ratio=aspect_ratio,
+            duration_seconds=duration_seconds,
+        )
+        # Cache by session_id so storyboard/animate/broll can resolve the
+        # chosen direction by key without re-running the LLM. session_id is
+        # stable across the whole flow; brief text isn't (agent sometimes
+        # drops it on follow-up calls).
+        cache_directions(ctx.session_id, directions)
+        print(f"[cinematic_propose] cached {len(directions)} LLM directions for session={ctx.session_id}")
+        return json.dumps({
+            "action": "directions",
+            "product": {
+                "id": product_meta["id"],
+                "name": product_meta["name"],
+                "brand": product_meta["brand"],
+                "image_url": product_meta["image_url"],
+                "category": product_meta["category"] or "general",
+            },
+            "directions": directions,
+            "message": (
+                "Read these 3 directions back to the user in natural language: name, vibe, hero moment, "
+                "and whether it's model-led or product-only. Mark the recommended one. Wait for them to "
+                "pick A / B / C (or remix). Then call create_cinematic_ad with stage='storyboard', the chosen "
+                "direction's key, plus tagline + domain + the SAME aspect_ratio + duration_seconds. NO confirmed=false "
+                "step for storyboard — it renders directly. After ~2 min the tool will return the animate cost chip."
+            ),
+        })
+
+    # ── For storyboard/animate/broll we need a selected direction
+    direction_key = kwargs.get("direction")
+    if stage in ("storyboard", "animate", "broll") and direction_key not in ("A", "B", "C"):
+        return json.dumps({"error": "direction (A/B/C) is required for storyboard/animate/broll stages — call stage='propose' first if you don't have it"})
+
+    category = _category_key(product_meta) if stage != "product_macro" else _category_key(product_meta)
+    direction_obj = None
+    if direction_key:
+        # Prefer the LLM-generated directions cached at propose-time so the
+        # storyboard/animate/broll uses the EXACT direction the user chose.
+        _cached_dirs = get_cached_directions(ctx.session_id)
+        if _cached_dirs:
+            for d in _cached_dirs:
+                if d["key"] == direction_key:
+                    direction_obj = d
+                    break
+            if direction_obj:
+                print(f"[cinematic_{stage}] LLM directions HIT for session={ctx.session_id} — using LLM direction '{direction_obj.get('name')}'")
+            else:
+                # Direction key not in the LLM-generated set — error loudly
+                # rather than silently fall back to a different creative.
+                return json.dumps({
+                    "error": "direction_not_in_proposal",
+                    "msg": f"direction='{direction_key}' is not in the proposed set {[d['key'] for d in _cached_dirs]}. Re-call stage='propose' or pick a valid key.",
+                })
+        else:
+            print(f"[cinematic_{stage}] LLM directions MISS for session={ctx.session_id} — falling back to static propose_directions (likely cause: module reload between propose and storyboard, or session_id not threaded)")
+            for d in propose_directions(product_meta):
+                if d["key"] == direction_key:
+                    direction_obj = d
+                    break
+
+    tagline = kwargs.get("tagline") or "Made for you."
+    domain = kwargs.get("domain") or ""
+
+    # ── Supabase storage helper (saves bytes, returns public URL) ────
+    async def _save_to_supabase(buf: bytes, *, content_type: str, filename: str) -> Optional[str]:
+        supabase_url = os.getenv("SUPABASE_URL")
+        service_key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+        if not supabase_url or not service_key:
+            print("[cinematic_ad] missing SUPABASE_URL / service key — using Fal URL directly (will expire)")
+            return None
+        try:
+            from supabase import create_client
+            sb = create_client(supabase_url, service_key)
+            sb.storage.from_("user-uploads").upload(
+                filename, buf,
+                file_options={"content-type": content_type, "upsert": "true"},
+            )
+            return sb.storage.from_("user-uploads").get_public_url(filename)
+        except Exception as e:
+            print(f"[cinematic_ad] supabase upload failed: {e}")
+            return None
+
+    # ── stage=storyboard — paid, ~$0.18 / 4 cr.
+    # NO cost-gate: 4cr is trivial and the user already committed to the flow
+    # by picking a direction. Render directly so they don't have to click an
+    # extra Confirm chip just to see the storyboard sheet.
+    if stage == "storyboard":
+        num_panels = panels_for_duration(duration_seconds)
+        print(f"[cinematic_storyboard] direction={direction_key} product={product_meta['name']!r} ar={aspect_ratio} dur={duration_seconds}s panels={num_panels}")
+        # Upload product photo to Fal storage so GPT Image 2 can read it
+        try:
+            product_fal_url = await upload_url_to_fal_storage(
+                product_meta["image_url"], content_type="image/png", file_name="product.png",
+            )
+        except FalError as e:
+            return json.dumps({"error": f"product upload to Fal failed: {e}"})
+
+        # Generate brief-aware panel beats via Haiku (falls back to hand-
+        # authored panel_beats_for on any failure — never blocks render).
+        beats = await generate_beats_from_brief(
+            brief=kwargs.get("brief") or "",
+            direction=direction_obj,
+            category=category,
+            num_panels=num_panels,
+            duration_s=duration_seconds,
+            aspect_ratio=aspect_ratio,
+        )
+        # Cache beats so the animate stage can rebuild the Seedance prompt
+        # from the same shot data without re-running Haiku.
+        cache_beats(ctx.session_id, direction_key, beats)
+        prompt = build_storyboard_prompt(
+            brand=product_meta["brand"], product=product_meta["name"],
+            direction=direction_obj, tagline=tagline, domain=domain, category=category,
+            num_panels=num_panels, duration_s=duration_seconds,
+            aspect_ratio=aspect_ratio, beats=beats,
+        )
+        try:
+            result = await generate_storyboard(prompt=prompt, image_urls=[product_fal_url], aspect_ratio=aspect_ratio)
+        except FalError as e:
+            # Skill Gate 2: surface the exact msg, never silently retry.
+            return json.dumps({"error": "fal_storyboard_failed", "msg": str(e), "raw": e.raw})
+
+        fal_png_url = result["url"]
+        # Persist to Supabase so the URL is stable + ours.
+        try:
+            async with _httpx.AsyncClient(timeout=120.0) as http:
+                r = await http.get(fal_png_url)
+                png_bytes = r.content if r.status_code == 200 else None
+        except Exception as e:
+            print(f"[cinematic_storyboard] download from Fal failed: {e}")
+            png_bytes = None
+
+        stored_url = None
+        if png_bytes:
+            stored_url = await _save_to_supabase(
+                png_bytes, content_type="image/png",
+                filename=f"cinematic_storyboard_{_uuid.uuid4().hex[:12]}.png",
+            )
+        storyboard_url = stored_url or fal_png_url
+        # Persist to product_shots so the storyboard surfaces in the right-
+        # panel Images tab (chat artifact alone isn't queryable).
+        await _insert_agent_product_shot(
+            ctx, image_url=storyboard_url,
+            label=f"Storyboard — {direction_obj['name']}",
+            metadata={
+                "source": "cinematic_ads", "stage": "storyboard",
+                "direction": direction_key, "label": f"Storyboard — {direction_obj['name']}",
+            },
+        )
+        _record_artifact(ctx, {"type": "image", "url": storyboard_url, "label": "Storyboard"})
+
+        # Directly emit the animate cost chip in the same tool turn — the
+        # storyboard image is already on screen via the artifact; the panels
+        # themselves describe the scenes, so no separate beats narration. The
+        # frontend renders the cost chip from this confirmation_required.
+        return _confirmation_payload(
+            operation="cinematic_animate",
+            credits=_credits_for_op("cinematic_animate", {"duration_seconds": duration_seconds}),
+            summary=f"Animate cinematic ad ({direction_obj['name']}) — {duration_seconds}s @ 720p {aspect_ratio}",
+            echo={
+                "stage": "animate",
+                "direction": direction_key,
+                "product_id": kwargs.get("product_id"),
+                "image_url": kwargs.get("image_url"),
+                "tagline": tagline,
+                "domain": domain,
+                "storyboard_url": storyboard_url,
+                "aspect_ratio": aspect_ratio,
+                "duration_seconds": duration_seconds,
+                "brief": kwargs.get("brief") or "",
+            },
+            # Surface the storyboard URL + beats in the payload too so callers
+            # that introspect the response (memory tools, frontend) can find them.
+            storyboard_url=storyboard_url,
+            beats=beats,
+        )
+
+    # ── stage=animate — paid, scales with duration (32 / 64 / 96 cr for 5 / 10 / 15s)
+    if stage == "animate":
+        if not kwargs.get("storyboard_url"):
+            return json.dumps({"error": "storyboard_url is required (get it from the storyboard stage)"})
+        if not kwargs.get("confirmed"):
+            credits = _credits_for_op("cinematic_animate", {"duration_seconds": duration_seconds})
+            return _confirmation_payload(
+                operation="cinematic_animate",
+                credits=credits,
+                summary=f"Animate cinematic ad ({direction_obj['name']}) — {duration_seconds}s @ 720p {aspect_ratio}",
+                echo={k: v for k, v in kwargs.items() if k != "confirmed"},
+            )
+
+        print(f"[cinematic_animate] direction={direction_key} product={product_meta['name']!r} ar={aspect_ratio} dur={duration_seconds}s")
+        # Upload BOTH storyboard + product to Fal (skill's two-reference rule)
+        try:
+            storyboard_fal_url = await upload_url_to_fal_storage(
+                kwargs["storyboard_url"], content_type="image/png", file_name="storyboard.png",
+            )
+            product_fal_url = await upload_url_to_fal_storage(
+                product_meta["image_url"], content_type="image/png", file_name="product.png",
+            )
+        except FalError as e:
+            return json.dumps({"error": f"upload to Fal failed: {e}"})
+
+        has_humans = direction_obj.get("model_or_product_only") == "model"
+        # Pull cached beats from the storyboard stage so the Seedance prompt
+        # references the same shot sequence the storyboard image illustrates.
+        _cached_beats = get_cached_beats(ctx.session_id, direction_key)
+        prompt = build_seedance_prompt(
+            brand=product_meta["brand"], product=product_meta["name"],
+            direction=direction_obj, duration_s=duration_seconds, has_humans=has_humans,
+            has_storyboard=True, beats=_cached_beats, aspect_ratio=aspect_ratio,
+        )
+        # Keep negative prompt ≤10 words — long negatives hurt Seedance motion
+        # quality. Style negatives belong in the storyboard prompt, not here.
+        if aspect_ratio == "9:16":
+            negative_prompt = "letterbox bars, horizontal framing"
+        elif aspect_ratio == "4:3":
+            negative_prompt = "widescreen letterbox"
+        else:
+            negative_prompt = ""
+        try:
+            result = await animate_storyboard_kie_seedance(
+                prompt=prompt, image_urls=[storyboard_fal_url, product_fal_url],
+                duration=duration_seconds, resolution="720p", aspect_ratio=aspect_ratio,
+                negative_prompt=negative_prompt,
+            )
+        except KieError as e:
+            return json.dumps({"error": "kie_animate_failed", "msg": str(e), "raw": e.raw})
+
+        mp4_url = result["url"]
+        # Persist mp4 to Supabase so it doesn't expire from Fal's CDN
+        try:
+            # verify=False — Kie's tempfile.aiquickdraw.com CDN serves a
+            # self-signed cert that httpx's default verify chain rejects.
+            # Safe: we only fetch our own just-generated mp4, no MITM risk.
+            async with _httpx.AsyncClient(timeout=300.0, verify=False) as http:
+                r = await http.get(mp4_url)
+                mp4_bytes = r.content if r.status_code == 200 else None
+        except Exception as e:
+            print(f"[cinematic_animate] download from Fal failed: {e}")
+            mp4_bytes = None
+
+        stored_video_url = None
+        if mp4_bytes:
+            stored_video_url = await _save_to_supabase(
+                mp4_bytes, content_type="video/mp4",
+                filename=f"cinematic_ad_{_uuid.uuid4().hex[:12]}.mp4",
+            )
+        final_video_url = stored_video_url or mp4_url
+
+        job_id = await _insert_agent_video_job(
+            ctx,
+            final_video_url=final_video_url,
+            model_api="seedance-2.0-pro",
+            campaign_name=f"{product_meta['brand']} cinematic ad — {direction_obj['name']} ({duration_seconds}s {aspect_ratio})",
+            duration_seconds=float(duration_seconds),
+            hook=(kwargs.get("brief") or direction_obj["name"])[:500],
+            metadata={
+                "source": "cinematic_ads",
+                "stage": "animate",
+                "direction": direction_obj,
+                "storyboard_url": kwargs.get("storyboard_url"),
+                "product_id": product_meta.get("id"),
+                "tagline": tagline,
+                "domain": domain,
+                "aspect_ratio": aspect_ratio,
+                "duration_seconds": duration_seconds,
+            },
+        )
+        if final_video_url:
+            _record_artifact(ctx, {"type": "video", "url": final_video_url, "job_id": job_id})
+
+        return json.dumps({
+            "action": "ad_ready",
+            "video_url": final_video_url,
+            "job_id": job_id,
+            "offers": ["broll", "product_macro"],
+            "message": (
+                "Show the video to the user. Mention it's saved to the Videos tab. "
+                "Offer two optional add-ons: (1) a b-roll clip from one of the storyboard "
+                "panels (~$1.51 / 32 cr each — name the strongest 2 panels), and "
+                "(2) a product-only macro beauty shot (~$1.51 / 32 cr). Only call them "
+                "if the user explicitly asks."
+            ),
+            "credits_spent": _credits_for_op("cinematic_animate", {"duration_seconds": duration_seconds}),
+        })
+
+    # ── stage=broll — paid, ~$1.51 / 32 cr per panel
+    if stage == "broll":
+        panel_index = kwargs.get("panel_index")
+        if not isinstance(panel_index, int) or panel_index < 1 or panel_index > 6:
+            return json.dumps({"error": "panel_index (1-6) is required for broll stage"})
+        if not kwargs.get("storyboard_url"):
+            return json.dumps({"error": "storyboard_url is required for broll stage"})
+        if not kwargs.get("confirmed"):
+            credits = _credits_for_op("cinematic_broll", {})
+            return _confirmation_payload(
+                operation="cinematic_broll",
+                credits=credits,
+                summary=f"B-roll clip from panel {panel_index} (5s @ 720p)",
+                echo={k: v for k, v in kwargs.items() if k != "confirmed"},
+            )
+
+        try:
+            storyboard_fal_url = await upload_url_to_fal_storage(
+                kwargs["storyboard_url"], content_type="image/png", file_name="storyboard.png",
+            )
+            product_fal_url = await upload_url_to_fal_storage(
+                product_meta["image_url"], content_type="image/png", file_name="product.png",
+            )
+        except FalError as e:
+            return json.dumps({"error": f"upload to Fal failed: {e}"})
+
+        # Prefer cached Haiku-generated beats (richer fields) over static
+        # fallback, so broll matches the storyboard's exact shot vocabulary.
+        beats = get_cached_beats(ctx.session_id, direction_key) \
+            or panel_beats_for(direction_key, category=category)
+        panel = next((b for b in beats if b["n"] == panel_index), None)
+        if not panel:
+            return json.dumps({"error": f"no beat metadata for panel {panel_index}"})
+
+        has_humans = direction_obj.get("model_or_product_only") == "model"
+        prompt = build_seedance_broll_prompt(
+            brand=product_meta["brand"], product=product_meta["name"],
+            panel=panel, has_humans=has_humans,
+            direction=direction_obj, aspect_ratio=aspect_ratio,
+        )
+        negative_prompt_broll = (
+            "letterbox bars, horizontal framing" if aspect_ratio == "9:16"
+            else ("widescreen letterbox" if aspect_ratio == "4:3" else "")
+        )
+        try:
+            result = await animate_storyboard_kie_seedance(
+                prompt=prompt, image_urls=[storyboard_fal_url, product_fal_url],
+                duration=5, resolution="720p", aspect_ratio=aspect_ratio,
+                negative_prompt=negative_prompt_broll,
+            )
+        except KieError as e:
+            return json.dumps({"error": "kie_broll_failed", "msg": str(e), "raw": e.raw})
+
+        mp4_url = result["url"]
+        try:
+            # verify=False — Kie's tempfile.aiquickdraw.com CDN serves a
+            # self-signed cert that httpx's default verify chain rejects.
+            # Safe: we only fetch our own just-generated mp4, no MITM risk.
+            async with _httpx.AsyncClient(timeout=300.0, verify=False) as http:
+                r = await http.get(mp4_url)
+                mp4_bytes = r.content if r.status_code == 200 else None
+        except Exception:
+            mp4_bytes = None
+        stored_video_url = None
+        if mp4_bytes:
+            stored_video_url = await _save_to_supabase(
+                mp4_bytes, content_type="video/mp4",
+                filename=f"cinematic_broll_{_uuid.uuid4().hex[:12]}.mp4",
+            )
+        final_video_url = stored_video_url or mp4_url
+
+        job_id = await _insert_agent_video_job(
+            ctx, final_video_url=final_video_url, model_api="seedance-2.0-pro",
+            campaign_name=f"{product_meta['brand']} b-roll panel {panel_index}",
+            duration_seconds=5.0, hook=panel["scene"],
+            metadata={
+                "source": "cinematic_ads", "stage": "broll",
+                "panel_index": panel_index, "panel": panel,
+                "product_id": product_meta.get("id"),
+            },
+        )
+        if final_video_url:
+            _record_artifact(ctx, {"type": "video", "url": final_video_url, "job_id": job_id})
+        return json.dumps({
+            "action": "broll_ready",
+            "video_url": final_video_url, "job_id": job_id, "panel_index": panel_index,
+            "credits_spent": _credits_for_op("cinematic_broll", {}),
+        })
+
+    # ── stage=product_macro — paid, ~$1.51 / 32 cr, product-only
+    if stage == "product_macro":
+        if not kwargs.get("confirmed"):
+            credits = _credits_for_op("cinematic_product_macro", {})
+            return _confirmation_payload(
+                operation="cinematic_product_macro",
+                credits=credits,
+                summary="Product macro beauty shot (5s @ 720p)",
+                echo={k: v for k, v in kwargs.items() if k != "confirmed"},
+            )
+
+        try:
+            product_fal_url = await upload_url_to_fal_storage(
+                product_meta["image_url"], content_type="image/png", file_name="product.png",
+            )
+        except FalError as e:
+            return json.dumps({"error": f"product upload to Fal failed: {e}"})
+
+        prompt = build_seedance_product_macro_prompt(
+            brand=product_meta["brand"], product=product_meta["name"], category=category,
+            direction=direction_obj, aspect_ratio=aspect_ratio,
+        )
+        negative_prompt_macro = (
+            "letterbox bars, horizontal framing" if aspect_ratio == "9:16"
+            else ("widescreen letterbox" if aspect_ratio == "4:3" else "")
+        )
+        try:
+            result = await animate_storyboard_kie_seedance(
+                prompt=prompt, image_urls=[product_fal_url],
+                duration=5, resolution="720p", aspect_ratio=aspect_ratio,
+                negative_prompt=negative_prompt_macro,
+            )
+        except KieError as e:
+            return json.dumps({"error": "kie_product_macro_failed", "msg": str(e), "raw": e.raw})
+
+        mp4_url = result["url"]
+        try:
+            # verify=False — Kie's tempfile.aiquickdraw.com CDN serves a
+            # self-signed cert that httpx's default verify chain rejects.
+            # Safe: we only fetch our own just-generated mp4, no MITM risk.
+            async with _httpx.AsyncClient(timeout=300.0, verify=False) as http:
+                r = await http.get(mp4_url)
+                mp4_bytes = r.content if r.status_code == 200 else None
+        except Exception:
+            mp4_bytes = None
+        stored_video_url = None
+        if mp4_bytes:
+            stored_video_url = await _save_to_supabase(
+                mp4_bytes, content_type="video/mp4",
+                filename=f"cinematic_product_macro_{_uuid.uuid4().hex[:12]}.mp4",
+            )
+        final_video_url = stored_video_url or mp4_url
+
+        job_id = await _insert_agent_video_job(
+            ctx, final_video_url=final_video_url, model_api="seedance-2.0-pro",
+            campaign_name=f"{product_meta['brand']} product macro",
+            duration_seconds=5.0, hook=f"{product_meta['brand']} product macro",
+            metadata={
+                "source": "cinematic_ads", "stage": "product_macro",
+                "product_id": product_meta.get("id"),
+            },
+        )
+        if final_video_url:
+            _record_artifact(ctx, {"type": "video", "url": final_video_url, "job_id": job_id})
+        return json.dumps({
+            "action": "product_macro_ready",
+            "video_url": final_video_url, "job_id": job_id,
+            "credits_spent": _credits_for_op("cinematic_product_macro", {}),
+        })
+
+    return json.dumps({"error": f"unhandled stage: {stage}"})
 
 
 async def _tool_create_clone_video(ctx: ToolContext, **kwargs: Any) -> str:
@@ -5216,6 +5999,7 @@ TOOL_DISPATCH: dict[str, Callable[..., Awaitable[str]]] = {
     "generate_scripts": _tool_generate_scripts,
     # full UGC pipelines (gated)
     "create_ugc_video": _tool_create_ugc_video,
+    "create_cinematic_ad": _tool_create_cinematic_ad,
     "create_clone_video": _tool_create_clone_video,
     "create_bulk_campaign": _tool_create_bulk_campaign,
     # scheduling & social (free)
@@ -5393,6 +6177,27 @@ class ManagedAgentClient:
         self._agent_id: Optional[str] = None
         self._environment_id: Optional[str] = None
         self._lock = asyncio.Lock()
+        # Server-side auto-fire safety net for gated tools.
+        # When a tool returns {"action":"confirmation_required", "next_call":{...}},
+        # we stash {tool_name, next_call, credits, summary} here keyed by session_id.
+        # On the next turn, if the user clicked Confirm (canonical button text),
+        # _run_stream_impl auto-fires the pending tool directly — bypassing the LLM
+        # because Anthropic agents intermittently fail to re-emit the tool_use
+        # block after a cost confirmation despite the system-prompt rule.
+        # Process-local; cleared after fire / cancel / reset.
+        self._pending_confirmations: dict[str, dict] = {}
+        # Idempotency cache for gated tools — prevents the LLM from re-firing the
+        # same stage twice within 60s (real production hit: after a storyboard
+        # finished, user typed "go" intending to advance; the agent re-fired the
+        # SAME storyboard stage with confirmed=True, costing 4 extra credits and
+        # 2 extra minutes). Keyed by session_id → {fingerprint: fired_at_unix}.
+        self._recent_tool_fires: dict[str, dict[str, float]] = {}
+        # Last successful storyboard per cinematic-ads session: stores
+        # {url, brief_hash, direction}. The IDEMPOTENCY guard only rehydrates
+        # storyboard_url into duplicate_suppressed when brief_hash + direction
+        # match the current call — preventing the agent from re-using a stale
+        # URL when the user has pivoted to a new brief.
+        self._last_storyboard_meta: dict[str, dict] = {}
 
     # ── lazy resource creation ────────────────────────────────────────
     async def _ensure_agent(self) -> str:
@@ -5574,6 +6379,14 @@ class ManagedAgentClient:
           - {"type": "done", "session_id": str}
           - {"type": "error", "message": str}
         """
+        # Diagnostic header — diagnose auto-fire misses and other turn-level issues.
+        try:
+            _b_preview = (brief or "")[:120].replace("\n", " ")
+            _pending_keys = list(self._pending_confirmations.keys())
+            _has_pending = session_id in self._pending_confirmations if session_id else False
+            print(f"[stream_impl] brief={_b_preview!r} session_id={session_id!r} stashed_sessions={_pending_keys} pending_for_session={_has_pending}")
+        except Exception:
+            pass
         # Inject locale directive so conversational replies match the user's
         # actual message language. Tool calls / JSON payloads stay English.
         #
@@ -5613,6 +6426,232 @@ class ManagedAgentClient:
         }
         if brief.strip() in _AUTO_BUTTON_TEXTS:
             _detected = None
+
+        # ── Server-side auto-fire safety net for gated tools ──────────
+        # Anthropic agents intermittently fail to re-emit the tool_use block
+        # after a Confirm cost click despite the system-prompt anti-hallucination
+        # rule. When that happens the UI freezes after Confirm and the user has
+        # to retry the whole flow. Fix server-side: detect the canonical Confirm
+        # / Cancel button replies, look up the pending tool we stashed on the
+        # previous turn (see `_pending_confirmations` capture above), and either
+        # invoke it directly (Confirm) or clear + acknowledge (Cancel). Bypasses
+        # Anthropic for that single turn — every other turn still goes through
+        # the normal LLM stream.
+        _CONFIRM_REPLIES = {
+            "Confirmed — proceed with the pending generation now.",
+            "Confirmed - proceed with the pending generation now.",
+            "Confirmado — procede con la generación pendiente ahora.",
+            "Confirmado - procede con la generación pendiente ahora.",
+        }
+        _CANCEL_REPLIES = {
+            "Cancel that — don't proceed.",
+            "Cancel that - don't proceed.",
+            "Cancela eso — no procedas.",
+            "Cancela eso - no procedas.",
+        }
+        # The frontend prepends bracket markers like `[ENGINE=default — ...]` /
+        # `[LANG=en — ...]` / `[QUICK_MODE=on]` to the user's actual text. Strip
+        # those (leading and any newline-separated trailing) before matching the
+        # canonical confirm / cancel reply text, otherwise auto-fire never matches.
+        _bracket_strip_re = _re_module.compile(r"^\[[A-Z_]+=.*?\]\s*\n*", _re_module.DOTALL)
+        _cleaned_brief = brief
+        for _ in range(4):  # strip up to 4 stacked bracket prefixes
+            _new = _bracket_strip_re.sub("", _cleaned_brief, count=1).strip()
+            if _new == _cleaned_brief.strip():
+                break
+            _cleaned_brief = _new
+        _stripped_brief = _cleaned_brief.strip()
+        # Fall back to "contains" if exact match fails — some preface code paths
+        # add prefixes the bracket-stripper doesn't anticipate (e.g. parenthetical
+        # asides, asset-reference blocks that don't start with [BRACKET=...]).
+        _is_confirm_click = (
+            _stripped_brief in _CONFIRM_REPLIES
+            or any(reply in brief for reply in _CONFIRM_REPLIES)
+        )
+        _is_cancel_click = (
+            _stripped_brief in _CANCEL_REPLIES
+            or any(reply in brief for reply in _CANCEL_REPLIES)
+        )
+        print(f"[stream_impl] confirm={_is_confirm_click} cancel={_is_cancel_click} stripped_brief_tail={_stripped_brief[-100:]!r}")
+        _pending = self._pending_confirmations.get(session_id) if session_id else None
+
+        if _is_cancel_click and _pending and session_id:
+            print(f"[ManagedAgent] auto-cancel: clearing pending {_pending.get('tool_name')!r}")
+            self._pending_confirmations.pop(session_id, None)
+            yield {"type": "agent_message", "text": "Cancelled. Let me know when you want to try again."}
+            yield {"type": "done", "session_id": session_id}
+            return
+
+        if _is_confirm_click and _pending and session_id:
+            tool_name = _pending.get("tool_name")
+            base_input = dict(_pending.get("next_call") or {})
+            base_input["confirmed"] = True
+            print(f"[ManagedAgent] auto-fire: re-invoking {tool_name!r} with confirmed=true (LLM bypass)")
+            self._pending_confirmations.pop(session_id, None)
+
+            fn = TOOL_DISPATCH.get(tool_name) if tool_name else None
+            if not fn:
+                yield {"type": "agent_message", "text": f"Couldn't auto-fire — tool {tool_name!r} not found. Try again."}
+                yield {"type": "done", "session_id": session_id}
+                return
+
+            ctx_af = ToolContext(user_token=user_token, project_id=project_id, session_id=session_id)
+            # Record the auto-fire in _recent_tool_fires so the LLM idempotency
+            # guard catches a follow-up LLM re-fire of the same stage (e.g. user
+            # types "go" after auto-fired storyboard finishes — LLM must NOT
+            # re-fire storyboard, must advance to animate).
+            try:
+                import time as _time_af
+                _fingerprint_af = _compute_tool_fingerprint(tool_name, base_input)
+                _recent_af = self._recent_tool_fires.get(session_id, {})
+                _recent_af[_fingerprint_af] = _time_af.time()
+                self._recent_tool_fires[session_id] = _recent_af
+            except Exception:
+                pass
+
+            # Emit an artifact_pending event so the right-side panel can render
+            # a "generating…" placeholder card immediately, instead of leaving
+            # the user with only a "thinking…" chat bubble for 2–8 minutes.
+            # The frontend clears the placeholder on next fetchAssets refresh.
+            _pending_evt = _pending_artifact_event_for(tool_name, base_input)
+            if _pending_evt:
+                yield _pending_evt
+
+            # Loop: a single Confirm may chain through multiple stages if the
+            # tool itself returns confirmation_required again (multi-stage flows
+            # like cinematic-ads do storyboard → animate → broll, each its own
+            # cost gate). Each new confirmation_required is re-stashed for the
+            # NEXT user Confirm; this loop only handles up to one tool execution
+            # per Confirm click (no auto-chaining without user input).
+            try:
+                af_result_text = await fn(ctx_af, **base_input)
+            except Exception as e:
+                import traceback as _tb
+                print(f"[ManagedAgent] auto-fire EXCEPTION: {type(e).__name__}: {e}")
+                _tb.print_exc()
+                yield {"type": "agent_message", "text": f"Error firing {tool_name}: {e}"}
+                yield {"type": "done", "session_id": session_id}
+                return
+
+            # Drain artifacts (storyboard image, video mp4, etc.) BEFORE the
+            # narration so the UI renders the asset above the text.
+            for art in ctx_af.new_artifacts:
+                yield {"type": "artifact", "artifact": art}
+            ctx_af.new_artifacts.clear()
+
+            # Stash storyboard meta (url + brief_hash + direction) so the
+            # IDEMPOTENCY guard can rehydrate it ONLY when the brief and
+            # direction still match — avoids re-using a stale URL after the
+            # user pivots to a new brief.
+            if tool_name == "create_cinematic_ad" and session_id:
+                try:
+                    import hashlib as _hashlib_af
+                    _af_parsed_for_url = json.loads(af_result_text)
+                    _sb_url = _af_parsed_for_url.get("storyboard_url") if isinstance(_af_parsed_for_url, dict) else None
+                    if _sb_url:
+                        _brief_txt_af = (base_input.get("brief") or "").strip()
+                        _brief_h_af = _hashlib_af.sha1(_brief_txt_af.encode("utf-8")).hexdigest()[:8] if _brief_txt_af else ""
+                        self._last_storyboard_meta[session_id] = {
+                            "url": _sb_url,
+                            "brief_hash": _brief_h_af,
+                            "direction": base_input.get("direction"),
+                        }
+                except Exception:
+                    pass
+
+            # If the auto-fired tool returned ANOTHER confirmation_required
+            # (next stage of a multi-stage flow), stash it and emit a new
+            # confirmation chip + narration so the user can confirm stage N+1.
+            try:
+                af_parsed = json.loads(af_result_text)
+            except Exception:
+                af_parsed = None
+
+            # ── Auto-chain storyboard_ready → animate cost chip ────────────
+            # After a successful storyboard, immediately fire the animate
+            # stage with confirmed=False to surface the 96cr cost chip in the
+            # same turn. Eliminates the LLM-mediated "go" turn that frequently
+            # mis-fires as a duplicate storyboard.
+            if (isinstance(af_parsed, dict)
+                    and af_parsed.get("action") == "storyboard_ready"
+                    and tool_name == "create_cinematic_ad"
+                    and isinstance(af_parsed.get("next_call"), dict)
+                    and af_parsed["next_call"].get("stage") == "animate"
+                    and af_parsed["next_call"].get("confirmed") is False):
+                print("[ManagedAgent] auto-chain: firing animate(confirmed=False) immediately after storyboard_ready")
+                _chain_input = dict(af_parsed["next_call"])
+                # Carry the brief forward so the animate stage's downstream
+                # logic (and the IDEMPOTENCY fingerprint) sees the same brief.
+                if "brief" not in _chain_input and base_input.get("brief"):
+                    _chain_input["brief"] = base_input["brief"]
+                try:
+                    _chain_result_text = await fn(ctx_af, **_chain_input)
+                    _chain_parsed = json.loads(_chain_result_text)
+                except Exception as _chain_e:
+                    print(f"[ManagedAgent] auto-chain animate failed: {type(_chain_e).__name__}: {_chain_e} — falling back to LLM narration")
+                    _chain_parsed = None
+
+                if isinstance(_chain_parsed, dict) and _chain_parsed.get("action") == "confirmation_required":
+                    self._pending_confirmations[session_id] = {
+                        "tool_name": tool_name,
+                        "next_call": _chain_parsed.get("next_call") or _chain_input,
+                        "credits": _chain_parsed.get("credits"),
+                        "summary": _chain_parsed.get("summary"),
+                    }
+                    # Skip beats narration — the storyboard image itself
+                    # already shows scene/action/sound per panel. Surface the
+                    # animate cost chip directly.
+                    _chain_credits = _chain_parsed.get("credits", 0)
+                    _chain_summary = _chain_parsed.get("summary") or "Animate cinematic ad"
+                    yield {
+                        "type": "confirmation_pending",
+                        "credits": _chain_credits,
+                        "summaries": [str(_chain_summary)],
+                    }
+                    yield {
+                        "type": "agent_message",
+                        "text": f"Ready to animate this into the full cinematic ad? That costs **{_chain_credits} credits** — Confirm to proceed.",
+                    }
+                    yield {"type": "done", "session_id": session_id}
+                    return
+                # Else: chain failed / returned something unexpected — fall
+                # through to the normal narration path below.
+
+            if isinstance(af_parsed, dict) and af_parsed.get("action") == "confirmation_required":
+                self._pending_confirmations[session_id] = {
+                    "tool_name": tool_name,
+                    "next_call": af_parsed.get("next_call") or {},
+                    "credits": af_parsed.get("credits"),
+                    "summary": af_parsed.get("summary"),
+                }
+                credits = af_parsed.get("credits", 0)
+                summary = af_parsed.get("summary") or af_parsed.get("operation") or "next step"
+                yield {
+                    "type": "confirmation_pending",
+                    "credits": credits,
+                    "summaries": [str(summary)],
+                }
+                yield {
+                    "type": "agent_message",
+                    "text": f"Next step ready: {summary}. Confirm to continue ({credits} credits).",
+                }
+            else:
+                # Final result — surface a short user-facing message. The actual
+                # artifact (image / video) was already yielded above.
+                narration = None
+                if isinstance(af_parsed, dict):
+                    if af_parsed.get("video_url"):
+                        narration = "Your video is ready and saved to the Videos tab."
+                    elif af_parsed.get("storyboard_url"):
+                        narration = "Here's the storyboard — say go to animate it (or cancel)."
+                    elif af_parsed.get("error"):
+                        narration = f"Error: {af_parsed['error']}"
+                if not narration:
+                    narration = "Done."
+                yield {"type": "agent_message", "text": narration}
+
+            yield {"type": "done", "session_id": session_id}
+            return
 
         # Language resolution priority:
         #   1. Explicit `lang` from the frontend — the source of truth. The
@@ -5673,6 +6712,10 @@ class ManagedAgentClient:
                 f"{stored_agent_id}; current agent is {current_agent_id}. "
                 f"Invalidating so a fresh session picks up the new tool list / prompt."
             )
+            # Drop any stashed pending confirmation tied to the doomed session
+            # so a future Confirm click can't auto-fire against a tool the new
+            # agent never proposed.
+            self._pending_confirmations.pop(session_id, None)
             session_id = None
 
         # Resolve / create session, with transparent fallback for stale ids.
@@ -5692,17 +6735,23 @@ class ManagedAgentClient:
                         seen_event_ids.add(ev_id)
             except NotFoundError:
                 print(f"[ManagedAgent] session {session_id} gone, creating new")
+                self._pending_confirmations.pop(session_id, None)
+                self._recent_tool_fires.pop(session_id, None)
+                self._last_storyboard_meta.pop(session_id, None)
                 session_id = None
                 seen_event_ids.clear()
             except Exception as e:
                 print(f"[ManagedAgent] session probe failed ({e}), creating new")
+                self._pending_confirmations.pop(session_id, None)
+                self._recent_tool_fires.pop(session_id, None)
+                self._last_storyboard_meta.pop(session_id, None)
                 session_id = None
                 seen_event_ids.clear()
         if not session_id:
             session_id = await self._create_session(brief, project_id)
         yield {"type": "session", "session_id": session_id, "agent_id": current_agent_id}
 
-        ctx = ToolContext(user_token=user_token, project_id=project_id)
+        ctx = ToolContext(user_token=user_token, project_id=project_id, session_id=session_id)
         tool_calls_made = 0
 
         # Build a compact context primer from prior turns. Sent only on
@@ -5837,7 +6886,8 @@ class ManagedAgentClient:
             # a raw red error pill and has to re-type their message.
             _TRANSIENT_PATTERNS = (
                 "overloaded", "rate limit", "rate_limit",
-                "internal server error", "500", "529",
+                "internal server error", "internal service error",
+                "500", "529",
                 "timeout", "timed out", "temporarily unavailable",
                 "service unavailable", "503",
             )
@@ -5977,6 +7027,76 @@ class ManagedAgentClient:
                         fn = TOOL_DISPATCH.get(name)
                         if fn is None:
                             return tool_use_id, json.dumps({"error": f"unknown tool: {name}"}), True
+
+                        # ── Idempotency guard for LLM-fired gated tools ──
+                        # When the LLM (not auto-fire) calls a gated tool with
+                        # confirmed=True and the SAME tool+stage was fired in the
+                        # last 60s, short-circuit. Prevents the agent from re-running
+                        # an expensive stage when the user just said "go / yes / ok"
+                        # intending to advance to the next stage.
+                        #
+                        # For create_cinematic_ad: ALSO block confirmed=False re-fires
+                        # of a stage already completed in this flow. Otherwise the
+                        # agent re-emits the cost chip and the user's next Confirm
+                        # auto-fires the same stage again (3rd identical storyboard).
+                        _is_cinematic = (name == "create_cinematic_ad")
+                        _confirmed = tool_input.get("confirmed") is True
+                        _should_check_guard = session_id and (_confirmed or _is_cinematic)
+                        if _should_check_guard:
+                            import time as _time
+                            import hashlib as _hashlib_fp
+                            _fingerprint = _compute_tool_fingerprint(name, tool_input)
+                            _brief_txt_fp = (tool_input.get("brief") or "").strip()
+                            _current_brief_hash = _hashlib_fp.sha1(_brief_txt_fp.encode("utf-8")).hexdigest()[:8] if _brief_txt_fp else ""
+                            _recent = self._recent_tool_fires.get(session_id, {})
+                            _last = _recent.get(_fingerprint, 0)
+                            _now = _time.time()
+                            # Cinematic ads are strictly staged (propose→storyboard→
+                            # animate→broll→product_macro) — re-firing a completed
+                            # stage is ALWAYS wrong inside the same flow. Storyboard
+                            # alone takes ~2min, so the default 60s window misses
+                            # the "user typed 'go' after storyboard finished" case.
+                            _window = 1800.0 if name == "create_cinematic_ad" else 60.0
+                            if _now - _last < _window:
+                                print(f"[ManagedAgent] IDEMPOTENCY guard: {_fingerprint} fired {int(_now - _last)}s ago (window {int(_window)}s) — short-circuiting duplicate")
+                                _payload = {
+                                    "action": "duplicate_suppressed",
+                                    "message": f"This step ({_fingerprint}) was already completed in this flow. Advance to the NEXT stage — do NOT re-fire the same one. For cinematic_ad: storyboard→animate→broll→product_macro.",
+                                    "tool_name": name,
+                                    "fingerprint": _fingerprint,
+                                    "seconds_since_last_fire": int(_now - _last),
+                                }
+                                # Rehydrate the prior storyboard_url ONLY when
+                                # the brief AND direction still match — pivoting
+                                # to a new brief must not re-use the old URL,
+                                # or the agent will hallucinate that a fresh
+                                # storyboard is ready when it isn't.
+                                if _is_cinematic:
+                                    _prior_meta = self._last_storyboard_meta.get(session_id) or {}
+                                    _brief_match = bool(_prior_meta.get("brief_hash")) and _prior_meta.get("brief_hash") == _current_brief_hash
+                                    _dir_match = _prior_meta.get("direction") == tool_input.get("direction")
+                                    if _prior_meta.get("url") and _brief_match and _dir_match:
+                                        _payload["storyboard_url"] = _prior_meta["url"]
+                                        _payload["hint"] = "The storyboard for this exact brief+direction is in `storyboard_url`. Advance to stage='animate' with it."
+                                        _payload["message"] = "Storyboard already rendered for this brief+direction. Advance to stage='animate'."
+                                    else:
+                                        _payload["message"] = (
+                                            "A prior storyboard exists in this session but it's for a DIFFERENT brief or direction. "
+                                            "Do NOT pretend the prior storyboard satisfies the new brief. "
+                                            "The guard fingerprint matched — tell the user the engine is preventing a rapid duplicate fire; "
+                                            "they can wait 30 min, pick a different direction, OR keep going with the existing storyboard."
+                                        )
+                                return tool_use_id, json.dumps(_payload), False
+                            # Only RECORD on confirmed=True calls (actual paid fires).
+                            # confirmed=False is just a cost-preview request and must
+                            # not self-block legitimate future Confirm clicks.
+                            if _confirmed:
+                                _recent[_fingerprint] = _now
+                                # prune entries older than 1h to bound memory
+                                self._recent_tool_fires[session_id] = {
+                                    k: v for k, v in _recent.items() if _now - v < 3600
+                                }
+
                         try:
                             print(f"[ManagedAgent] tool {name}({_summarize_input(tool_input, 120)})")
                             result_text = await fn(ctx, **tool_input)
@@ -5995,7 +7115,27 @@ class ManagedAgentClient:
                                             result_text = await fn(ctx, **tool_input)
                                 except Exception as inner_e:
                                     print(f"[ManagedAgent] Quick mode auto-confirm parse error: {inner_e}")
-                            
+
+                            # Stash storyboard meta (url + brief_hash + direction)
+                            # so the IDEMPOTENCY guard only rehydrates when the
+                            # current call matches both. Prevents serving a
+                            # stale URL after the user pivots to a new brief.
+                            if name == "create_cinematic_ad" and session_id:
+                                try:
+                                    import hashlib as _hashlib_sb
+                                    _parsed = json.loads(result_text)
+                                    _sb_url = _parsed.get("storyboard_url") if isinstance(_parsed, dict) else None
+                                    if _sb_url:
+                                        _brief_txt_sb = (tool_input.get("brief") or "").strip()
+                                        _brief_h_sb = _hashlib_sb.sha1(_brief_txt_sb.encode("utf-8")).hexdigest()[:8] if _brief_txt_sb else ""
+                                        self._last_storyboard_meta[session_id] = {
+                                            "url": _sb_url,
+                                            "brief_hash": _brief_h_sb,
+                                            "direction": tool_input.get("direction"),
+                                        }
+                                except Exception:
+                                    pass
+
                             return tool_use_id, result_text, False
                         except Exception as e:
                             return tool_use_id, json.dumps({"error": str(e)}), True
@@ -6035,6 +7175,10 @@ class ManagedAgentClient:
                     tool_result_events: list[dict] = []
                     confirm_total_credits = 0
                     confirm_summaries: list[str] = []
+                    # Build {tool_use_id → name} so we can attribute confirmation_required
+                    # results back to their originating tool for the auto-fire safety net.
+                    _id_to_name = {ev.id: ev.name for ev in pending_tool_calls}
+                    _stashed_pending: Optional[dict] = None
                     for tool_use_id, result_text, is_error in results:
                         yield {
                             "type": "tool_result",
@@ -6061,6 +7205,16 @@ class ManagedAgentClient:
                                         confirm_total_credits += int(c)
                                     if s:
                                         confirm_summaries.append(str(s))
+                                    # Stash the first pending tool for the auto-fire safety net.
+                                    # In practice gated tools come one at a time; if there are
+                                    # multiple in a batch we stash the first.
+                                    if _stashed_pending is None:
+                                        _stashed_pending = {
+                                            "tool_name": _id_to_name.get(tool_use_id),
+                                            "next_call": parsed.get("next_call") or {},
+                                            "credits": parsed.get("credits"),
+                                            "summary": parsed.get("summary"),
+                                        }
                                 elif "total_credits" in parsed and "line_items" in parsed:
                                     c = parsed.get("total_credits")
                                     if isinstance(c, (int, float)):
@@ -6073,6 +7227,11 @@ class ManagedAgentClient:
                     )
 
                     if pending_confirmation:
+                        # Stash for the server-side auto-fire safety net so the next turn's
+                        # Confirm-button reply bypasses the LLM and re-fires the tool directly.
+                        if _stashed_pending and _stashed_pending.get("tool_name") and session_id:
+                            self._pending_confirmations[session_id] = _stashed_pending
+                            print(f"[ManagedAgent] stashed pending confirmation: {_stashed_pending['tool_name']} ({_stashed_pending.get('credits')} cr)")
                         yield {
                             "type": "confirmation_pending",
                             "credits": pending_confirmation["credits"],

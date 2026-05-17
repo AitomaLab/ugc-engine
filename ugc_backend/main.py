@@ -681,6 +681,7 @@ class JobCreate(BaseModel):
     subtitle_placement: Optional[str] = "middle"
     # Language
     video_language: str = "en"                   # 'en' or 'es' — defaults to English
+    language_accent: Optional[str] = None        # 'spain' | 'latam' — only consulted when video_language == 'es'
     # Music
     music_enabled: Optional[bool] = True
 
@@ -703,6 +704,7 @@ class BulkJobCreate(BaseModel):
     subtitle_placement: Optional[str] = "middle"
     # Language
     video_language: str = "en"                   # 'en' or 'es' — defaults to English
+    language_accent: Optional[str] = None        # 'spain' | 'latam' — only consulted when video_language == 'es'
     # Music
     music_enabled: Optional[bool] = True
 
@@ -1232,7 +1234,7 @@ def api_create_job(
                 "cost_video", "cost_voice", "cost_music", "cost_processing", "total_cost",
                 "cinematic_shot_ids", "error_message",
                 "subtitles_enabled", "subtitle_style", "subtitle_placement",
-                "video_language", "music_enabled",
+                "video_language", "language_accent", "music_enabled",
                 "preview_url", "preview_type", "status_message",
             }
 
@@ -1992,7 +1994,7 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
                 "cost_video", "cost_voice", "cost_music", "cost_processing", "total_cost",
                 "cinematic_shot_ids", "error_message", "variation_prompt",
                 "subtitles_enabled", "subtitle_style", "subtitle_placement",
-                "video_language", "music_enabled",
+                "video_language", "language_accent", "music_enabled",
                 "preview_url", "preview_type", "status_message",
             }
 

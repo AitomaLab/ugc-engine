@@ -304,6 +304,7 @@ SKIP_KIE_RETRY_PATTERNS = (
 # Transient KIE errors — retry KIE a few times, then fall back to WaveSpeed.
 RETRIABLE_PATTERNS = (
     "500", "unknown generation error", "timed out", "timeout", "generation failed",
+    "aspect ratio",  # KIE transient bug — rejects valid "9:16" string intermittently
 )
 
 
@@ -483,14 +484,14 @@ def _wavespeed_primary_video_attempt(
         sd_dur = max(4, min(15, int(duration)))
         ref_imgs = [u for u in (reference_image_urls or []) if u]
         ref_vids = [u for u in (reference_video_urls or []) if u]
-        # Replace KIE-specific @ImageN / @VideoN placeholders with descriptive
-        # noun phrases. WaveSpeed Seedance has no concept of named refs; if we
-        # leave the literal tokens the model can render them as on-screen text,
-        # but if we delete them outright the surrounding sentence becomes a
-        # fragment ("@Image1 captures Alexa" → " captures Alexa"). The noun
-        # phrase keeps the prompt grammatical without leaking a token.
-        ws_prompt = re.sub(r"@Image\d+", "the reference image", prompt or "")
-        ws_prompt = re.sub(r"@Video\d+", "the reference video", ws_prompt).strip()
+        # Replace KIE-specific @ImageN / @VideoN / @image_X / @video_X
+        # placeholders with descriptive noun phrases. WaveSpeed Seedance has
+        # no concept of named refs; if we leave the literal tokens the model
+        # can render them as on-screen text, but if we delete them outright
+        # the surrounding sentence becomes a fragment. The noun phrase keeps
+        # the prompt grammatical without leaking a token.
+        ws_prompt = re.sub(r"@[Ii]mage[\d_]+", "the reference image", prompt or "")
+        ws_prompt = re.sub(r"@[Vv]ideo[\d_]+", "the reference video", ws_prompt).strip()
         # Choose between seedance-2.0 (full quality) and seedance-2.0-fast
         use_fast = "fast" in (model_api or "").lower()
         # Multi-image or video-ref → t2v. WaveSpeed i2v is single-image only;

@@ -60,6 +60,10 @@ interface AgentPanelProps {
     initialUseSeedance?: boolean;
     /** Fires when the agent starts a generation job, so the parent can switch the gallery tab. */
     onJobStart?: (kind: 'image' | 'video') => void;
+    /** Fires when a long-running tool announces a pending artifact (right-panel placeholder). */
+    onArtifactPending?: (pending: { pending_id: string; kind: 'image' | 'video'; label: string; stage?: string; tool_name?: string; eta_seconds?: number }) => void;
+    /** Fires when a real artifact lands, so the parent can drop one matching placeholder. */
+    onArtifactReady?: (kind: 'image' | 'video') => void;
     /**
      * When set, edit-intent prompts (e.g. "trim clip 2 to 5 seconds") are routed to
      * the editor-AI module (/api/editor/ai) instead of the managed agent stream.
@@ -253,7 +257,7 @@ const PRO_ASPECT_RATIOS_VID = ['9:16', '16:9'];
 const PRO_QUALITIES = ['2K', '4K'];
 const PRO_LANGUAGES = ['EN', 'ES'];
 
-export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse, hideHeader = false, onStateChange, onSubmitOverride, initialBrief, initialRefs, initialUseSeedance, onJobStart, jobId }: AgentPanelProps, ref: React.Ref<AgentPanelHandle>) {
+export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse, hideHeader = false, onStateChange, onSubmitOverride, initialBrief, initialRefs, initialUseSeedance, onJobStart, onArtifactPending, onArtifactReady, jobId }: AgentPanelProps, ref: React.Ref<AgentPanelHandle>) {
     const { lang, t } = useTranslation();
     const [open, setOpen] = useState(false);
     const [brief, setBrief] = useState('');
@@ -293,6 +297,10 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
     const scrollerRef = useRef<HTMLDivElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    // Auto-grow the composer textarea upward as the user types (like Claude
+    // Code). Capped so it never eats the whole panel; overflow scrolls inside.
+    const COMPOSER_MIN_H = 88;
+    const COMPOSER_MAX_H = 320;
 
     // ── File attachments ────────────────────────────────────────────────
     const [attachments, setAttachments] = useState<AttachedFile[]>([]);
@@ -309,6 +317,15 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
     const dequeueTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     useEffect(() => { queuePausedRef.current = queuePaused; }, [queuePaused]);
     useEffect(() => { queueRef.current = queue; }, [queue]);
+    // Auto-grow textarea on content change
+    useEffect(() => {
+        const el = textareaRef.current;
+        if (!el) return;
+        el.style.height = 'auto';
+        const next = Math.min(Math.max(el.scrollHeight, COMPOSER_MIN_H), COMPOSER_MAX_H);
+        el.style.height = `${next}px`;
+        el.style.overflowY = el.scrollHeight > COMPOSER_MAX_H ? 'auto' : 'hidden';
+    }, [brief]);
     // Auto-clear pause when the queue empties so a fresh send after a clean
     // user-stop fires immediately instead of getting trapped in pause state.
     useEffect(() => {
@@ -1190,7 +1207,29 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     }));
                     setArtifactsReadyCount((c) => c + 1);
                     setArtifactFlashTick(Date.now());
+                    // Drop one matching placeholder so the right-panel
+                    // shrinks one-by-one as generations complete.
+                    const artKind = (art as any)?.type === 'video' ? 'video' : 'image';
+                    onArtifactReady?.(artKind);
                     onArtifact?.();
+                    break;
+                }
+                case 'artifact_pending': {
+                    // A long-running tool just started. Surface a placeholder
+                    // in the right-side gallery so the user sees a spinner
+                    // instead of staring at a "thinking…" bubble for minutes.
+                    const p = e as { pending_id?: string; kind?: 'image' | 'video'; label?: string; stage?: string; tool_name?: string; eta_seconds?: number };
+                    if (p.pending_id && p.kind && p.label) {
+                        onArtifactPending?.({
+                            pending_id: p.pending_id,
+                            kind: p.kind,
+                            label: p.label,
+                            stage: p.stage,
+                            tool_name: p.tool_name,
+                            eta_seconds: p.eta_seconds,
+                        });
+                        onJobStart?.(p.kind);
+                    }
                     break;
                 }
                 case 'confirmation_pending': {
@@ -1870,10 +1909,16 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                 // ratio they picked so the bubble can render it as "selected".
                                 const next = turns[idx + 1];
                                 const nextUserText = next?.role === 'user' ? (next.text || '') : '';
-                                const selectedAspect: 'vertical' | 'horizontal' | null =
+                                const selectedAspect: 'vertical' | 'horizontal' | 'classic' | null =
                                     /9\s*:\s*16|vertical/i.test(nextUserText) ? 'vertical'
                                         : /16\s*:\s*9|horizontal/i.test(nextUserText) ? 'horizontal'
-                                            : null;
+                                            : /4\s*:\s*3|classic/i.test(nextUserText) ? 'classic'
+                                                : null;
+                                const selectedDuration: 5 | 10 | 15 | null =
+                                    /\b5\s*s(econds?)?\b/i.test(nextUserText) ? 5
+                                        : /\b10\s*s(econds?)?\b/i.test(nextUserText) ? 10
+                                            : /\b15\s*s(econds?)?\b/i.test(nextUserText) ? 15
+                                                : null;
                                 return (
                                     <TurnBubble
                                         key={idx}
@@ -1883,6 +1928,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                         running={running}
                                         onQuickReply={(text) => { handleRun(text); }}
                                         selectedAspect={selectedAspect}
+                                        selectedDuration={selectedDuration}
                                     />
                                 );
                             });
@@ -2237,11 +2283,12 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                 onKeyDown={handleBriefKeyDown}
                                 onFocus={() => { if (!mentionsLoaded) loadMentionData(); }}
                                 placeholder={t('creativeOs.agent.composerPlaceholder')}
-                                rows={3}
                                 style={{
                                     width: '100%',
+                                    minHeight: `${COMPOSER_MIN_H}px`,
+                                    maxHeight: `${COMPOSER_MAX_H}px`,
                                     paddingTop: '10px',
-                                    paddingBottom: '44px',
+                                    paddingBottom: '50px',
                                     paddingLeft: '12px',
                                     paddingRight: '84px',
                                     border: '1px solid rgba(13,27,62,0.12)',
@@ -2253,6 +2300,23 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                     outline: 'none',
                                     background: 'white',
                                     display: 'block',
+                                    overflowY: 'hidden',
+                                }}
+                            />
+                            {/* Solid white strip masking the bottom of the textarea so long
+                                prompts never bleed visually behind the bottom action buttons. */}
+                            <div
+                                aria-hidden
+                                style={{
+                                    position: 'absolute',
+                                    left: '1px',
+                                    right: '1px',
+                                    bottom: '1px',
+                                    height: '46px',
+                                    background: 'white',
+                                    borderBottomLeftRadius: '11px',
+                                    borderBottomRightRadius: '11px',
+                                    pointerEvents: 'none',
                                 }}
                             />
                             <button
@@ -3176,7 +3240,7 @@ function ThinkingIndicator() {
     );
 }
 
-function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspect }: { turn: AgentTurn; refMap: Map<string, AgentRef>; isLast?: boolean; running?: boolean; onQuickReply?: (text: string) => void; selectedAspect?: 'vertical' | 'horizontal' | null }) {
+function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspect, selectedDuration }: { turn: AgentTurn; refMap: Map<string, AgentRef>; isLast?: boolean; running?: boolean; onQuickReply?: (text: string) => void; selectedAspect?: 'vertical' | 'horizontal' | 'classic' | null; selectedDuration?: 5 | 10 | 15 | null }) {
     const { t } = useTranslation();
     const isUser = turn.role === 'user';
     const hasRefPreviews = isUser && !!turn.refs?.some((r) => r.image_url || r.video_url);
@@ -3188,6 +3252,7 @@ function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspec
     const rawText = turn.text || '';
     const hasAspectMarker = !isUser && rawText.includes('[[ASPECT_BUTTONS]]');
     const hasAccentMarker = !isUser && rawText.includes('[[SPANISH_ACCENT_BUTTONS]]');
+    const hasDurationMarker = !isUser && rawText.includes('[[DURATION_BUTTONS]]');
 
     // Detect [[SAVE_OR_GENERATE:image_url=...&type=product|influencer]] marker
     const saveOrGenMatch = !isUser ? rawText.match(/\[\[SAVE_OR_GENERATE:image_url=([^&]+)&type=(product|influencer)\]\]/) : null;
@@ -3199,6 +3264,7 @@ function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspec
     let displayText = rawText;
     if (hasAspectMarker) displayText = displayText.replace(/\s*\[\[ASPECT_BUTTONS\]\]\s*/g, '').trim();
     if (hasAccentMarker) displayText = displayText.replace(/\s*\[\[SPANISH_ACCENT_BUTTONS\]\]\s*/g, '').trim();
+    if (hasDurationMarker) displayText = displayText.replace(/\s*\[\[DURATION_BUTTONS\]\]\s*/g, '').trim();
     if (hasSaveOrGenMarker) displayText = displayText.replace(/\s*\[\[SAVE_OR_GENERATE:[^\]]+\]\]\s*/g, '').trim();
 
     // Save-or-generate modal state
@@ -3209,10 +3275,11 @@ function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspec
     const [selectedAccent, setSelectedAccent] = useState<'spain' | 'latam' | null>(null);
 
     const aspectButtonsActive = hasAspectMarker && !!isLast && !!onQuickReply && !selectedAspect;
+    const durationButtonsActive = hasDurationMarker && !!isLast && !!onQuickReply && !selectedDuration;
     const accentButtonsActive = hasAccentMarker && !!isLast && !!onQuickReply && !selectedAccent;
     const saveOrGenActive = hasSaveOrGenMarker && !!isLast && !!onQuickReply && !saveChoice;
     const confirmChipActive = !!turn.pendingConfirmation && !!isLast && !!onQuickReply;
-    const hasContent = !!displayText || !!turn.artifacts?.length || turn.interrupted || hasRefPreviews || hasAspectMarker || hasAccentMarker || hasSaveOrGenMarker || !!turn.pendingConfirmation;
+    const hasContent = !!displayText || !!turn.artifacts?.length || turn.interrupted || hasRefPreviews || hasAspectMarker || hasAccentMarker || hasDurationMarker || hasSaveOrGenMarker || !!turn.pendingConfirmation;
     // While a run is active, show a placeholder "…" bubble (three breathing
     // dots) in place of the empty agent turn so the UI never looks frozen
     // while waiting for the first `agent_message`. Historical empty turns
@@ -3300,10 +3367,12 @@ function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspec
 
                 {hasAspectMarker && (
                     <div style={{ display: 'flex', gap: '8px', marginTop: displayText ? '10px' : 0, flexWrap: 'wrap' }}>
-                        {(['vertical', 'horizontal'] as const).map((kind) => {
+                        {(['vertical', 'horizontal', 'classic'] as const).map((kind) => {
                             const label = kind === 'vertical'
-                                ? t('creativeOs.agent.aspectVertical')
-                                : t('creativeOs.agent.aspectHorizontal');
+                                ? `${t('creativeOs.agent.aspectVertical')} (9:16)`
+                                : kind === 'horizontal'
+                                    ? `${t('creativeOs.agent.aspectHorizontal')} (16:9)`
+                                    : 'Classic (4:3)';
                             const isSelected = selectedAspect === kind;
                             const muted = !!selectedAspect && !isSelected;
                             return (
@@ -3327,6 +3396,42 @@ function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspec
                                         fontSize: '13px',
                                         fontWeight: 500,
                                         cursor: aspectButtonsActive ? 'pointer' : 'default',
+                                    }}
+                                >
+                                    {label}
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
+
+                {hasDurationMarker && (
+                    <div style={{ display: 'flex', gap: '8px', marginTop: (displayText || hasAspectMarker) ? '8px' : 0, flexWrap: 'wrap' }}>
+                        {([5, 10, 15] as const).map((sec) => {
+                            const label = `${sec}s`;
+                            const isSelected = selectedDuration === sec;
+                            const muted = !!selectedDuration && !isSelected;
+                            return (
+                                <button
+                                    key={sec}
+                                    type="button"
+                                    disabled={!durationButtonsActive}
+                                    onClick={() => durationButtonsActive && onQuickReply?.(label)}
+                                    style={{
+                                        padding: '6px 14px',
+                                        borderRadius: '8px',
+                                        border: isSelected
+                                            ? '1px solid #337AFF'
+                                            : '1px solid rgba(51,122,255,0.15)',
+                                        background: isSelected
+                                            ? 'linear-gradient(135deg, #337AFF 0%, #5B8FFF 100%)'
+                                            : muted
+                                                ? 'rgba(51,122,255,0.03)'
+                                                : 'white',
+                                        color: isSelected ? 'white' : muted ? '#8A93B0' : '#337AFF',
+                                        fontSize: '13px',
+                                        fontWeight: 500,
+                                        cursor: durationButtonsActive ? 'pointer' : 'default',
                                     }}
                                 >
                                     {label}

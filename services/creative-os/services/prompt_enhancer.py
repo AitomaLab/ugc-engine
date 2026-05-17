@@ -56,27 +56,34 @@ def _load_system_prompt(mode: str) -> str:
 def _build_user_message(user_prompt: str, language: str = "en", context: dict | None = None) -> str:
     """Build the user message with context from the Create Bar."""
     lang_name = "English" if language == "en" else "Spanish"
+    is_seedance = context and context.get("mode", "").startswith("seedance_2_")
     parts = []
-    if context and context.get("mode") in ("seedance_2_ugc", "seedance_2_cinematic", "seedance_2_product"):
-        seedance_lang = "Spanish (Latin American accent)" if language == "es" else "English"
-        parts.append(f"[Language: {seedance_lang}]")
-    parts.append(f"Language for introductions and non-prompt text: {lang_name}")
 
-    # ── Clip duration (CRITICAL for script pacing) ──
-    # GPT-4o must know the exact clip length to apply the dialogue word
-    # budget (Rule 15) and beat-timestamp constraints (Rule 16).
+    if is_seedance:
+        seedance_lang = "Spanish (Latin American accent)" if language == "es" else "English"
+        parts.append(f"[Video language: {seedance_lang}]")
+    else:
+        parts.append(f"Language for introductions and non-prompt text: {lang_name}")
+
+    # ── Clip duration ──
     if context and context.get("duration"):
         dur = int(context["duration"])
-        word_budgets = {5: "12–15", 8: "20–24", 10: "25–30", 15: "40–50"}
-        budget = word_budgets.get(dur, f"~{int(dur * 2.5)}–{int(dur * 3)}")
-        parts.append(
-            f"\n[CLIP DURATION: {dur} seconds] "
-            f"ALL timestamps in Dynamic Description must end at or before {dur}s. "
-            f"Dialogue word budget: {budget} words MAXIMUM. "
-            f"Script must end 1 second before the clip ends ({dur - 1}s). "
-            f"Use the {dur}-second beat structure from the mode specification. "
-            f"Do NOT write beats or dialogue for a longer clip."
-        )
+        if is_seedance:
+            # The new Seedance director prompt handles timing internally —
+            # just pass the duration as simple context.
+            parts.append(f"\n[Duration: {dur} seconds]")
+        else:
+            # Non-Seedance modes: keep the detailed word-budget injection
+            word_budgets = {5: "12–15", 8: "20–24", 10: "25–30", 15: "40–50"}
+            budget = word_budgets.get(dur, f"~{int(dur * 2.5)}–{int(dur * 3)}")
+            parts.append(
+                f"\n[CLIP DURATION: {dur} seconds] "
+                f"ALL timestamps in Dynamic Description must end at or before {dur}s. "
+                f"Dialogue word budget: {budget} words MAXIMUM. "
+                f"Script must end 1 second before the clip ends ({dur - 1}s). "
+                f"Use the {dur}-second beat structure from the mode specification. "
+                f"Do NOT write beats or dialogue for a longer clip."
+            )
 
     if context:
         if context.get("product_name"):
@@ -85,16 +92,28 @@ def _build_user_message(user_prompt: str, language: str = "en", context: dict | 
             parts.append(f"Product description: {context['product_description']}")
         if context.get("influencer_name"):
             parts.append(f"Influencer: {context['influencer_name']}")
-        if context.get("image_url"):
-            parts.append(f"Reference image uploaded: {context['image_url']}")
-            # For Seedance modes, instruct GPT-4o to use @Image1 binding
-            # so the engine locks onto the exact product text/labels.
-            if context.get("mode", "").startswith("seedance_2_"):
+
+        # ── Reference images with @ImageN indexing (KIE API format) ──
+        # KIE's Seedance 2.0 uses @Image1, @Image2, etc. to bind the
+        # reference_image_urls array to specific roles in the scene.
+        # We tell GPT-4o which index maps to which image.
+        if is_seedance:
+            image_urls = context.get("image_urls") or []
+            if not image_urls and context.get("image_url"):
+                image_urls = [context["image_url"]]
+            if image_urls:
+                parts.append("\n[Reference images provided]")
+                for idx, url in enumerate(image_urls, 1):
+                    parts.append(f"  @Image{idx}: {url}")
                 parts.append(
-                    "CRITICAL: This image is mapped to @Image1 in the Seedance engine. "
-                    "You MUST use @Image1 in your Dynamic and Static descriptions to anchor "
-                    "the product's visual identity. Without @Image1, the engine will hallucinate text."
+                    "Use @Image1, @Image2, etc. in your prompt to reference "
+                    "each image in the scene. Seedance only preserves visual "
+                    "identity if you use these references explicitly."
                 )
+        else:
+            if context.get("image_url"):
+                parts.append(f"Reference image uploaded: {context['image_url']}")
+
         if context.get("elements"):
             element_names = [f"@{e['name']}" for e in context["elements"]]
             parts.append(f"\nAvailable Kling 3.0 element references: {', '.join(element_names)}")
@@ -138,7 +157,7 @@ def parse_prompt_options(response_text: str) -> list[dict]:
                 continue
 
         # Extract prompt from code block
-        code_match = re.search(r'```(?:text)?\s*\n(.*?)\n```', block, re.DOTALL)
+        code_match = re.search(r'```(?:text|markdown)?\s*\n(.*?)\n```', block, re.DOTALL)
         if code_match:
             prompt = code_match.group(1).strip()
             if prompt and len(prompt) > 20:
@@ -150,7 +169,7 @@ def parse_prompt_options(response_text: str) -> list[dict]:
     # If we couldn't parse structured options, try a simpler approach
     if not options:
         # Try splitting by code blocks
-        code_blocks = re.findall(r'```(?:text)?\s*\n(.*?)\n```', response_text, re.DOTALL)
+        code_blocks = re.findall(r'```(?:text|markdown)?\s*\n(.*?)\n```', response_text, re.DOTALL)
         for i, prompt in enumerate(code_blocks):
             prompt = prompt.strip()
             if prompt and len(prompt) > 20:

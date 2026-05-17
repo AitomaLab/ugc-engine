@@ -34,6 +34,14 @@ CREDIT_COSTS = {
     ("clone", 30): 180,
     # Editor render (re-encoding edited timeline — fixed flat fee)
     "editor_render": 10,
+    # Cinematic Ads (Fal AI: GPT Image 2 + Seedance 2.0 Pro, always 720p)
+    # Margin-aligned with existing video jobs (~21 credits per $1 of COGS).
+    "cinematic_storyboard": 4,              # GPT Image 2 high (any aspect, ~$0.18)
+    "cinematic_animate_720p_5s":  32,       # Seedance 720p 5s
+    "cinematic_animate_720p_10s": 64,       # Seedance 720p 10s
+    "cinematic_animate_720p_15s": 96,       # Seedance 720p 15s (anchor)
+    "cinematic_broll_720p_5s": 32,          # Seedance 720p 5s broll panel
+    "cinematic_product_macro_720p_5s": 32,  # Seedance 720p 5s product macro
 }
 
 
@@ -85,6 +93,26 @@ def get_video_clip_credit_cost(mode: str, clip_length: int, has_reference: bool 
     if not per_s_key:
         raise ValueError(f"No credit cost defined for video clip mode: {mode}")
     return int(CREDIT_COSTS[per_s_key] * max(1, int(clip_length)))
+
+
+def get_cinematic_ad_credit_cost(stage: str, duration_seconds: int = 15) -> int:
+    """Credits for one Cinematic Ads stage.
+
+    stage: 'storyboard' | 'animate' | 'broll' | 'product_macro'
+    duration_seconds: only used for 'animate' — one of 5 / 10 / 15.
+    All animation stages are 720p; broll + product_macro are always 5s.
+    """
+    if stage == "animate":
+        key = f"cinematic_animate_720p_{int(duration_seconds)}s"
+        return CREDIT_COSTS.get(key, CREDIT_COSTS["cinematic_animate_720p_15s"])
+    key = {
+        "storyboard": "cinematic_storyboard",
+        "broll": "cinematic_broll_720p_5s",
+        "product_macro": "cinematic_product_macro_720p_5s",
+    }.get(stage)
+    if not key:
+        raise ValueError(f"No cinematic-ad credit cost defined for stage: {stage}")
+    return CREDIT_COSTS[key]
 
 
 def get_video_credit_cost(product_type: str, duration: int) -> int:

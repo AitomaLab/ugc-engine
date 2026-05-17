@@ -135,6 +135,45 @@ export default function ProjectContainerPage() {
     // Sync agent panel state to power reactive header elements
     const [agentState, setAgentState] = useState<AgentPanelState>({ useSeedance: false, running: false, turnsCount: 0 });
 
+    // In-flight placeholders for the right-panel gallery. Added when the
+    // agent emits `artifact_pending` (right after the user confirms a paid
+    // generation), cleared on the next fetchAssets refresh when the real
+    // artifact has landed in Supabase.
+    const addPendingPlaceholder = useCallback((p: { pending_id: string; kind: 'image' | 'video'; label: string; eta_seconds?: number }) => {
+        const placeholder: any = {
+            id: p.pending_id,
+            is_placeholder: true,
+            status: 'generating',
+            label: p.label,
+            eta_seconds: p.eta_seconds,
+            created_at: new Date().toISOString(),
+        };
+        if (p.kind === 'video') {
+            setVideos(prev => [placeholder, ...prev]);
+            setActiveTab('videos');
+        } else {
+            setImages(prev => [placeholder, ...prev]);
+            setActiveTab('images');
+        }
+    }, []);
+    const clearPendingPlaceholders = useCallback(() => {
+        setVideos(prev => prev.filter(v => !v.is_placeholder));
+        setImages(prev => prev.filter(v => !v.is_placeholder));
+    }, []);
+    // Clear the OLDEST pending placeholder of a given kind. Called when a
+    // matching real artifact lands so placeholders shrink one-by-one as
+    // generations complete, instead of all-or-nothing on `done`.
+    const clearOnePlaceholder = useCallback((kind: 'image' | 'video') => {
+        const setter = kind === 'video' ? setVideos : setImages;
+        setter(prev => {
+            const idx = prev.findIndex(v => v.is_placeholder);
+            if (idx === -1) return prev;
+            const next = [...prev];
+            next.splice(idx, 1);
+            return next;
+        });
+    }, []);
+
     const fetchAssets = useCallback(async (silent = false) => {
         if (!session || !projectId) return;
         if (!silent) setLoading(true);
@@ -148,8 +187,12 @@ export default function ProjectContainerPage() {
                 videos: any[];
             }>(`/creative-os/projects/${projectId}/full`);
             setProjectName(full.project?.name || 'Project');
-            setImages(full.images || []);
-            setVideos(full.videos || []);
+            // Preserve any local placeholders the agent emitted while the
+            // generation is still in flight (the new real asset will arrive
+            // via SSE 'artifact' and clearOnePlaceholder will drop one of
+            // matching kind). fetchAssets ALONE should never wipe them.
+            setImages(prev => [...prev.filter(v => v.is_placeholder), ...(full.images || [])]);
+            setVideos(prev => [...prev.filter(v => v.is_placeholder), ...(full.videos || [])]);
         } catch (err) {
             console.error('Failed to fetch assets:', err);
         } finally {
@@ -163,10 +206,12 @@ export default function ProjectContainerPage() {
     const pollInFlight = useCallback(async () => {
         if (!session || !projectId) return;
         const imageIds = images.filter(a => {
+            if (a.is_placeholder) return false;
             const s = (a.status || '').toLowerCase();
             return s.includes('pending') || s.includes('processing') || s.includes('generating');
         }).map(a => a.id).filter(Boolean);
         const videoIds = videos.filter(a => {
+            if (a.is_placeholder) return false;
             const s = (a.status || '').toLowerCase();
             return s.includes('pending') || s.includes('processing') || s.includes('generating');
         }).map(a => a.id).filter(Boolean);
@@ -636,7 +681,7 @@ export default function ProjectContainerPage() {
                 {projectHeaderBar}
                 {galleryBlock}
                 {false && createBarOpen && createBarBlock}
-                <AgentPanel ref={agentRef} projectId={projectId} jobId={selectedJobId} onArtifact={() => fetchAssets(true)} onStateChange={setAgentState} initialBrief={initialBrief || undefined} initialRefs={initialRefs} initialUseSeedance={initialUseSeedance} onJobStart={(kind) => { setActiveTab(kind === 'video' ? 'videos' : 'images'); startJobRefetchBurst(); }} />
+                <AgentPanel ref={agentRef} projectId={projectId} jobId={selectedJobId} onArtifact={() => { fetchAssets(true); }} onArtifactPending={addPendingPlaceholder} onArtifactReady={clearOnePlaceholder} onStateChange={setAgentState} initialBrief={initialBrief || undefined} initialRefs={initialRefs} initialUseSeedance={initialUseSeedance} onJobStart={(kind) => { setActiveTab(kind === 'video' ? 'videos' : 'images'); startJobRefetchBurst(); }} />
             </div>
         );
     }
@@ -670,7 +715,7 @@ export default function ProjectContainerPage() {
                             ref={agentRef}
                             projectId={projectId}
                             jobId={selectedJobId}
-                            onArtifact={() => fetchAssets(true)}
+                            onArtifact={() => { fetchAssets(true); }} onArtifactPending={addPendingPlaceholder} onArtifactReady={clearOnePlaceholder}
                             embedded={true}
                             hideHeader={true}
                             onStateChange={setAgentState}
@@ -690,6 +735,7 @@ export default function ProjectContainerPage() {
                 }}>
                     <div style={{
                         flex: 1, overflowY: 'auto',
+                        display: 'flex', flexDirection: 'column',
                         // Create Bar hidden — gallery extends to the bottom.
                         padding: '24px 28px 32px',
                     }}>

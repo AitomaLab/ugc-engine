@@ -700,21 +700,27 @@ def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, 
 
     has_wavespeed = bool(os.getenv("WAVESPEED_API_KEY", ""))
     providers_to_try = [primary]
-    if has_wavespeed:
+    # When force_kie=True (digital-product extend chains), DO NOT fall back to
+    # Wavespeed for scene 1 — a Wavespeed taskId can't be extended by Kie, and
+    # silently falling back poisons the whole chain (downstream extends 500).
+    # Better to fail loudly so the caller retries Kie.
+    if has_wavespeed and not force_kie:
         providers_to_try.append(secondary)
 
     last_error = None
     for provider in providers_to_try:
         try:
             if provider == "kie":
-                # Fast-fail: 3 min timeout on Kie.ai (instead of 20 min)
-                # If it succeeds, great ($0.30). If not, bail fast to WaveSpeed.
-                print(f"      [Router] → Sending job to Kie.ai (3-min fast-fail)...")
+                # Fast-fail 3min when Wavespeed fallback exists; full 20min when
+                # force_kie=True since there's no fallback to bail to.
+                kie_timeout = 1200 if force_kie else 180
+                label = "20-min full" if force_kie else "3-min fast-fail"
+                print(f"      [Router] → Sending job to Kie.ai ({label})...")
                 result = generate_video(
                     prompt, reference_image_url, model_api,
                     first_frame_url, return_last_frame, duration,
                     kling_elements=kling_elements,
-                    max_poll_seconds=180,  # 3 minutes fast-fail
+                    max_poll_seconds=kie_timeout,
                     aspect_ratio=aspect_ratio,
                 )
             else:

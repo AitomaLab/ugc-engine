@@ -71,5 +71,15 @@
     },
     "processing": {
         "cost_per_video": 0.01
+    },
+    "fal": {
+        "_note": "Fal AI pricing for the cinematic-ads agent flow (GPT Image 2 storyboard + Seedance 2.0 Pro animation). All animation runs are 720p (per product spec — no 480p toggle).",
+        "gpt_image_2": {
+            "storyboard_high_2560x1792_per_image": 0.18
+        },
+        "seedance_2_pro": {
+            "720p_per_s": 0.30,
+            "_note_480p": "480p is roughly $0.18/s but the cinematic-ads tool always runs 720p."
+        }
     }
 }
