@@ -6322,6 +6322,11 @@ class ManagedAgentClient:
         # was empty → auto-fire couldn't recover → user saw chat freeze). 10-min TTL.
         # Value shape: {**entry, "_stash_ts": float}
         self._pending_confirmations_by_project: dict[tuple[str, str], dict] = {}
+        # Idempotency cache for gated tools — prevents the LLM from re-firing the
+        # same stage twice within 60s. Keyed by session_id → {fingerprint: fired_at_unix}.
+        self._recent_tool_fires: dict[str, dict[str, float]] = {}
+        # Last successful storyboard per cinematic-ads session: {url, brief_hash, direction}.
+        self._last_storyboard_meta: dict[str, dict] = {}
 
     def _stash_pending_confirmation(
         self,
@@ -6353,18 +6358,6 @@ class ManagedAgentClient:
             self._pending_confirmations.pop(session_id, None)
         if user_token and project_id:
             self._pending_confirmations_by_project.pop((user_token, project_id), None)
-        # Idempotency cache for gated tools — prevents the LLM from re-firing the
-        # same stage twice within 60s (real production hit: after a storyboard
-        # finished, user typed "go" intending to advance; the agent re-fired the
-        # SAME storyboard stage with confirmed=True, costing 4 extra credits and
-        # 2 extra minutes). Keyed by session_id → {fingerprint: fired_at_unix}.
-        self._recent_tool_fires: dict[str, dict[str, float]] = {}
-        # Last successful storyboard per cinematic-ads session: stores
-        # {url, brief_hash, direction}. The IDEMPOTENCY guard only rehydrates
-        # storyboard_url into duplicate_suppressed when brief_hash + direction
-        # match the current call — preventing the agent from re-using a stale
-        # URL when the user has pivoted to a new brief.
-        self._last_storyboard_meta: dict[str, dict] = {}
 
     # ── lazy resource creation ────────────────────────────────────────
     async def _ensure_agent(self) -> str:
