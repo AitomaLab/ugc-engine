@@ -495,6 +495,7 @@ async def generate_directions_from_brief(
     category: str,
     aspect_ratio: str = "16:9",
     duration_seconds: int = 15,
+    user_lang: str = "en",
     anthropic_client: Optional[Any] = None,
 ) -> list[dict]:
     """Generate 3 cinematic directions tailored to the user's brief + product,
@@ -547,7 +548,13 @@ async def generate_directions_from_brief(
         "like 'calm coverage', 'soft fades', 'slow contemplative pacing'. Do NOT propose 'minimal architectural' or "
         "'quiet sculpture' directions when the brief asks for 'dynamic aggressive cuts'. "
         "If the brief is product-only and contains NO action sequence, all three may be product_only. "
-        "No prose, no markdown, no preamble."
+        + (
+            "OUTPUT LANGUAGE: write the `name`, `vibe`, and `hero_moment` fields in Spanish (es-ES). "
+            "Keep `camera_signature` / `lighting_signature` / `style_grade` in English (cinematography vocabulary). "
+            if user_lang == "es" else
+            "OUTPUT LANGUAGE: write all human-readable fields in English. "
+        )
+        + "No prose, no markdown, no preamble."
     )
     _aspect_hint = {
         "9:16": (
@@ -666,6 +673,7 @@ async def generate_beats_from_brief(
     num_panels: int = 6,
     duration_s: int = 15,
     aspect_ratio: str = "16:9",
+    user_lang: str = "en",
     anthropic_client: Optional[Any] = None,
 ) -> list[dict]:
     """Generate num_panels storyboard beats tailored to the user's brief +
@@ -706,7 +714,13 @@ async def generate_beats_from_brief(
         "Replace every adjective like 'slow / fast / gentle / subtle' with time/physics anchors. "
         "Each beat MUST be a HARD CUT — visually distinct shot, no smooth transitions. "
         "Beats together form a coherent narrative arc. "
-        "No prose, no markdown, no preamble.\n\n"
+        + (
+            "OUTPUT LANGUAGE: write `scene`, `action`, and `sound` in Spanish (es-ES). "
+            "Keep `camera`, `lens`, `lighting`, and `motion` in English (cinematography terminology). "
+            if user_lang == "es" else
+            "OUTPUT LANGUAGE: write all human-readable fields in English. "
+        )
+        + "No prose, no markdown, no preamble.\n\n"
         f"SHOT VOCAB (pick `camera` from these per beat):\n{_shot_vocab_lines}"
     )
     _aspect_hint = {
@@ -726,7 +740,9 @@ async def generate_beats_from_brief(
         f"FORMAT: {aspect_ratio} ({_aspect_hint})\n"
         f"DURATION: {duration_s}s across {num_panels} beats (~{beat_s:.1f}s each)\n\n"
         f"Write the {num_panels} beats so the storyboard tells the story in the BRIEF using the "
-        f"DIRECTION's aesthetic AND fits the FORMAT. Beat {num_panels} MUST be the end card. "
+        f"DIRECTION's aesthetic AND fits the FORMAT. Beat {num_panels} MUST be a clean cinematic HERO SHOT "
+        f"of the product (or product+character) — no text, no typography, no logo lockup, no 'buy now', "
+        f"no domain. Treat it as the final pure-image frame of the ad. "
         "If HUMANS ALLOWED is False, do NOT include people in any beat. Concrete actions only — no abstract metaphors. "
         "Lean on the DIRECTION's camera_signature / lighting_signature when picking per-beat camera + lens + lighting."
     )
@@ -892,12 +908,18 @@ def build_storyboard_prompt(
         f"and surface texture across every panel. The product never deforms, never changes color, "
         f"never appears in degraded form. THIS REFERENCE IS THE IDENTITY ANCHOR. Keep small text "
         f"on packaging as illegible texture, not readable type.\n\n"
+        f"NO TEXT OVERLAYS INSIDE ANY PANEL. Do NOT render any tagline, brand name, product name, "
+        f"website domain, CTA, or any other typographic element INSIDE the panel frames. Panel "
+        f"{num_panels:02d} must be a pure cinematic hero image (clean product/scene shot) with NO "
+        f"end-card text, NO logo lockup, NO 'buy now', NO domain. The header above the grid + the "
+        f"caption blocks below each panel are the ONLY text in this image.\n\n"
         f"{character_lock}"
         f"{aesthetic_block}"
         f"{aspect_note}\n\n"
         f"PANELS (timestamped for a {duration_s}-second spot @ {beat_s:.1f}s per beat — HARD CUTS between every panel):\n"
         f"{beats_block}\n\n"
-        f"End-card text (panel {num_panels:02d} only): \"{brand} {product}. {tagline}. {domain}\"\n\n"
+        # No end-card text overlay — panel N is a pure hero image (see "NO TEXT OVERLAYS" rule above).
+
         f"Render the full storyboard as ONE single image, {cols}×{rows} grid {sheet_orient}. "
         f"Captions legible in monospace. No watermarks. No extra text beyond what is "
         f"specified. Same product silhouette every panel."

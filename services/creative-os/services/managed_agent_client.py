@@ -413,13 +413,13 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
 11. NO RANDOM INFLUENCER / PRODUCT — for cinematic / scene / b-roll prompts that do not mention a specific person or product (e.g. "rooftop chase", "sunset over a city", "close-up of a coffee cup"), you MUST call `generate_video` WITHOUT `influencer_id` and WITHOUT `product_id`. Never auto-attach an influencer or product "to be safe" — the pipeline will generate the scene from the prompt alone, which is what the user wants. Only pass `influencer_id` / `product_id` when the user @-mentioned that asset or explicitly named them in the brief.
 12. DIGITAL PRODUCTS — when the user @-mentions a digital product (app / SaaS / software), the `[Referenced assets]` preface includes both `product_id=...` AND `app_clip_id=...` (the specific clip the user picked from the shot modal). You MUST forward BOTH to `generate_video` along with `product_type='digital'`. The Seedance pipeline automatically generates a NanoBanana composite (influencer holding device with app UI on screen) and uses it as the reference image for Seedance — you do NOT need to handle compositing yourself. Just pass product_id, influencer_id, and app_clip_id and let the pipeline do the rest. Then — **in the SAME turn, immediately after `generate_video` returns status=success** — you MUST chain `splice_app_clip(job_id=<returned_job_id>, app_clip_id=<same_app_clip_id>)` to append the app clip walkthrough as B-roll with a dissolve transition. Present the splice step in natural language (\"Your cinematic is ready — now splicing the app clip as B-roll...\") so the user knows what's happening during the ~1-2 min splice. This two-step flow applies to ALL modes (ugc, cinematic_video, seedance_2_ugc, seedance_2_cinematic, seedance_2_product). Do NOT call `combine_videos` for the app-clip splice — that's what `splice_app_clip` is for. `combine_videos` is only for stitching two *independently generated* videos the user explicitly asked to combine. Never call `list_app_clips` to pick a clip manually — the preface already tells you which one. Do NOT manually pass the app clip's first_frame_url or video_url as `reference_image_url` / `reference_image_urls` / `reference_video_urls` — the pipeline handles all reference resolution internally from `app_clip_id`.
 
-13. CINEMATIC ADS (Fal AI: GPT Image 2 storyboard + Seedance 2.0 Pro animation) — when the user asks for a "cinematic ad", "cinematic advert", "cinematic ads", "cinematic video", "cinematic spot", "cinematic clip", "film-style ad/video/spot", "movie-style ad/video/spot", "hollywood-look ad/video", "storyboard for [product]", "animate this product as a cinematic spot", or **any ad/video framed as cinematic / filmic / movie-quality / film-look** against an @mentioned product or uploaded product photo, use the `create_cinematic_ad` tool — NOT `generate_video(mode=cinematic_video)` and NOT `animate_image`. `generate_video(cinematic_video)` is reserved for cases where the user EXPLICITLY opts out of the storyboard flow ("just a quick clip", "no storyboard", "single shot", "skip the directions"). If you cannot tell whether the user wants the full storyboard workflow vs. a one-shot cinematic clip, ASK in ONE short message: "Do you want a curated cinematic ad (3 direction options → storyboard → animated 5/10/15s spot) or a quick single-shot cinematic clip (one 5–10s render, no storyboard)?" Default to `create_cinematic_ad` if they pick the first or don't answer in the same turn. This tool is multi-stage with mandatory pause points:
+13. CINEMATIC ADS (Fal AI: GPT Image 2 storyboard + Seedance 2.0 Pro animation) — when the user asks for a "cinematic ad", "cinematic advert", "cinematic ads", "cinematic video", "cinematic spot", "cinematic clip", "film-style ad/video/spot", "movie-style ad/video/spot", "hollywood-look ad/video", "storyboard for [product]", "animate this product as a cinematic spot", or **any ad/video framed as cinematic / filmic / movie-quality / film-look** — OR the Spanish equivalents "anuncio cinematográfico", "anuncio cinemático", "vídeo cinematográfico", "spot cinemático", "anuncio de cine", "estilo cine", "estilo película", "spot publicitario cinemático" — against an @mentioned product or uploaded product photo, use the `create_cinematic_ad` tool — NOT `generate_video(mode=cinematic_video)` and NOT `animate_image`. `generate_video(cinematic_video)` is reserved for cases where the user EXPLICITLY opts out of the storyboard flow ("just a quick clip", "no storyboard", "single shot", "skip the directions"). If you cannot tell whether the user wants the full storyboard workflow vs. a one-shot cinematic clip, ASK in ONE short message: "Do you want a curated cinematic ad (3 direction options → storyboard → animated 5/10/15s spot) or a quick single-shot cinematic clip (one 5–10s render, no storyboard)?" Default to `create_cinematic_ad` if they pick the first or don't answer in the same turn. This tool is multi-stage with mandatory pause points:
   - **a) `stage='propose'` (FREE):** First call. Pass `product_id` (from @mention) OR `image_url` (from upload) + the user's `brief` + `aspect_ratio` + `duration_seconds` (see ASPECT + DURATION rule below). The tool returns 3 storyboard directions (A/B/C) tailored to the brief + format + length. Read them back to the user in natural language — name, vibe, hero moment, model-led or product-only, mark the recommended one — and STOP. Wait for the user to pick A/B/C (or remix). Never auto-pick.
   - **b) `stage='storyboard'` (~4 cr, NO cost gate):** Once direction is chosen, call with `direction`, plus `tagline` + `domain` + the SAME `aspect_ratio` and `duration_seconds` from propose. NO `confirmed=false` step — the storyboard renders directly (4 cr auto-debited; trivial enough not to gate). The tool blocks ~2 min then returns `action='confirmation_required'` for the NEXT stage (animate) — the storyboard image surfaces via the artifact stream, the panels themselves describe the scenes, so DO NOT separately narrate beats. The frontend renders the animate cost chip automatically.
   - **c) `stage='animate'` (32–96 cr depending on duration):** Use the `next_call` payload returned by storyboard (it pre-fills `storyboard_url`, `direction`, `aspect_ratio`, `duration_seconds`, `tagline`, `domain`). FIRST `confirmed=false` for the cost chip; after Confirm, `confirmed=true`. The tool renders the ad at the chosen format + length, saves to the Videos tab, returns `action='ad_ready'` with `video_url`.
   - **d) Optional add-ons:** `stage='broll'` (`panel_index`, ~32 cr) and `stage='product_macro'` (~32 cr). Both always 5s; respect the SAME `aspect_ratio` chosen earlier.
 
-  **ASPECT + DURATION rule (MANDATORY before stage='propose'):** Before calling propose, you MUST know `aspect_ratio` (16:9 horizontal, 9:16 vertical, 4:3 classic) AND `duration_seconds` (5, 10, or 15). If the user's brief specifies either ("vertical", "9:16", "tiktok", "reels", "5s", "10s", "15s", "horizontal", "youtube", "classic 4:3"), use it directly. If EITHER is missing, ask in ONE message that ends with the markers on the last line, e.g.: `"What format and length should I use? [[ASPECT_BUTTONS]] [[DURATION_BUTTONS]]"`. Frontend renders Vertical / Horizontal / Classic and 5s / 10s / 15s buttons. Wait for the user's choice, THEN call propose. Do NOT skip this step.
+  **ASPECT + DURATION rule (MANDATORY before stage='propose'):** Before calling propose, you MUST know `aspect_ratio` (16:9 horizontal, 9:16 vertical, 4:3 classic) AND `duration_seconds` (5, 10, or 15). If the user's brief specifies either ("vertical", "9:16", "tiktok", "reels", "5s", "10s", "15s", "horizontal", "youtube", "classic 4:3"), use it directly. If EITHER is missing, ask in ONE message **in the user's language** that ends with the markers on the last line. EN example: `"What format and length should I use? [[ASPECT_BUTTONS]] [[DURATION_BUTTONS]]"`. ES example: `"¿Qué formato y duración quieres? [[ASPECT_BUTTONS]] [[DURATION_BUTTONS]]"`. Frontend renders Vertical / Horizontal / Classic and 5s / 10s / 15s buttons. Wait for the user's choice, THEN call propose. Do NOT skip this step.
 
   HARD RULES for cinematic ads: resolution is ALWAYS 720p — never offer 480p, never ask. Each paid stage is its own confirmation; approval for storyboard does NOT carry to animate. If a call returns an `error` field, surface its `msg` field verbatim to the user — do NOT silently retry or silently swap models. Never describe the product or brand from memory; always rely on the @mentioned product or uploaded image."""
 
@@ -1694,6 +1694,25 @@ class ToolContext:
     artifacts: list[dict] = field(default_factory=list)
     new_artifacts: list[dict] = field(default_factory=list)
     session_id: Optional[str] = None
+    user_lang: str = "en"  # "en" or "es" — detected from brief, used to localize chips + Haiku output
+
+
+_ES_HINTS = (
+    "á","é","í","ó","ú","ñ","¿","¡","ü",
+    " el "," la "," los "," las "," que "," por "," para "," con "," una "," un ",
+    " anuncio"," vídeo"," cinematográfico"," cinemático"," haz "," hazme ",
+)
+
+
+def _detect_user_lang(text: str) -> str:
+    """Heuristic ES/EN detection from the brief text. Cheap, deterministic,
+    no LLM round-trip. Returns 'es' when ≥2 Spanish hints appear in the first
+    400 chars, else 'en'."""
+    if not text:
+        return "en"
+    t = text.lower()[:400]
+    hits = sum(1 for h in _ES_HINTS if h in t)
+    return "es" if hits >= 2 else "en"
 
     def core(self) -> CoreAPIClient:
         return CoreAPIClient(token=self.user_token, project_id=self.project_id)
@@ -3326,6 +3345,11 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
     if stage not in ("propose", "storyboard", "animate", "broll", "product_macro"):
         return json.dumps({"error": "stage must be one of: propose, storyboard, animate, broll, product_macro"})
 
+    # Detect user language from the brief once per call. Used to localize the
+    # Haiku output (direction names + beat captions) and the hardcoded chip /
+    # narration strings below.
+    ctx.user_lang = _detect_user_lang(kwargs.get("brief") or "")
+
     # ── Resolve product source (either product_id from @mention or image_url upload)
     async def _resolve_product() -> dict:
         product_id = kwargs.get("product_id")
@@ -3392,6 +3416,7 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
             category=_category_for_dir,
             aspect_ratio=aspect_ratio,
             duration_seconds=duration_seconds,
+            user_lang=ctx.user_lang,
         )
         # Cache by session_id so storyboard/animate/broll can resolve the
         # chosen direction by key without re-running the LLM. session_id is
@@ -3496,6 +3521,7 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
             num_panels=num_panels,
             duration_s=duration_seconds,
             aspect_ratio=aspect_ratio,
+            user_lang=ctx.user_lang,
         )
         # Cache beats so the animate stage can rebuild the Seedance prompt
         # from the same shot data without re-running Haiku.
@@ -3548,7 +3574,7 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
         return _confirmation_payload(
             operation="cinematic_animate",
             credits=_credits_for_op("cinematic_animate", {"duration_seconds": duration_seconds}),
-            summary=f"Animate cinematic ad ({direction_obj['name']}) — {duration_seconds}s @ 720p {aspect_ratio}",
+            summary=(f"Animar anuncio cinemático ({direction_obj['name']}) — {duration_seconds}s @ 720p {aspect_ratio}" if ctx.user_lang == "es" else f"Animate cinematic ad ({direction_obj['name']}) — {duration_seconds}s @ 720p {aspect_ratio}"),
             echo={
                 "stage": "animate",
                 "direction": direction_key,
@@ -3576,7 +3602,7 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
             return _confirmation_payload(
                 operation="cinematic_animate",
                 credits=credits,
-                summary=f"Animate cinematic ad ({direction_obj['name']}) — {duration_seconds}s @ 720p {aspect_ratio}",
+                summary=(f"Animar anuncio cinemático ({direction_obj['name']}) — {duration_seconds}s @ 720p {aspect_ratio}" if ctx.user_lang == "es" else f"Animate cinematic ad ({direction_obj['name']}) — {duration_seconds}s @ 720p {aspect_ratio}"),
                 echo={k: v for k, v in kwargs.items() if k != "confirmed"},
             )
 
@@ -3688,7 +3714,7 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
             return _confirmation_payload(
                 operation="cinematic_broll",
                 credits=credits,
-                summary=f"B-roll clip from panel {panel_index} (5s @ 720p)",
+                summary=(f"Clip B-roll del panel {panel_index} (5s @ 720p)" if ctx.user_lang == "es" else f"B-roll clip from panel {panel_index} (5s @ 720p)"),
                 echo={k: v for k, v in kwargs.items() if k != "confirmed"},
             )
 
@@ -3772,7 +3798,7 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
             return _confirmation_payload(
                 operation="cinematic_product_macro",
                 credits=credits,
-                summary="Product macro beauty shot (5s @ 720p)",
+                summary=("Plano macro del producto (5s @ 720p)" if ctx.user_lang == "es" else "Product macro beauty shot (5s @ 720p)"),
                 echo={k: v for k, v in kwargs.items() if k != "confirmed"},
             )
 
@@ -6478,7 +6504,8 @@ class ManagedAgentClient:
         if _is_cancel_click and _pending and session_id:
             print(f"[ManagedAgent] auto-cancel: clearing pending {_pending.get('tool_name')!r}")
             self._pending_confirmations.pop(session_id, None)
-            yield {"type": "agent_message", "text": "Cancelled. Let me know when you want to try again."}
+            _cancel_lang = _detect_user_lang(brief)
+            yield {"type": "agent_message", "text": ("Cancelado. Avísame cuando quieras intentarlo de nuevo." if _cancel_lang == "es" else "Cancelled. Let me know when you want to try again.")}
             yield {"type": "done", "session_id": session_id}
             return
 
@@ -6608,10 +6635,13 @@ class ManagedAgentClient:
                         "credits": _chain_credits,
                         "summaries": [str(_chain_summary)],
                     }
-                    yield {
-                        "type": "agent_message",
-                        "text": f"Ready to animate this into the full cinematic ad? That costs **{_chain_credits} credits** — Confirm to proceed.",
-                    }
+                    _chain_lang = _detect_user_lang(brief)
+                    _chain_msg = (
+                        f"¿Listo para animar esto como anuncio cinemático completo? Cuesta **{_chain_credits} créditos** — Confirma para proceder."
+                        if _chain_lang == "es"
+                        else f"Ready to animate this into the full cinematic ad? That costs **{_chain_credits} credits** — Confirm to proceed."
+                    )
+                    yield {"type": "agent_message", "text": _chain_msg}
                     yield {"type": "done", "session_id": session_id}
                     return
                 # Else: chain failed / returned something unexpected — fall
