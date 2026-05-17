@@ -7437,13 +7437,28 @@ class ManagedAgentClient:
                             yield {"type": "artifact", "artifact": art}
                         ctx.new_artifacts.clear()
 
+                    # Drop any tool_result with an empty/missing custom_tool_use_id —
+                    # Anthropic returns `events.0.custom_tool_use_id: minimum string
+                    # length is 1` and fails the whole batch. Happens (rarely) when the
+                    # upstream model stream is interrupted mid-tool_use_block and
+                    # `ev.id` arrives empty. Logging loudly so we can trace it.
+                    _filtered_events = []
+                    for _ev in tool_result_events:
+                        _tid = _ev.get("custom_tool_use_id")
+                        if not _tid or not isinstance(_tid, str):
+                            print(f"[ManagedAgent] dropping tool_result with empty custom_tool_use_id (would 400 Anthropic): {_ev!r}")
+                            continue
+                        _filtered_events.append(_ev)
+                    if not _filtered_events:
+                        print("[ManagedAgent] tool_result_events all dropped (empty ids) — skipping events.send")
+                        continue
                     # Send all results back to the session in a single batched call.
                     # Keepalive during the send — large payloads can take 30-60s and
                     # intermediaries (Railway proxy, browser) kill idle SSE connections.
                     send_task = asyncio.create_task(
                         self._client.beta.sessions.events.send(
                             session_id,
-                            events=tool_result_events,
+                            events=_filtered_events,
                         )
                     )
                     send_elapsed = 0
