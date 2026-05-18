@@ -947,6 +947,7 @@
   "creativeOs.gallery.finishing": "finalizando...",
   "creativeOs.gallery.minLeft": "~{n} min restantes",
   "creativeOs.gallery.secLeft": "~{n} s restantes",
+  "creativeOs.gallery.providerDisclaimer": "Los tiempos de generación pueden variar según la demanda del proveedor de IA.",
   "creativeOs.gallery.stepInfluencerReady": "Imagen de influencer lista",
   "creativeOs.gallery.stepGeneratingImage": "Generando imagen...",
   "creativeOs.gallery.stepAnimatingScene": "Animando escena",

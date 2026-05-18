@@ -64,7 +64,7 @@ function getSuggestedPrompts(product: string, influencer: string): string[] {
     return [
         `Create a UGC ad with @${influencer} showing @${product} and explaining why it's a must-have this summer`,
         `Generate a cinematic product shot of @${product} with dramatic lighting`,
-        `Make a UGC video of @${influencer} unboxing @${product} and reacting with genuine excitement`,
+        `Create an eye-grabbing cinematic ad of @${product}`,
     ];
 }
 
@@ -147,7 +147,7 @@ export function OnboardingModal({ onComplete, onSkip }: OnboardingModalProps) {
             influencerId: influencer.id,
             influencerName: influencer.name,
             influencerImageUrl: getInfluencerImage(influencer),
-            prompt: `${selectedPrompt} [9:16 vertical] [5s clip duration] [ONBOARDING_FIRST_VIDEO — this is the user's welcome video, it must be FREE (0 credits). Use the product image_url as a reference_image in Seedance so the product is visible in the video.]`,
+            prompt: `${selectedPrompt} [9:16 vertical] [5s clip duration] [SCRIPT LENGTH: hook/dialogue MUST be ≤12 words total — anything longer cannot be spoken in 5 seconds.] [PRODUCT INTERACTION: if the product has a cap, lid, seal, or wrapper (bottle, jar, tube, can, pouch), the character MUST visibly open/unscrew/remove it BEFORE drinking, eating, or using — never drink through a closed cap or use a sealed product. No impossible interactions, no hallucinations.] [ONBOARDING_FIRST_VIDEO — this is the user's welcome video, it must be FREE (0 credits). Use the product image_url as a reference_image in Seedance so the product is visible in the video.]`,
         });
     };
 

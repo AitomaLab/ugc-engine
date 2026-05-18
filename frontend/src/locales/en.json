@@ -947,6 +947,7 @@
   "creativeOs.gallery.finishing": "finishing...",
   "creativeOs.gallery.minLeft": "~{n}m left",
   "creativeOs.gallery.secLeft": "~{n}s left",
+  "creativeOs.gallery.providerDisclaimer": "AI generation times vary based on model provider demand.",
   "creativeOs.gallery.stepInfluencerReady": "Influencer image ready",
   "creativeOs.gallery.stepGeneratingImage": "Generating image...",
   "creativeOs.gallery.stepAnimatingScene": "Animating scene",

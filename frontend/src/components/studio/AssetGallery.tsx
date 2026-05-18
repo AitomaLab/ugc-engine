@@ -823,6 +823,13 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
                             <span style={{ fontSize: '11px', color: 'white', opacity: 0.7 }}>
                                 {remainingLabel}
                             </span>
+                            {/* Disclaimer — only when generation is running long,
+                                so we don't badger users on fast renders. */}
+                            {elapsed > estimatedTotal * 0.6 && (
+                                <span style={{ fontSize: '10px', color: 'white', opacity: 0.5, maxWidth: '85%', textAlign: 'center', lineHeight: 1.4, marginTop: '2px' }}>
+                                    {t('creativeOs.gallery.providerDisclaimer') || 'AI generation times vary based on model provider demand.'}
+                                </span>
+                            )}
                         </div>
 
                         <style>{`
