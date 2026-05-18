@@ -31,6 +31,7 @@ Thumbs.db
 # UGC SaaS Specific
 ugc_saas.db
 *.mp4
+!frontend/public/animation-previews/*.mp4
 *.wav
 *.json
 !package.json
