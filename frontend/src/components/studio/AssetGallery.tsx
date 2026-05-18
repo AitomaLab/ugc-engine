@@ -16,7 +16,12 @@ function thumbUrl(url: string | null | undefined, width: number): string {
     if (url.includes('/storage/v1/object/public/')) {
         const rewritten = url.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/');
         const sep = rewritten.includes('?') ? '&' : '?';
-        return `${rewritten}${sep}width=${width}&quality=70&resize=cover`;
+        // resize=contain with both width AND height bounds keeps aspect ratio
+        // proportional (image fits inside the box, longest side ≤ width).
+        // Without both bounds OR with resize=cover, Supabase's renderer returns
+        // a broken width-clamped/height-untouched image (e.g. 1792x2560 →
+        // 480x2560) which makes intrinsic-dimension measurement nonsensical.
+        return `${rewritten}${sep}width=${width}&height=${width}&resize=contain&quality=70`;
     }
     return url;
 }
@@ -170,7 +175,7 @@ export function AssetGallery({ assets, type, loading, projectId, onRefresh, onAn
         return (
             <div style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))',
                 gap: '16px',
             }}>
                 {[0, 1, 2, 3, 4, 5].map(i => (
@@ -286,7 +291,7 @@ export function AssetGallery({ assets, type, loading, projectId, onRefresh, onAn
 
             <div style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))',
                 gap: '16px',
             }}>
                 {paged.map((asset, i) => (
@@ -451,6 +456,14 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
     const { t } = useTranslation();
     const [hovered, setHovered] = useState(false);
     const [elapsed, setElapsed] = useState(0);
+    const [mediaError, setMediaError] = useState(false);
+    // Per-card aspect ratio — derive from backend-recorded analysis_json.aspect_ratio
+    // (e.g. "16:9" → "16/9"). For legacy video rows that lack it, fall back to
+    // the measured intrinsic dimensions on <video> onLoadedMetadata. Default 9/16.
+    const _recordedAR = (asset?.analysis_json?.aspect_ratio as string) || '';
+    const cardAspect = _recordedAR ? _recordedAR.replace(':', '/') : '9/16';
+    const [measuredAR, setMeasuredAR] = useState<string | null>(null);
+    const effectiveAspect = _recordedAR ? cardAspect : (measuredAR || cardAspect);
     const imageUrl = type === 'images' ? asset.image_url : null;
     const videoUrl = type === 'videos' ? (asset.final_video_url || asset.video_url) : asset.video_url;
     const status = asset.status || 'success';
@@ -486,7 +499,7 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
             onMouseLeave={() => { if (!isConfirmingDelete) setHovered(false); }}
             style={{
                 position: 'relative',
-                aspectRatio: '9/16',
+                aspectRatio: effectiveAspect,
                 borderRadius: '12px',
                 overflow: 'hidden',
                 background: '#0D1B3E',
@@ -501,15 +514,22 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
             }}
         >
             {/* Content */}
-            {imageUrl && (
+            {imageUrl && !mediaError && (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                    src={thumbUrl(imageUrl, 480)}
-                    srcSet={`${thumbUrl(imageUrl, 320)} 320w, ${thumbUrl(imageUrl, 480)} 480w, ${thumbUrl(imageUrl, 640)} 640w`}
-                    sizes="(max-width: 600px) 50vw, 240px"
+                    src={thumbUrl(imageUrl, 640)}
+                    srcSet={`${thumbUrl(imageUrl, 480)} 480w, ${thumbUrl(imageUrl, 640)} 640w, ${thumbUrl(imageUrl, 960)} 960w`}
+                    sizes="(max-width: 600px) 80vw, 420px"
                     alt=""
                     loading="lazy"
                     decoding="async"
+                    onLoad={e => {
+                        const img = e.currentTarget;
+                        if (!_recordedAR && img.naturalWidth && img.naturalHeight) {
+                            setMeasuredAR(`${img.naturalWidth}/${img.naturalHeight}`);
+                        }
+                    }}
+                    onError={() => setMediaError(true)}
                     style={{
                         width: '100%',
                         height: '100%',
@@ -517,7 +537,7 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
                     }}
                 />
             )}
-            {videoUrl && !isProcessing && (
+            {videoUrl && !isProcessing && !mediaError && (
                 <video
                     src={videoUrl}
                     muted
@@ -526,12 +546,42 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
                     preload="metadata"
                     onMouseEnter={e => (e.target as HTMLVideoElement).play().catch(() => {})}
                     onMouseLeave={e => { (e.target as HTMLVideoElement).pause(); (e.target as HTMLVideoElement).currentTime = 0; }}
+                    onLoadedMetadata={e => {
+                        const v = e.currentTarget;
+                        if (!_recordedAR && v.videoWidth && v.videoHeight) {
+                            setMeasuredAR(`${v.videoWidth}/${v.videoHeight}`);
+                        }
+                    }}
+                    onError={() => setMediaError(true)}
                     style={{
                         width: '100%',
                         height: '100%',
                         objectFit: 'cover',
                     }}
                 />
+            )}
+            {mediaError && (
+                <div style={{
+                    position: 'absolute',
+                    inset: 0,
+                    background: 'linear-gradient(135deg, #1B2447 0%, #0D1B3E 100%)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '16px',
+                    textAlign: 'center',
+                    color: '#8A93B0',
+                    gap: '8px',
+                }}>
+                    <div style={{ fontSize: '28px', opacity: 0.5 }}>⌀</div>
+                    <div style={{ fontSize: '13px', fontWeight: 600, color: '#C5CCDE' }}>
+                        {t('creativeOs.gallery.assetExpired') || 'Asset unavailable'}
+                    </div>
+                    <div style={{ fontSize: '11px', lineHeight: 1.4, maxWidth: '80%' }}>
+                        {t('creativeOs.gallery.assetExpiredHint') || 'The original CDN link expired. Re-generate to restore it.'}
+                    </div>
+                </div>
             )}
 
             {/* Selection checkbox — top right */}

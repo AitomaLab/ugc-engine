@@ -226,19 +226,38 @@ async def execute_image_generation(data: ExecuteRequest, user: dict = Depends(ge
                     f"no arm crossing screen, no unnatural arm position, no character holding the filming camera, "
                     f"no flat lighting, no overexposed lighting, no blown highlights"
                 )
+            elif product is None:
+                # Character-only lifestyle scene: no product was registered and
+                # no real product image is in the refs. This path used to inject
+                # "casually presenting the product" + "one hand holds the
+                # product" + "preserve all visible text and logos" — which made
+                # the model HALLUCINATE a random product into the character's
+                # hand. When there's no product, build a clean character-only
+                # template instead.
+                composite_prompt = (
+                    f"action: character {scene_description}\n"
+                    f"anatomy: exactly one person with exactly two arms and two hands, accurate hands with realistic proportions, "
+                    f"hands rest naturally and EMPTY — do NOT hold any product, device, or object unless the scene explicitly calls for one\n"
+                    f"character: infer exact appearance from reference image, preserve facial features and skin tone, "
+                    f"natural skin texture with visible pores and subtle grain, fine lines, skin imperfections, unretouched complexion, not airbrushed, natural highlight roll-off on skin\n"
+                    f"setting: {ctx['setting']}, tidy and clean with premium casual art direction\n"
+                    f"lighting: soft directional natural window light, subtle shadows for depth, natural highlight roll-off on skin\n"
+                    f"camera: iPhone 1x aesthetic, clean but slightly organic composition, naturally blurred background, slightly uneven framing\n"
+                    f"style: candid UGC look, no filters, realism, high detail, skin texture, visible pores, micro skin texture, raw unedited photo quality\n"
+                    f"negative: no smooth skin, no poreless skin, no plastic skin, no waxy skin, no beauty filter, no skin retouching, "
+                    f"no third arm, no third hand, no extra limbs, no extra fingers, "
+                    f"no airbrushed skin, no studio backdrop, no geometric distortion, "
+                    f"no mutated hands, no floating limbs, disconnected limbs, mutation, "
+                    f"no random product in hand, no bottle, no can, no box, no phone unless scene says so, "
+                    f"no flat lighting, no overexposed lighting, no blown highlights"
+                )
             else:
                 # Physical product: build product-holding composite prompt.
-                # When `product` is None (upload-only path), fall back to a generic
-                # descriptor and let NanoBanana infer the actual product from the
-                # reference image(s) the user attached.
-                if product:
-                    va = product.get("visual_description") or product.get("visual_analysis") or {}
-                    if isinstance(va, str):
-                        visual_desc_str = va
-                    else:
-                        visual_desc_str = va.get("visual_description", "the product")
+                va = product.get("visual_description") or product.get("visual_analysis") or {}
+                if isinstance(va, str):
+                    visual_desc_str = va
                 else:
-                    visual_desc_str = "product visible in the reference image"
+                    visual_desc_str = va.get("visual_description", "the product")
 
                 composite_prompt = (
                     f"action: character {scene_description}, casually presenting the product\n"

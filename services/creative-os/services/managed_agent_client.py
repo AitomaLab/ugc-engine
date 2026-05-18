@@ -602,7 +602,7 @@ def _custom_tools_for_agent() -> list[dict]:
                 "type": "object",
                 "properties": {
                     "prompt": {"type": "string", "description": "Detailed visual prompt for the image."},
-                    "mode": {"type": "string", "enum": image_mode_ids, "description": "Image style mode."},
+                    "mode": {"type": "string", "enum": image_mode_ids, "description": "Image style mode. IMPORTANT: 'ugc' = character holding a product (REQUIRES product_id OR a product reference image). For character-only lifestyle scenes WITHOUT any product (e.g. 'photos of @maria in different settings'), use 'cinematic' or another non-ugc mode — otherwise the pipeline will inject 'holding the product' language and the model will hallucinate a random product into the character's hand."},
                     "product_id": {"type": "string", "description": "Optional product ID from list_project_assets."},
                     "influencer_id": {"type": "string", "description": "Optional influencer ID from list_project_assets."},
                     "reference_image_urls": {
@@ -693,9 +693,8 @@ def _custom_tools_for_agent() -> list[dict]:
                 "(9:16 clip) or computer (16:9 clip) and concats the full app clip as B-roll — "
                 "automatic in ALL modes, so never call combine_videos to splice the app clip. "
                 "FIRST call returns a credit cost estimate; after user confirms, call again with confirmed=true. "
-                "For cinematic product ADS (storyboard + multiple direction options + 5/10/15s animated spot) "
-                "use `create_cinematic_ad` instead — this tool is for single quick clips only, even when "
-                "mode='cinematic_video'."
+                "For cinematic product ADS (storyboard + direction options + 5/10/15s spot) use "
+                "`create_cinematic_ad` instead — this tool is for single quick clips only."
             ),
             "input_schema": {
                 "type": "object",
@@ -1709,6 +1708,77 @@ _ES_HINTS = (
     " el "," la "," los "," las "," que "," por "," para "," con "," una "," un ",
     " anuncio"," vídeo"," cinematográfico"," cinemático"," haz "," hazme ",
 )
+
+
+_AGENT_REGISTRY_BUCKET = "user-uploads"
+_AGENT_REGISTRY_PATH = "system/agent_registry.json"
+
+
+def _compute_agent_schema_hash() -> str:
+    """Hash the tool schema + system prompt to a stable identifier. When this
+    changes, a new agent must be minted on Anthropic's side. Includes
+    SYSTEM_PROMPT so a meaningful prompt change re-mints too; trivial whitespace
+    edits will re-mint though, which is fine (mints are free and cheap)."""
+    import hashlib as _hl
+    payload = json.dumps({
+        "tools": _custom_tools_for_agent(),
+        "system": SYSTEM_PROMPT,
+    }, sort_keys=True, default=str)
+    return _hl.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _supabase_admin_client():
+    """Lazy import + construct the supabase admin client. None if env missing."""
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    if not url or not key:
+        return None
+    try:
+        from supabase import create_client
+        return create_client(url, key)
+    except Exception as e:
+        print(f"[agent_registry] supabase client init failed: {e}")
+        return None
+
+
+async def _load_agent_registry() -> dict:
+    """Read the hash→agent_id registry from Supabase Storage. Returns {} on
+    any failure so callers fall through to fresh mint."""
+    sb = _supabase_admin_client()
+    if sb is None:
+        return {}
+    try:
+        # supabase-py storage is sync — wrap in to_thread to avoid blocking loop
+        buf = await asyncio.to_thread(
+            sb.storage.from_(_AGENT_REGISTRY_BUCKET).download, _AGENT_REGISTRY_PATH
+        )
+        return json.loads(buf.decode("utf-8")) if buf else {}
+    except Exception as e:
+        # File not found is expected on first run — treat as empty registry.
+        msg = str(e).lower()
+        if "not found" in msg or "object_not_found" in msg or "404" in msg:
+            return {}
+        print(f"[agent_registry] load failed ({type(e).__name__}: {e}); treating as empty")
+        return {}
+
+
+async def _save_agent_registry(registry: dict) -> None:
+    """Persist the hash→agent_id registry to Supabase Storage so other
+    instances (and future restarts) auto-resolve to the same agent. Silent on
+    failure — the caller still has the agent id in memory for this run."""
+    sb = _supabase_admin_client()
+    if sb is None:
+        print("[agent_registry] save skipped: SUPABASE_URL / service key missing")
+        return
+    try:
+        body = json.dumps(registry, sort_keys=True, indent=2).encode("utf-8")
+        await asyncio.to_thread(
+            sb.storage.from_(_AGENT_REGISTRY_BUCKET).upload,
+            _AGENT_REGISTRY_PATH, body,
+            {"content-type": "application/json", "upsert": "true"},
+        )
+    except Exception as e:
+        print(f"[agent_registry] save failed ({type(e).__name__}: {e})")
 
 
 def _detect_user_lang(text: str) -> str:
@@ -6367,24 +6437,38 @@ class ManagedAgentClient:
         async with self._lock:
             if self._agent_id:
                 return self._agent_id
-            # Check for a pre-configured agent ID set as a Railway environment variable.
-            # This prevents creating a new agent on every service restart, which would
-            # invalidate all stored session IDs in Supabase.
+            # Resolution order:
+            #   1. ANTHROPIC_AGENT_ID env var (manual pin — rollback / debugging).
+            #   2. Auto-discovery by tool-schema hash, persisted in Supabase Storage
+            #      at user-uploads/system/agent_registry.json. Self-heals when tool
+            #      schema changes (mints new agent + writes registry entry). Every
+            #      instance reads the same registry so localhost + Railway converge
+            #      on the same agent automatically.
             env_agent_id = os.getenv("ANTHROPIC_AGENT_ID")
             if env_agent_id:
                 self._agent_id = env_agent_id
-                print(f"[ManagedAgent] using pre-configured agent {env_agent_id}")
+                print(f"[ManagedAgent] using pinned agent {env_agent_id} (ANTHROPIC_AGENT_ID set)")
                 return env_agent_id
+
+            schema_hash = _compute_agent_schema_hash()
+            registry = await _load_agent_registry()
+            existing_id = registry.get(schema_hash)
+            if existing_id:
+                # Verify the agent still exists on Anthropic's side (account
+                # could have been wiped). If retrieve fails, mint a fresh one.
+                try:
+                    await self._client.beta.agents.retrieve(existing_id)
+                    self._agent_id = existing_id
+                    print(f"[ManagedAgent] auto-resolved agent {existing_id} for schema_hash={schema_hash[:12]}")
+                    return existing_id
+                except Exception as e:
+                    print(f"[ManagedAgent] registry entry {existing_id} for {schema_hash[:12]} no longer valid ({type(e).__name__}); re-minting")
+
             agent = await self._client.beta.agents.create(
                 model=DEFAULT_MODEL,
                 name=AGENT_NAME,
                 description="Studio creative director — drives Creative OS image/animation/video tools.",
-                # NOTE: the beta Agents API requires `system` to be a plain
-                # string. The Messages-API style content-blocks list with
-                # `cache_control` is rejected with HTTP 400 ("value must be
-                # a string"). The Anthropic platform handles caching of the
-                # agent's system prompt internally; no client-side hint is
-                # needed. Do NOT replace this with a list/blocks structure.
+                # NOTE: the beta Agents API requires `system` to be a plain string.
                 system=SYSTEM_PROMPT,
                 tools=[
                     {"type": "agent_toolset_20260401"},
@@ -6392,9 +6476,13 @@ class ManagedAgentClient:
                 ],
             )
             self._agent_id = agent.id
-            print(f"[ManagedAgent] *** CREATED NEW AGENT {agent.id} ***")
-            print(f"[ManagedAgent] ACTION REQUIRED: Add ANTHROPIC_AGENT_ID={agent.id} to Railway environment variables.")
-            print(f"[ManagedAgent] Without this, a new agent will be created on every service restart.")
+            print(f"[ManagedAgent] *** MINTED NEW AGENT {agent.id} for schema_hash={schema_hash[:12]} ***")
+            # Persist the (hash → id) mapping so future starts of any instance
+            # (this one, Railway replicas, local dev) auto-resolve to the same
+            # agent without manual env-var updates.
+            registry[schema_hash] = agent.id
+            await _save_agent_registry(registry)
+            print(f"[ManagedAgent] wrote agent registry to Supabase Storage (system/agent_registry.json)")
             return agent.id
 
     async def _ensure_environment(self) -> str:
