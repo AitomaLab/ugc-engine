@@ -171,8 +171,13 @@ export function MentionDropdown({ groups, ordered, activeIndex, onPick, onHover,
                                                 )}
                                             </div>
                                             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
-                                                <span style={{ fontSize: '13px', fontWeight: 600, color: '#0D1B3E', lineHeight: 1.2 }}>
+                                                <span style={{ fontSize: '13px', fontWeight: 600, color: '#0D1B3E', lineHeight: 1.2, display: 'flex', alignItems: 'center', gap: '6px' }}>
                                                     {item.name}
+                                                    {(item.ref as any)?.label === 'just attached' && (
+                                                        <span style={{ fontSize: '10px', fontWeight: 600, color: '#0046FF', background: '#E8EEFF', padding: '1px 6px', borderRadius: '8px', lineHeight: 1.4 }}>
+                                                            Just attached
+                                                        </span>
+                                                    )}
                                                 </span>
                                                 <span style={{ fontSize: '11px', color: '#8A93B0' }}>
                                                     @{item.tag}

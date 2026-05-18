@@ -256,10 +256,42 @@ export default function StudioPage() {
     }
   };
 
+  // Attached files (upload-aware, mirrors AgentPanel's AttachedFile shape).
+  // Declared before filteredMentions so the @-mention list can prepend
+  // just-attached uploads without hitting a temporal-dead-zone error.
+  interface DashboardAttachment {
+    id: string;
+    type: 'image' | 'video';
+    name: string;
+    status: 'uploading' | 'ready' | 'error';
+    url?: string;
+    tag?: string;
+    previewUrl?: string;
+    error?: string;
+  }
+  const [attachments, setAttachments] = useState<DashboardAttachment[]>([]);
+
+  // Derive @-mention entries from the just-attached uploads so users can
+  // reference the image they're about to send within the SAME prompt
+  // (badged "Just attached" in the dropdown).
+  const attachmentMentionItems = useMemo<MentionItem[]>(() =>
+    attachments
+      .filter(a => a.status === 'ready' && a.url && a.type === 'image')
+      .map(a => ({
+        type: 'image',
+        tag: a.tag || `upload_${a.id.slice(0, 8).replace(/-/g, '')}`,
+        name: a.name || 'Attached image',
+        image_url: a.url,
+        ref: { type: 'image', tag: a.tag, name: a.name || 'attached', shot_id: a.id, image_url: a.url, label: 'just attached' } as any,
+      })),
+    [attachments]
+  );
+
   const filteredMentions = useMemo(() => {
-    if (!mentionFilter) return mentionItems;
-    return mentionItems.filter(m => m.tag.includes(mentionFilter) || m.name.toLowerCase().includes(mentionFilter));
-  }, [mentionItems, mentionFilter]);
+    const source = [...attachmentMentionItems, ...mentionItems];
+    if (!mentionFilter) return source;
+    return source.filter(m => m.tag.includes(mentionFilter) || m.name.toLowerCase().includes(mentionFilter));
+  }, [mentionItems, attachmentMentionItems, mentionFilter]);
 
   // Group filtered mentions for the tabbed dropdown
   const groupedMentions = useMemo(() => ({
@@ -395,18 +427,6 @@ export default function StudioPage() {
     }, 0);
   };
 
-  // Attached files (upload-aware, mirrors AgentPanel's AttachedFile shape)
-  interface DashboardAttachment {
-    id: string;
-    type: 'image' | 'video';
-    name: string;
-    status: 'uploading' | 'ready' | 'error';
-    url?: string;
-    tag?: string;
-    previewUrl?: string;
-    error?: string;
-  }
-  const [attachments, setAttachments] = useState<DashboardAttachment[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
   const removeAttachment = (id: string) => {

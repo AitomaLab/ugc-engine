@@ -663,6 +663,20 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                 ref: { type: 'influencer', tag, name, id: inf.id, image_url: inf.image_url },
             });
         }
+        // Just-attached uploads: surface them at the top of the Images tab
+        // with a "Just attached" badge so users can @-reference the file
+        // they're about to send in the same prompt body.
+        for (const att of attachments) {
+            if (att.status !== 'ready' || !att.url || att.type !== 'image') continue;
+            const tag = att.tag || `upload_${att.id.slice(0, 8).replace(/-/g, '')}`;
+            items.push({
+                type: 'image',
+                tag,
+                name: att.name || 'Attached image',
+                image_url: att.url,
+                ref: { type: 'image', tag, name: att.name || 'attached', shot_id: att.id, image_url: att.url, label: 'just attached' } as any,
+            });
+        }
         for (const img of projectImages) {
             const baseName = img.product_name || img.campaign_name || 'image';
             const shortId = (img.id || '').slice(0, 8);
@@ -689,7 +703,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             });
         }
         return items;
-    }, [products, influencers, projectImages, projectVideos]);
+    }, [products, influencers, projectImages, projectVideos, attachments]);
 
     const filteredMentions = useMemo(() => {
         const f = mentionFilter.toLowerCase();

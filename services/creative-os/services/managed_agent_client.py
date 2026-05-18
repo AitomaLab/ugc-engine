@@ -404,7 +404,7 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
    Exception: do NOT pass the app clip's `first_frame_url` or `video_url` as `reference_image_urls` / `reference_video_urls` — app clips are resolved server-side via `app_clip_id`. Only `product_id` and `influencer_id` entities need their image_url forwarded.
    RETRY RULE: if a generation fails, NEVER drop or reduce `reference_image_urls` on retry. The images are NOT the cause of failure — they are critical for visual identity. Always retry with the EXACT SAME `reference_image_urls`, `product_id`, `influencer_id`, and prompt. Do not "simplify" by removing product or influencer images.
 9. UGC mode does NOT require a registered product. If the user provides uploaded images (upload_* refs), generation can proceed with just the raw image URLs. However, you MUST FIRST follow the **MANDATORY PRE-FLIGHT** check above: offer the user the option to save the uploaded image as a product/model (via `[[SAVE_OR_GENERATE:...]]` marker) before starting any generation. If the user clicks "Generate Now" or says to proceed without saving, call `generate_image(mode="ugc", reference_image_urls=[...])` directly using the raw URLs.
-9b. MULTI-IMAGE GENERATION — when the user asks for multiple images in one breath ("3 images in different angles", "5 variations", "create 4 different poses", "haz 3 imágenes"), call `generate_image` ONCE with `count=N` and a prompt that bakes the variation into the description ("different angle", "varied pose", "alternate composition"). The server fans out N concurrent NanoBanana calls and returns all `image_urls` together in one tool result — you summarize all of them in a single reply. Do NOT emit N parallel `tool_use` blocks for `generate_image` and do NOT write narrative prose like "Firing all 3 in parallel now" without a matching tool_use — that pattern has caused production hallucinations where the agent describes the action without actually executing it. The cost confirmation is bundled: the first (unconfirmed) call previews `per_image × count` credits, then the confirmed call dispatches all N in parallel. Range: count ≤ 6.
+9b. MULTI-IMAGE GENERATION — when the user asks for multiple images in one breath ("3 images in different angles", "5 variations", "10 lifestyle photos", "haz 10 imágenes"), call `generate_image` ONCE with `count=N` and a prompt that bakes the variation into the description ("different angle", "varied pose", "alternate composition"). The server fans out N concurrent NanoBanana calls and returns all `image_urls` together in one tool result — you summarize all of them in a single reply. Do NOT emit N parallel `tool_use` blocks for `generate_image` and do NOT write narrative prose like "Firing all 10 in parallel now" without a matching tool_use — that pattern triggers the server-side IDEMPOTENCY guard which silently blocks all but the first call, leaving the user with 1 image when they asked for N. The cost confirmation is bundled: the first (unconfirmed) call previews `per_image × count` credits, then the confirmed call dispatches all N in parallel. Range: count ≤ 10. **If the user asks for MORE than 10**: call `generate_image` ONCE with `count=10` and explicitly tell them in your reply "I can generate up to 10 per batch — confirm and I'll queue another batch for the remaining X right after this one completes." NEVER split into multiple parallel tool_use blocks to work around the cap.
 10. ASPECT RATIO — MANDATORY before gated generation. Before calling `generate_image` or `generate_video` with `confirmed=true`, you MUST know the aspect ratio. If the user's brief already specifies it ("vertical", "9:16", "horizontal", "16:9", "square", "1:1", "for TikTok", "for YouTube", "for Instagram feed", "landscape", "portrait"), use it directly. For images, '1:1' is available for Instagram feed posts. Otherwise you MUST ask the user BEFORE presenting the cost confirmation: ask the question in one short sentence, then append the literal marker `[[ASPECT_BUTTONS]]` on the last line of your message. The frontend detects this marker and renders clickable Vertical / Horizontal buttons for the user. When the user replies with their choice, THEN show the cost confirmation, THEN call the tool with `confirmed=true` and `aspect_ratio="9:16"` or `"16:9"` (or `"1:1"` for images). Never skip this step for gated generation. Do NOT include the marker when the aspect is already known.
 10b. LANGUAGE — for video clips (`generate_video`), pass `language="es"` when the user requests Spanish / Latin dialogue. Default is English. Seedance 2.0 modes have full bilingual EN/ES support.
 10c. SPANISH ACCENT — MANDATORY when `language="es"` (or `video_language="es"`). Veo defaults to neutral Latin American Spanish whenever you don't specify, so you MUST resolve the accent BEFORE calling any video tool with `confirmed=true`:
@@ -634,16 +634,19 @@ def _custom_tools_for_agent() -> list[dict]:
                     "count": {
                         "type": "integer",
                         "minimum": 1,
-                        "maximum": 6,
+                        "maximum": 10,
                         "description": (
                             "Number of images to generate concurrently from the same prompt and references "
-                            "(default 1, max 6). USE THIS when the user asks for multiple variants — e.g. "
-                            "\"3 images in different angles\" → count=3 with a prompt that mentions \"different angle, "
-                            "varied composition\". The server fires N concurrent NanoBanana calls and returns all "
-                            "image_urls in a single response. ALWAYS prefer count=N over emitting N separate parallel "
-                            "tool_use blocks — the single-call dispatch is more reliable and avoids the agent "
-                            "hallucinating action without actually firing the calls. Cost confirmation is bundled: "
-                            "the first (unconfirmed) call previews credits = per_image × count."
+                            "(default 1, max 10). USE THIS when the user asks for multiple variants — e.g. "
+                            "\"3 images in different angles\" → count=3, \"10 lifestyle photos\" → count=10. "
+                            "The server fires N concurrent NanoBanana calls (with per-scene prompt splitting "
+                            "when the brief implies distinct scenes) and returns all image_urls in a single "
+                            "response. ALWAYS prefer count=N over emitting N separate parallel tool_use blocks "
+                            "— the single-call dispatch is more reliable and avoids the agent hallucinating. "
+                            "If the user asks for MORE than 10, call once with count=10, then in your reply "
+                            "tell them \"I can do up to 10 per batch — confirm and I'll fire another batch "
+                            "for the remaining X after this one completes.\" Never split into separate parallel "
+                            "tool_use blocks. Cost confirmation is bundled: per_image × count."
                         ),
                     },
                     "confirmed": {"type": "boolean", "description": confirmed_desc},
@@ -2180,7 +2183,7 @@ async def _tool_generate_image(ctx: ToolContext, **kwargs: Any) -> str:
         count = int(raw_count) if raw_count is not None else 1
     except (TypeError, ValueError):
         count = 1
-    count = max(1, min(6, count))
+    count = max(1, min(10, count))
 
     # Cost confirmation gate — first call previews credits, doesn't spend.
     if not kwargs.get("confirmed"):
@@ -7242,9 +7245,26 @@ class ManagedAgentClient:
                             _window = 1800.0 if name == "create_cinematic_ad" else 60.0
                             if _now - _last < _window:
                                 print(f"[ManagedAgent] IDEMPOTENCY guard: {_fingerprint} fired {int(_now - _last)}s ago (window {int(_window)}s) — short-circuiting duplicate")
+                                # Tailor the explanation for generate_image so the LLM
+                                # learns the right pattern mid-conversation (it tends to
+                                # emit N parallel tool_use blocks for "10 images" instead
+                                # of count=N). For other tools, keep the generic
+                                # "advance to next stage" hint.
+                                if name == "generate_image":
+                                    _msg = (
+                                        "Duplicate generate_image call blocked. You emitted multiple parallel tool_use "
+                                        "blocks for the same configuration in this turn — only the FIRST ran, the rest "
+                                        "(including this one) are no-ops. NEXT TIME, when the user asks for N images of "
+                                        "the same configuration, call generate_image ONCE with count=N (max 10). If they "
+                                        "asked for more than 10, fire one batch of 10 and tell them you'll queue the rest. "
+                                        "Tell the user only 1 image is generating from this turn (the others were duplicates) "
+                                        "and ask if they want you to fire the remaining as a single batched call."
+                                    )
+                                else:
+                                    _msg = f"This step ({_fingerprint}) was already completed in this flow. Advance to the NEXT stage — do NOT re-fire the same one. For cinematic_ad: storyboard→animate→broll→product_macro."
                                 _payload = {
                                     "action": "duplicate_suppressed",
-                                    "message": f"This step ({_fingerprint}) was already completed in this flow. Advance to the NEXT stage — do NOT re-fire the same one. For cinematic_ad: storyboard→animate→broll→product_macro.",
+                                    "message": _msg,
                                     "tool_name": name,
                                     "fingerprint": _fingerprint,
                                     "seconds_since_last_fire": int(_now - _last),
