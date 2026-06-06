@@ -23,6 +23,21 @@ const AgentPanel = dynamic(
 );
 import Select from '@/components/ui/Select';
 
+/** Failed jobs with no media URL are ghost cards — hide from gallery. */
+const isGhostAsset = (a: { status?: string; image_url?: string; final_video_url?: string; video_url?: string; is_placeholder?: boolean }, kind: 'images' | 'videos') => {
+    if (a.is_placeholder) return false;
+    const s = (a.status || '').toLowerCase();
+    const hasMedia = kind === 'images'
+        ? !!a.image_url
+        : !!(a.final_video_url || a.video_url);
+    return s.includes('failed') && !hasMedia;
+};
+
+const isInFlightStatus = (status?: string) => {
+    const s = (status || '').toLowerCase();
+    return s.includes('pending') || s.includes('processing') || s.includes('generating');
+};
+
 type TabId = 'images' | 'videos';
 
 /* ── Mode label helper (mirrors VideoDetailModal) ─────────────── */
@@ -132,6 +147,12 @@ export default function ProjectContainerPage() {
     const [agentOpen, setAgentOpen] = useState(true);
     const [createBarOpen, setCreateBarOpen] = useState(true);
     const agentRef = useRef<AgentPanelHandle>(null);
+    const reportedFailuresRef = useRef<Set<string>>(new Set()); // dedupe chat error injection
+    const seenInPollRef = useRef<Set<string>>(new Set()); // ids confirmed present in jobs-status
+    // Background video jobs (edit_video) finish minutes after tool_result — keep
+    // polling these ids even if /full missed the initial processing row.
+    const watchedVideoJobIdsRef = useRef<Set<string>>(new Set());
+    const [watchPollTick, setWatchPollTick] = useState(0);
     // Sync agent panel state to power reactive header elements
     const [agentState, setAgentState] = useState<AgentPanelState>({ useSeedance: false, running: false, turnsCount: 0 });
 
@@ -174,6 +195,25 @@ export default function ProjectContainerPage() {
         });
     }, []);
 
+    const registerVideoJobWatch = useCallback((jobId: string, label?: string) => {
+        if (!jobId) return;
+        watchedVideoJobIdsRef.current.add(jobId);
+        setWatchPollTick((t) => t + 1);
+        setVideos((prev) => {
+            if (prev.some((v) => v.id === jobId)) return prev;
+            return [{
+                id: jobId,
+                status: 'processing',
+                progress: 5,
+                status_message: 'Generating video',
+                campaign_name: label || 'AI edit',
+                model_api: 'gemini-omni-video',
+                created_at: new Date().toISOString(),
+            }, ...prev];
+        });
+        setActiveTab('videos');
+    }, []);
+
     const fetchAssets = useCallback(async (silent = false) => {
         if (!session || !projectId) return;
         if (!silent) setLoading(true);
@@ -187,12 +227,48 @@ export default function ProjectContainerPage() {
                 videos: any[];
             }>(`/creative-os/projects/${projectId}/full`);
             setProjectName(full.project?.name || 'Project');
-            // Preserve any local placeholders the agent emitted while the
-            // generation is still in flight (the new real asset will arrive
-            // via SSE 'artifact' and clearOnePlaceholder will drop one of
-            // matching kind). fetchAssets ALONE should never wipe them.
-            setImages(prev => [...prev.filter(v => v.is_placeholder), ...(full.images || [])]);
-            setVideos(prev => [...prev.filter(v => v.is_placeholder), ...(full.videos || [])]);
+            // Preserve placeholders AND any in-flight processing rows that
+            // landed locally (via poll) but aren't in /full yet — fetchAssets
+            // used to wipe them on every burst refetch, making the progress
+            // card flash for a few seconds then vanish while KIE still ran.
+            // Keep local rows that /full hasn't caught up with yet — both
+            // in-flight AND just-finished (jobs-status often leads /full by
+            // several seconds; dropping success rows here made completed
+            // videos vanish until a manual page refresh).
+            const mergeFullAssets = <T extends { id?: string; is_placeholder?: boolean; status?: string; image_url?: string; final_video_url?: string; video_url?: string }>(
+                prev: T[],
+                fullRows: T[],
+                hasPlayableMedia: (v: T) => boolean,
+            ): T[] => {
+                const placeholders = prev.filter(v => v.is_placeholder);
+                const fullMap = new Map(fullRows.map(r => [r.id, r]));
+                const localOnly = prev.filter(v => {
+                    if (v.is_placeholder || !v.id || fullMap.has(v.id)) return false;
+                    if (isInFlightStatus(v.status)) return true;
+                    if ((v.status || '').toLowerCase() === 'success' && hasPlayableMedia(v)) return true;
+                    return false;
+                });
+                return [...placeholders, ...localOnly, ...fullRows];
+            };
+            setImages(prev => mergeFullAssets(prev, full.images || [], v => !!v.image_url));
+            setVideos(prev => {
+                const merged = mergeFullAssets(
+                    prev,
+                    full.videos || [],
+                    v => !!(v.final_video_url || v.video_url),
+                );
+                // Belt-and-suspenders: any processing row from /full gets watched
+                // even if the video_job_started SSE was missed.
+                let addedWatch = false;
+                for (const v of merged) {
+                    if (v.id && isInFlightStatus(v.status) && !watchedVideoJobIdsRef.current.has(v.id)) {
+                        watchedVideoJobIdsRef.current.add(v.id);
+                        addedWatch = true;
+                    }
+                }
+                if (addedWatch) setWatchPollTick((t) => t + 1);
+                return merged;
+            });
         } catch (err) {
             console.error('Failed to fetch assets:', err);
         } finally {
@@ -205,17 +281,14 @@ export default function ProjectContainerPage() {
     // into the cached lists.
     const pollInFlight = useCallback(async () => {
         if (!session || !projectId) return;
-        const imageIds = images.filter(a => {
-            if (a.is_placeholder) return false;
-            const s = (a.status || '').toLowerCase();
-            return s.includes('pending') || s.includes('processing') || s.includes('generating');
-        }).map(a => a.id).filter(Boolean);
-        const videoIds = videos.filter(a => {
-            if (a.is_placeholder) return false;
-            const s = (a.status || '').toLowerCase();
-            return s.includes('pending') || s.includes('processing') || s.includes('generating');
-        }).map(a => a.id).filter(Boolean);
+        const imageIds = images.filter(a => !a.is_placeholder && isInFlightStatus(a.status)).map(a => a.id).filter(Boolean);
+        const inflightVideoIds = videos.filter(a => !a.is_placeholder && isInFlightStatus(a.status)).map(a => a.id).filter(Boolean);
+        const watchedVideoIds = [...watchedVideoJobIdsRef.current];
+        const videoIds = [...new Set([...inflightVideoIds, ...watchedVideoIds])];
         if (imageIds.length === 0 && videoIds.length === 0) return;
+
+        const polledImageSet = new Set(imageIds);
+        const polledVideoSet = new Set(videoIds);
 
         try {
             const status = await creativeFetch<{
@@ -226,36 +299,134 @@ export default function ProjectContainerPage() {
                 body: JSON.stringify({ image_ids: imageIds, video_ids: videoIds }),
             });
 
-            const mergeBy = <T extends { id?: string }>(prev: T[], updates: T[]): T[] => {
-                if (!updates?.length) return prev;
-                const map = new Map(updates.map(u => [u.id, u]));
-                return prev.map(p => {
-                    const u = map.get(p.id);
-                    return u ? { ...p, ...u } : p;
+            const imageMap = new Map((status.images || []).map(u => [u.id, u]));
+            const videoMap = new Map((status.videos || []).map(u => [u.id, u]));
+            let shouldNotifyFailure = false;
+            const fallbackErrors: string[] = [];
+
+            const reconcileList = <T extends { id?: string; status?: string; status_message?: string; image_url?: string; final_video_url?: string; video_url?: string; is_placeholder?: boolean }>(
+                prev: T[],
+                polled: Set<string>,
+                updateMap: Map<string, T>,
+                kind: 'images' | 'videos',
+                defaultFailMsg: string,
+            ): T[] => {
+                return prev.flatMap(p => {
+                    if (!p.id || !polled.has(p.id)) return [p];
+                    const u = updateMap.get(p.id);
+                    if (!u) {
+                        // Only treat as deleted after we've seen this row in a
+                        // prior poll — otherwise a race (row not committed yet,
+                        // or /full lag) would flash-remove the progress card.
+                        const seenKey = `${kind}:${p.id}`;
+                        if (!seenInPollRef.current.has(seenKey)) {
+                            return [p];
+                        }
+                        const key = `${kind}:${p.id}:deleted`;
+                        if (!reportedFailuresRef.current.has(key)) {
+                            reportedFailuresRef.current.add(key);
+                            shouldNotifyFailure = true;
+                            fallbackErrors.push(defaultFailMsg);
+                        }
+                        return [];
+                    }
+                    seenInPollRef.current.add(`${kind}:${p.id}`);
+                    const merged = { ...p, ...u };
+                    if (isGhostAsset(merged, kind)) {
+                        const key = `${kind}:${p.id}:failed`;
+                        if (!reportedFailuresRef.current.has(key)) {
+                            reportedFailuresRef.current.add(key);
+                            shouldNotifyFailure = true;
+                            fallbackErrors.push(merged.status_message || defaultFailMsg);
+                        }
+                        return [];
+                    }
+                    return [merged];
                 });
             };
 
-            let anyTransitionedToSuccess = false;
+            let anyVideoSuccess = false;
+            let anyImageSuccess = false;
             for (const v of (status.videos || [])) {
-                if ((v.status || '').toLowerCase() === 'success') anyTransitionedToSuccess = true;
+                const polled = polledVideoSet.has(v.id);
+                const wasInFlight = videos.some(
+                    (p) => p.id === v.id && isInFlightStatus(p.status),
+                );
+                if (polled && wasInFlight && (v.status || '').toLowerCase() === 'success' && (v.final_video_url || v.video_url)) {
+                    anyVideoSuccess = true;
+                }
             }
             for (const im of (status.images || [])) {
-                if (!(im.status || '').toLowerCase().match(/pending|processing|generating/)) anyTransitionedToSuccess = true;
+                const polled = polledImageSet.has(im.id);
+                const wasInFlight = images.some(
+                    (p) => p.id === im.id && isInFlightStatus(p.status),
+                );
+                if (polled && wasInFlight && (im.status || '').toLowerCase() === 'success' && im.image_url) {
+                    anyImageSuccess = true;
+                }
             }
 
-            setImages(prev => mergeBy(prev, status.images || []));
-            setVideos(prev => mergeBy(prev, status.videos || []));
+            setImages(prev => reconcileList(prev, polledImageSet, imageMap, 'images', 'Image generation failed — please try again.'));
+            setVideos(prev => {
+                let next = reconcileList(prev, polledVideoSet, videoMap, 'videos', 'Video generation failed — please try again.');
+                // Watched background jobs may land in jobs-status before /full
+                // ever returned them — merge those rows into the gallery.
+                for (const id of polledVideoSet) {
+                    if (next.some((v) => v.id === id)) continue;
+                    const row = videoMap.get(id);
+                    if (row && !isGhostAsset(row, 'videos')) {
+                        next = [row, ...next];
+                    }
+                }
+                return next;
+            });
 
-            // When any in-flight job finishes, do ONE full refetch to pull
-            // enriched fields (product_name, mode, etc.) that the lightweight
-            // status endpoint omits.
-            if (anyTransitionedToSuccess) {
-                fetchAssets(true);
+            if (anyVideoSuccess) clearOnePlaceholder('video');
+            if (anyImageSuccess) clearOnePlaceholder('image');
+
+            for (const v of (status.videos || [])) {
+                const st = (v.status || '').toLowerCase();
+                if (st === 'success' || st.includes('failed')) {
+                    watchedVideoJobIdsRef.current.delete(String(v.id));
+                }
+            }
+            if (watchedVideoIds.some((id) => {
+                const row = videoMap.get(id);
+                return row && ((row.status || '').toLowerCase() === 'success' || (row.status || '').toLowerCase().includes('failed'));
+            })) {
+                setWatchPollTick((t) => t + 1);
+            }
+
+            if (shouldNotifyFailure) {
+                void (async () => {
+                    let hasFailureTurn = await agentRef.current?.refreshThread?.() ?? false;
+                    // Background failure append may land slightly after row delete.
+                    if (!hasFailureTurn) {
+                        await new Promise((r) => setTimeout(r, 2000));
+                        hasFailureTurn = await agentRef.current?.refreshThread?.() ?? false;
+                    }
+                    if (hasFailureTurn) return;
+                    // Legacy paths that only mark failed (no thread append) —
+                    // inject a fallback error bubble so chat still explains it.
+                    for (const msg of fallbackErrors) {
+                        agentRef.current?.reportGenerationFailure(msg);
+                    }
+                })();
+            }
+
+            // Enriched metadata (product_name, mode, …) lives on /full only.
+            // Delay slightly so /full has the row — mergeFullAssets keeps the
+            // poll-merged playable URL visible until then.
+            if (anyVideoSuccess || anyImageSuccess) {
+                window.setTimeout(() => { fetchAssets(true); }, 1500);
             }
         } catch (err) {
-            console.error('Status poll failed:', err);
+            // Best-effort poll — transient backend/auth timeouts self-heal on
+            // the next tick. Warn (not error) so we don't trip the dev error
+            // overlay for an expected, recoverable condition.
+            console.warn('Status poll failed (will retry next tick):', err);
         }
-    }, [session, projectId, images, videos, fetchAssets]);
+    }, [session, projectId, images, videos, fetchAssets, watchPollTick, clearOnePlaceholder]);
 
     // Initial fetch
     useEffect(() => {
@@ -267,20 +438,46 @@ export default function ProjectContainerPage() {
     // (influencer resolution, reference-image prep, product lookups),
     // so we poll every 1.5s for up to 20s to catch it as soon as it lands.
     // Once a pending row is in state, the 5s auto-poll below takes over.
+    // Two-stage burst polling triggered by every tool_use (onJobStart):
+    //   Stage 1: 1.5s × first 20s — catches the new shot row as soon as the
+    //            backend writes it, even before the agent's tool_result.
+    //   Stage 2: 5s × next 70s    — guarantees we keep polling for 90s total
+    //            so the moment WaveSpeed / Fal / Kie writes status='success'
+    //            (typically 30-90s after kick-off) the gallery refreshes
+    //            without depending on the in-state auto-poll, which can miss
+    //            races on brand-new empty projects (onboarding flow).
     const startJobRefetchBurst = useCallback(() => {
         if (burstRef.current) clearInterval(burstRef.current);
         const startedAt = Date.now();
-        const tick = () => { fetchAssets(true); };
+        const tick = () => {
+            fetchAssets(true);
+            void pollInFlight();
+        };
         tick();
-        burstRef.current = setInterval(() => {
-            if (Date.now() - startedAt > 20000) {
+        const FAST_MS = 1500;
+        const SLOW_MS = 5000;
+        const FAST_UNTIL = 20000;
+        // Video edits (Omni) and UGC can run 5–12 min — keep burst alive long enough
+        // that fetchAssets catches the processing row even if SSE was delayed.
+        const TOTAL_MS = 600000;
+        const schedule = (intervalMs: number) => setInterval(() => {
+            const elapsed = Date.now() - startedAt;
+            if (elapsed > TOTAL_MS) {
                 if (burstRef.current) clearInterval(burstRef.current);
                 burstRef.current = null;
                 return;
             }
+            // Swap to slow interval once past the fast window.
+            if (intervalMs === FAST_MS && elapsed > FAST_UNTIL) {
+                if (burstRef.current) clearInterval(burstRef.current);
+                burstRef.current = schedule(SLOW_MS);
+                tick();
+                return;
+            }
             tick();
-        }, 1500);
-    }, [fetchAssets]);
+        }, intervalMs);
+        burstRef.current = schedule(FAST_MS);
+    }, [fetchAssets, pollInFlight]);
 
     // Stop the burst early once any pending row appears — auto-poll takes over.
     useEffect(() => {
@@ -299,7 +496,14 @@ export default function ProjectContainerPage() {
         if (burstRef.current) clearInterval(burstRef.current);
     }, []);
 
-    // Auto-poll: check for pending/processing assets every 5s.
+    // Kick an immediate status poll when a background video job id is registered.
+    useEffect(() => {
+        if (watchedVideoJobIdsRef.current.size > 0) {
+            void pollInFlight();
+        }
+    }, [watchPollTick, pollInFlight]);
+
+    // Auto-poll: check for pending/processing assets every 2s (faster finish detection).
     // Pauses while the tab is hidden to avoid burning cycles for users
     // who switched away, and fires an immediate refetch when they return.
     useEffect(() => {
@@ -310,12 +514,14 @@ export default function ProjectContainerPage() {
             const s = (a.status || '').toLowerCase();
             return s.includes('pending') || s.includes('processing') || s.includes('generating');
         });
+        const hasWatchedVideos = watchedVideoJobIdsRef.current.size > 0;
 
-        if (hasPending) {
+        if (hasPending || hasWatchedVideos) {
+            void pollInFlight();
             pollRef.current = setInterval(() => {
                 if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
                 pollInFlight();
-            }, 5000);
+            }, 2000);
             const onVisible = () => {
                 if (document.visibilityState === 'visible') pollInFlight();
             };
@@ -332,7 +538,7 @@ export default function ProjectContainerPage() {
         return () => {
             if (pollRef.current) clearInterval(pollRef.current);
         };
-    }, [images, videos, pollInFlight]);
+    }, [images, videos, pollInFlight, watchPollTick]);
 
     // Reset filters when switching tabs
     useEffect(() => {
@@ -342,7 +548,15 @@ export default function ProjectContainerPage() {
     }, [activeTab]);
 
     // ── Derive unique filter values from current tab assets ──
-    const currentAssets = activeTab === 'images' ? images : videos;
+    const visibleImages = useMemo(
+        () => images.filter(a => a.is_placeholder || !isGhostAsset(a, 'images')),
+        [images],
+    );
+    const visibleVideos = useMemo(
+        () => videos.filter(a => a.is_placeholder || !isGhostAsset(a, 'videos')),
+        [videos],
+    );
+    const currentAssets = activeTab === 'images' ? visibleImages : visibleVideos;
 
     const productOptions = useMemo(() => {
         const names = new Set<string>();
@@ -681,7 +895,7 @@ export default function ProjectContainerPage() {
                 {projectHeaderBar}
                 {galleryBlock}
                 {false && createBarOpen && createBarBlock}
-                <AgentPanel ref={agentRef} projectId={projectId} jobId={selectedJobId} onArtifact={() => { fetchAssets(true); }} onArtifactPending={addPendingPlaceholder} onArtifactReady={clearOnePlaceholder} onStateChange={setAgentState} initialBrief={initialBrief || undefined} initialRefs={initialRefs} initialUseSeedance={initialUseSeedance} onJobStart={(kind) => { setActiveTab(kind === 'video' ? 'videos' : 'images'); startJobRefetchBurst(); }} />
+                <AgentPanel ref={agentRef} projectId={projectId} jobId={selectedJobId} onArtifact={() => { fetchAssets(true); }} onArtifactPending={addPendingPlaceholder} onArtifactReady={clearOnePlaceholder} onStateChange={setAgentState} initialBrief={initialBrief || undefined} initialRefs={initialRefs} initialUseSeedance={initialUseSeedance} onJobStart={(kind) => { setActiveTab(kind === 'video' ? 'videos' : 'images'); startJobRefetchBurst(); }} onVideoJobStarted={({ job_id, label }) => registerVideoJobWatch(job_id, label)} />
             </div>
         );
     }
@@ -723,6 +937,7 @@ export default function ProjectContainerPage() {
                             initialRefs={initialRefs}
                             initialUseSeedance={initialUseSeedance}
                             onJobStart={(kind) => { setActiveTab(kind === 'video' ? 'videos' : 'images'); startJobRefetchBurst(); }}
+                            onVideoJobStarted={({ job_id, label }) => registerVideoJobWatch(job_id, label)}
                         />
                     </div>
                 )}

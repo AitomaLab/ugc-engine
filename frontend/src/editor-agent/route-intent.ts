@@ -30,12 +30,31 @@ const GENERATION_KEYWORDS = [
 	'try again',
 ];
 
+// Generative / pixel-level edits that ONLY the managed agent's edit_video
+// (Gemini Omni) tool can do — adding or removing objects/accessories, changing
+// the background or scene, inserting a person, camera-angle / mood / VFX edits,
+// etc. These must NEVER route to the deterministic timeline editor (which can
+// only trim / caption / re-time / re-position existing footage). Checked BEFORE
+// EDIT_KEYWORDS so a phrase like "edit the video by adding a hat" stays managed.
+// Phrases carry leading spaces where a bare token would false-match (e.g. " hat"
+// avoids matching "what" / "that" / "chat").
+const GENERATIVE_EDIT_KEYWORDS = [
+	'add a ', 'add an ', 'add some ', 'adding ',
+	'remove the ', 'remove a ', 'remove an ', 'erase ', 'get rid of',
+	'change the background', 'change background', 'replace the background', 'background to ',
+	'change the scene', 'change scene', 'change the setting', 'different scene',
+	'put me in', 'put him in', 'put her in', 'put them in', 'insert ',
+	'make him wear', 'make her wear', 'make them wear', 'wear a ', 'wearing ',
+	' hat', 'sunglasses', 'change the clothes', 'change his outfit', 'change her outfit',
+	'camera angle', 'change the angle', 'different angle', 'zoom into', 'zoom in on',
+	'vfx', 'visual effect', 'transform ', 'make it look like', 'turn it into',
+	'change the mood', 'change the lighting', 'color grade', 'recolor',
+	'replace the', 'swap the', 'put a ',
+];
+
 const EDIT_KEYWORDS = [
 	'trim',
 	'shorten',
-	'edit this',
-	'edit the',
-	'adjust',
 	'change volume',
 	'change the volume',
 	'set volume',
@@ -91,6 +110,12 @@ export function classifyEditorAgentRoute(
 		return 'managed';
 	}
 	if (containsAny(msg, GENERATION_KEYWORDS)) {
+		return 'managed';
+	}
+	// Generative pixel edits (add a hat, change the background, insert a person…)
+	// belong to the managed agent's edit_video tool, never the timeline editor —
+	// even when the prompt also starts with "edit the video…".
+	if (containsAny(msg, GENERATIVE_EDIT_KEYWORDS)) {
 		return 'managed';
 	}
 	if (containsAny(msg, EDIT_KEYWORDS)) {

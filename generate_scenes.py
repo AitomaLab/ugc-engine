@@ -1085,7 +1085,13 @@ def extend_video_with_retry(task_id, prompt, seed=None, model="veo-3.1-fast", ma
         Wavespeed fails or `video_url` is missing.
       - WAVESPEED_PRIMARY=false: legacy Kie-only path.
     """
-    RETRIABLE_PATTERNS = ("500", "internal error", "unknown generation error", "timed out", "timeout")
+    # Broadened to catch "unknown extend error" (Kie's generic failure) and
+    # connection / read errors that crop up under queue load.
+    RETRIABLE_PATTERNS = (
+        "500", "502", "503", "504",
+        "internal error", "unknown generation error", "unknown extend error",
+        "timed out", "timeout", "connection", "read error",
+    )
 
     # `force_kie=True` overrides WAVESPEED_PRIMARY. Used by digital-product
     # UGC chains where the original Kie task_id MUST be reused so Veo gets

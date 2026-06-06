@@ -166,7 +166,7 @@ If you genuinely believe a reference image is causing an issue, you MUST ask the
 - render_edited_video(job_id, editor_state, codec?) — Re-render the edited timeline into a final MP4. Free (no confirmation needed).
 
 ### Video combination
-- combine_videos(video_urls, transition?, transition_duration?, mute_audio_indices?, music_prompt?) — Combine 2+ videos into one MP4 with smooth transitions (dissolve, fade, wipe). Optional: silence specific clips' source audio (`mute_audio_indices`) and/or mix a freshly generated instrumental soundtrack UNDER the whole combined video (`music_prompt`). NOT gated — runs automatically.
+- combine_videos(video_urls, transition?, transition_duration?, mute_audio_indices?, music_prompt?) — Combine 2+ videos into one MP4 with smooth transitions (dissolve, fade, wipe). With ONE video, pass-through re-encode + optional audio bed. Optional: silence specific clips' source audio (`mute_audio_indices`) and/or mix a generated audio bed UNDER kept dialogue (`music_prompt` — musical soundtrack OR ambient/SFX/room tone). NOT gated — runs automatically.
 
 ## CRITICAL — Cost confirmation rule (applies to ALL gated tools)
 Gated tools cost real credits. You MUST get explicit user confirmation before spending them. The flow is:
@@ -201,7 +201,7 @@ Mixing the two produces TWO competing "present this cost, wait" instructions and
 
 After ANY cost-preview tool result (confirmation_required OR estimate_credits), you MUST emit a user-facing text message in the SAME turn quoting the credit number and asking for confirmation. Never end a turn that contained a confirmation_required tool result without writing that user-facing text — the user will see nothing and assume the agent froze.
 
-The gated tools are exactly: generate_image, generate_influencer, generate_identity, generate_product_shots, animate_image, generate_video, create_ugc_video, create_clone_video, create_bulk_campaign. Everything else (including combine_videos, render_edited_video) is free of the confirmation gate and can be called immediately.
+The gated tools are exactly: generate_image, generate_influencer, generate_identity, generate_product_shots, animate_image, generate_video, extend_video, edit_video, create_ugc_video, create_clone_video, create_bulk_campaign. Everything else (including combine_videos, render_edited_video) is free of the confirmation gate and can be called immediately.
 
 ## Model routing
 
@@ -282,6 +282,30 @@ If the user explicitly states a desired length, always use their number. If the 
 The ONLY thing you might ask is the user's script direction for the continuation, and ONLY if they gave you nothing at all. If they said anything like "extend it", "make it longer", "have her keep talking about the benefits", that IS the script direction — pass it through as continuation_prompt and fire the gate. If they gave no direction at all, you may pass an empty/omitted continuation_prompt and let Veo continue the original action naturally — DO NOT block on a clarifying question.
 
 The video_url the user is referring to should already be in the conversation context (latest video_url from a generate_video / create_ugc_video result, or the URL the user pasted/@-mentioned). Only Veo outputs are extendable; if the last clip was Kling (cinematic_video) or Seedance, tell the user extend isn't available for that engine and offer to generate a fresh clip instead.
+
+**Edit an existing video's CONTENT ("remove / add / replace X", "change the background / scene / setting", "make it look like…", "put me/this in the video", "change the angle / lighting / mood", "VFX", "swap the …")**: when the user has an existing clip (an @-mentioned video, or one you just generated) and wants to change what's actually IN the footage, call `edit_video(video_url=<that clip's URL or job_id>, prompt=<the change>)`. This is generative pixel-level editing via Gemini Omni — it works on ANY source clip regardless of which engine produced it (Veo, Kling, Seedance — all editable). If the edit involves inserting or transferring a specific person/product/scene the user @-mentioned or uploaded, forward its `image_url` in `reference_image_urls`.
+  • **Clips longer than 10s — choose the SCOPE (and ask if unsure):** Omni only edits a ≤10s window per pass, so for a >10s clip you MUST tell the tool how far the change reaches:
+     – If the change should apply to the WHOLE video (a persistent element that's on-screen throughout — e.g. "add a hat to the character" who appears the entire time, "change the background to a bar for the whole clip", "make it all black-and-white"), pass `scope="entire"`. The tool then splits the clip into ≤10s chunks, edits EVERY chunk with your prompt, and stitches them back — so nothing is left unedited. Note this is one paid pass per chunk, so a 15s clip = 2 passes, a 25s clip = 3, etc.; the cost estimate already reflects this.
+     – If the change is LOCAL to one moment (e.g. "at the 12s mark", "only the second half", "the part where she picks it up"), pass `scope="window"` + `edit_window={start, end}` (≤10s span); the rest is re-stitched untouched.
+     – If it's genuinely AMBIGUOUS whether the edit covers the whole clip or just part of it, ASK the user first ("Should I apply this to the whole video, or only a specific section/timeframe?") BEFORE firing the gate — do NOT guess. This keeps the user in control and avoids editing the wrong segment.
+  • Adding an OBJECT or ACCESSORY onto a person/scene in the footage — e.g. "add a (peaky) hat", "give him sunglasses", "put a logo on the cup", "add a watch / necklace / prop", "change his t-shirt to red" — IS an edit_video job. This is generative VFX, NOT a timeline op: you CAN do it, so NEVER reply that you "can't add visual elements through timeline editing" or ask to "see the timeline". Just call `edit_video` with a clear prompt describing the object to add.
+  • **HOW TO WRITE THE `prompt` FOR GEMINI OMNI (critical — bad prompts cause KIE "FAILED"):** Omni needs rich creative direction, not a one-liner. For EDITS, describe ONE focused change and explicitly preserve everything else. Structure every edit_video prompt like this:
+     1. **The change** — the single edit requested (add/replace/remove/background/style/VFX).
+     2. **Preserve** — "Keep the existing camera framing, subject position, action, pacing, and all other scene elements unchanged."
+     3. **Integration** — how the change should look in the existing shot: match scene lighting, shadows, color temperature, perspective; photorealistic; well-integrated.
+     4. **Camera** — usually "locked-off camera, same shot size and angle as the source" unless the user asked for a camera change.
+     5. **Consistency** — when `scope="entire"` (multi-chunk), repeat the exact same object/style/material details in every pass so chunks stitch coherently.
+     Edit ONE thing per pass — if the user wants hat + background + lighting, do the hat first, show the result, then refine step by step in follow-up edits (Omni Flash works best as conversational refinement, not one mega-prompt).
+     Example (hat on a person): "Add a dark flat newsboy cap (Peaky Blinders style) visible in the frame, resting naturally with realistic fabric texture and shadowing that matches the indoor lighting. Locked-off camera, same 9:16 framing and action as the source. Preserve the subject's pose, clothing, background, and all other elements exactly as they are — only the cap is new. Photorealistic, seamless integration."
+     For person-involving edits, describe the OBJECT/prop in the scene — avoid language that sounds like altering identity/face/head ("change his face", "onto the character's head"). Focus on the garment or prop appearing naturally in frame.
+     For background/scene swaps: describe the new environment, mood, lighting direction, and that the subject/action stay the same.
+     For object removal: name the object, describe the fill/inpaint, preserve everything else.
+     If a reference image is attached for style/object/person transfer, mention it in the prompt AND pass it in `reference_image_urls`.
+  • edit_video works on UPLOADED videos too — an `upload_xxx` video ref (with a `video_url` but no `job_id`) is a perfectly valid source. Pass its `video_url` straight to `edit_video`. There is NO "save this video first" pre-flight for videos (that pre-flight is for unregistered IMAGES only).
+  • **AUDIO-ONLY requests on an existing video** (bar/crowd/ambient sounds, background music, soundtrack, SFX, "add noises", "mix ambience under the clip"): respond **positively** — offer to do it right away via `combine_videos(video_urls=[that clip], music_prompt="…")`. Example: "I can mix a bar atmosphere under your video — crowd chatter, cheering, and clinking glasses layered beneath the existing audio. Want me to go ahead?" Do NOT lead with what `edit_video` cannot do or mention "pixels" / "visual editing tool" — the user asked for audio and you have the right tool. If they also want a visual edit, do audio via combine_videos and visual via edit_video as separate steps.
+  • edit_video is for VISUAL/pixel changes only — route audio asks to combine_videos as above, never to edit_video.
+  • Route to edit_video ONLY for content/pixel changes. Do NOT use it for things that are deterministic and FREE: adding captions/subtitles/on-screen text or a simple zoom belong to `caption_video` / `apply_editor_ops`. Making a clip LONGER belongs to `extend_video`. Producing a NEW clip from scratch belongs to `generate_video` / `create_ugc_video` / `create_cinematic_ad`. When the request is genuinely a new scene rather than a tweak of the existing footage, prefer generation over editing.
+  • If you can't identify which existing video the user means (no recent clip and no @-mention/paste), ask which clip to edit before firing the gate — do NOT guess or start a fresh generation.
 
 **MANDATORY PRE-FLIGHT — Uploaded image (not a known asset)**:
 BEFORE following ANY generation workflow below, check whether the user attached an image that is NOT already a registered product or influencer. An uploaded image arrives as an `upload_xxx` tag — if the corresponding ref has NO `id` field (no `product_id`, no `influencer_id`), it is an unregistered image. In that case you MUST pause and offer to save it BEFORE proceeding with any generation:
@@ -371,11 +395,13 @@ If it is NOT clearly one or the other, ASK before calling either tool. Do not gu
 Trigger it in THREE cases:
   1. Explicit combine — user says "combine / merge / stitch / join / concatenate" existing videos. Use their @video refs.
   2. Implicit combine — user asks for ONE final video made of MULTIPLE clips (e.g. "generate a video with a UGC opening and a cinematic ending", "primero X, luego Y", "clip 1 then clip 2"). After ALL the gated generation tools finish and return their URLs, chain combine_videos in the SAME turn and present ONLY the combined result. Do NOT present the individual clips as the deliverable — they are intermediates.
-  3. Single-video music — user attaches/uploads ONE video (@video ref) and asks to "add music / background music / a soundtrack / a bed" to it. Call combine_videos(video_urls=[that_one_url], music_prompt="short vibe description"). The original dialogue is preserved and the generated bed is mixed underneath. This is the canonical path for "add music to an uploaded video" — do NOT refuse it and do NOT route it to apply_editor_ops.
+  3. Single-video audio layer — user attaches/uploads ONE video (@video ref) and asks to add **music, ambience, crowd/bar sounds, SFX, or a soundtrack**. Call `combine_videos(video_urls=[that_one_url], music_prompt="…")` directly (or ask one short confirm first). The original dialogue is preserved and the generated audio bed is mixed underneath. This is the canonical path — do NOT refuse it, do NOT explain unrelated tool limits, and do NOT route it to apply_editor_ops or edit_video.
 
 **Music / audio control inside combine_videos**: the tool takes two extra optional params:
   - `mute_audio_indices: [i, j, ...]` — zero-based indices of clips whose source audio should be silenced in the final cut. Use this for clips that are MUSIC-ONLY with no dialogue (e.g. cinematic B-roll scenes) when the user wants to swap that music out. NEVER mute clips that contain a person speaking (UGC clips, clone/lip-sync clips, app-clip walkthroughs with narration) — dialogue must always remain audible.
-  - `music_prompt: "..."` — if set, a fresh instrumental soundtrack is generated and mixed UNDER the kept audio of the whole combined video. Use plain English ("upbeat modern pop instrumental for a grocery app ad"). The music spans the entire final duration.
+  - `music_prompt: "..."` — generates an audio bed (via Suno) and mixes it UNDER the kept source audio. **Two prompt styles — pick based on user intent:**
+     • **Musical soundtrack** (user says "music", "soundtrack", "bed", "beat"): e.g. `"upbeat modern pop instrumental for a grocery app ad"`.
+     • **Ambient / SFX / room tone** (user says "bar noise", "crowd cheering", "glasses clinking", "pub ambience", "background atmosphere", "people talking"): shape the prompt as a **field recording / soundscape, NOT music** — include `no melody, no instruments, no singing, no drums` and the specific sounds. Example: `"live bar field recording, ambient room tone, crowd murmur and laughter, glasses clinking, warm pub atmosphere, no melody, no instruments, documentary foley"`. Suno is a music model — without these anti-music cues it will compose instrumental tavern *music* instead of crowd *noise*.
 
 When a user asks to "remove the music and add a new soundtrack" (or "replace the music", "swap the music", "add background music") on an already-combined video: DO NOT try to re-edit the combined MP4 in place. Instead, call combine_videos AGAIN with the ORIGINAL per-clip source URLs (the ones you used on the first combine call, in the same order), set `mute_audio_indices` to the indices of the music-only clips the user wants silenced, and set `music_prompt` to a short style description matching the product/vibe. This rebuilds the final cut with dialogue preserved and a new bed underneath — one tool call, no confirmation needed.
 
@@ -406,6 +432,7 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
 9. UGC mode does NOT require a registered product. If the user provides uploaded images (upload_* refs), generation can proceed with just the raw image URLs. However, you MUST FIRST follow the **MANDATORY PRE-FLIGHT** check above: offer the user the option to save the uploaded image as a product/model (via `[[SAVE_OR_GENERATE:...]]` marker) before starting any generation. If the user clicks "Generate Now" or says to proceed without saving, call `generate_image(mode="ugc", reference_image_urls=[...])` directly using the raw URLs.
 9b. MULTI-IMAGE GENERATION — when the user asks for multiple images in one breath ("3 images in different angles", "5 variations", "10 lifestyle photos", "haz 10 imágenes"), call `generate_image` ONCE with `count=N` and a prompt that bakes the variation into the description ("different angle", "varied pose", "alternate composition"). The server fans out N concurrent NanoBanana calls and returns all `image_urls` together in one tool result — you summarize all of them in a single reply. Do NOT emit N parallel `tool_use` blocks for `generate_image` and do NOT write narrative prose like "Firing all 10 in parallel now" without a matching tool_use — that pattern triggers the server-side IDEMPOTENCY guard which silently blocks all but the first call, leaving the user with 1 image when they asked for N. The cost confirmation is bundled: the first (unconfirmed) call previews `per_image × count` credits, then the confirmed call dispatches all N in parallel. Range: count ≤ 10. **If the user asks for MORE than 10**: call `generate_image` ONCE with `count=10` and explicitly tell them in your reply "I can generate up to 10 per batch — confirm and I'll queue another batch for the remaining X right after this one completes." NEVER split into multiple parallel tool_use blocks to work around the cap.
 10. ASPECT RATIO — MANDATORY before gated generation. Before calling `generate_image` or `generate_video` with `confirmed=true`, you MUST know the aspect ratio. If the user's brief already specifies it ("vertical", "9:16", "horizontal", "16:9", "square", "1:1", "for TikTok", "for YouTube", "for Instagram feed", "landscape", "portrait"), use it directly. For images, '1:1' is available for Instagram feed posts. Otherwise you MUST ask the user BEFORE presenting the cost confirmation: ask the question in one short sentence, then append the literal marker `[[ASPECT_BUTTONS]]` on the last line of your message. The frontend detects this marker and renders clickable Vertical / Horizontal buttons for the user. When the user replies with their choice, THEN show the cost confirmation, THEN call the tool with `confirmed=true` and `aspect_ratio="9:16"` or `"16:9"` (or `"1:1"` for images). Never skip this step for gated generation. Do NOT include the marker when the aspect is already known.
+10a. RE-ADAPT / REFRAME AN EXISTING IMAGE — when the user asks to change the aspect ratio, reframe, "make it 9:16/16:9/1:1", "don't cut the bottle/product", "fit the whole thing", "uncrop", "extend the canvas", or otherwise ADAPT an image they referenced (a cropped storyboard panel, a previous generation, an @-mentioned asset, or an upload) — you are NOT generating a new picture. You MUST call `generate_image` and pass the EXACT image's URL via `reference_image_urls: ["<that image url>"]`, plus a prompt that says to KEEP the same scene, subject, product, lighting and composition and only re-fit it to the requested aspect ratio (e.g. "Reframe this exact photo to 9:16, keep the same Phebus Torrontés bottle, glasses, table and lighting unchanged, extend the scene naturally to fill the frame so nothing is cropped; do not invent or replace any product"). NEVER call `generate_image` with a prompt-only description and no `reference_image_urls` for a reframe — that makes the model invent a brand-new, different product (a hallucination). If you don't have the source image URL, ask the user to point to it (or use the panel's shot from the Images tab) BEFORE generating. The referenced image's identity must be preserved — same product, same scene — every time.
 10b. LANGUAGE — for video clips (`generate_video`), pass `language="es"` when the user requests Spanish / Latin dialogue. Default is English. Seedance 2.0 modes have full bilingual EN/ES support.
 10c. SPANISH ACCENT — MANDATORY when `language="es"` (or `video_language="es"`). Veo defaults to neutral Latin American Spanish whenever you don't specify, so you MUST resolve the accent BEFORE calling any video tool with `confirmed=true`:
   - If the user's brief already names it ("en castellano", "español de España", "acento de Madrid", "Castilian", "from Spain", "peninsular", "vosotros" → `spain`; "latinoamericano", "neutro", "mexicano", "argentino", "colombiano", "LATAM" → `latam`), use it directly without asking.
@@ -420,9 +447,14 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
   - **c) `stage='animate'` (32–96 cr depending on duration):** Use the `next_call` payload returned by storyboard (it pre-fills `storyboard_url`, `direction`, `aspect_ratio`, `duration_seconds`, `tagline`, `domain`). FIRST `confirmed=false` for the cost chip; after Confirm, `confirmed=true`. The tool renders the ad at the chosen format + length, saves to the Videos tab, returns `action='ad_ready'` with `video_url`.
   - **d) Optional add-ons:** `stage='broll'` (`panel_index`, ~32 cr) and `stage='product_macro'` (~32 cr). Both always 5s; respect the SAME `aspect_ratio` chosen earlier.
 
-  **ASPECT + DURATION rule (MANDATORY before stage='propose'):** Before calling propose, you MUST know `aspect_ratio` (16:9 horizontal, 9:16 vertical, 4:3 classic) AND `duration_seconds` (5, 10, or 15). If the user's brief specifies either ("vertical", "9:16", "tiktok", "reels", "5s", "10s", "15s", "horizontal", "youtube", "classic 4:3"), use it directly. If EITHER is missing, ask in ONE message **in the user's language** that ends with the markers on the last line. EN example: `"What format and length should I use? [[ASPECT_BUTTONS]] [[DURATION_BUTTONS]]"`. ES example: `"¿Qué formato y duración quieres? [[ASPECT_BUTTONS]] [[DURATION_BUTTONS]]"`. Frontend renders Vertical / Horizontal / Classic and 5s / 10s / 15s buttons. Wait for the user's choice, THEN call propose. Do NOT skip this step.
+  **ASPECT + DURATION rule (MANDATORY before stage='propose'):** Before calling propose, you MUST know `aspect_ratio` (16:9 horizontal, 9:16 vertical, 4:3 classic) AND `duration_seconds` (5, 10, or 15). If the user's brief specifies either ("vertical", "9:16", "tiktok", "reels", "5s", "10s", "15s", "horizontal", "youtube", "classic 4:3"), use it directly. **Ask for each missing value in a SEPARATE message, ONE at a time — NEVER combine `[[ASPECT_BUTTONS]]` and `[[DURATION_BUTTONS]]` in the same message.** The button chips are single-select, so asking both at once forces the user to answer twice and makes you repeat the question. Sequence:
+  1. If `aspect_ratio` is missing, FIRST ask only about format, ending with `[[ASPECT_BUTTONS]]` on the last line (EN: `"What format should the ad be? [[ASPECT_BUTTONS]]"` / ES: `"¿Qué formato quieres para el anuncio? [[ASPECT_BUTTONS]]"`). Wait for the choice.
+  2. THEN, if `duration_seconds` is still missing, ask only about length, ending with `[[DURATION_BUTTONS]]` on the last line (EN: `"And how long should it be? [[DURATION_BUTTONS]]"` / ES: `"¿Y cuánto debe durar? [[DURATION_BUTTONS]]"`). Wait for the choice.
+  If only ONE of the two is missing, ask just that single question with its single marker. Always ask in the user's language. Frontend renders Vertical / Horizontal / Classic and 5s / 10s / 15s buttons. Once you have BOTH values, call propose. Do NOT skip this step.
 
-  HARD RULES for cinematic ads: resolution is ALWAYS 720p — never offer 480p, never ask. Each paid stage is its own confirmation; approval for storyboard does NOT carry to animate. If a call returns an `error` field, surface its `msg` field verbatim to the user — do NOT silently retry or silently swap models. Never describe the product or brand from memory; always rely on the @mentioned product or uploaded image."""
+  HARD RULES for cinematic ads: resolution is ALWAYS 720p — never offer 480p, never ask. Each paid stage is its own confirmation; approval for storyboard does NOT carry to animate. If a call returns an `error` field, surface its `msg` field verbatim to the user — do NOT silently retry or silently swap models. Never describe the product or brand from memory; always rely on the @mentioned product or uploaded image.
+
+14. CROPPING / SPLITTING A STORYBOARD INTO INDIVIDUAL PANELS — when the user asks to "crop", "split", "cut", "separate", or "show me each panel / each image individually" from a storyboard (or any multi-panel sheet), you MUST call the `crop_storyboard` tool. It downloads the sheet, slices it into individual panel images, uploads each one, saves them to the project, and surfaces them in the Images tab. It is FREE and needs no confirmation. If the user references the storyboard you just made, you can omit `image_url` (it defaults to the latest storyboard); otherwise pass the sheet's `image_url`. Pass `num_panels` when you know the count (e.g. 4 or 6) so the splitter picks the right grid. NEVER fabricate this: do not write out panel descriptions as text and claim the files were "saved to Outputs" or "rendered in my view" — you have no such side effect. The ONLY way real cropped images appear for the user is by calling `crop_storyboard`. After it returns, refer to the panels by number/label; do not paste URLs."""
 
 
 # ── Tool definitions exposed to the agent ─────────────────────────────
@@ -848,6 +880,74 @@ def _custom_tools_for_agent() -> list[dict]:
         },
         {
             "type": "custom",
+            "name": "edit_video",
+            "description": (
+                "Generatively EDIT an existing video's PIXELS/CONTENT with Gemini Omni (a clip the user @-mentioned "
+                "or just generated): remove/add/replace objects, change background/scene/mood/lighting/angle, transform "
+                "materials, VFX, or insert/transfer a person/product from a reference image. Pass `video_url` (or "
+                "`job_id`) + a `prompt`; optional `reference_image_urls` (max 5). Works on any engine's output. NOT for "
+                "captions/text/zoom (caption_video/apply_editor_ops, free), making a clip longer (extend_video), or a "
+                "new clip (generate_video). Clips >10s: scope='entire' edits the WHOLE clip in ≤10s chunks (cost scales "
+                "with length); scope='window'+edit_window edits one moment. Ask if unsure. FIRST call returns a cost "
+                "estimate; after the user confirms, call again with confirmed=true."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "video_url": {
+                        "type": "string",
+                        "description": "Public URL of the existing video to edit (from the [Referenced assets] preface or the last generated clip).",
+                    },
+                    "job_id": {
+                        "type": "string",
+                        "description": "Alternative to video_url — job_id of an existing video; its final_video_url is resolved automatically.",
+                    },
+                    "prompt": {
+                        "type": "string",
+                        "description": (
+                            "Rich Omni edit prompt — ONE focused change + preserve-everything-else + integration details. "
+                            "Include: (1) the exact change, (2) 'preserve camera/subject/action/background unchanged', "
+                            "(3) lighting/shadow/style match for seamless integration, (4) locked-off camera unless "
+                            "camera change requested, (5) consistency details for scope='entire' multi-chunk edits. "
+                            "Edit one thing per pass; refine step-by-step in follow-ups. For person edits, describe "
+                            "the object/prop in frame, not face/identity alteration."
+                        ),
+                    },
+                    "reference_image_urls": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional reference images (max 5) to insert / transfer a person, product, scene or style. Forward image_url(s) from the [Referenced assets] preface.",
+                    },
+                    "aspect_ratio": {
+                        "type": "string",
+                        "enum": ["16:9", "9:16"],
+                        "description": "Optional. Omni supports only 16:9 or 9:16. Omit to preserve the source aspect ratio.",
+                    },
+                    "resolution": {
+                        "type": "string",
+                        "enum": ["720p", "1080p", "4k"],
+                        "description": "Output resolution. Default 720p. 4k costs more.",
+                    },
+                    "scope": {
+                        "type": "string",
+                        "enum": ["entire", "window"],
+                        "description": "For clips >10s. 'entire' = the edit applies to the WHOLE video: it is split into ≤10s chunks, every chunk is edited, then stitched (cost scales with length). 'window' = the edit applies to ONE moment only: provide edit_window and the rest is left untouched. Default 'entire'. Ask the user when unsure.",
+                    },
+                    "edit_window": {
+                        "type": "object",
+                        "properties": {
+                            "start": {"type": "number", "description": "Window start in seconds."},
+                            "end": {"type": "number", "description": "Window end in seconds (end-start must be ≤ 10)."},
+                        },
+                        "description": "Only with scope='window' on clips >10s: the {start, end} seconds (≤10s span) of the single segment to edit.",
+                    },
+                    "confirmed": {"type": "boolean", "description": confirmed_desc},
+                },
+                "required": ["prompt"],
+            },
+        },
+        {
+            "type": "custom",
             "name": "generate_image_text_only",
             "description": (
                 "Generate a still image from text alone (no reference images). Use this ONLY when the user "
@@ -946,6 +1046,28 @@ def _custom_tools_for_agent() -> list[dict]:
                     "confirmed": {"type": "boolean", "description": confirmed_desc},
                 },
                 "required": ["image_url"],
+            },
+        },
+        {
+            "type": "custom",
+            "name": "crop_storyboard",
+            "description": (
+                "Crop a storyboard sheet (or any multi-panel grid image) into its individual "
+                "panel images. Each panel is uploaded to storage, saved to the project, and shown "
+                "in the Images tab. FREE — no credits, no confirmation. Use this whenever the user "
+                "asks to 'crop', 'split', 'cut', 'separate', or 'show each panel/image individually' "
+                "from a storyboard. Do NOT describe panels as text and claim they were saved — you "
+                "MUST call this tool so the real cropped images appear. If image_url is omitted, the "
+                "most recent storyboard rendered in this session is used."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "image_url": {"type": "string", "description": "Public URL of the storyboard sheet to crop. Optional — defaults to the last storyboard rendered this session."},
+                    "num_panels": {"type": "integer", "description": "Expected number of panels (e.g. 4 or 6). Helps the splitter pick the right grid. Optional."},
+                    "panel_labels": {"type": "array", "items": {"type": "string"}, "description": "Optional labels for each panel in reading order (e.g. scene names)."},
+                },
+                "required": [],
             },
         },
 
@@ -1591,7 +1713,7 @@ def _custom_tools_for_agent() -> list[dict]:
                     },
                     "music_prompt": {
                         "type": "string",
-                        "description": "Optional short English style description of a background soundtrack to generate and mix UNDER the kept dialogue (e.g. 'upbeat modern pop instrumental for a grocery app ad'). When set, the whole combined video gets a fresh instrumental bed at a dialogue-safe level. Leave unset to keep the source audio untouched.",
+                        "description": "Optional audio bed to generate and mix UNDER kept dialogue. Musical soundtrack: 'upbeat modern pop instrumental for a grocery app ad'. Ambient/SFX/room tone (bar crowd, glasses clinking, pub ambience): use field-recording phrasing with 'no melody, no instruments' — e.g. 'live bar field recording, crowd murmur, glasses clinking, warm pub atmosphere, no melody, no instruments, documentary foley'. Leave unset to keep source audio untouched.",
                     },
                 },
                 "required": ["video_urls"],
@@ -1723,6 +1845,11 @@ def _compute_agent_schema_hash() -> str:
     payload = json.dumps({
         "tools": _custom_tools_for_agent(),
         "system": SYSTEM_PROMPT,
+        # Model id is baked at mint time — bumping it must force a re-mint
+        # so an existing registry entry for a deprecated model doesn't get
+        # reused (real bug: Anthropic deprecated bare "claude-sonnet-4-6"
+        # and existing agents minted with it started 400'ing).
+        "model": DEFAULT_MODEL,
     }, sort_keys=True, default=str)
     return _hl.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -1927,6 +2054,13 @@ def _compute_tool_fingerprint(tool_name: str, tool_input: dict) -> str:
     _brief = (tool_input.get("brief") or "").strip()
     if _brief:
         parts.append(f"brief={_hashlib.sha1(_brief.encode('utf-8')).hexdigest()[:8]}")
+    # Include a short prompt-hash so parallel generate_image calls with
+    # different scene descriptions but the same mode+aspect (e.g. "4 product
+    # ads, each a different scenario") don't collide on the guard and silently
+    # drop 2-3 of the 4 requested images. Different prompt → different fp.
+    _prompt = (tool_input.get("prompt") or "").strip()
+    if _prompt:
+        parts.append(f"prompt={_hashlib.sha1(_prompt.encode('utf-8')).hexdigest()[:8]}")
     return "|".join(parts)
 
 
@@ -1968,6 +2102,10 @@ def _pending_artifact_event_for(tool_name: str, tool_input: dict) -> Optional[di
             "tool_name": tool_name,
             "eta_seconds": eta,
         }
+    # NOTE: edit_video deliberately does NOT emit an artifact_pending placeholder.
+    # It inserts a REAL video_jobs row (status=processing) up front, which the
+    # gallery surfaces via the tool_call → refetch burst (edit_video is in the
+    # frontend videoTools set). A placeholder here would duplicate that card.
     return None
 
 
@@ -2012,6 +2150,9 @@ async def _insert_agent_product_shot(
         return None
 
     shot_id = str(_uuid4())
+    from utils.persist_image import persist_image_url
+
+    image_url = await persist_image_url(image_url, shot_id=shot_id, path_prefix="agent_shots")
     # product_shots schema has no `metadata` column — keep this row minimal.
     row: dict = {
         "id": shot_id,
@@ -2050,16 +2191,25 @@ async def _insert_agent_product_shot(
 async def _insert_agent_video_job(
     ctx: ToolContext,
     *,
-    final_video_url: str,
+    final_video_url: Optional[str],
     model_api: str,
     campaign_name: str,
     duration_seconds: float,
     hook: str,
     metadata: dict,
+    status: str = "success",
+    progress: int = 100,
+    status_message: Optional[str] = None,
+    job_id: Optional[str] = None,
 ) -> Optional[str]:
     """Insert a video_jobs row directly (bypasses POST /jobs, which needs a real
     influencer). Returns job_id or None. The row is scoped to the current user
-    and project so it shows up in the right-panel Videos tab."""
+    and project so it shows up in the right-panel Videos tab.
+
+    Pass status='processing' (with no final_video_url) to create the live
+    progress card BEFORE a long render starts, then call _update_agent_video_job
+    to flip it to success/failed when the render completes. Pass an explicit
+    `job_id` to control the row id (so the updater can target it)."""
     from uuid import uuid4 as _uuid4
 
     supabase_url = os.getenv("SUPABASE_URL")
@@ -2073,13 +2223,12 @@ async def _insert_agent_video_job(
         print("[agent_video_job] could not decode user_id from JWT — skipping persist")
         return None
 
-    candidate_id = str(_uuid4())
+    candidate_id = job_id or str(_uuid4())
     row = {
         "id": candidate_id,
         "user_id": user_id,
-        "status": "success",
-        "progress": 100,
-        "final_video_url": final_video_url,
+        "status": status,
+        "progress": progress,
         "model_api": model_api,
         "campaign_name": campaign_name,
         "video_language": "en",
@@ -2091,6 +2240,10 @@ async def _insert_agent_video_job(
         "hook": hook,
         "metadata": metadata,
     }
+    if final_video_url:
+        row["final_video_url"] = final_video_url
+    if status_message:
+        row["status_message"] = status_message
     if ctx.project_id:
         row["project_id"] = ctx.project_id
 
@@ -2126,6 +2279,136 @@ async def _insert_agent_video_job(
     except Exception as e:
         print(f"[agent_video_job] insert exception: {e}")
     return None
+
+
+async def _update_agent_video_job(ctx: ToolContext, *, job_id: str, fields: dict) -> bool:
+    """PATCH a video_jobs row (used to flip a processing edit card to
+    success/failed). Service-role key so it survives an expired user JWT."""
+    if not job_id or not fields:
+        return False
+    supabase_url = os.getenv("SUPABASE_URL")
+    service_key = os.getenv("SUPABASE_SERVICE_KEY")
+    api_key = service_key or os.getenv("SUPABASE_ANON_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+    if not supabase_url or not api_key:
+        return False
+    auth_token = service_key or ctx.user_token
+    try:
+        import httpx as _httpx
+        async with _httpx.AsyncClient(timeout=10.0) as http:
+            resp = await http.patch(
+                f"{supabase_url}/rest/v1/video_jobs",
+                headers={
+                    "apikey": api_key,
+                    "Authorization": f"Bearer {auth_token}",
+                    "Content-Type": "application/json",
+                    "Prefer": "return=minimal",
+                },
+                params={"id": f"eq.{job_id}"},
+                json=fields,
+            )
+        if resp.status_code in (200, 204):
+            return True
+        print(f"[agent_video_job] update failed {resp.status_code}: {resp.text[:200]}")
+    except Exception as e:
+        print(f"[agent_video_job] update exception: {e}")
+    return False
+
+
+async def _delete_agent_video_job(ctx: ToolContext, job_id: str) -> bool:
+    """Remove a ghost processing card — used when a background render fails."""
+    if not job_id:
+        return False
+    supabase_url = os.getenv("SUPABASE_URL")
+    service_key = os.getenv("SUPABASE_SERVICE_KEY")
+    api_key = service_key or os.getenv("SUPABASE_ANON_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+    if not supabase_url or not api_key:
+        return False
+    auth_token = service_key or ctx.user_token
+    try:
+        import httpx as _httpx
+        async with _httpx.AsyncClient(timeout=10.0) as http:
+            resp = await http.delete(
+                f"{supabase_url}/rest/v1/video_jobs",
+                headers={
+                    "apikey": api_key,
+                    "Authorization": f"Bearer {auth_token}",
+                    "Prefer": "return=minimal",
+                },
+                params={"id": f"eq.{job_id}"},
+            )
+        return resp.status_code in (200, 204)
+    except Exception as e:
+        print(f"[agent_video_job] delete exception: {e}")
+    return False
+
+
+async def _delete_agent_product_shot(ctx: ToolContext, shot_id: str) -> bool:
+    """Remove a ghost processing image card when generation fails."""
+    if not shot_id:
+        return False
+    supabase_url = os.getenv("SUPABASE_URL")
+    service_key = os.getenv("SUPABASE_SERVICE_KEY")
+    api_key = service_key or os.getenv("SUPABASE_ANON_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+    if not supabase_url or not api_key:
+        return False
+    auth_token = service_key or ctx.user_token
+    try:
+        import httpx as _httpx
+        async with _httpx.AsyncClient(timeout=10.0) as http:
+            resp = await http.delete(
+                f"{supabase_url}/rest/v1/product_shots",
+                headers={
+                    "apikey": api_key,
+                    "Authorization": f"Bearer {auth_token}",
+                    "Prefer": "return=minimal",
+                },
+                params={"id": f"eq.{shot_id}"},
+            )
+        return resp.status_code in (200, 204)
+    except Exception as e:
+        print(f"[agent_product_shot] delete exception: {e}")
+    return False
+
+
+async def _report_generation_failed(
+    ctx: ToolContext,
+    *,
+    asset_kind: str,
+    row_id: Optional[str],
+    error_msg: str,
+    operation: str = "generation",
+) -> None:
+    """On API failure: drop the processing card and persist an error in chat."""
+    from services.agent_threads import append_thread_turn_service
+
+    msg = (error_msg or "Generation failed — please try again.").strip()
+    if ctx.user_lang == "es":
+        if operation == "edit":
+            chat = f"La edición del vídeo falló: {msg}"
+        elif asset_kind == "video":
+            chat = f"La generación del vídeo falló: {msg}"
+        else:
+            chat = f"La generación de la imagen falló: {msg}"
+    else:
+        if operation == "edit":
+            chat = f"Video edit failed: {msg}"
+        elif asset_kind == "video":
+            chat = f"Video generation failed: {msg}"
+        else:
+            chat = f"Image generation failed: {msg}"
+
+    user_id = _user_id_from_jwt(ctx.user_token)
+    if user_id and ctx.project_id:
+        await append_thread_turn_service(
+            user_id, ctx.project_id,
+            {"role": "agent", "text": chat, "generation_failed": True},
+        )
+
+    if row_id:
+        if asset_kind == "video":
+            await _delete_agent_video_job(ctx, row_id)
+        else:
+            await _delete_agent_product_shot(ctx, row_id)
 
 
 # ── Credit cost helpers ───────────────────────────────────────────────
@@ -2209,6 +2492,13 @@ def _credits_for_op(operation: str, params: dict) -> int:
         except (TypeError, ValueError):
             dur = 15
         return get_cinematic_ad_credit_cost(stage_key, duration_seconds=dur)
+    if operation == "edit_video":
+        # Gemini Omni Video edit — flat per-generation cost (720p/1080p vs 4k).
+        try:
+            from ugc_backend.credit_cost_service import get_gemini_omni_edit_credit_cost
+        except ImportError:
+            from services.credit_costs import get_gemini_omni_edit_credit_cost
+        return get_gemini_omni_edit_credit_cost(resolution=params.get("resolution", "720p"))
     raise ValueError(f"unknown operation for credit estimate: {operation}")
 
 
@@ -2729,6 +3019,399 @@ async def _tool_extend_video(ctx: ToolContext, **kwargs: Any) -> str:
         "status": "success",
         "video_url": video_url,
         "source_video_url": kwargs["video_url"],
+    })
+
+
+# ── Gemini Omni Video (edit_video) durability helpers ──────────────────
+async def _download_video_bytes(url: str) -> Optional[bytes]:
+    """Fetch a video URL → bytes. verify=False because Kie's tempfile CDN
+    serves a self-signed cert; we only ever fetch our own generated assets."""
+    import httpx as _httpx
+    try:
+        async with _httpx.AsyncClient(timeout=300.0, verify=False, follow_redirects=True) as http:
+            r = await http.get(url)
+            return r.content if r.status_code == 200 else None
+    except Exception as e:
+        print(f"[edit_video] download failed ({url[:80]}): {e}")
+        return None
+
+
+async def _save_video_bytes_to_supabase(buf: bytes, *, filename: str, bucket: str = "generated-videos") -> Optional[str]:
+    """Upload mp4 bytes to Supabase Storage; return durable public URL or None."""
+    supabase_url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    if not supabase_url or not key:
+        print("[edit_video] missing SUPABASE_URL / key — keeping remote URL")
+        return None
+    try:
+        from supabase import create_client
+        sb = create_client(supabase_url, key)
+        sb.storage.from_(bucket).upload(
+            filename, buf, file_options={"content-type": "video/mp4", "upsert": "true"},
+        )
+        return sb.storage.from_(bucket).get_public_url(filename)
+    except Exception as e:
+        print(f"[edit_video] supabase upload failed: {e}")
+        return None
+
+
+async def _ensure_durable_video_url(url: str) -> str:
+    """Mirror ephemeral provider URLs to Supabase before downstream HTTP fetches."""
+    import uuid as _uuid
+    from utils.persist_media import finalize_video_url, is_supabase_storage_url
+
+    if is_supabase_storage_url(url):
+        return url
+    return await finalize_video_url(
+        url,
+        storage_filename=f"edit_src/{_uuid.uuid4().hex}.mp4",
+    )
+
+
+# Strong refs to detached background edit jobs so the event loop doesn't GC
+# them mid-render after the originating chat request has already returned.
+_EDIT_BG_TASKS: set = set()
+
+
+def _plan_edit_windows(
+    total_dur: float,
+    scope: str,
+    edit_window: dict,
+    *,
+    max_win: float = 10.0,
+    safety: float = 0.2,
+) -> tuple[list[tuple[float, float]], str]:
+    """Plan the ≤10s Omni edit window(s) for a clip.
+
+    Returns (windows, mode):
+      • 'whole'  — clip ≤10s (or unknown duration): a single window covering it.
+      • 'window' — scope='window' + a valid edit_window: edit just that moment,
+                   the rest of the clip is re-stitched untouched.
+      • 'entire' — default for >10s: split the WHOLE clip into N even ≤10s
+                   chunks; every chunk is edited and the edited chunks stitched
+                   back together (so a change that spans the full video is
+                   applied everywhere, not only the first 10s).
+    """
+    import math as _math
+
+    if total_dur <= 0:
+        return [(0.0, max_win)], "whole"
+    safe_dur = max(0.5, total_dur - safety)
+    if safe_dur <= max_win + 0.3:
+        return [(0.0, round(min(safe_dur, max_win), 2))], "whole"
+
+    if scope == "window" and isinstance(edit_window, dict) and edit_window.get("end") is not None:
+        try:
+            ws = max(0.0, float(edit_window.get("start", 0.0)))
+            we = float(edit_window.get("end"))
+        except (TypeError, ValueError):
+            ws, we = 0.0, min(safe_dur, max_win)
+        ws = min(ws, max(0.0, safe_dur - 0.5))
+        we = min(we, safe_dur)
+        if we - ws > max_win:
+            we = ws + max_win
+        if we <= ws:
+            we = min(safe_dur, ws + max_win)
+        return [(round(ws, 2), round(we, 2))], "window"
+
+    # entire-video: even chunks so the last one isn't a tiny sliver.
+    n = max(1, _math.ceil(safe_dur / max_win))
+    step = safe_dur / n
+    wins = [(round(i * step, 2), round((i + 1) * step, 2)) for i in range(n)]
+    wins[-1] = (wins[-1][0], round(safe_dur, 2))
+    return wins, "entire"
+
+
+async def _tool_edit_video(ctx: ToolContext, **kwargs: Any) -> str:
+    """Generative video EDIT via Gemini Omni Video (Kie.ai).
+
+    Edits an existing clip from a natural-language prompt (object add/remove,
+    scene/background/mood/angle change, material/VFX, reference-image transfer,
+    character insertion). The Omni model edits a ≤10s window per call. For
+    clips longer than 10s we edit only the target window and re-stitch the
+    untouched pre/post footage around it so the whole video is preserved.
+
+    Purely additive — does not touch any existing pipeline.
+    """
+    import uuid as _uuid
+    from services.kie_gemini_omni_client import edit_video_gemini_omni, KieOmniError, MAX_EDIT_WINDOW_SECONDS
+
+    prompt = (kwargs.get("prompt") or "").strip()
+    if not prompt:
+        return json.dumps({"error": "prompt (the edit instruction) is required"})
+
+    # Resolve the source video: explicit URL wins, else resolve a job_id.
+    video_url = (kwargs.get("video_url") or "").strip()
+    job_id_src = kwargs.get("job_id")
+    if not video_url and job_id_src:
+        try:
+            status = await ctx.core().get_job_status(str(job_id_src))
+            video_url = status.get("final_video_url") or status.get("video_url") or ""
+        except Exception as e:
+            return json.dumps({"error": f"could not resolve job_id {job_id_src}: {e}"})
+    if not video_url:
+        return json.dumps({"error": "a source video is required — pass video_url or job_id of an existing clip"})
+
+    resolution = (kwargs.get("resolution") or "720p").lower()
+    if resolution not in ("720p", "1080p", "4k"):
+        resolution = "720p"
+    aspect_ratio = kwargs.get("aspect_ratio")
+    if aspect_ratio not in ("16:9", "9:16"):
+        aspect_ratio = None
+    ref_images = [u for u in (kwargs.get("reference_image_urls") or []) if u][:5]
+
+    scope = (kwargs.get("scope") or "entire").lower()
+    if scope not in ("entire", "window"):
+        scope = "entire"
+
+    # ── Cost gate — first call previews credits, doesn't spend. ──────────
+    if not kwargs.get("confirmed"):
+        # Probe duration up front (best-effort, streamed — no full download) so a
+        # >10s "entire" edit prices ALL its ≤10s passes, not just one.
+        _ew_preview = kwargs.get("edit_window") if isinstance(kwargs.get("edit_window"), dict) else {}
+        try:
+            import asyncio as _aio_preview
+            from utils.video_concat import probe_duration as _probe_preview
+            _td_preview = await _aio_preview.to_thread(_probe_preview, video_url)
+        except Exception:
+            _td_preview = 0.0
+        _wins_preview, _mode_preview = _plan_edit_windows(_td_preview, scope, _ew_preview)
+        _passes = max(1, len(_wins_preview))
+        base = _credits_for_op("edit_video", {"resolution": resolution})
+        credits = base * _passes
+        if _passes > 1:
+            summary = (
+                f"Editar todo el vídeo con IA (Gemini Omni, {resolution}, {_passes} tramos de ≤10s): {prompt[:60]}"
+                if ctx.user_lang == "es"
+                else f"AI-edit the whole video (Gemini Omni, {resolution}, {_passes}×≤10s passes): {prompt[:60]}"
+            )
+        else:
+            summary = (
+                f"Editar el vídeo con IA (Gemini Omni, {resolution}): {prompt[:70]}"
+                if ctx.user_lang == "es"
+                else f"AI-edit the video (Gemini Omni, {resolution}): {prompt[:70]}"
+            )
+        return _confirmation_payload(
+            operation="edit_video",
+            credits=credits,
+            summary=summary,
+            echo={k: v for k, v in kwargs.items() if k != "confirmed"},
+        )
+
+    # ── Confirmed → execute. ─────────────────────────────────────────────
+    import asyncio as _asyncio
+    import tempfile as _tempfile
+    from pathlib import Path as _Path
+    from utils.video_concat import probe_duration, trim_segment, concat_segments
+
+    # Create the live progress card up front (status=processing) so the Videos
+    # tab shows a "generating" card with an ETA for the whole render — instead of
+    # nothing until the ~3-min Kie job finishes. Flipped to success/failed below.
+    edit_job_id = await _insert_agent_video_job(
+        ctx, final_video_url=None, model_api="gemini-omni-video",
+        campaign_name=f"AI edit — {prompt[:40]}",
+        duration_seconds=0.0, hook=prompt[:500],
+        status="processing", progress=5,
+        status_message="Generating video",
+        metadata={
+            "source": "gemini_omni_edit", "edit_prompt": prompt,
+            "resolution": resolution, "parent_job_id": job_id_src,
+            "source_video_url": video_url,
+        },
+    )
+
+    async def _fail_edit_card(msg: str = "Edit failed — please retry") -> None:
+        await _report_generation_failed(
+            ctx, asset_kind="video", row_id=edit_job_id,
+            error_msg=msg, operation="edit",
+        )
+
+    # ── Run the whole render DETACHED from the chat stream. ──────────────
+    # A multi-pass Omni edit can take many minutes. If we awaited it inline the
+    # browser's stream would time out long before Kie finished and surface a
+    # FALSE "failed" in chat — even though the backend was still working. So we
+    # fire the entire job (durable mirror → probe → per-chunk Omni → stitch →
+    # persist) as a background task and return immediately. The ONLY thing the
+    # user sees in chat is the acknowledgement; the REAL result — or a REAL
+    # failure — lands on the Videos-tab processing card via polling.
+    async def _run_edit_job() -> None:
+        try:
+            durable_src = await _ensure_durable_video_url(video_url)
+            try:
+                total_dur = await _asyncio.to_thread(probe_duration, durable_src)
+            except Exception:
+                total_dur = 0.0
+
+            # KIE requires 16:9 / 9:16 (no "preserve source"). If the user didn't
+            # pin one, infer it from the source orientation.
+            _ar = aspect_ratio
+            if _ar not in ("16:9", "9:16"):
+                try:
+                    from utils.video_concat import probe_orientation
+                    _ar = "9:16" if await _asyncio.to_thread(probe_orientation, durable_src) == "phone" else "16:9"
+                except Exception:
+                    _ar = "9:16"
+
+            edit_window = kwargs.get("edit_window") if isinstance(kwargs.get("edit_window"), dict) else {}
+
+            # Plan the ≤10s edit window(s):
+            #   • 'whole'  — clip ≤10s: one pass over the whole thing.
+            #   • 'entire' — >10s, change spans the FULL video: split into N even
+            #                ≤10s chunks, edit EVERY chunk, concat the edited chunks.
+            #   • 'window' — >10s, change is localised: edit one ≤10s window and
+            #                re-stitch the untouched pre/post footage around it.
+            windows, mode = _plan_edit_windows(total_dur, scope, edit_window)
+
+            async def _edit_one(win: tuple[float, float]) -> str:
+                """Edit one ≤10s window; return a local mp4 path (or Kie URL)."""
+                res = await edit_video_gemini_omni(
+                    prompt=prompt, video_url=durable_src, start=win[0], ends=win[1],
+                    image_urls=ref_images, aspect_ratio=_ar, resolution=resolution,
+                )
+                seg_buf = await _download_video_bytes(res["url"])
+                if not seg_buf:
+                    return res["url"]
+                seg_dir = _Path(_tempfile.mkdtemp(prefix="omni_seg_"))
+                seg_path = seg_dir / f"seg_{_uuid.uuid4().hex[:8]}.mp4"
+                seg_path.write_bytes(seg_buf)
+                return str(seg_path)
+
+            if mode == "whole":
+                result = await edit_video_gemini_omni(
+                    prompt=prompt, video_url=durable_src,
+                    start=windows[0][0], ends=windows[0][1],
+                    image_urls=ref_images, aspect_ratio=_ar, resolution=resolution,
+                )
+                buf = await _download_video_bytes(result["url"])
+                final_url = (
+                    await _save_video_bytes_to_supabase(buf, filename=f"edit_{_uuid.uuid4().hex[:12]}.mp4")
+                    if buf else None
+                ) or result["url"]
+                out_dur = total_dur if total_dur > 0 else windows[0][1]
+
+            elif mode == "entire":
+                # Edit EVERY ≤10s chunk IN PARALLEL (one independent Kie task per
+                # chunk) so the total wait ≈ a single pass instead of the sum —
+                # then concat them back in original order.
+                n_parts = len(windows)
+                if edit_job_id:
+                    await _update_agent_video_job(ctx, job_id=edit_job_id, fields={
+                        "status": "processing", "progress": 8,
+                        "status_message": (
+                            f"Editing {n_parts} parts in parallel…" if n_parts > 1 else "Editing video…"
+                        ),
+                    })
+                _sem = _asyncio.Semaphore(4)  # cap fan-out to stay within Kie rate limits
+                _done = {"n": 0}
+
+                async def _edit_part(win: tuple[float, float]) -> str:
+                    async with _sem:
+                        path = await _edit_one(win)
+                    _done["n"] += 1
+                    if edit_job_id and n_parts > 1:
+                        await _update_agent_video_job(ctx, job_id=edit_job_id, fields={
+                            "status": "processing",
+                            "progress": 8 + int(85 * _done["n"] / max(1, n_parts)),
+                            "status_message": f"Edited {_done['n']} of {n_parts} parts…",
+                        })
+                    return path
+
+                results = await _asyncio.gather(
+                    *[_edit_part(w) for w in windows], return_exceptions=True
+                )
+                # Re-raise the first real failure so the outer handler flips the
+                # card to a real error instead of stitching a partial result.
+                for r in results:
+                    if isinstance(r, BaseException):
+                        raise r
+                seg_paths: list[str] = list(results)
+
+                def _concat_all() -> str:
+                    return seg_paths[0] if len(seg_paths) == 1 else str(concat_segments(seg_paths))
+
+                stitched_path = await _asyncio.to_thread(_concat_all)
+                with open(stitched_path, "rb") as fh:
+                    stitched_bytes = fh.read()
+                final_url = (
+                    await _save_video_bytes_to_supabase(stitched_bytes, filename=f"edit_{_uuid.uuid4().hex[:12]}.mp4")
+                ) or seg_paths[0]
+                out_dur = total_dur
+
+            else:  # mode == "window"
+                win_start, win_end = windows[0]
+                edited_seg = await _edit_one((win_start, win_end))
+
+                def _build_stitch() -> str:
+                    segments: list[str] = []
+                    if win_start > 0.1:
+                        segments.append(str(trim_segment(durable_src, 0.0, win_start)))
+                    segments.append(edited_seg)
+                    if total_dur - win_end > 0.1:
+                        segments.append(str(trim_segment(durable_src, win_end, total_dur)))
+                    return segments[0] if len(segments) == 1 else str(concat_segments(segments))
+
+                stitched_path = await _asyncio.to_thread(_build_stitch)
+                with open(stitched_path, "rb") as fh:
+                    stitched_bytes = fh.read()
+                final_url = (
+                    await _save_video_bytes_to_supabase(stitched_bytes, filename=f"edit_{_uuid.uuid4().hex[:12]}.mp4")
+                ) or edited_seg
+                out_dur = total_dur
+
+            _final_metadata = {
+                "source": "gemini_omni_edit",
+                "edit_prompt": prompt,
+                "resolution": resolution,
+                "parent_job_id": job_id_src,
+                "source_video_url": video_url,
+                "edit_window": edit_window or None,
+                "edit_mode": mode,
+                "edit_passes": len(windows),
+                "reference_image_count": len(ref_images),
+            }
+            if edit_job_id:
+                # Flip the up-front processing card to its finished state.
+                _done_fields: dict = {
+                    "status": "success", "progress": 100,
+                    "final_video_url": final_url, "status_message": None,
+                    "metadata": _final_metadata,
+                }
+                if out_dur:
+                    _done_fields["video_duration_seconds"] = round(float(out_dur), 2)
+                    _done_fields["length"] = int(round(float(out_dur)))
+                await _update_agent_video_job(ctx, job_id=edit_job_id, fields=_done_fields)
+            else:
+                # Up-front insert failed (rare) — persist a fresh row instead.
+                await _insert_agent_video_job(
+                    ctx, final_video_url=final_url, model_api="gemini-omni-video",
+                    campaign_name=f"AI edit — {prompt[:40]}",
+                    duration_seconds=float(out_dur) if out_dur else 0.0,
+                    hook=prompt[:500], metadata=_final_metadata,
+                )
+            print(f"[edit_video] background job complete ({mode}, {len(windows)} pass) → "
+                  f"{(final_url or '')[:80]}")
+        except KieOmniError as e:
+            await _fail_edit_card(f"Edit failed: {str(e)[:160]}")
+            print(f"[edit_video] background KieOmniError: {e}")
+        except Exception as e:
+            await _fail_edit_card("Edit failed unexpectedly — please retry")
+            print(f"[edit_video] background unexpected error: {e}")
+
+    _bg = _asyncio.create_task(_run_edit_job())
+    _EDIT_BG_TASKS.add(_bg)
+    _bg.add_done_callback(_EDIT_BG_TASKS.discard)
+
+    # Return NOW — the live card carries progress + the final result. No long
+    # await on the stream means a false "failed" can never reach the chat.
+    return json.dumps({
+        "action": "edit_started",
+        "job_id": edit_job_id,
+        "source_video_url": video_url,
+        "message": (
+            "Vídeo en edición — el resultado aparecerá en la pestaña Vídeos en breve."
+            if ctx.user_lang == "es"
+            else "Video edit started — the result will appear in the Videos tab shortly."
+        ),
     })
 
 
@@ -3821,25 +4504,10 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
             return json.dumps({"error": "kie_animate_failed", "msg": str(e), "raw": e.raw})
 
         mp4_url = result["url"]
-        # Persist mp4 to Supabase so it doesn't expire from Fal's CDN
-        try:
-            # verify=False — Kie's tempfile.aiquickdraw.com CDN serves a
-            # self-signed cert that httpx's default verify chain rejects.
-            # Safe: we only fetch our own just-generated mp4, no MITM risk.
-            async with _httpx.AsyncClient(timeout=300.0, verify=False) as http:
-                r = await http.get(mp4_url)
-                mp4_bytes = r.content if r.status_code == 200 else None
-        except Exception as e:
-            print(f"[cinematic_animate] download from Fal failed: {e}")
-            mp4_bytes = None
+        from utils.persist_media import finalize_video_url, is_supabase_storage_url, schedule_video_persist_retry
 
-        stored_video_url = None
-        if mp4_bytes:
-            stored_video_url = await _save_to_supabase(
-                mp4_bytes, content_type="video/mp4",
-                filename=f"cinematic_ad_{_uuid.uuid4().hex[:12]}.mp4",
-            )
-        final_video_url = stored_video_url or mp4_url
+        storage_name = f"cinematic_ad_{_uuid.uuid4().hex[:12]}.mp4"
+        final_video_url = await finalize_video_url(mp4_url, storage_filename=storage_name)
 
         job_id = await _insert_agent_video_job(
             ctx,
@@ -3860,6 +4528,15 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
                 "duration_seconds": duration_seconds,
             },
         )
+        if job_id and not is_supabase_storage_url(final_video_url):
+            async def _on_persisted(stored: str) -> None:
+                await _update_agent_video_job(ctx, job_id=job_id, fields={"final_video_url": stored})
+
+            schedule_video_persist_retry(
+                mp4_url,
+                storage_filename=storage_name,
+                on_persisted=_on_persisted,
+            )
         if final_video_url:
             _record_artifact(ctx, {"type": "video", "url": final_video_url, "job_id": job_id})
 
@@ -3932,22 +4609,10 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
             return json.dumps({"error": "kie_broll_failed", "msg": str(e), "raw": e.raw})
 
         mp4_url = result["url"]
-        try:
-            # verify=False — Kie's tempfile.aiquickdraw.com CDN serves a
-            # self-signed cert that httpx's default verify chain rejects.
-            # Safe: we only fetch our own just-generated mp4, no MITM risk.
-            async with _httpx.AsyncClient(timeout=300.0, verify=False) as http:
-                r = await http.get(mp4_url)
-                mp4_bytes = r.content if r.status_code == 200 else None
-        except Exception:
-            mp4_bytes = None
-        stored_video_url = None
-        if mp4_bytes:
-            stored_video_url = await _save_to_supabase(
-                mp4_bytes, content_type="video/mp4",
-                filename=f"cinematic_broll_{_uuid.uuid4().hex[:12]}.mp4",
-            )
-        final_video_url = stored_video_url or mp4_url
+        from utils.persist_media import finalize_video_url, is_supabase_storage_url, schedule_video_persist_retry
+
+        storage_name = f"cinematic_broll_{_uuid.uuid4().hex[:12]}.mp4"
+        final_video_url = await finalize_video_url(mp4_url, storage_filename=storage_name)
 
         job_id = await _insert_agent_video_job(
             ctx, final_video_url=final_video_url, model_api="seedance-2.0-pro",
@@ -3959,6 +4624,15 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
                 "product_id": product_meta.get("id"),
             },
         )
+        if job_id and not is_supabase_storage_url(final_video_url):
+            async def _on_persisted(stored: str) -> None:
+                await _update_agent_video_job(ctx, job_id=job_id, fields={"final_video_url": stored})
+
+            schedule_video_persist_retry(
+                mp4_url,
+                storage_filename=storage_name,
+                on_persisted=_on_persisted,
+            )
         if final_video_url:
             _record_artifact(ctx, {"type": "video", "url": final_video_url, "job_id": job_id})
         return json.dumps({
@@ -4003,22 +4677,10 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
             return json.dumps({"error": "kie_product_macro_failed", "msg": str(e), "raw": e.raw})
 
         mp4_url = result["url"]
-        try:
-            # verify=False — Kie's tempfile.aiquickdraw.com CDN serves a
-            # self-signed cert that httpx's default verify chain rejects.
-            # Safe: we only fetch our own just-generated mp4, no MITM risk.
-            async with _httpx.AsyncClient(timeout=300.0, verify=False) as http:
-                r = await http.get(mp4_url)
-                mp4_bytes = r.content if r.status_code == 200 else None
-        except Exception:
-            mp4_bytes = None
-        stored_video_url = None
-        if mp4_bytes:
-            stored_video_url = await _save_to_supabase(
-                mp4_bytes, content_type="video/mp4",
-                filename=f"cinematic_product_macro_{_uuid.uuid4().hex[:12]}.mp4",
-            )
-        final_video_url = stored_video_url or mp4_url
+        from utils.persist_media import finalize_video_url, is_supabase_storage_url, schedule_video_persist_retry
+
+        storage_name = f"cinematic_product_macro_{_uuid.uuid4().hex[:12]}.mp4"
+        final_video_url = await finalize_video_url(mp4_url, storage_filename=storage_name)
 
         job_id = await _insert_agent_video_job(
             ctx, final_video_url=final_video_url, model_api="seedance-2.0-pro",
@@ -4029,6 +4691,15 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
                 "product_id": product_meta.get("id"),
             },
         )
+        if job_id and not is_supabase_storage_url(final_video_url):
+            async def _on_persisted(stored: str) -> None:
+                await _update_agent_video_job(ctx, job_id=job_id, fields={"final_video_url": stored})
+
+            schedule_video_persist_retry(
+                mp4_url,
+                storage_filename=storage_name,
+                on_persisted=_on_persisted,
+            )
         if final_video_url:
             _record_artifact(ctx, {"type": "video", "url": final_video_url, "job_id": job_id})
         return json.dumps({
@@ -5244,6 +5915,40 @@ async def _tool_splice_app_clip(ctx: ToolContext, **kwargs: Any) -> str:
     })
 
 
+def _shape_suno_prompt(prompt: str) -> tuple[str, bool]:
+    """Rewrite Suno prompts for ambient/SFX asks so the model doesn't compose melody.
+
+    Suno V4 with instrumental=True is a *music* generator. Prompts like "bar crowd
+    cheering, glasses clinking" without anti-music cues become tavern instrumental
+    tracks. When the user wants room tone / foley / ambience, prepend field-recording
+    framing and explicit no-melody guards, plus Suno-friendly [Crowd Noise] tags.
+    """
+    import re as _re
+
+    p = (prompt or "").strip()
+    if not p:
+        return p, False
+    ambience = bool(_re.search(
+        r"\b(crowd|cheering|cheer|chatter|chatting|clinking|glasses|glass|pub|bar|tavern|"
+        r"ambience|ambient|atmosphere|room tone|foley|sfx|sound effect|background noise|"
+        r"people (talking|drinking)|lively (bar|pub|tavern)|noises?)\b",
+        p, _re.I,
+    ))
+    musical = bool(_re.search(
+        r"\b(instrumental|soundtrack|music bed|background music|beat|melody|song|score|"
+        r"upbeat|pop|hip hop|electronic|guitar|piano)\b",
+        p, _re.I,
+    ))
+    if not ambience or musical:
+        return p[:500], False
+    shaped = (
+        "Live documentary field recording, ambient soundscape, room tone, "
+        "no melody, no instruments, no singing, no drums, no bass line. "
+        f"{p}. [Crowd Noise] intimate venue, background murmur, glasses clinking"
+    )
+    return shaped[:500], True
+
+
 async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
     """Combine multiple videos with dissolve transitions. Gated tool."""
     import subprocess
@@ -5274,6 +5979,9 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
         if 0 <= idx_int < len(video_urls):
             mute_indices.add(idx_int)
     music_prompt = (kwargs.get("music_prompt") or "").strip() or None
+    is_ambience_bed = False
+    if music_prompt:
+        music_prompt, is_ambience_bed = _shape_suno_prompt(music_prompt)
 
     # Kick off Suno generation in parallel with the video download/normalize
     # work — music generation typically takes 30s-2min and masking it behind
@@ -5288,7 +5996,7 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
             if repo_root not in _sys.path:
                 _sys.path.insert(0, repo_root)
             import generate_scenes as _gs  # type: ignore
-            print(f"[combine_videos] Starting Suno music generation (prompt={music_prompt[:60]}...)")
+            print(f"[combine_videos] Starting Suno generation (ambience={is_ambience_bed}, prompt={music_prompt[:80]}...)")
             music_task = asyncio.create_task(
                 asyncio.to_thread(_gs.generate_music, prompt=music_prompt, instrumental=True)
             )
@@ -5530,14 +6238,17 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
                         mresp.raise_for_status()
                         with open(music_path, "wb") as mf:
                             mf.write(mresp.content)
-                    print(f"[combine_videos] Downloaded music ({len(mresp.content)/1024/1024:.1f}MB); mixing under dialogue...")
+                    # Ambience beds need to sit louder than subtle music beds so
+                    # crowd/room tone is audible; musical beds stay dialogue-safe.
+                    bed_vol = "0.38" if is_ambience_bed else "0.22"
+                    print(f"[combine_videos] Downloaded bed ({len(mresp.content)/1024/1024:.1f}MB, vol={bed_vol}); mixing under dialogue...")
                     mixed_path = os.path.join(work_dir, "combined_with_music.mp4")
                     mix_cmd = [
                         FFMPEG, "-y",
                         "-i", output_path,
                         "-stream_loop", "-1", "-i", music_path,
                         "-filter_complex",
-                        "[1:a]volume=0.22[m];"
+                        f"[1:a]volume={bed_vol}[m];"
                         "[0:a][m]amix=inputs=2:duration=first:dropout_transition=2,"
                         "dynaudnorm=f=150:g=15[a]",
                         "-map", "0:v",
@@ -6008,6 +6719,283 @@ async def _tool_generate_product_shots(ctx: ToolContext, **kwargs: Any) -> str:
     })
 
 
+# ── Crop a storyboard sheet into individual panel images ──────────────
+def _longest_true_run(mask) -> tuple[int, int]:
+    """Return (start, end) of the longest contiguous run of True in a 1-D bool array."""
+    best_start, best_len = 0, 0
+    cur_start = None
+    n = len(mask)
+    for i in range(n):
+        if mask[i]:
+            if cur_start is None:
+                cur_start = i
+        else:
+            if cur_start is not None:
+                run = i - cur_start
+                if run > best_len:
+                    best_start, best_len = cur_start, run
+                cur_start = None
+    if cur_start is not None:
+        run = n - cur_start
+        if run > best_len:
+            best_start, best_len = cur_start, run
+    return best_start, best_start + best_len
+
+
+def _trim_panel_to_photo(cell):
+    """Trim a storyboard panel down to just the photographic region by shaving
+    the cream timecode bar on top and the SCENE/CAMERA/ACTION/SOUND caption
+    strip below.
+
+    EDGE-ONLY: we remove paper bands (bright, low-saturation background of the
+    text areas) ONLY where they are contiguous with the top or bottom edge —
+    never from the interior. This guarantees photo content is never cut even
+    when bright/low-saturation elements (sky, white wine, glassware, table)
+    appear inside the image. Conservative caps ensure that, if detection is off,
+    we under-trim rather than slice into the photo.
+
+    Returns the trimmed PIL image (or the original on any inconclusive case)."""
+    import numpy as np
+
+    hsv = np.asarray(cell.convert("HSV"), dtype=np.float32) / 255.0
+    S, V = hsv[:, :, 1], hsv[:, :, 2]
+    # Caption / title backgrounds are bright AND nearly desaturated (cream paper).
+    paper = (V > 0.74) & (S < 0.20)
+    h, w = paper.shape
+    if h < 10 or w < 10:
+        return cell
+
+    # Heavy smoothing so sparse text lines inside a caption block merge with
+    # their cream background into one continuous "paper" band (a caption strip
+    # = light bg + thin text reads as mostly-paper once smoothed), while the
+    # textured photo stays low.
+    def _smooth(a, k):
+        k = max(3, k | 1)  # force odd, >=3
+        if len(a) < k:
+            return a
+        return np.convolve(a, np.ones(k) / k, mode="same")
+
+    row_frac = _smooth(paper.mean(axis=1), h // 30)
+    thr = 0.5  # a row is "text/paper" when most of it is cream background
+
+    # Shave contiguous paper rows from the TOP edge (timecode bar).
+    top = 0
+    while top < h and row_frac[top] > thr:
+        top += 1
+    # Shave contiguous paper rows from the BOTTOM edge (caption strip).
+    bottom = h
+    while bottom > top and row_frac[bottom - 1] > thr:
+        bottom -= 1
+
+    # Safety caps so we never eat into the photo: at most 22% off the top
+    # (timecode bar is thin) and never below keeping 45% of the panel height.
+    top = min(top, int(0.22 * h))
+    bottom = max(bottom, int(0.45 * h))
+    if bottom - top < 0.42 * h:
+        return cell
+
+    return cell.crop((0, top, w, bottom))
+
+
+def _split_grid_panels(img_bytes: bytes, expected: Optional[int] = None) -> list[bytes]:
+    """Split a multi-panel sheet (e.g. a storyboard grid) into individual
+    panel PNGs.
+
+    Strategy: detect near-uniform bright separator bands (the gutters between
+    panels and any title/header strip) on both axes, carve the image into
+    a grid of content blocks, drop bands too small to be real panels
+    (title strips, margins), then crop each cell in reading order. Falls back
+    to an even grid when detection is inconclusive.
+    """
+    import io
+    import numpy as np
+    from PIL import Image
+
+    img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+    w, h = img.size
+    gray = np.array(img.convert("L"))
+
+    def _content_bands(profile_means, profile_stds, length, min_gap) -> list[tuple[int, int]]:
+        # Separator pixels: bright AND low-variance (a clean gutter/margin).
+        is_sep = (profile_means > 218) & (profile_stds < 28)
+        bands: list[tuple[int, int]] = []
+        start = None
+        for i in range(length):
+            if not is_sep[i]:
+                if start is None:
+                    start = i
+            else:
+                if start is not None and i - start >= 1:
+                    bands.append((start, i))
+                start = None
+        if start is not None:
+            bands.append((start, length))
+        # Merge bands separated by a thin gutter (< min_gap) — keeps a single
+        # panel whose internal caption strip momentarily looks like a gap.
+        merged: list[tuple[int, int]] = []
+        for b in bands:
+            if merged and b[0] - merged[-1][1] < min_gap:
+                merged[-1] = (merged[-1][0], b[1])
+            else:
+                merged.append(b)
+        if not merged:
+            return []
+        # Drop bands far smaller than the median (title strips, margins).
+        sizes = sorted(b[1] - b[0] for b in merged)
+        median = sizes[len(sizes) // 2]
+        return [b for b in merged if (b[1] - b[0]) >= 0.45 * median]
+
+    col_bands = _content_bands(gray.mean(axis=0), gray.std(axis=0), w, max(8, w // 80))
+    row_bands = _content_bands(gray.mean(axis=1), gray.std(axis=1), h, max(8, h // 80))
+
+    cells: list[bytes] = []
+
+    def _emit(box) -> None:
+        crop = img.crop(box)
+        # Strip the timecode bar + caption text strip so only the photo remains.
+        try:
+            crop = _trim_panel_to_photo(crop)
+        except Exception:
+            pass
+        buf = io.BytesIO()
+        crop.save(buf, format="PNG", optimize=True)
+        cells.append(buf.getvalue())
+
+    detected = len(row_bands) * len(col_bands)
+    use_detection = (
+        len(row_bands) >= 1 and len(col_bands) >= 1
+        and (expected is None or detected == expected)
+    )
+    if use_detection:
+        for (top, bottom) in row_bands:
+            for (left, right) in col_bands:
+                _emit((left, top, right, bottom))
+        return cells
+
+    # ── Fallback: even grid. Pick a layout matching `expected`. ──
+    layouts = {1: (1, 1), 2: (1, 2), 3: (1, 3), 4: (2, 2), 5: (2, 3), 6: (2, 3), 8: (2, 4), 9: (3, 3)}
+    rows, cols = layouts.get(expected or 4, (2, 2))
+    cw, ch = w // cols, h // rows
+    for r in range(rows):
+        for c in range(cols):
+            left, top = c * cw, r * ch
+            right = w if c == cols - 1 else left + cw
+            bottom = h if r == rows - 1 else top + ch
+            _emit((left, top, right, bottom))
+    if expected:
+        cells = cells[:expected]
+    return cells
+
+
+async def _tool_crop_storyboard(ctx: ToolContext, **kwargs: Any) -> str:
+    """Crop a storyboard (or any multi-panel sheet) into individual panel
+    images, persist each to Supabase + the project's product_shots table, and
+    record them as artifacts so they appear in the right-panel Images tab."""
+    import io
+    import uuid as _uuid
+    import httpx as _httpx
+    from supabase import create_client
+
+    if not ctx.project_id:
+        return json.dumps({"error": "project_id is required to crop a storyboard"})
+
+    # Resolve the source sheet URL: explicit arg, else the last storyboard
+    # rendered in this session.
+    image_url = kwargs.get("image_url") or kwargs.get("storyboard_url")
+    if not image_url and ctx.session_id and _singleton is not None:
+        meta = _singleton._last_storyboard_meta.get(ctx.session_id)
+        if isinstance(meta, dict):
+            image_url = meta.get("url")
+    if not image_url:
+        return json.dumps({"error": "no storyboard image found — pass image_url of the sheet to crop"})
+
+    expected = kwargs.get("num_panels")
+    try:
+        expected = int(expected) if expected is not None else None
+    except (TypeError, ValueError):
+        expected = None
+
+    try:
+        async with _httpx.AsyncClient(timeout=120.0, follow_redirects=True) as http:
+            resp = await http.get(image_url)
+            resp.raise_for_status()
+            sheet_bytes = resp.content
+    except Exception as e:
+        return json.dumps({"error": f"could not download storyboard image: {e}"})
+
+    try:
+        panels = await asyncio.to_thread(_split_grid_panels, sheet_bytes, expected)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return json.dumps({"error": f"failed to split storyboard: {type(e).__name__}: {e}"})
+
+    if not panels:
+        return json.dumps({"error": "no panels detected in the storyboard image"})
+
+    supabase_url = os.getenv("SUPABASE_URL")
+    service_key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    if not supabase_url or not service_key:
+        return json.dumps({"error": "Supabase storage not configured"})
+    sb = create_client(supabase_url, service_key)
+
+    client = ctx.core()
+    panel_urls: list[str] = []
+    shot_ids: list[str] = []
+    labels = kwargs.get("panel_labels") if isinstance(kwargs.get("panel_labels"), list) else None
+
+    for i, panel_bytes in enumerate(panels):
+        filename = f"storyboard_panels/{_uuid.uuid4().hex[:12]}_panel_{i + 1}.png"
+        try:
+            sb.storage.from_("product-images").upload(
+                filename, panel_bytes,
+                file_options={"content-type": "image/png", "upsert": "true"},
+            )
+            url = sb.storage.from_("product-images").get_public_url(filename)
+        except Exception as e:
+            print(f"[crop_storyboard] panel {i + 1} upload failed: {e}")
+            continue
+        panel_urls.append(url)
+
+        label = (labels[i] if labels and i < len(labels) else f"Panel {i + 1}")
+        try:
+            shot = await client.create_standalone_shot({
+                "shot_type": "storyboard_panel",
+                "status": "image_completed",
+                "image_url": url,
+                "project_id": ctx.project_id,
+                "analysis_json": {
+                    "mode": "storyboard_panel",
+                    "panel_index": i + 1,
+                    "label": label,
+                    "source_storyboard_url": image_url,
+                },
+            })
+            sid = shot.get("id")
+            if sid:
+                shot_ids.append(sid)
+        except Exception as e:
+            print(f"[crop_storyboard] panel {i + 1} persist failed: {e}")
+            sid = None
+
+        _record_artifact(ctx, {"type": "image", "url": url, **({"shot_id": sid} if sid else {})})
+
+    if not panel_urls:
+        return json.dumps({"error": "all panel uploads failed"})
+
+    return json.dumps({
+        "status": "success",
+        "panel_count": len(panel_urls),
+        "panel_urls": panel_urls,
+        "shot_ids": shot_ids,
+        "message": (
+            f"Cropped {len(panel_urls)} panels from the storyboard. They are saved to the "
+            f"project and now appear in the Images tab. Refer to them by panel number; do NOT "
+            f"paste URLs."
+        ),
+    })
+
+
 # ── Phase 6b: AI scripting ────────────────────────────────────────────
 async def _tool_generate_ai_script(ctx: ToolContext, **kwargs: Any) -> str:
     from routers.generate_video import AIScriptRequest, generate_ai_script
@@ -6179,12 +7167,15 @@ TOOL_DISPATCH: dict[str, Callable[..., Awaitable[str]]] = {
     "generate_video": _tool_generate_video,
     # WaveSpeed-only additive tools
     "extend_video": _tool_extend_video,
+    # generative video editing (gated)
+    "edit_video": _tool_edit_video,
     "generate_image_text_only": _tool_generate_image_text_only,
     "generate_image_alt_versions": _tool_generate_image_alt_versions,
     # image generation & identity (gated)
     "generate_influencer": _tool_generate_influencer,
     "generate_identity": _tool_generate_identity,
     "generate_product_shots": _tool_generate_product_shots,
+    "crop_storyboard": _tool_crop_storyboard,
     # AI scripting (free)
     "generate_ai_script": _tool_generate_ai_script,
     # asset management (free)
@@ -6465,7 +7456,10 @@ class ManagedAgentClient:
                     print(f"[ManagedAgent] registry entry {existing_id} for {schema_hash[:12]} no longer valid ({type(e).__name__}); re-minting")
 
             agent = await self._client.beta.agents.create(
-                model=DEFAULT_MODEL,
+                # Anthropic switched the `model` field from a plain string to
+                # a structured BetaManagedAgentsModelConfig. Passing the bare
+                # string now 400s with "model not supported" for every model.
+                model={"id": DEFAULT_MODEL, "speed": "standard"},
                 name=AGENT_NAME,
                 description="Studio creative director — drives Creative OS image/animation/video tools.",
                 # NOTE: the beta Agents API requires `system` to be a plain string.
@@ -6774,6 +7768,23 @@ class ManagedAgentClient:
             except Exception:
                 pass
 
+            # Mirror the normal streaming path's `tool_call` event so the
+            # frontend starts its asset-refetch burst (onJobStart → poll the
+            # Images/Videos tab) for generations fired via the Confirm button.
+            # The auto-fire path bypasses the LLM stream, so without this no
+            # tool_call event was ever emitted — the gallery only refreshed on
+            # the next manual reload, even though a "processing" shot row was
+            # already created. Emitting it here makes async generations
+            # (generate_image reframes, videos, etc.) surface automatically.
+            import uuid as _uuid_tc
+            yield {
+                "type": "tool_call",
+                "name": tool_name,
+                "input_summary": _summarize_input(base_input),
+                "mode": base_input.get("mode") if isinstance(base_input, dict) else None,
+                "tool_use_id": f"autofire_{_uuid_tc.uuid4().hex[:12]}",
+            }
+
             # Emit an artifact_pending event so the right-side panel can render
             # a "generating…" placeholder card immediately, instead of leaving
             # the user with only a "thinking…" chat bubble for 2–8 minutes.
@@ -6781,6 +7792,27 @@ class ManagedAgentClient:
             _pending_evt = _pending_artifact_event_for(tool_name, base_input)
             if _pending_evt:
                 yield _pending_evt
+
+            # Long-running video edits bypass the LLM here, so without an explicit
+            # ack the user only sees a silent "Working…" for ~3 min. Confirm in
+            # chat what we're doing + point at the live progress card.
+            if tool_name == "edit_video":
+                _af_lang = _detect_user_lang(brief)
+                _edit_prompt = (base_input.get("prompt") or "").strip() if isinstance(base_input, dict) else ""
+                _short = (_edit_prompt[:120] + "…") if len(_edit_prompt) > 120 else _edit_prompt
+                if _af_lang == "es":
+                    _ack = (
+                        f"¡Manos a la obra! Estoy editando tu vídeo con IA"
+                        + (f": {_short}" if _short else "")
+                        + ". Tardará unos minutos — verás la tarjeta de progreso en la pestaña **Vídeos** y el resultado aparecerá ahí automáticamente al terminar. Puedes seguir trabajando mientras tanto."
+                    )
+                else:
+                    _ack = (
+                        f"On it — editing your video with AI now"
+                        + (f": {_short}" if _short else "")
+                        + ". This takes a few minutes — you'll see the progress card in the **Videos** tab and the finished clip will appear there automatically when it's done. Feel free to keep working in the meantime."
+                    )
+                yield {"type": "agent_message", "text": _ack}
 
             # Loop: a single Confirm may chain through multiple stages if the
             # tool itself returns confirmation_required again (multi-stage flows
@@ -6908,6 +7940,24 @@ class ManagedAgentClient:
                 yield {
                     "type": "agent_message",
                     "text": f"Next step ready: {summary}. Confirm to continue ({credits} credits).",
+                }
+            elif isinstance(af_parsed, dict) and af_parsed.get("action") == "edit_started":
+                # Background edit — ack was already sent before the tool ran.
+                # Don't append a redundant "Done." that hides the real failure
+                # message when the background job finishes later.
+                _vjid = af_parsed.get("job_id")
+                if _vjid:
+                    yield {
+                        "type": "video_job_started",
+                        "job_id": str(_vjid),
+                        "label": "AI edit",
+                        "tool_name": "edit_video",
+                    }
+                yield {
+                    "type": "tool_result",
+                    "tool_use_id": f"autofire_{tool_name}_result",
+                    "summary": af_parsed.get("message") or "Video edit started",
+                    "is_error": False,
                 }
             else:
                 # Final result — surface a short user-facing message. The actual
@@ -7392,17 +8442,35 @@ class ManagedAgentClient:
                             print(f"[ManagedAgent] tool {name}({_summarize_input(tool_input, 120)})")
                             result_text = await fn(ctx, **tool_input)
                             
-                            # Auto-confirm Quick Mode
-                            if "[QUICK_MODE=on]" in brief:
+                            # Auto-confirm Quick Mode. For multi-stage tools
+                            # (create_cinematic_ad: storyboard→animate→broll) the
+                            # confirmation_required response carries a `next_call`
+                            # that advances the stage; using it instead of `echo`
+                            # prevents re-firing the SAME stage with confirmed=True
+                            # (real bug: double-storyboard render, $0.33 + 2min wasted).
+                            #
+                            # EXCEPTION: create_cinematic_ad is NEVER auto-confirmed.
+                            # The storyboard is a mandatory human review checkpoint —
+                            # the user must SEE the storyboard (flushed as soon as the
+                            # storyboard stage returns) and approve before the costly
+                            # animate stage runs. Auto-confirming here chained
+                            # storyboard→animate in a single tool call, so both
+                            # artifacts only surfaced together after ~6 min with no
+                            # approval pause.
+                            if "[QUICK_MODE=on]" in brief and name != "create_cinematic_ad":
                                 try:
                                     parsed = json.loads(result_text)
                                     if isinstance(parsed, dict) and parsed.get("action") == "confirmation_required":
                                         credits = parsed.get("credits", 0)
                                         if isinstance(credits, (int, float)) and credits <= 100:
-                                            print(f"[ManagedAgent] Auto-confirming Quick Mode tool {name} (Cost: {credits})")
-                                            tool_input["confirmed"] = True
-                                            echo = parsed.get("echo", {})
-                                            tool_input.update(echo)
+                                            next_call = parsed.get("next_call")
+                                            if isinstance(next_call, dict) and next_call:
+                                                tool_input = {**next_call, "confirmed": True}
+                                                print(f"[ManagedAgent] Auto-confirming Quick Mode tool {name} → stage={tool_input.get('stage','same')} (Cost: {credits})")
+                                            else:
+                                                tool_input["confirmed"] = True
+                                                tool_input.update(parsed.get("echo") or {})
+                                                print(f"[ManagedAgent] Auto-confirming Quick Mode tool {name} (Cost: {credits})")
                                             result_text = await fn(ctx, **tool_input)
                                 except Exception as inner_e:
                                     print(f"[ManagedAgent] Quick mode auto-confirm parse error: {inner_e}")
@@ -7506,6 +8574,13 @@ class ManagedAgentClient:
                                             "credits": parsed.get("credits"),
                                             "summary": parsed.get("summary"),
                                         }
+                                elif parsed.get("action") == "edit_started" and parsed.get("job_id"):
+                                    yield {
+                                        "type": "video_job_started",
+                                        "job_id": str(parsed["job_id"]),
+                                        "label": "AI edit",
+                                        "tool_name": _id_to_name.get(tool_use_id) or "edit_video",
+                                    }
                                 elif "total_credits" in parsed and "line_items" in parsed:
                                     c = parsed.get("total_credits")
                                     if isinstance(c, (int, float)):

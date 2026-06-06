@@ -31,6 +31,10 @@ export interface AgentPanelHandle {
     running: boolean;
     turnsCount: number;
     reset: () => void;
+    /** Inject a generation-failure message into chat (from gallery poll). */
+    reportGenerationFailure: (message: string) => void;
+    /** Reload persisted thread (picks up background failure messages). */
+    refreshThread: () => Promise<boolean>;
 }
 
 export interface AgentPanelState {
@@ -60,6 +64,8 @@ interface AgentPanelProps {
     initialUseSeedance?: boolean;
     /** Fires when the agent starts a generation job, so the parent can switch the gallery tab. */
     onJobStart?: (kind: 'image' | 'video') => void;
+    /** Background video job (e.g. edit_video) — parent should watch this id until success/fail. */
+    onVideoJobStarted?: (payload: { job_id: string; label?: string }) => void;
     /** Fires when a long-running tool announces a pending artifact (right-panel placeholder). */
     onArtifactPending?: (pending: { pending_id: string; kind: 'image' | 'video'; label: string; stage?: string; tool_name?: string; eta_seconds?: number }) => void;
     /** Fires when a real artifact lands, so the parent can drop one matching placeholder. */
@@ -193,6 +199,7 @@ function toolActivityLabel(
     }
     if (name === 'create_bulk_campaign') return t('creativeOs.agent.activityBulkCampaign');
     if (name === 'render_edited_video') return t('creativeOs.agent.activityRenderingEditFull');
+    if (name === 'edit_video') return t('creativeOs.agent.activityEditingVideoFull');
 
     if (name === 'generate_image' || name === 'generate_influencer'
         || name === 'generate_identity' || name === 'generate_product_shots') {
@@ -257,7 +264,7 @@ const PRO_ASPECT_RATIOS_VID = ['9:16', '16:9'];
 const PRO_QUALITIES = ['2K', '4K'];
 const PRO_LANGUAGES = ['EN', 'ES'];
 
-export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse, hideHeader = false, onStateChange, onSubmitOverride, initialBrief, initialRefs, initialUseSeedance, onJobStart, onArtifactPending, onArtifactReady, jobId }: AgentPanelProps, ref: React.Ref<AgentPanelHandle>) {
+export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse, hideHeader = false, onStateChange, onSubmitOverride, initialBrief, initialRefs, initialUseSeedance, onJobStart, onVideoJobStarted, onArtifactPending, onArtifactReady, jobId }: AgentPanelProps, ref: React.Ref<AgentPanelHandle>) {
     const { lang, t } = useTranslation();
     const [open, setOpen] = useState(false);
     const [brief, setBrief] = useState('');
@@ -663,19 +670,32 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                 ref: { type: 'influencer', tag, name, id: inf.id, image_url: inf.image_url },
             });
         }
-        // Just-attached uploads: surface them at the top of the Images tab
-        // with a "Just attached" badge so users can @-reference the file
-        // they're about to send in the same prompt body.
+        // Just-attached uploads: surface them at the top of the matching tab
+        // (image → Images, video → Videos) with a "Just attached" badge so users
+        // can @-reference the file they're about to send in the same prompt body.
         for (const att of attachments) {
-            if (att.status !== 'ready' || !att.url || att.type !== 'image') continue;
+            if (att.status !== 'ready' || !att.url) continue;
             const tag = att.tag || `upload_${att.id.slice(0, 8).replace(/-/g, '')}`;
-            items.push({
-                type: 'image',
-                tag,
-                name: att.name || 'Attached image',
-                image_url: att.url,
-                ref: { type: 'image', tag, name: att.name || 'attached', shot_id: att.id, image_url: att.url, label: 'just attached' } as any,
-            });
+            if (att.type === 'video') {
+                items.push({
+                    type: 'video',
+                    tag,
+                    name: att.name || 'Attached video',
+                    // Leave image_url undefined: the picker renders a <video
+                    // preload="metadata"> poster from ref.video_url. Setting a
+                    // video blob URL here would force the <img> branch → broken
+                    // thumbnail. The durable public URL travels on ref.video_url.
+                    ref: { type: 'video', tag, name: att.name || 'attached', video_url: att.url, label: 'just attached' } as any,
+                });
+            } else {
+                items.push({
+                    type: 'image',
+                    tag,
+                    name: att.name || 'Attached image',
+                    image_url: att.url,
+                    ref: { type: 'image', tag, name: att.name || 'attached', shot_id: att.id, image_url: att.url, label: 'just attached' } as any,
+                });
+            }
         }
         for (const img of projectImages) {
             const baseName = img.product_name || img.campaign_name || 'image';
@@ -748,8 +768,8 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             return t;
         }).filter((t) => {
             // Drop agent turns that are now empty after scrubbing
-            // (unless they have artifacts or tool_calls to show)
-            if (t.role === 'agent' && !t.text && !(t.artifacts?.length) && !(t.tool_calls?.length)) return false;
+            // (unless they have artifacts, tool_calls, or a failure notice)
+            if (t.role === 'agent' && !t.text && !(t.artifacts?.length) && !(t.tool_calls?.length) && !t.generation_failed) return false;
             return true;
         });
     }, []);
@@ -1181,7 +1201,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     const videoTools = new Set([
                         'generate_video', 'animate_image',
                         'create_ugc_video', 'create_clone_video',
-                        'render_edited_video',
+                        'render_edited_video', 'edit_video',
                     ]);
                     const imageTools = new Set([
                         'generate_image', 'generate_image_text_only',
@@ -1243,6 +1263,14 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                             eta_seconds: p.eta_seconds,
                         });
                         onJobStart?.(p.kind);
+                    }
+                    break;
+                }
+                case 'video_job_started': {
+                    const vjs = e as { job_id?: string; label?: string };
+                    if (vjs.job_id) {
+                        onVideoJobStarted?.({ job_id: vjs.job_id, label: vjs.label });
+                        onJobStart?.('video');
                     }
                     break;
                 }
@@ -1768,13 +1796,56 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
     }, [projectId]);
 
     // Expose imperative handle for parent-driven header controls
+    const refreshThread = useCallback(async (): Promise<boolean> => {
+        if (!projectId) return false;
+        try {
+            const thread = await getAgentThread(projectId);
+            const next = sanitizeTurns(thread.turns || []);
+            setTurns(next);
+            if (thread.session_id) setSessionId(thread.session_id);
+            // Failure turn is appended after the stream ack — may not be the
+            // absolute last turn if the user sent another message since.
+            for (let i = next.length - 1; i >= Math.max(0, next.length - 4); i--) {
+                const t = next[i];
+                if (t?.role === 'agent' && t.generation_failed) return true;
+            }
+            return false;
+        } catch (err) {
+            console.warn('agent thread refresh failed:', err);
+            return false;
+        }
+    }, [projectId, sanitizeTurns]);
+
+    const reportGenerationFailure = useCallback((message: string) => {
+        const text = (message || '').trim();
+        if (!text) return;
+        setTurns(prev => {
+            // Skip duplicate back-to-back failure bubbles.
+            const last = prev[prev.length - 1];
+            if (last?.role === 'agent' && last.generation_failed && last.text === text) return prev;
+            return [
+                ...prev,
+                {
+                    role: 'agent' as const,
+                    text,
+                    artifacts: [],
+                    tool_calls: [],
+                    generation_failed: true,
+                    ts: Date.now(),
+                },
+            ];
+        });
+    }, []);
+
     useImperativeHandle(ref, () => ({
         useSeedance,
         toggleSeedance: () => { if (!running) setUseSeedance(v => !v); },
         running,
         turnsCount: turns.length,
         reset: handleReset,
-    }), [useSeedance, running, turns.length, handleReset]);
+        reportGenerationFailure,
+        refreshThread,
+    }), [useSeedance, running, turns.length, handleReset, reportGenerationFailure, refreshThread]);
 
     // Shared inner content: used by both embedded (full-height) and floating (modal) modes.
     const panelContent = (
@@ -3293,7 +3364,7 @@ function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspec
     const accentButtonsActive = hasAccentMarker && !!isLast && !!onQuickReply && !selectedAccent;
     const saveOrGenActive = hasSaveOrGenMarker && !!isLast && !!onQuickReply && !saveChoice;
     const confirmChipActive = !!turn.pendingConfirmation && !!isLast && !!onQuickReply;
-    const hasContent = !!displayText || !!turn.artifacts?.length || turn.interrupted || hasRefPreviews || hasAspectMarker || hasAccentMarker || hasDurationMarker || hasSaveOrGenMarker || !!turn.pendingConfirmation;
+    const hasContent = !!displayText || !!turn.artifacts?.length || turn.interrupted || turn.generation_failed || hasRefPreviews || hasAspectMarker || hasAccentMarker || hasDurationMarker || hasSaveOrGenMarker || !!turn.pendingConfirmation;
     // While a run is active, show a placeholder "…" bubble (three breathing
     // dots) in place of the empty agent turn so the UI never looks frozen
     // while waiting for the first `agent_message`. Historical empty turns
@@ -3317,11 +3388,11 @@ function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspec
                     borderRadius: isUser ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
                     background: isUser
                         ? 'linear-gradient(135deg, #337AFF 0%, #5B8FFF 100%)'
-                        : 'white',
-                    color: isUser ? 'white' : '#0D1B3E',
+                        : turn.generation_failed ? '#FFF5F5' : 'white',
+                    color: isUser ? 'white' : turn.generation_failed ? '#C53030' : '#0D1B3E',
                     fontSize: '13px',
                     lineHeight: 1.5,
-                    border: isUser ? 'none' : '1px solid rgba(13,27,62,0.08)',
+                    border: isUser ? 'none' : turn.generation_failed ? '1px solid rgba(197,48,48,0.25)' : '1px solid rgba(13,27,62,0.08)',
                     boxShadow: isUser ? 'none' : '0 1px 3px rgba(13,27,62,0.04)',
                 }}
             >
@@ -3382,10 +3453,12 @@ function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspec
                 {hasAspectMarker && (
                     <div style={{ display: 'flex', gap: '8px', marginTop: displayText ? '10px' : 0, flexWrap: 'wrap' }}>
                         {(['vertical', 'horizontal', 'classic'] as const).map((kind) => {
+                            // Locale strings already include the ratio (e.g.
+                            // "Vertical (9:16)") — do NOT append it again.
                             const label = kind === 'vertical'
-                                ? `${t('creativeOs.agent.aspectVertical')} (9:16)`
+                                ? t('creativeOs.agent.aspectVertical')
                                 : kind === 'horizontal'
-                                    ? `${t('creativeOs.agent.aspectHorizontal')} (16:9)`
+                                    ? t('creativeOs.agent.aspectHorizontal')
                                     : 'Classic (4:3)';
                             const isSelected = selectedAspect === kind;
                             const muted = !!selectedAspect && !isSelected;

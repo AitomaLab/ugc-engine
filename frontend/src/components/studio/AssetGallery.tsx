@@ -457,6 +457,13 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
     const [hovered, setHovered] = useState(false);
     const [elapsed, setElapsed] = useState(0);
     const [mediaError, setMediaError] = useState(false);
+    // Only flip mediaError on hosts that are KNOWN to expire (legacy Fal CDN
+    // / Kie tempfile). Fresh Supabase + WaveSpeed URLs may briefly 5xx during
+    // CDN warmup — don't permanently mark them expired; the burst poll will
+    // re-render and the browser will retry on the next tick.
+    const LEGACY_EXPIRED_HOSTS = ['d2p7pge43lyniu.cloudfront.net', 'tempfile.aiquickdraw.com'];
+    const isLegacyExpiredHost = (url?: string | null): boolean =>
+        !!url && LEGACY_EXPIRED_HOSTS.some(h => url.includes(h));
     // Per-card aspect ratio — derive from backend-recorded analysis_json.aspect_ratio
     // (e.g. "16:9" → "16/9"). For legacy video rows that lack it, fall back to
     // the measured intrinsic dimensions on <video> onLoadedMetadata. Default 9/16.
@@ -468,6 +475,7 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
     const videoUrl = type === 'videos' ? (asset.final_video_url || asset.video_url) : asset.video_url;
     const status = asset.status || 'success';
     const isProcessing = status.includes('pending') || status.includes('processing') || status.includes('generating');
+    const isFailed = !isProcessing && status.includes('failed') && !imageUrl && !videoUrl;
 
     // Track elapsed time for pending assets
     useEffect(() => {
@@ -529,7 +537,7 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
                             setMeasuredAR(`${img.naturalWidth}/${img.naturalHeight}`);
                         }
                     }}
-                    onError={() => setMediaError(true)}
+                    onError={() => { if (isLegacyExpiredHost(imageUrl || videoUrl)) setMediaError(true); }}
                     style={{
                         width: '100%',
                         height: '100%',
@@ -552,7 +560,7 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
                             setMeasuredAR(`${v.videoWidth}/${v.videoHeight}`);
                         }
                     }}
-                    onError={() => setMediaError(true)}
+                    onError={() => { if (isLegacyExpiredHost(imageUrl || videoUrl)) setMediaError(true); }}
                     style={{
                         width: '100%',
                         height: '100%',
@@ -580,6 +588,29 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
                     </div>
                     <div style={{ fontSize: '11px', lineHeight: 1.4, maxWidth: '80%' }}>
                         {t('creativeOs.gallery.assetExpiredHint') || 'The original CDN link expired. Re-generate to restore it.'}
+                    </div>
+                </div>
+            )}
+            {isFailed && !mediaError && (
+                <div style={{
+                    position: 'absolute',
+                    inset: 0,
+                    background: 'linear-gradient(135deg, #2A1B2E 0%, #1B0D1F 100%)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '16px',
+                    textAlign: 'center',
+                    color: '#8A93B0',
+                    gap: '8px',
+                }}>
+                    <div style={{ fontSize: '26px', opacity: 0.6 }}>⚠</div>
+                    <div style={{ fontSize: '13px', fontWeight: 600, color: '#E0C5CE' }}>
+                        {t('creativeOs.gallery.generationFailed') || 'Generation interrupted'}
+                    </div>
+                    <div style={{ fontSize: '11px', lineHeight: 1.4, maxWidth: '82%' }}>
+                        {t('creativeOs.gallery.generationFailedHint') || 'This generation did not finish — please try again.'}
                     </div>
                 </div>
             )}
@@ -776,16 +807,33 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
                             display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end',
                             paddingBottom: '16px', gap: '6px',
                         }}>
-                            {/* Spinner only when no preview */}
+                            {/* Spinner + (optional) disclaimer — centered vertically.
+                                Disclaimer only appears when generation is dragging
+                                so we don't badger users on fast renders. */}
                             {!hasPreview && (
                                 <div style={{
-                                    width: '36px', height: '36px',
-                                    border: '3px solid rgba(51,122,255,0.2)',
-                                    borderTopColor: '#337AFF',
-                                    borderRadius: '50%',
-                                    animation: 'spin 0.8s linear infinite',
-                                    marginBottom: 'auto', marginTop: 'auto',
-                                }} />
+                                    marginTop: 'auto', marginBottom: 'auto',
+                                    display: 'flex', flexDirection: 'column',
+                                    alignItems: 'center', gap: '14px',
+                                    width: '100%',
+                                }}>
+                                    <div style={{
+                                        width: '36px', height: '36px',
+                                        border: '3px solid rgba(51,122,255,0.2)',
+                                        borderTopColor: '#337AFF',
+                                        borderRadius: '50%',
+                                        animation: 'spin 0.8s linear infinite',
+                                    }} />
+                                    {elapsed > estimatedTotal * 0.6 && (
+                                        <span style={{
+                                            fontSize: '13px', color: 'white', opacity: 0.85,
+                                            maxWidth: '80%', textAlign: 'center', lineHeight: 1.45,
+                                            fontWeight: 500,
+                                        }}>
+                                            {t('creativeOs.gallery.providerDisclaimer') || 'AI generation times vary based on model provider demand.'}
+                                        </span>
+                                    )}
+                                </div>
                             )}
 
                             {/* Status badge */}
@@ -823,13 +871,6 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
                             <span style={{ fontSize: '11px', color: 'white', opacity: 0.7 }}>
                                 {remainingLabel}
                             </span>
-                            {/* Disclaimer — only when generation is running long,
-                                so we don't badger users on fast renders. */}
-                            {elapsed > estimatedTotal * 0.6 && (
-                                <span style={{ fontSize: '10px', color: 'white', opacity: 0.5, maxWidth: '85%', textAlign: 'center', lineHeight: 1.4, marginTop: '2px' }}>
-                                    {t('creativeOs.gallery.providerDisclaimer') || 'AI generation times vary based on model provider demand.'}
-                                </span>
-                            )}
                         </div>
 
                         <style>{`

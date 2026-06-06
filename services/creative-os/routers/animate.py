@@ -7,6 +7,7 @@ don't require speech/dialogue — just camera movement presets.
 """
 import os
 import httpx
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import Optional
@@ -427,9 +428,22 @@ async def _run_animation_pipeline(job_id: str, data: AnimateRequest, token: str)
                 raise RuntimeError("Animation produced no video URL")
 
             print(f"[Animate] Complete! Video URL: {video_url[:80]}...")
+            from utils.persist_media import finalize_video_url
+
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            storage_filename = f"animate_{job_id[:8]}_{ts}.mp4"
+
+            async def _on_persisted(stored: str) -> None:
+                await update_job({"final_video_url": stored})
+
+            final_url = await finalize_video_url(
+                video_url,
+                storage_filename=storage_filename,
+                on_persisted=_on_persisted,
+            )
             await update_job({
                 "status": "success",
-                "final_video_url": video_url,
+                "final_video_url": final_url,
                 "progress": 100,
                 "status_message": "Complete!",
             })

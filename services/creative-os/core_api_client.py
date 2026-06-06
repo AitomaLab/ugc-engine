@@ -156,6 +156,18 @@ class CoreAPIClient:
         result = sb.table("product_shots").update(data).eq("id", shot_id).execute()
         return result.data[0] if result.data else {}
 
+    async def update_job(self, job_id: str, data: dict) -> dict:
+        """Update a video_jobs record directly via Supabase REST."""
+        import os
+        from supabase import create_client
+
+        sb = create_client(
+            os.getenv("SUPABASE_URL"),
+            os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY"),
+        )
+        result = sb.table("video_jobs").update(data).eq("id", job_id).execute()
+        return result.data[0] if result.data else {}
+
     async def create_standalone_shot(self, data: dict) -> dict:
         """Create a product_shot record via Supabase REST (no product_id required).
 

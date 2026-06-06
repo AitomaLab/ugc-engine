@@ -545,7 +545,7 @@ def generate_product_shot_image(shot_id: str):
         try:
             image_url = _upload_url_to_storage(image_url, "cinematic-shots", f"shot_{shot_id}.png", "image/png")
         except Exception as e:
-            print(f"      ⚠️ Storage re-upload failed, using raw URL: {e}")
+            print(f"      ⚠️ Storage re-upload failed, will retry on gallery load: {e}")
 
         # 4. Update DB with result
         update_product_shot(shot_id, {
@@ -587,7 +587,7 @@ def animate_product_shot_video(shot_id: str):
         try:
             video_url = _upload_url_to_storage(video_url, "cinematic-shots", f"shot_{shot_id}_video.mp4", "video/mp4")
         except Exception as e:
-            print(f"      ⚠️ Storage re-upload failed, using raw URL: {e}")
+            print(f"      ⚠️ Storage re-upload failed, will retry on gallery load: {e}")
 
         # Update DB with result
         update_product_shot(shot_id, {
@@ -682,6 +682,12 @@ def generate_transition_shot(shot_id: str):
             prompt=image_prompt,
             product_image_url=product["image_url"],
         )
+        try:
+            image_url = _upload_url_to_storage(
+                image_url, "product-images", f"transition_{shot_id}.png", "image/png",
+            )
+        except Exception as e:
+            print(f"      ⚠️ Storage re-upload failed, will retry on gallery load: {e}")
         update_product_shot(shot_id, {"status": "image_completed", "image_url": image_url})
         print(f"   Image ready: {image_url[:60]}...")
 

@@ -372,13 +372,28 @@ def run_generation_pipeline(
                 # Physical products keep Wavespeed-primary with video-extend
                 # — no on-screen UI to pin and continuity is acceptable there.
                 _force_kie = (product_type == "digital")
-                result = generate_scenes.extend_video_with_retry(
-                    task_id=current_task_id,
-                    prompt=extension_prompt,
-                    seed=ext_scene.get("seed"),
-                    video_url=current_video_url,
-                    force_kie=_force_kie,
-                )
+                try:
+                    result = generate_scenes.extend_video_with_retry(
+                        task_id=current_task_id,
+                        prompt=extension_prompt,
+                        seed=ext_scene.get("seed"),
+                        video_url=current_video_url,
+                        force_kie=_force_kie,
+                        max_retries=5,
+                    )
+                except RuntimeError as _ext_e:
+                    # Graceful degradation: if Kie / Wavespeed extend keeps
+                    # failing (e.g. "unknown extend error" under heavy queue
+                    # load), publish what we have rather than leaving the job
+                    # stuck in 'processing' forever. The user sees a shorter
+                    # video instead of a permanent spinner.
+                    print(f"      [EXTEND] ⚠ Scene {idx} failed after retries: {_ext_e} — finalizing with {len(extend_chunks)} scene(s) we have")
+                    if status_callback:
+                        try:
+                            status_callback(f"Extend: scene {idx} failed — finalizing with {len(extend_chunks)} scene(s)")
+                        except Exception:
+                            pass
+                    break
                 # The returned video contains ONLY the new extension segment
                 chunk_idx_path = output_dir / f"extended_chunk_{idx-1}.mp4"
                 generate_scenes.download_video(result["videoUrl"], chunk_idx_path)

@@ -42,6 +42,11 @@ CREDIT_COSTS = {
     "cinematic_animate_720p_15s": 96,       # Seedance 720p 15s (anchor)
     "cinematic_broll_720p_5s": 32,          # Seedance 720p 5s broll panel
     "cinematic_product_macro_720p_5s": 32,  # Seedance 720p 5s product macro
+    # Gemini Omni Video — generative EDIT of an existing clip (KIE).
+    # "With video input" pricing is flat per generation, independent of length.
+    # Margin-aligned at ~21 credits per $1 of COGS (same rule as cinematic ads).
+    "gemini_omni_edit_720p": 25,            # 720p/1080p with video input ($1.20)
+    "gemini_omni_edit_4k": 38,              # 4K with video input ($1.80)
 }
 
 
@@ -112,6 +117,16 @@ def get_cinematic_ad_credit_cost(stage: str, duration_seconds: int = 15) -> int:
     }.get(stage)
     if not key:
         raise ValueError(f"No cinematic-ad credit cost defined for stage: {stage}")
+    return CREDIT_COSTS[key]
+
+
+def get_gemini_omni_edit_credit_cost(resolution: str = "720p") -> int:
+    """Credits for one Gemini Omni Video edit (with-video-input, flat per gen).
+
+    720p/1080p → 25 credits; 4k → 38 credits. The >10s chunk→edit→stitch flow
+    still sends only ONE edit window to the model, so it costs the same flat rate.
+    """
+    key = "gemini_omni_edit_4k" if str(resolution).lower() == "4k" else "gemini_omni_edit_720p"
     return CREDIT_COSTS[key]
 
 

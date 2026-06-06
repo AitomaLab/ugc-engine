@@ -216,6 +216,30 @@ async def _create_video_job_record(
         return {"id": None, "kie_task_id": task_id}
 
 
+async def _mirror_video_to_supabase(
+    video_url: str,
+    *,
+    storage_filename: str,
+    token: str,
+    project_id: str,
+    job_id: str,
+) -> str:
+    """Mirror provider video to Supabase when possible; never fail the job on storage hiccups."""
+    from utils.persist_media import finalize_video_url
+
+    async def _on_persisted(stored: str) -> None:
+        await _update_video_job_via_api(token, project_id, job_id, {
+            "final_video_url": stored,
+            "preview_url": None,
+        })
+
+    return await finalize_video_url(
+        video_url,
+        storage_filename=storage_filename,
+        on_persisted=_on_persisted,
+    )
+
+
 async def _update_video_job_via_api(token: str, project_id: str, job_id: str, updates: dict):
     """Update a video_jobs record via Supabase REST API.
 
@@ -311,12 +335,21 @@ async def _poll_kie_task(
                         or status_data.get("resultUrl")
                     )
                     if video_url:
+                        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        storage_filename = f"kie_poll_{job_id[:8]}_{ts}.mp4"
+                        final_url = await _mirror_video_to_supabase(
+                            video_url,
+                            storage_filename=storage_filename,
+                            token=token,
+                            project_id=project_id,
+                            job_id=job_id,
+                        )
                         await _update_video_job_via_api(token, project_id, job_id, {
                             "status": "success",
-                            "final_video_url": video_url,
-                            "preview_url": video_url,
+                            "final_video_url": final_url,
+                            "preview_url": None,
                         })
-                        print(f"[Creative OS] Video job {job_id} completed: {video_url}")
+                        print(f"[Creative OS] Video job {job_id} completed: {final_url}")
                         return
                 elif task_status in ("failed", "error"):
                     error_msg = status_data.get("error", "Generation failed on kie.ai")
@@ -1072,30 +1105,15 @@ async def _run_seedance_clip_pipeline(
             "progress": 90,
         })
 
-        final_url = video_url
-        timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
-        try:
-            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-                tmp_path = tmp.name
-            await asyncio.to_thread(generate_scenes.download_video, video_url, tmp_path)
-            storage_filename = f"seedance_clip_{job_id[:8]}_{timestamp}.mp4"
-            try:
-                from ugc_db.db_manager import get_supabase
-                sb = get_supabase()
-                with open(tmp_path, "rb") as f:
-                    sb.storage.from_("generated-videos").upload(
-                        storage_filename, f,
-                        file_options={"content-type": "video/mp4"},
-                    )
-                final_url = sb.storage.from_("generated-videos").get_public_url(storage_filename)
-            except Exception as upload_err:
-                print(f"[Seedance] Supabase upload failed: {upload_err}, using raw URL")
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
-        except Exception as e:
-            print(f"[Seedance] Upload failed, using raw URL: {e}")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        storage_filename = f"seedance_clip_{job_id[:8]}_{timestamp}.mp4"
+        final_url = await _mirror_video_to_supabase(
+            video_url,
+            storage_filename=storage_filename,
+            token=token,
+            project_id=project_id,
+            job_id=job_id,
+        )
 
         # App-clip B-roll concat (digital products) is now a separate agent
         # step — the agent chains `splice_app_clip(job_id)` after this tool
@@ -1705,40 +1723,16 @@ async def _run_cinematic_clip_pipeline(
             "progress": 90,
         })
 
-        try:
-            import tempfile
-            from datetime import datetime as _dt
-
-            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-                tmp_path = tmp.name
-
-            await asyncio.to_thread(generate_scenes.download_video, video_url, tmp_path)
-
-            timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
-            storage_filename = f"cinematic_clip_{job_id[:8]}_{timestamp}.mp4"
-            try:
-                from ugc_db.db_manager import get_supabase
-                sb = get_supabase()
-                with open(tmp_path, "rb") as f:
-                    sb.storage.from_("generated-videos").upload(
-                        storage_filename, f,
-                        file_options={"content-type": "video/mp4"},
-                    )
-                final_url = sb.storage.from_("generated-videos").get_public_url(storage_filename)
-            except Exception as upload_err:
-                print(f"[Cinematic] Supabase upload failed: {upload_err}, using raw URL")
-                final_url = video_url
-
-            try:
-                import os as _os
-                _os.unlink(tmp_path)
-            except Exception:
-                pass
-
-            print(f"[Cinematic] Uploaded: {final_url[:80]}...")
-        except Exception as e:
-            print(f"[Cinematic] Upload failed, using raw URL: {e}")
-            final_url = video_url
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        storage_filename = f"cinematic_clip_{job_id[:8]}_{timestamp}.mp4"
+        final_url = await _mirror_video_to_supabase(
+            video_url,
+            storage_filename=storage_filename,
+            token=token,
+            project_id=project_id,
+            job_id=job_id,
+        )
+        print(f"[Cinematic] Uploaded: {final_url[:80]}...")
 
         # App-clip B-roll concat is now a separate agent step — see Seedance
         # pipeline for rationale. Stash app_clip_id in metadata so the agent's
@@ -2594,43 +2588,21 @@ async def _run_ugc_clip_pipeline(
             "progress": 90,
         })
 
-        try:
-            # Download the video to a temp file and re-upload to Supabase
-            import tempfile
-            from datetime import datetime as _dt
+        await _update_video_job_via_api(token, project_id, job_id, {
+            "status_message": "Uploading video...",
+            "progress": 90,
+        })
 
-            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-                tmp_path = tmp.name
-
-            await asyncio.to_thread(generate_scenes.download_video, video_url, tmp_path)
-
-            # Upload to Supabase Storage (inline to avoid Celery dependency)
-            timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
-            storage_filename = f"ugc_clip_{job_id[:8]}_{timestamp}.mp4"
-            try:
-                from ugc_db.db_manager import get_supabase
-                sb = get_supabase()
-                with open(tmp_path, "rb") as f:
-                    sb.storage.from_("generated-videos").upload(
-                        storage_filename, f,
-                        file_options={"content-type": "video/mp4"},
-                    )
-                final_url = sb.storage.from_("generated-videos").get_public_url(storage_filename)
-            except Exception as upload_err:
-                print(f"[UGC Clip] Supabase upload failed: {upload_err}, using raw URL")
-                final_url = video_url
-
-            # Clean up temp file
-            try:
-                import os as _os
-                _os.unlink(tmp_path)
-            except Exception:
-                pass
-
-            print(f"[UGC Clip] Uploaded: {final_url[:80]}...")
-        except Exception as e:
-            print(f"[UGC Clip] Upload failed, using raw URL: {e}")
-            final_url = video_url
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        storage_filename = f"ugc_clip_{job_id[:8]}_{timestamp}.mp4"
+        final_url = await _mirror_video_to_supabase(
+            video_url,
+            storage_filename=storage_filename,
+            token=token,
+            project_id=project_id,
+            job_id=job_id,
+        )
+        print(f"[UGC Clip] Uploaded: {final_url[:80]}...")
 
         # App-clip B-roll concat is now a separate agent step — see Seedance
         # pipeline for rationale. Stash app_clip_id in metadata so the agent's
@@ -2829,42 +2801,17 @@ async def _persist_extended_clip(
     """Download the extension from CloudFront, upload to Supabase storage,
     and create a video_jobs row mirroring the source clip's context.
 
-    Returns the Supabase public URL on success, or the original CloudFront URL
-    on any failure (best-effort — never blocks the user response).
+    Returns the best available URL (Supabase when inline persist succeeds).
     """
-    import asyncio
-    import tempfile
-    from datetime import datetime as _dt
+    from utils.persist_media import finalize_video_url, is_supabase_storage_url, schedule_video_persist_retry
 
-    final_url = cloudfront_url
     row = source_ctx.get("row") or {}
     project_id = source_ctx.get("project_id") or row.get("project_id")
 
-    # 1. Download CloudFront → upload to Supabase storage
-    try:
-        generate_scenes = _load_creative_os_generate_scenes()
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-            tmp_path = tmp.name
-        await asyncio.to_thread(generate_scenes.download_video, cloudfront_url, tmp_path)
-        try:
-            from ugc_db.db_manager import get_supabase
-            sb = get_supabase()
-            timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
-            storage_filename = f"veo_extend_{timestamp}.mp4"
-            with open(tmp_path, "rb") as f:
-                sb.storage.from_("generated-videos").upload(
-                    storage_filename, f,
-                    file_options={"content-type": "video/mp4"},
-                )
-            final_url = sb.storage.from_("generated-videos").get_public_url(storage_filename)
-            print(f"[Extend] uploaded to Supabase: {final_url[:80]}...")
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
-    except Exception as e:
-        print(f"[Extend] Supabase upload failed ({e}), keeping CloudFront URL")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    storage_filename = f"veo_extend_{timestamp}.mp4"
+    final_url = await finalize_video_url(cloudfront_url, storage_filename=storage_filename)
+    print(f"[Extend] asset URL ready: {final_url[:80]}...")
 
     # 2. Create a video_jobs row so the next re-extend can recover context
     if not row:
@@ -2911,6 +2858,17 @@ async def _persist_extended_clip(
                     "wavespeed_cloudfront_url": cloudfront_url,
                 },
             })
+            if not is_supabase_storage_url(final_url):
+                async def _on_persisted(stored: str) -> None:
+                    await _update_video_job_via_api(token, project_id, job_id, {
+                        "final_video_url": stored,
+                    })
+
+                schedule_video_persist_retry(
+                    cloudfront_url,
+                    storage_filename=storage_filename,
+                    on_persisted=_on_persisted,
+                )
             print(f"[Extend] persisted video_jobs row {job_id}")
     except Exception as e:
         print(f"[Extend] failed to persist video_jobs row: {e}")

@@ -1,19 +1,20 @@
 """Normalize any user-provided image to an opaque PNG on a white background.
 
-Fixes transparency (kills the 'checkerboard' artifact Kling paints into
-alpha), strips EXIF (including the orientation tag so phone photos don't
-render rotated), and coerces the format to PNG so every downstream
-consumer can trust what it gets from Supabase Storage.
-"""
+Kept self-contained (no ugc_db import) so creative-os can import it without
+needing the repo root on sys.path. The ugc_backend copy at
+ugc_db/image_normalize.py is identical."""
 from __future__ import annotations
 
 import io
-
 from PIL import Image, ImageOps
 
 
-def normalize_image_bytes(raw: bytes) -> bytes:
-    """Take any image bytes, return opaque PNG bytes."""
+def normalize_image_bytes(raw: bytes, max_dim: int = 4096) -> bytes:
+    """Take any image bytes, return opaque PNG bytes on a white background.
+    Honors EXIF orientation, drops EXIF, flattens alpha, AND downscales to
+    `max_dim` on the longest side so the result never exceeds Anthropic's
+    8000-pixel-per-side hard cap when forwarded to the agent. 4096 is well
+    below the cap while keeping fine detail on hi-res studio shots."""
     im = Image.open(io.BytesIO(raw))
     im = ImageOps.exif_transpose(im)
     if im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info):
@@ -23,6 +24,12 @@ def normalize_image_bytes(raw: bytes) -> bytes:
         im = bg
     elif im.mode != "RGB":
         im = im.convert("RGB")
+    # Downscale if either side exceeds max_dim. Preserves aspect ratio.
+    if max(im.size) > max_dim:
+        im.thumbnail((max_dim, max_dim), Image.LANCZOS)
     out = io.BytesIO()
     im.save(out, format="PNG", optimize=True)
     return out.getvalue()
+
+
+__all__ = ["normalize_image_bytes"]

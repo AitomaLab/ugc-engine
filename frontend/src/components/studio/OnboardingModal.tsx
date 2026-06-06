@@ -63,9 +63,124 @@ function getProductImage(p: RealProduct): string | null {
 function getSuggestedPrompts(product: string, influencer: string): string[] {
     return [
         `Create a UGC ad with @${influencer} showing @${product} and explaining why it's a must-have this summer`,
-        `Generate a cinematic product shot of @${product} with dramatic lighting`,
+        `Generate 3 image ads of @${influencer} holding @${product} in different scenarios`,
         `Create an eye-grabbing cinematic ad of @${product}`,
     ];
+}
+
+/* ── @-mention pill (mirrors chat styling) ──────────────────────────── */
+
+function MentionPill({ image, name }: { image?: string | null; name: string }) {
+    return (
+        <span style={{
+            display: 'inline-flex', alignItems: 'center', gap: '4px',
+            padding: '2px 8px 2px 2px', borderRadius: '6px',
+            background: 'rgba(51,122,255,0.08)', border: '1px solid rgba(51,122,255,0.15)',
+            verticalAlign: 'baseline',
+        }}>
+            {image && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={image} alt="" style={{ width: '18px', height: '18px', borderRadius: '4px', objectFit: 'cover', flexShrink: 0 }} />
+            )}
+            <span style={{ fontSize: '12px', fontWeight: 600, color: '#337AFF', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+        </span>
+    );
+}
+
+/** Parse "@<name>" tokens in a prompt and render matches as MentionPill.
+ *  Matching is case-insensitive against the product + influencer names. */
+function renderPromptWithPills(
+    prompt: string,
+    refs: { name: string; image: string | null }[],
+): React.ReactNode {
+    if (!prompt) return prompt;
+    // Match against the literal @<name> strings (longest first so multi-word
+    // names like "@Apple Headphones" win over a partial "@Apple" match).
+    const tokens = refs
+        .map(r => ({ ...r, token: `@${r.name}` }))
+        .sort((a, b) => b.token.length - a.token.length);
+    if (!tokens.length) return prompt;
+    const nodes: React.ReactNode[] = [];
+    let remaining = prompt;
+    let key = 0;
+    while (remaining.length) {
+        // Find the earliest token occurrence in the remaining string.
+        let bestIdx = -1;
+        let bestTok: typeof tokens[number] | null = null;
+        for (const t of tokens) {
+            const idx = remaining.toLowerCase().indexOf(t.token.toLowerCase());
+            if (idx !== -1 && (bestIdx === -1 || idx < bestIdx)) {
+                bestIdx = idx;
+                bestTok = t;
+            }
+        }
+        if (!bestTok || bestIdx === -1) {
+            nodes.push(<span key={key++}>{remaining}</span>);
+            break;
+        }
+        if (bestIdx > 0) nodes.push(<span key={key++}>{remaining.slice(0, bestIdx)}</span>);
+        nodes.push(<MentionPill key={key++} image={bestTok.image || undefined} name={bestTok.name} />);
+        remaining = remaining.slice(bestIdx + bestTok.token.length);
+    }
+    return nodes;
+}
+
+/* ── 9:16 image card with hover-revealed edit icon (top-right) ─────── */
+
+function HoverEditableCard({ imageUrl, onEdit, title }: { imageUrl: string | null; onEdit: () => void; title: string }) {
+    const [hovered, setHovered] = useState(false);
+    return (
+        <div
+            onMouseEnter={() => setHovered(true)}
+            onMouseLeave={() => setHovered(false)}
+            style={{
+                position: 'relative',
+                height: 'min(360px, 42vh)',
+                aspectRatio: '9 / 16',
+                borderRadius: '18px',
+                overflow: 'hidden',
+                background: '#F4F6FA',
+                border: '1px solid rgba(0,0,0,0.06)',
+                transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+                transform: hovered ? 'scale(1.01)' : 'none',
+                boxShadow: hovered ? '0 8px 24px rgba(0,0,0,0.12)' : 'none',
+            }}
+        >
+            {imageUrl && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={imageUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            )}
+            <button
+                onClick={onEdit}
+                title={title}
+                style={{
+                    position: 'absolute',
+                    top: '10px',
+                    right: '10px',
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '50%',
+                    background: 'rgba(255,255,255,0.95)',
+                    border: '1px solid rgba(0,0,0,0.08)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
+                    padding: 0,
+                    opacity: hovered ? 1 : 0,
+                    transform: hovered ? 'scale(1)' : 'scale(0.85)',
+                    transition: 'opacity 0.18s ease, transform 0.18s ease',
+                    pointerEvents: hovered ? 'auto' : 'none',
+                }}
+            >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0D1B3E" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                    <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                </svg>
+            </button>
+        </div>
+    );
 }
 
 /* ── Component ────────────────────────────────────────────────── */
@@ -140,14 +255,24 @@ export function OnboardingModal({ onComplete, onSkip }: OnboardingModalProps) {
 
     const handleCreate = () => {
         if (!product || !influencer || !selectedPrompt) return;
+        const productImageUrl = getProductImage(product);
+        const influencerImageUrl = getInfluencerImage(influencer);
+        // Prompt #2 (3 image ads) uses template products whose UUIDs may not
+        // exist in the user's DB → backend 404s on product_id lookup. Tell the
+        // agent to use reference_image_urls instead so the pipeline takes the
+        // upload-only branch which works without a DB row.
+        const isImageAdsPrompt = selectedPrompt.toLowerCase().includes('image ads');
+        const refImageHint = isImageAdsPrompt
+            ? ` [USE reference_image_urls (NOT product_id) when calling generate_image. URLs to pass: ${[productImageUrl, influencerImageUrl].filter(Boolean).join(' AND ')}. The pipeline takes the upload-only branch and renders 3 composites from these two images.]`
+            : '';
         onComplete({
             productId: product.id,
             productName: product.name,
-            productImageUrl: getProductImage(product),
+            productImageUrl,
             influencerId: influencer.id,
             influencerName: influencer.name,
-            influencerImageUrl: getInfluencerImage(influencer),
-            prompt: `${selectedPrompt} [9:16 vertical] [5s clip duration] [SCRIPT LENGTH: hook/dialogue MUST be ≤12 words total — anything longer cannot be spoken in 5 seconds.] [PRODUCT INTERACTION: if the product has a cap, lid, seal, or wrapper (bottle, jar, tube, can, pouch), the character MUST visibly open/unscrew/remove it BEFORE drinking, eating, or using — never drink through a closed cap or use a sealed product. No impossible interactions, no hallucinations.] [ONBOARDING_FIRST_VIDEO — this is the user's welcome video, it must be FREE (0 credits). Use the product image_url as a reference_image in Seedance so the product is visible in the video.]`,
+            influencerImageUrl,
+            prompt: `${selectedPrompt} [9:16 vertical] [5s clip duration] [SCRIPT LENGTH: hook/dialogue MUST be ≤12 words total — anything longer cannot be spoken in 5 seconds.] [PRODUCT INTERACTION: if the product has a cap, lid, seal, or wrapper (bottle, jar, tube, can, pouch), the character MUST visibly open/unscrew/remove it BEFORE drinking, eating, or using — never drink through a closed cap or use a sealed product. No impossible interactions, no hallucinations.] [ONBOARDING_FIRST_VIDEO — this is the user's welcome video, it must be FREE (0 credits). Use the product image_url as a reference_image in Seedance so the product is visible in the video.]${refImageHint}`,
         });
     };
 
@@ -235,6 +360,10 @@ export function OnboardingModal({ onComplete, onSkip }: OnboardingModalProps) {
                             overflow: 'hidden',
                             border: '1px solid rgba(0,0,0,0.08)',
                             marginBottom: '12px',
+                            width: '70%',
+                            maxWidth: '70%',
+                            marginLeft: 'auto',
+                            marginRight: 'auto',
                         }}>
                             <video
                                 src="https://res.cloudinary.com/ducrze2ys/video/upload/v1777570469/StudioRecording_final_edxjzf.mp4"
@@ -297,8 +426,8 @@ export function OnboardingModal({ onComplete, onSkip }: OnboardingModalProps) {
                                     </>
                                 )}
 
-                                {/* ── Selected product chip + change link ── */}
-                                {selectedProduct && (
+                                {/* ── Selected product chip (only while picking influencer) ── */}
+                                {selectedProduct && !selectedInfluencer && (
                                     <div style={{
                                         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                                         padding: '8px 14px', borderRadius: '10px',
@@ -340,60 +469,68 @@ export function OnboardingModal({ onComplete, onSkip }: OnboardingModalProps) {
                                     </>
                                 )}
 
-                                {/* ── Selected influencer chip + change link ── */}
-                                {selectedInfluencer && (
-                                    <div style={{
-                                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                                        padding: '8px 14px', borderRadius: '10px',
-                                        background: 'rgba(51,122,255,0.06)', border: '1px solid rgba(51,122,255,0.15)',
-                                        marginBottom: '16px',
-                                    }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                            {influencer && getInfluencerImage(influencer) && (
-                                                <img src={getInfluencerImage(influencer)!} alt="" style={{ width: '28px', height: '28px', borderRadius: '50%', objectFit: 'cover' }} />
-                                            )}
-                                            <span style={{ fontSize: '13px', fontWeight: 700, color: '#0D1B3E' }}>{influencer?.name}</span>
-                                        </div>
-                                        <button
-                                            onClick={() => { setSelectedInfluencer(''); setSelectedPrompt(''); }}
-                                            style={{ background: 'none', border: 'none', color: '#337AFF', fontSize: '12px', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
-                                        >
-                                            Change
-                                        </button>
-                                    </div>
-                                )}
+                                {/* ── Two-column layout when both are selected:
+                                    LEFT = product + influencer as 9:16 cards
+                                    RIGHT = prompt suggestions ── */}
+                                {selectedProduct && selectedInfluencer && (() => {
+                                    const promptRefs = [
+                                        product ? { name: product.name, image: getProductImage(product) } : null,
+                                        influencer ? { name: influencer.name, image: getInfluencerImage(influencer) } : null,
+                                    ].filter(Boolean) as { name: string; image: string | null }[];
 
-                                {/* ── Prompt suggestions (after both selected) ── */}
-                                {prompts.length > 0 && selectedProduct && selectedInfluencer && (
-                                    <>
-                                        <div style={{ fontSize: '12px', fontWeight: 700, color: '#8A93B0', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>
-                                            {t('onboarding.suggestedPrompts')}
+                                    return (
+                                        <div style={{ display: 'flex', gap: '20px', marginBottom: '16px', alignItems: 'flex-start' }}>
+                                            {/* LEFT column — two 9:16 cards, ~202×360 each. Edit icon shows on hover, top-right. */}
+                                            <div style={{ display: 'flex', flexDirection: 'row', gap: '8px' }}>
+                                                <HoverEditableCard
+                                                    imageUrl={product ? getProductImage(product) : null}
+                                                    onEdit={() => { setSelectedProduct(''); setSelectedInfluencer(''); setSelectedPrompt(''); }}
+                                                    title="Change product"
+                                                />
+                                                <HoverEditableCard
+                                                    imageUrl={influencer ? getInfluencerImage(influencer) : null}
+                                                    onEdit={() => { setSelectedInfluencer(''); setSelectedPrompt(''); }}
+                                                    title="Change influencer"
+                                                />
+                                            </div>
+
+                                            {/* RIGHT column — prompts; column stretches to match
+                                                the height of the 9:16 cards on the left so the
+                                                whole row reads as one balanced block. */}
+                                            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: 'min(360px, 42vh)' }}>
+                                                <div style={{ fontSize: '12px', fontWeight: 700, color: '#8A93B0', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '20px' }}>
+                                                    {t('onboarding.suggestedPrompts')}
+                                                </div>
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1, justifyContent: 'flex-start' }}>
+                                                    {prompts.map((p, i) => (
+                                                        <button
+                                                            key={i}
+                                                            onClick={() => setSelectedPrompt(p)}
+                                                            style={{
+                                                                padding: '16px 18px',
+                                                                borderRadius: '10px',
+                                                                border: selectedPrompt === p ? '2px solid #337AFF' : '1px solid rgba(0,0,0,0.08)',
+                                                                background: selectedPrompt === p ? 'rgba(51,122,255,0.08)' : 'rgba(51,122,255,0.025)',
+                                                                cursor: 'pointer',
+                                                                textAlign: 'left',
+                                                                fontSize: '13px',
+                                                                color: '#0D1B3E',
+                                                                lineHeight: 1.6,
+                                                                transition: 'all 0.15s',
+                                                                fontFamily: 'inherit',
+                                                                minHeight: 'min(88px, 10vh)',
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                            }}
+                                                        >
+                                                            <span>{renderPromptWithPills(p, promptRefs)}</span>
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
                                         </div>
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '16px' }}>
-                                            {prompts.map((p, i) => (
-                                                <button
-                                                    key={i}
-                                                    onClick={() => setSelectedPrompt(p)}
-                                                    style={{
-                                                        padding: '10px 14px',
-                                                        borderRadius: '10px',
-                                                        border: selectedPrompt === p ? '2px solid #337AFF' : '1px solid rgba(0,0,0,0.08)',
-                                                        background: selectedPrompt === p ? 'rgba(51,122,255,0.04)' : 'white',
-                                                        cursor: 'pointer',
-                                                        textAlign: 'left',
-                                                        fontSize: '12px',
-                                                        color: '#0D1B3E',
-                                                        lineHeight: 1.4,
-                                                        transition: 'all 0.15s',
-                                                        fontFamily: 'inherit',
-                                                    }}
-                                                >
-                                                    {p}
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </>
-                                )}
+                                    );
+                                })()}
                             </>
                         )}
 
@@ -429,42 +566,51 @@ export function OnboardingModal({ onComplete, onSkip }: OnboardingModalProps) {
                 backdropFilter: 'blur(8px)',
                 zIndex: 9998,
             }} />
-            {/* Modal */}
+            {/* Modal — content drives the size; 4% padding gutter on all sides via
+                an outer flex viewport wrapper, then the modal sits inside it at
+                content-natural width/height (capped by the wrapper). */}
             <div style={{
-                position: 'fixed',
-                top: '50%', left: '50%',
-                transform: 'translate(-50%, -50%)',
-                width: '640px',
-                maxWidth: '92vw',
-                maxHeight: '90vh',
-                overflowY: 'auto',
-                background: 'white',
-                borderRadius: '20px',
-                boxShadow: '0 32px 80px rgba(0,0,0,0.25)',
+                position: 'fixed', inset: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                padding: '4vh 4vw',
+                pointerEvents: 'none',
                 zIndex: 9999,
-                animation: 'onboardingScaleIn 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
             }}>
-                {/* Step indicator */}
                 <div style={{
-                    display: 'flex', gap: '4px', justifyContent: 'center',
-                    padding: '16px 0 0',
+                    width: 'auto',
+                    maxWidth: 'min(900px, 100%)',
+                    maxHeight: '100%',
+                    overflowY: 'auto',
+                    background: 'white',
+                    borderRadius: '20px',
+                    boxShadow: '0 32px 80px rgba(0,0,0,0.25)',
+                    animation: 'onboardingScaleIn 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                    pointerEvents: 'auto',
+                    display: 'flex',
+                    flexDirection: 'column',
                 }}>
-                    {[0, 1, 2, 3].map(i => (
-                        <div key={i} style={{
-                            width: step === i ? '24px' : '8px',
-                            height: '4px',
-                            borderRadius: '2px',
-                            background: step === i ? '#337AFF' : 'rgba(0,0,0,0.1)',
-                            transition: 'all 0.3s',
-                        }} />
-                    ))}
+                    {/* Step indicator */}
+                    <div style={{
+                        display: 'flex', gap: '4px', justifyContent: 'center',
+                        padding: '16px 0 0',
+                    }}>
+                        {[0, 1, 2, 3].map(i => (
+                            <div key={i} style={{
+                                width: step === i ? '24px' : '8px',
+                                height: '4px',
+                                borderRadius: '2px',
+                                background: step === i ? '#337AFF' : 'rgba(0,0,0,0.1)',
+                                transition: 'all 0.3s',
+                            }} />
+                        ))}
+                    </div>
+                    {renderStep()}
                 </div>
-                {renderStep()}
             </div>
             <style>{`
                 @keyframes onboardingScaleIn {
-                    from { opacity: 0; transform: translate(-50%, -50%) scale(0.95); }
-                    to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+                    from { opacity: 0; transform: scale(0.95); }
+                    to { opacity: 1; transform: scale(1); }
                 }
             `}</style>
         </>

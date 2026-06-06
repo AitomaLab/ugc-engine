@@ -233,6 +233,8 @@ export interface AgentTurn {
     // editor ops that couldn't be auto-applied from the project agent panel.
     // Renders as an "Open in editor" button that navigates to /editor/{jobId}.
     editorCta?: { jobId: string };
+    /** Set when a background generation failed — surfaced as an error bubble in chat. */
+    generation_failed?: boolean;
     ts: number;
 }
 

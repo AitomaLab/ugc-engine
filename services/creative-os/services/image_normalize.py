@@ -9,9 +9,12 @@ import io
 from PIL import Image, ImageOps
 
 
-def normalize_image_bytes(raw: bytes) -> bytes:
+def normalize_image_bytes(raw: bytes, max_dim: int = 4096) -> bytes:
     """Take any image bytes, return opaque PNG bytes on a white background.
-    Honors EXIF orientation, drops EXIF, flattens alpha."""
+    Honors EXIF orientation, drops EXIF, flattens alpha, AND downscales to
+    `max_dim` on the longest side so the result never exceeds Anthropic's
+    8000-pixel-per-side hard cap when forwarded to the agent. 4096 is well
+    below the cap while keeping fine detail on hi-res studio shots."""
     im = Image.open(io.BytesIO(raw))
     im = ImageOps.exif_transpose(im)
     if im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info):
@@ -21,6 +24,9 @@ def normalize_image_bytes(raw: bytes) -> bytes:
         im = bg
     elif im.mode != "RGB":
         im = im.convert("RGB")
+    # Downscale if either side exceeds max_dim. Preserves aspect ratio.
+    if max(im.size) > max_dim:
+        im.thumbnail((max_dim, max_dim), Image.LANCZOS)
     out = io.BytesIO()
     im.save(out, format="PNG", optimize=True)
     return out.getvalue()

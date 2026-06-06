@@ -216,6 +216,31 @@ async def _fetch_project_images(
     return all_shots
 
 
+async def _heal_assets_for_client(
+    client: CoreAPIClient,
+    images: list | None = None,
+    videos: list | None = None,
+) -> tuple[list, list]:
+    """Best-effort: mirror any non-Supabase asset URLs and update DB rows."""
+    from utils.persist_media import heal_asset_rows
+
+    imgs = list(images or [])
+    vids = list(videos or [])
+
+    async def _update_shot(shot_id: str, data: dict):
+        await client.update_shot(shot_id, data)
+
+    async def _update_job(job_id: str, data: dict):
+        await client.update_job(job_id, data)
+
+    return await heal_asset_rows(
+        imgs,
+        vids,
+        update_shot_fn=_update_shot,
+        update_job_fn=_update_job,
+    )
+
+
 async def _fetch_project_videos(
     client: CoreAPIClient,
     influencer_map: dict | None = None,
@@ -732,6 +757,8 @@ async def get_project_full(project_id: str, user: dict = Depends(get_current_use
         _fetch_project_videos(client, influencer_map=influencer_map, products=products),
     )
 
+    images, videos = await _heal_assets_for_client(client, images, videos)
+
     if not project:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Project not found")
@@ -793,7 +820,7 @@ async def project_jobs_status(
                 headers=headers,
                 params={
                     "id": f"in.({','.join(image_ids)})",
-                    "select": "id,status,status_message,progress,preview_url,image_url",
+                    "select": "id,status,status_message,progress,preview_url,image_url,created_at",
                 },
             ))
         else:
@@ -804,7 +831,7 @@ async def project_jobs_status(
                 headers=headers,
                 params={
                     "id": f"in.({','.join(video_ids)})",
-                    "select": "id,status,status_message,progress,preview_url,preview_type,final_video_url,thumbnail_url",
+                    "select": "id,status,status_message,progress,preview_url,preview_type,final_video_url,thumbnail_url,created_at",
                 },
             ))
         else:
@@ -824,7 +851,107 @@ async def project_jobs_status(
         r = results[idx]
         if not isinstance(r, Exception) and r.status_code == 200:
             out["videos"] = r.json() or []
+
+    # Reconcile orphaned shots: a generation writes its result back from an
+    # in-process background task. If the worker/process is restarted (deploy,
+    # code reload, crash) while that task is mid-flight, the shot is stranded
+    # in "processing" forever and the UI spins indefinitely even though the
+    # provider finished. After a generous grace period (well beyond any real
+    # render time) flip such shots to "failed" so the card resolves and the
+    # user can retry instead of staring at an eternal spinner.
+    await _reconcile_stale_image_shots(http_headers=headers, supabase_url=supabase_url, rows=out["images"])
+    await _reconcile_stale_video_jobs(http_headers=headers, supabase_url=supabase_url, rows=out["videos"])
     return out
+
+
+# Images never legitimately take this long; past it the writeback task is dead.
+_STALE_IMAGE_SECONDS = 8 * 60
+# Video renders (Kie polls, multi-chunk edits) can run longer — generous grace.
+_STALE_VIDEO_SECONDS = 25 * 60
+
+
+def _is_stale_processing_row(row: dict, *, media_keys: str | list[str], grace_seconds: int) -> bool:
+    from datetime import datetime, timezone
+
+    if not isinstance(row, dict):
+        return False
+    status = (row.get("status") or "").lower()
+    if not ("processing" in status or "pending" in status or "generating" in status):
+        return False
+    keys = [media_keys] if isinstance(media_keys, str) else media_keys
+    if any(row.get(k) for k in keys):
+        return False
+    created = row.get("created_at")
+    if not created:
+        return False
+    try:
+        now = datetime.now(timezone.utc)
+        ts = datetime.fromisoformat(str(created).replace("Z", "+00:00"))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+    except Exception:
+        return False
+    return (now - ts).total_seconds() >= grace_seconds
+
+
+async def _reconcile_stale_image_shots(*, http_headers: dict, supabase_url: str, rows: list) -> None:
+    """Delete image shots stuck in processing — ghost cards must not linger."""
+    stale_ids: list[str] = []
+    for row in list(rows):
+        if _is_stale_processing_row(row, media_keys="image_url", grace_seconds=_STALE_IMAGE_SECONDS):
+            stale_ids.append(str(row["id"]))
+            rows.remove(row)
+
+    if not stale_ids:
+        return
+
+    import httpx as _httpx
+    del_headers = {**http_headers, "Prefer": "return=minimal"}
+    try:
+        async with _httpx.AsyncClient(timeout=10.0) as http:
+            await asyncio.gather(
+                *(
+                    http.delete(
+                        f"{supabase_url}/rest/v1/product_shots",
+                        headers=del_headers,
+                        params={"id": f"eq.{sid}"},
+                    )
+                    for sid in stale_ids
+                ),
+                return_exceptions=True,
+            )
+    except Exception as e:
+        print(f"[jobs-status] stale shot delete failed: {e}")
+
+
+async def _reconcile_stale_video_jobs(*, http_headers: dict, supabase_url: str, rows: list) -> None:
+    """Delete video jobs stuck in processing — ghost cards must not linger."""
+    stale_ids: list[str] = []
+    for row in list(rows):
+        if _is_stale_processing_row(row, media_keys=["final_video_url", "video_url"], grace_seconds=_STALE_VIDEO_SECONDS):
+            stale_ids.append(str(row["id"]))
+            rows.remove(row)
+
+    if not stale_ids:
+        return
+
+    import httpx as _httpx
+    del_headers = {**http_headers, "Prefer": "return=minimal"}
+    try:
+        async with _httpx.AsyncClient(timeout=10.0) as http:
+            await asyncio.gather(
+                *(
+                    http.delete(
+                        f"{supabase_url}/rest/v1/video_jobs",
+                        headers=del_headers,
+                        params={"id": f"eq.{sid}"},
+                    )
+                    for sid in stale_ids
+                ),
+                return_exceptions=True,
+            )
+    except Exception as e:
+        print(f"[jobs-status] stale video delete failed: {e}")
 
 
 @router.delete("/{project_id}")
@@ -837,14 +964,18 @@ async def delete_project(project_id: str, user: dict = Depends(get_current_user)
 async def list_project_images(project_id: str, user: dict = Depends(get_current_user)):
     """List all image assets (product shots) for a project."""
     client = CoreAPIClient(token=user["token"], project_id=project_id)
-    return await _fetch_project_images(client)
+    images = await _fetch_project_images(client)
+    images, _ = await _heal_assets_for_client(client, images=images, videos=[])
+    return images
 
 
 @router.get("/{project_id}/assets/videos")
 async def list_project_videos(project_id: str, user: dict = Depends(get_current_user)):
     """List all video assets (jobs) for a project."""
     client = CoreAPIClient(token=user["token"], project_id=project_id)
-    return await _fetch_project_videos(client)
+    videos = await _fetch_project_videos(client)
+    _, videos = await _heal_assets_for_client(client, images=[], videos=videos)
+    return videos
 
 
 @router.delete("/{project_id}/assets/images/{shot_id}")

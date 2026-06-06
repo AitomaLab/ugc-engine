@@ -435,7 +435,7 @@ def build_30s(dur, app_clip, ctx, product=None, influencer=None):
         veo_animation_prompt = (
             f"dialogue: {script_text}\n"
             f"action: character {device_action}, slight natural body movement, "
-            f"genuine excited expression, maintains eye contact with camera\n"
+            f"relaxed natural expression with subtle warm smile, maintains soft eye contact with camera (NOT wide-eyed, NOT surprised, NOT exaggerated)\n"
             f"character: {ctx['age']} {ctx['gender'].lower()}, {ctx['visuals']}, "
             f"natural skin texture with visible pores, not airbrushed\n"
             f"device: the {device_str} is PHYSICALLY held by the character, the FRONT screen faces the camera, the screen is fully visible to the viewer showing the app interface from the provided product image physically ON the screen of the device, the app interface is NOT floating in mid-air, the screen content is COMPLETELY STATIC throughout the clip — IDENTICAL pixel content from frame 1 to the final frame, character must NOT touch, tap, swipe, scroll or interact with the screen, the app UI must NOT change, transition, animate, navigate, or update at any point\n"
@@ -501,12 +501,13 @@ def build_30s(dur, app_clip, ctx, product=None, influencer=None):
                 f"natural skin texture with visible pores\n"
                 f"camera: amateur UGC video, same camera angle, stationary camera, locked off, NO panning, NO movement\n"
                 f"setting: {env}, slightly blurry background\n"
-                f"emotion: total amazement, joy, genuine warmth\n"
+                f"emotion: warm and natural, calm relaxed face with regular natural blinking every 2-4 seconds, soft eye contact (NOT wide-eyed, NOT a frozen surprised expression)\n"
                 f"voice_type: clear confident pronunciation, casual, conversational {_accent}, {ctx['tone'].lower()} tone, consistent medium pacing\n"
                 f"style: raw authentic TikTok/Reels UGC, candid, not polished\n"
                 f"speech_constraint: {speech_constraint}\n"
                 f"negative: no airbrushed skin, no studio lighting, no camera movement, no panning, no scene wipe, no cuts, no transitions, no extra fingers, no stuttering, no extra limbs, "
-                f"no subtitles, no captions, no text overlays, no burned-in text, no on-screen text, no words rendered on screen"
+                f"no subtitles, no captions, no text overlays, no burned-in text, no on-screen text, no words rendered on screen, "
+                f"no wide-eyed stare, no bulging eyes, no unblinking gaze, no frozen surprised expression"
             )
         scenes.append({
             "name": "reaction",
@@ -708,19 +709,20 @@ def build_digital_unified(influencer: dict, product: dict, app_clip: dict, durat
     veo_animation_prompt = (
         f"dialogue: {part1}\n"
         f"action: character {device_action}, slight natural body movement, "
-        f"genuine excited expression, maintains eye contact with camera\n"
+        f"relaxed natural expression with subtle warm smile, maintains soft eye contact with camera (NOT wide-eyed, NOT surprised, NOT exaggerated)\n"
         f"character: {ctx['age']} {ctx['gender'].lower()}, {ctx['visuals']}, "
         f"natural skin texture with visible pores, not airbrushed\n"
         f"camera: amateur UGC video, stationary POV camera, character does NOT hold the filming camera, slight natural handheld shake\n"
         f"setting: {ctx.get('setting', 'natural environment matching the background visible in the reference image')}, slightly blurry background\n"
-        f"emotion: genuine excitement, authentic discovery reaction\n"
+        f"emotion: warm and natural, calm relaxed face with regular natural blinking every 2-4 seconds, soft eye contact (NOT wide-eyed, NOT a frozen surprised expression)\n"
         f"voice_type: casual, conversational {_accent}, {ctx['tone'].lower()} tone\n"
         f"audio: character speaks clearly and audibly, voice must be present in the generated video\n"
         f"style: raw authentic TikTok/Reels UGC, candid, not polished\n"
         f"speech_constraint: speak ONLY the exact dialogue words provided, do not add or improvise any words, never repeat or stutter any word, each word must be spoken exactly once, speak at a relaxed unhurried natural pace filling the full duration of the video, do not rush\n"
         f"negative: no airbrushed skin, no studio lighting, no geometric distortion, no extra fingers, "
         f"no silent video, no muted audio, no word repetition, no stuttering, no repeated syllables, "
-        f"no subtitles, no captions, no text overlays, no burned-in text, no on-screen text, no words rendered on screen"
+        f"no subtitles, no captions, no text overlays, no burned-in text, no on-screen text, no words rendered on screen, "
+        f"no wide-eyed stare, no bulging eyes, no unblinking gaze, no frozen surprised expression"
     )
 
     scene_1 = {

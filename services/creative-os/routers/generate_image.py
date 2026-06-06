@@ -23,6 +23,32 @@ from services.model_router import get_image_mode
 router = APIRouter(prefix="/generate/image", tags=["image-generation"])
 
 
+async def _persist_and_complete_shot(
+    shot_id: str,
+    image_url: str,
+    *,
+    token: str,
+    project_id: str,
+    path_prefix: str = "project_shots",
+) -> str:
+    """Mirror provider URL to Supabase product-images, then mark shot complete."""
+    from utils.persist_media import finalize_image_url
+
+    client = CoreAPIClient(token=token, project_id=project_id)
+
+    async def _on_persisted(stored: str) -> None:
+        await client.update_shot(shot_id, {"image_url": stored})
+
+    stored = await finalize_image_url(
+        image_url,
+        shot_id=shot_id,
+        path_prefix=path_prefix,
+        on_persisted=_on_persisted,
+    )
+    await client.update_shot(shot_id, {"status": "image_completed", "image_url": stored})
+    return stored
+
+
 class EnhanceRequest(BaseModel):
     prompt: str
     mode: str  # "cinematic", "iphone_look", "luxury", or "ugc"
@@ -346,14 +372,11 @@ async def execute_image_generation(data: ExecuteRequest, user: dict = Depends(ge
                         aspect_ratio=aspect_ratio,
                         quality=quality,
                     )
-                    # Update the shot record with the completed image
                     if shot_id:
-                        update_client = CoreAPIClient(token=token, project_id=project_id)
-                        await update_client.update_shot(shot_id, {
-                            "status": "image_completed",
-                            "image_url": image_url,
-                        })
-                        print(f"[Image Gen] UGC shot {shot_id} completed: {image_url[:80]}...")
+                        stored = await _persist_and_complete_shot(
+                            shot_id, image_url, token=token, project_id=project_id,
+                        )
+                        print(f"[Image Gen] UGC shot {shot_id} completed: {stored[:80]}...")
                 except Exception as e:
                     print(f"[Image Gen] UGC background task failed: {e}")
                     if shot_id:
@@ -432,8 +455,9 @@ async def execute_image_generation(data: ExecuteRequest, user: dict = Depends(ge
                         has_influencer=has_inf, aspect_ratio=ar, quality=q,
                     )
                     if shot_id:
-                        c = CoreAPIClient(token=token, project_id=pid)
-                        await c.update_shot(shot_id, {"status": "image_completed", "image_url": image_url})
+                        await _persist_and_complete_shot(
+                            shot_id, image_url, token=token, project_id=pid,
+                        )
                         print(f"[Image Gen] QA shot {shot_id} completed")
                 except Exception as e:
                     print(f"[Image Gen] QA background failed: {e}")
@@ -511,8 +535,9 @@ async def execute_image_generation(data: ExecuteRequest, user: dict = Depends(ge
                         has_influencer=has_inf, aspect_ratio=ar, quality=q,
                     )
                     if shot_id:
-                        c = CoreAPIClient(token=token, project_id=pid)
-                        await c.update_shot(shot_id, {"status": "image_completed", "image_url": image_url})
+                        await _persist_and_complete_shot(
+                            shot_id, image_url, token=token, project_id=pid,
+                        )
                         print(f"[Image Gen] Product shot {shot_id} completed")
                 except Exception as e:
                     print(f"[Image Gen] Product background failed: {e}")
@@ -579,8 +604,9 @@ async def execute_image_generation(data: ExecuteRequest, user: dict = Depends(ge
                     has_influencer=has_inf, aspect_ratio=ar, quality=q,
                 )
                 if shot_id:
-                    c = CoreAPIClient(token=token, project_id=pid)
-                    await c.update_shot(shot_id, {"status": "image_completed", "image_url": image_url})
+                    await _persist_and_complete_shot(
+                        shot_id, image_url, token=token, project_id=pid,
+                    )
                     print(f"[Image Gen] Shot {shot_id} completed")
             except Exception as e:
                 print(f"[Image Gen] Background gen failed: {e}")
@@ -1810,6 +1836,10 @@ async def text_to_image(data: TextToImageRequest, user: dict = Depends(get_curre
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"text-to-image failed: {str(e)[:300]}")
 
+    from utils.persist_image import persist_image_url
+
+    image_url = await persist_image_url(image_url, path_prefix="text_to_image")
+
     shot_id: Optional[str] = None
     if data.project_id:
         try:
@@ -1932,12 +1962,16 @@ async def alt_versions(data: AltVersionsRequest, user: dict = Depends(get_curren
     # create new ones for any URLs beyond the 2 placeholders, mark unused
     # placeholders as failed.
     shot_ids: List[str] = []
+    from utils.persist_image import persist_image_url
+
     if client:
         for i, url in enumerate(image_urls):
+            stored = await persist_image_url(url, path_prefix="alt_versions")
+            image_urls[i] = stored
             if i < len(placeholder_shot_ids):
                 sid = placeholder_shot_ids[i]
                 try:
-                    await client.update_shot(sid, {"status": "image_completed", "image_url": url})
+                    await client.update_shot(sid, {"status": "image_completed", "image_url": stored})
                     shot_ids.append(sid)
                 except Exception as e:
                     print(f"[alt-versions] WARN: update {sid} failed: {e}")
@@ -1947,7 +1981,7 @@ async def alt_versions(data: AltVersionsRequest, user: dict = Depends(get_curren
                         "shot_type": "ai_generated",
                         "status": "image_completed",
                         "prompt": data.prompt,
-                        "image_url": url,
+                        "image_url": stored,
                         "project_id": data.project_id,
                         "analysis_json": {"mode": "alt_version", "provider": "wavespeed"},
                     })

@@ -38,6 +38,9 @@ CREDIT_COSTS = {
     "cinematic_animate_720p_15s": 96,
     "cinematic_broll_720p_5s": 32,
     "cinematic_product_macro_720p_5s": 32,
+    # Gemini Omni Video — generative edit of an existing clip (flat per gen).
+    "gemini_omni_edit_720p": 25,
+    "gemini_omni_edit_4k": 38,
 }
 
 
@@ -121,6 +124,12 @@ def get_text_to_image_credit_cost() -> int:
 def get_alt_versions_credit_cost() -> int:
     """Pair of alt-version outputs from a single edit-multi call."""
     return CREDIT_COSTS["wavespeed_alt_versions_pair"]
+
+
+def get_gemini_omni_edit_credit_cost(resolution: str = "720p") -> int:
+    """Credits for one Gemini Omni Video edit (flat per gen). 4k → 38, else 25."""
+    key = "gemini_omni_edit_4k" if str(resolution).lower() == "4k" else "gemini_omni_edit_720p"
+    return CREDIT_COSTS[key]
 
 
 def get_video_credit_cost(product_type: str, duration: int) -> int:
