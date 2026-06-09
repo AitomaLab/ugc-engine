@@ -10,18 +10,14 @@ import sys
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-# Ensure service directory is on the path for local imports
-sys.path.insert(0, str(Path(__file__).parent))
-# Also expose the repo root so shared modules at the top level (e.g.
-# `scene_builder.py`, used by routers/generate_image.py for visual
-# extraction) are importable from the deployed Railway service. Without
-# this, `from scene_builder import _extract_visual_appearance` raises
-# ModuleNotFoundError under cwd=services/creative-os and PYTHONPATH=.,
-# and every UGC image generation that has an influencer fails silently
-# in fan-out with no actual generation taking place.
-_repo_root = Path(__file__).parent.parent.parent
-if _repo_root.exists():
+_service_dir = Path(__file__).parent
+# Monorepo root (repo-root `prompts/`, `scene_builder.py`, etc.). On Railway
+# the full repo is cloned even when the service root is services/creative-os.
+_repo_root = _service_dir.parent.parent.parent
+if (_repo_root / "prompts" / "product_refs.py").exists():
     sys.path.insert(0, str(_repo_root))
+# Service directory last so repo-root `prompts/` wins over the local stub package.
+sys.path.insert(0, str(_service_dir))
 
 # Load env
 from env_loader import load_env

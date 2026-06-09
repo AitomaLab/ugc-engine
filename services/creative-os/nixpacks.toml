@@ -10,5 +10,13 @@ NIXPACKS_PYTHON_VERSION = "3.11"
 [phases.setup]
 nixPkgs = ["...", "ffmpeg"]
 
+# Sync canonical repo-root prompt modules into the local prompts package so
+# Railway builds (root directory = services/creative-os) can import them even
+# when the runtime image does not expose parent directories on sys.path.
+[phases.build]
+cmds = [
+  "for f in cinematic_ads product_refs script_split digital_prompts physical_prompts cinematic_shots; do cp -f ../../prompts/${f}.py prompts/ 2>/dev/null || true; done",
+]
+
 [start]
-cmd = "PYTHONPATH=. python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8001}"
+cmd = "PYTHONPATH=.:../.. python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8001}"
