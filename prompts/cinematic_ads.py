@@ -1,3 +1,4 @@
+# Canonical cinematic_ads module — imported by Creative OS via repo-root sys.path.
 """
 Cinematic-ads prompt builders + direction proposer.
 
@@ -40,6 +41,7 @@ from __future__ import annotations
 import asyncio
 import json as _json
 import os
+import re as _re
 from typing import Any, Optional
 
 
@@ -723,6 +725,17 @@ async def generate_beats_from_brief(
         + "No prose, no markdown, no preamble.\n\n"
         f"SHOT VOCAB (pick `camera` from these per beat):\n{_shot_vocab_lines}"
     )
+    if is_beauty_category(category):
+        system += (
+            "\n\nBEAUTY FAL SAFETY (mandatory when CATEGORY is beauty/skincare): "
+            "NEVER mention lip, lips, mouth, kiss, pout, or tongue in any `action`. "
+            "Product application MUST be on forearm, back of hand, or cheek — never on lips. "
+            "No lip ECU, no mouth close-up, no product touching lips. "
+            "PANEL FRAMING: beat 1 = medium establishing shot with face visible and product "
+            "on a surface nearby (not at lips). Beats 2 through N-1 = hands/forearm/product "
+            "macro only — explicitly state 'no face in frame'. Final beat = product hero or "
+            "relaxed medium shot (face optional, never lip ECU)."
+        )
     _aspect_hint = {
         "9:16": "VERTICAL (9:16) — frame for vertical screens, close-ups + single-subject framing, avoid wide horizon shots",
         "4:3":  "CLASSIC (4:3) — boxier frame, works for documentary / vintage",
@@ -809,6 +822,95 @@ def panels_for_duration(duration_seconds: int) -> int:
     return _DURATION_TO_PANELS.get(int(duration_seconds), 6)
 
 
+def is_beauty_category(category: str) -> bool:
+    return (category or "").lower() in _BEAUTY_CATS
+
+
+# Lip/mouth wording that triggers Fal GPT Image 2 content checkers on beauty ads.
+_LIP_MOUTH_RE = _re.compile(
+    r"\b(lower lip|upper lip|lips?|mouth|kiss|pout|tongue|balm[\s-]glossed|lip[\s-]rests?)\b",
+    _re.I,
+)
+_ECU_LIP_CAMERA_RE = _re.compile(r"anamorphic\s+ECU|ECU\s+off[\s-]axis", _re.I)
+
+
+_FACE_IN_FRAME_RE = _re.compile(
+    r"\b(face|portrait|profile|head|woman|man|person|model|she|he|her|his)\b",
+    _re.I,
+)
+
+
+def sanitize_beats_for_fal(
+    beats: list[dict],
+    *,
+    category: str,
+    has_humans: bool,
+    aggressive: bool = False,
+    hands_only: bool = False,
+) -> list[dict]:
+    """Rewrite beauty panel beats to pass Fal content moderation.
+
+    Standard mode fixes obvious lip/mouth ECU language. Aggressive mode (retry
+    path) forces forearm/hand application on any beat that still looks risky.
+    hands_only mode crops application panels to hands/product with no face in frame
+    (panel 1 may keep an establishing medium shot with face visible).
+    """
+    if not is_beauty_category(category) or not has_humans:
+        return beats
+
+    _safe_apply = (
+        "the formula glides smoothly across the forearm in one fluid horizontal stroke, "
+        "soft satin sheen catching warm light (no mouth contact)"
+    )
+    _safe_hold = (
+        "product held gently in hand near the cheek, warm window light, no lip or mouth contact"
+    )
+    _hands_only_action = (
+        "tight crop on hands and product only, no face visible in frame, "
+        "warm natural light on skin and packaging"
+    )
+    out: list[dict] = []
+    changed = False
+    for b in beats:
+        beat = dict(b)
+        action = str(beat.get("action") or "")
+        camera = str(beat.get("camera") or "")
+        orig_action, orig_camera = action, camera
+        panel_n = int(beat.get("n") or 0)
+        risky = bool(_LIP_MOUTH_RE.search(action)) or bool(_ECU_LIP_CAMERA_RE.search(camera))
+
+        if hands_only and panel_n > 1:
+            if _FACE_IN_FRAME_RE.search(action) or "face" in action.lower():
+                action = _hands_only_action
+                camera = "50mm close-up, hands and product in frame"
+                changed = True
+            elif "hand" not in action.lower() and "forearm" not in action.lower():
+                action = f"{_hands_only_action}, {action[:120]}"
+                camera = camera or "50mm close-up, hands and product in frame"
+                changed = True
+
+        if aggressive or risky:
+            if aggressive and (_LIP_MOUTH_RE.search(action) or "lip" in action.lower() or "mouth" in action.lower()):
+                action = _safe_apply if "glide" in action.lower() or "apply" in action.lower() or "stroke" in action.lower() else _safe_hold
+            else:
+                action = _LIP_MOUTH_RE.sub("soft skin", action)
+                action = action.replace("lower lip", "forearm")
+                action = action.replace("across lips", "across forearm")
+                action = action.replace("lip rests", "hand rests product nearby")
+            if _ECU_LIP_CAMERA_RE.search(camera):
+                camera = "50mm close-up, product in hand"
+            changed = True
+        beat["action"] = action[:240]
+        beat["camera"] = camera[:120]
+        out.append(beat)
+    if changed or aggressive or hands_only:
+        print(
+            f"[cinematic_storyboard] beats sanitized for Fal "
+            f"(aggressive={aggressive}, hands_only={hands_only})"
+        )
+    return out
+
+
 def _grid_for(num_panels: int, aspect_ratio: str) -> tuple[int, int]:
     """Return (cols, rows) for a storyboard sheet given panel count + aspect.
 
@@ -843,6 +945,8 @@ def build_storyboard_prompt(
     duration_s: int = 15,
     aspect_ratio: str = "16:9",
     beats: Optional[list[dict]] = None,
+    has_influencer_ref: bool = False,
+    moderation_profile: str = "sharp",
 ) -> str:
     has_humans = direction.get("model_or_product_only") == "model"
     beat_s = duration_s / num_panels
@@ -853,10 +957,92 @@ def build_storyboard_prompt(
     grid_text = f"{cols} columns by {rows} rows"
     sheet_orient = "vertical" if aspect_ratio == "9:16" else ("standard" if aspect_ratio == "4:3" else "landscape")
 
-    # Character lock — sharp, consistent face across panels. Soft-blur was a
-    # legacy beauty-safety rule but it broke Seedance face propagation
-    # (downstream i2v can't inpaint a blurred reference → blurred video faces).
-    if has_humans:
+    _fal_safety = (
+        "FAL SAFETY — product application on forearm, back of hand, or "
+        "cheek only. NEVER lip/mouth ECU, NEVER product touching lips.\n\n"
+    )
+
+    # Beauty uses progressive moderation profiles (sharp → hands_only →
+    # product_ref_only → blur_fallback). Non-beauty always sharp @Image2.
+    if has_humans and is_beauty_category(category):
+        profile = moderation_profile if moderation_profile in (
+            "sharp", "hands_only", "product_ref_only", "blur_fallback",
+        ) else "sharp"
+        use_image2 = has_influencer_ref and profile != "product_ref_only"
+
+        if profile == "blur_fallback":
+            if use_image2:
+                character_lock = (
+                    "CRITICAL — CHARACTER LOCK (for panels with a person): @Image2 "
+                    "anchors hair, jawline, skin tone, and clothing. Render the face "
+                    "center as SOFT WARM-TONED DIFFUSED BLUR (Sofia Coppola-style) — "
+                    "hair edges and jawline crisp, no discernible eyes/nose/mouth in "
+                    "storyboard panels.\n\n"
+                    + _fal_safety
+                )
+            else:
+                character_lock = (
+                    "CRITICAL — CHARACTER LOCK (for panels with a person): a woman in "
+                    "her late twenties, soft natural beauty. Render the FACE as SOFT "
+                    "WARM-TONED DIFFUSED BLUR — hair edges and jawline crisp, no "
+                    "discernible eyes/nose/mouth.\n\n"
+                    + _fal_safety
+                )
+        elif profile == "hands_only":
+            if use_image2:
+                character_lock = (
+                    "CRITICAL — CHARACTER LOCK: @Image2 anchors identity. Panel 01 ONLY "
+                    "may show a medium establishing shot with face FULLY SHARP and IN FOCUS "
+                    "(product on surface nearby, not at lips). Panels 02–"
+                    f"{num_panels:02d} are tight crops on hands/forearm/product ONLY — "
+                    "NO face visible in frame.\n\n"
+                    + _fal_safety
+                )
+            else:
+                character_lock = (
+                    "CRITICAL — CHARACTER LOCK: a single consistent woman in her late "
+                    "twenties. Panel 01 ONLY may show a medium establishing shot with face "
+                    "FULLY SHARP. Panels 02–"
+                    f"{num_panels:02d} are hands/forearm/product crops ONLY — NO face in frame.\n\n"
+                    + _fal_safety
+                )
+        elif profile == "product_ref_only" or not use_image2:
+            character_lock = (
+                "CRITICAL — CHARACTER LOCK (for panels with a person): a single "
+                "consistent woman in her late twenties, natural lived-in appearance. "
+                "Render the FACE FULLY, SHARP, IN FOCUS in panel 01 only; application "
+                "panels are hands-only crops with no face in frame. Same person across "
+                "every panel where she appears.\n\n"
+                + _fal_safety
+            )
+        else:  # sharp (default)
+            if use_image2:
+                character_lock = (
+                    "CRITICAL — CHARACTER LOCK (for panels with a person): locked to "
+                    "@Image2 — preserve exact face geometry, hair color/style, skin tone, "
+                    "and clothing. Render the FACE FULLY, SHARP, IN FOCUS — same person "
+                    "across every panel. Eyes, nose, mouth all clearly drawn. "
+                    "@Image2 is the identity anchor; do not invent a different face.\n\n"
+                    + _fal_safety
+                )
+            else:
+                character_lock = (
+                    "CRITICAL — CHARACTER LOCK (for panels with a person): a single "
+                    "consistent individual in their late twenties, natural lived-in "
+                    "appearance. Render the FACE FULLY, SHARP, IN FOCUS — same person "
+                    "across every panel.\n\n"
+                    + _fal_safety
+                )
+    elif has_humans and has_influencer_ref:
+        character_lock = (
+            "CRITICAL — CHARACTER LOCK (for panels with a person): locked to "
+            "@Image2 — preserve exact face geometry, hair color/style, skin tone, "
+            "and clothing. Render the FACE FULLY, SHARP, IN FOCUS — same person "
+            "across every panel. Eyes, nose, mouth all clearly drawn. "
+            "@Image2 is the identity anchor for the character; do not invent a "
+            "different face.\n\n"
+        )
+    elif has_humans:
         character_lock = (
             "CRITICAL — CHARACTER LOCK (for panels with a person): a single "
             "consistent individual in their late twenties, natural lived-in "
@@ -949,6 +1135,7 @@ def build_seedance_prompt(
     has_storyboard: bool = True,
     beats: Optional[list[dict]] = None,
     aspect_ratio: str = "16:9",
+    has_influencer_ref: bool = False,
 ) -> str:
     """Short 40-70 word "animate this storyboard" prompt — matches the prior
     working 16:9 shape. All cinematic complexity lives in the storyboard image
@@ -958,10 +1145,17 @@ def build_seedance_prompt(
     """
     if has_storyboard:
         panel_count = len(beats) if beats else 6
-        human_line = (
-            " Keep the character consistent across all shots — same person, same face."
-            if has_humans else ""
-        )
+        if has_humans and has_influencer_ref:
+            human_line = (
+                " @Image3 is the character — preserve exact face, hair, and skin tone "
+                "in every shot where a person appears."
+            )
+        elif has_humans:
+            human_line = (
+                " Keep the character consistent across all shots — same person, same face."
+            )
+        else:
+            human_line = ""
         return (
             f"Animate the {panel_count}-panel storyboard in @Image1 in order as a continuous "
             f"{duration_s}s {aspect_ratio} cinematic ad with hard cuts between panels. "
@@ -985,6 +1179,7 @@ def build_seedance_broll_prompt(
     has_humans: bool,
     direction: Optional[dict] = None,
     aspect_ratio: str = "16:9",
+    has_influencer_ref: bool = False,
 ) -> str:
     """Single-beat 5s pillar-structured b-roll prompt from one panel + the
     parent direction's signatures (so b-roll inherits the same look as the
@@ -992,7 +1187,14 @@ def build_seedance_broll_prompt(
     """
     direction = direction or {}
     action = panel.get("action") or panel.get("scene", "single product beat")
-    human_line = " Keep the character consistent and in focus." if has_humans else " No people."
+    if has_humans and has_influencer_ref:
+        human_line = (
+            " @Image3 is the character — preserve exact face, hair, and skin tone."
+        )
+    elif has_humans:
+        human_line = " Keep the character consistent and in focus."
+    else:
+        human_line = " No people."
     return (
         f"Animate @Image1 as a 5s {aspect_ratio} cinematic b-roll beat: {action}. "
         f"@Image2 is the {brand} {product} — preserve exact shape, color, materials; "

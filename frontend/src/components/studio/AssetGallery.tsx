@@ -60,6 +60,15 @@ interface AssetGalleryProps {
 
 const PAGE_SIZE = 20;
 
+/** Wall-clock ETA for in-flight video jobs (seconds). Never use the old 180s default. */
+function getVideoEtaSeconds(asset: { eta_seconds?: number; length?: number }): number {
+    if (asset?.eta_seconds) return asset.eta_seconds;
+    const len = asset?.length;
+    if (len === 30) return 540;
+    if (len === 15) return 360;
+    return 480;
+}
+
 export function AssetGallery({ assets, type, loading, projectId, onRefresh, onAnimated, onCreateVideo }: AssetGalleryProps) {
     const { t } = useTranslation();
     const [page, setPage] = useState(0);
@@ -474,7 +483,12 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
     const imageUrl = type === 'images' ? asset.image_url : null;
     const videoUrl = type === 'videos' ? (asset.final_video_url || asset.video_url) : asset.video_url;
     const status = asset.status || 'success';
-    const isProcessing = status.includes('pending') || status.includes('processing') || status.includes('generating');
+    const hasPlayableMedia = type === 'videos'
+        ? !!(asset.final_video_url || asset.video_url)
+        : !!asset.image_url;
+    const isProcessing = !hasPlayableMedia && (
+        status.includes('pending') || status.includes('processing') || status.includes('generating')
+    );
     const isFailed = !isProcessing && status.includes('failed') && !imageUrl && !videoUrl;
 
     // Track elapsed time for pending assets
@@ -487,7 +501,7 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
         return () => clearInterval(id);
     }, [isProcessing, asset.created_at]);
 
-    const estimatedTotal = type === 'images' ? 90 : 180;
+    const estimatedTotal = type === 'images' ? 90 : getVideoEtaSeconds(asset);
     const remaining = Math.max(0, estimatedTotal - elapsed);
     const formatTime = (s: number) => s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
 
@@ -768,13 +782,13 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
                     return statusMsg;
                 })();
 
-                // Estimated time — use real progress if available, else compute from elapsed
-                const estMinutes = type === 'images' ? 1.5 : 3;
-                const elapsedMin = elapsed / 60;
-                const remainingMin = Math.max(0, estMinutes - elapsedMin);
-                const remainingLabel = progress > 85 ? t('creativeOs.gallery.finishing') :
-                    remainingMin >= 1 ? t('creativeOs.gallery.minLeft').replace('{n}', String(Math.ceil(remainingMin))) :
-                    remainingMin > 0 ? t('creativeOs.gallery.secLeft').replace('{n}', String(Math.ceil(remainingMin * 60))) : t('creativeOs.gallery.finishing');
+                const estimatedTotalSec = type === 'images' ? 90 : getVideoEtaSeconds(asset);
+                const remainingSec = Math.max(0, estimatedTotalSec - elapsed);
+                const remainingLabel = (remainingSec <= 30 || progress >= 95)
+                    ? t('creativeOs.gallery.finishing')
+                    : remainingSec >= 60
+                        ? t('creativeOs.gallery.minLeft').replace('{n}', String(Math.ceil(remainingSec / 60)))
+                        : t('creativeOs.gallery.secLeft').replace('{n}', String(remainingSec));
 
                 return (
                     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>

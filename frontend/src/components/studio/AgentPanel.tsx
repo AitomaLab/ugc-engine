@@ -16,6 +16,7 @@ import {
     type AgentStreamEvent,
     type CaptionStylePreview,
 } from '@/lib/creative-os-api';
+import { fetchJobsStatus } from '@/lib/jobs-status-poll';
 import { CaptionStylePreviewCard } from '@/components/captions/CaptionStylePreviewCard';
 import { supabase } from '@/lib/supabaseClient';
 import { useTranslation } from '@/lib/i18n';
@@ -65,7 +66,7 @@ interface AgentPanelProps {
     /** Fires when the agent starts a generation job, so the parent can switch the gallery tab. */
     onJobStart?: (kind: 'image' | 'video') => void;
     /** Background video job (e.g. edit_video) — parent should watch this id until success/fail. */
-    onVideoJobStarted?: (payload: { job_id: string; label?: string }) => void;
+    onVideoJobStarted?: (payload: { job_id: string; label?: string; eta_seconds?: number; duration?: number }) => void;
     /** Fires when a long-running tool announces a pending artifact (right-panel placeholder). */
     onArtifactPending?: (pending: { pending_id: string; kind: 'image' | 'video'; label: string; stage?: string; tool_name?: string; eta_seconds?: number }) => void;
     /** Fires when a real artifact lands, so the parent can drop one matching placeholder. */
@@ -300,7 +301,12 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
     // wipes the user turn appended by the auto-fired handleRun).
     const [hydrating, setHydrating] = useState(Boolean(initialBrief));
     const abortRef = useRef<AbortController | null>(null);
-    const reconnectRef = useRef<{ timer: ReturnType<typeof setTimeout> | null; stableSince: number; lastHash: string }>({ timer: null, stableSince: 0, lastHash: '' });
+    const reconnectRef = useRef<{
+        timer: ReturnType<typeof setTimeout> | null;
+        stableSince: number;
+        lastHash: string;
+        watchedJobIds: Set<string>;
+    }>({ timer: null, stableSince: 0, lastHash: '', watchedJobIds: new Set() });
     const scrollerRef = useRef<HTMLDivElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1087,6 +1093,15 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                 reconnectRef.current.timer = null;
             }
         };
+        const isJobStillActive = (row: { status?: string; final_video_url?: string; video_url?: string }) => {
+            const st = (row.status || '').toLowerCase();
+            if (st.includes('fail') || st.includes('error')) return false;
+            if (st === 'success' || st === 'complete' || st === 'completed' || st === 'done') {
+                return !(row.final_video_url || row.video_url);
+            }
+            return st === 'processing' || st === 'pending' || st === 'generating' || !st;
+        };
+
         const startThreadPolling = () => {
             stopThreadPolling();
             reconnectRef.current.stableSince = 0;
@@ -1105,10 +1120,32 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                         if (thread.session_id) setSessionId(thread.session_id);
                         onArtifact?.();
                     }
-                    // Stop polling once state has been stable for 45s —
-                    // the run has almost certainly finished by then.
+
+                    // Background video jobs: parent project page polls jobs-status when
+                    // onVideoJobStarted is wired; avoid duplicate polls here.
+                    let hasActiveWatchedJob = false;
+                    const watchedIds = [...reconnectRef.current.watchedJobIds];
+                    if (watchedIds.length > 0 && onVideoJobStarted) {
+                        reconnectRef.current.watchedJobIds.clear();
+                    } else if (watchedIds.length > 0) {
+                        try {
+                            const status = await fetchJobsStatus(projectId, [], watchedIds);
+                            for (const row of status.videos || []) {
+                                if (row.id && isJobStillActive(row)) {
+                                    hasActiveWatchedJob = true;
+                                } else if (row.id) {
+                                    reconnectRef.current.watchedJobIds.delete(String(row.id));
+                                }
+                            }
+                        } catch (pollErr) {
+                            hasActiveWatchedJob = watchedIds.length > 0;
+                            console.warn('reconnect job-status poll failed:', pollErr);
+                        }
+                    }
+
+                    // Stop once thread is stable for 45s AND no watched jobs remain active.
                     const stableFor = Date.now() - reconnectRef.current.stableSince;
-                    if (reconnectRef.current.stableSince && stableFor > 45000) {
+                    if (reconnectRef.current.stableSince && stableFor > 45000 && !hasActiveWatchedJob) {
                         stopThreadPolling();
                         setRunning(false);
                         setActivity('');
@@ -1267,9 +1304,15 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     break;
                 }
                 case 'video_job_started': {
-                    const vjs = e as { job_id?: string; label?: string };
+                    const vjs = e as { job_id?: string; label?: string; eta_seconds?: number; duration?: number };
                     if (vjs.job_id) {
-                        onVideoJobStarted?.({ job_id: vjs.job_id, label: vjs.label });
+                        reconnectRef.current.watchedJobIds.add(vjs.job_id);
+                        onVideoJobStarted?.({
+                            job_id: vjs.job_id,
+                            label: vjs.label,
+                            eta_seconds: vjs.eta_seconds,
+                            duration: vjs.duration,
+                        });
                         onJobStart?.('video');
                     }
                     break;

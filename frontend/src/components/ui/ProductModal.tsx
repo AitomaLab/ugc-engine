@@ -58,7 +58,9 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
 
     // AI Analysis / Product Description State
     const [analyzing, setAnalyzing] = useState(false);
+    const [analyzeProgress, setAnalyzeProgress] = useState('');
     const [analysisResult, setAnalysisResult] = useState<any>(null);
+    const [shotDescriptions, setShotDescriptions] = useState<Record<string, any>>({});
     const [previewAssetUrl, setPreviewAssetUrl] = useState<string | null>(null);
     const [descriptionMode, setDescriptionMode] = useState<'ai' | 'manual'>('ai');
     const [manualDescription, setManualDescription] = useState('');
@@ -87,6 +89,7 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
                 setWebsiteUrl(product.website_url || '');
                 setProductViews(product.product_views || []);
                 setCurrentViewIndex(0);
+                setShotDescriptions(product.product_view_descriptions || {});
                 setAnalysisResult(product.visual_description || null);
                 // If there's a string description, start in manual mode
                 if (typeof product.visual_description === 'string') {
@@ -100,12 +103,30 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
                 setName(''); setType(defaultType || 'physical');
                 setImageUrl(defaultImageUrl || ''); setWebsiteUrl('');
                 setProductViews([]); setCurrentViewIndex(0);
+                setShotDescriptions({});
                 setAnalysisResult(null);
                 setClipVideoUrl(''); setClipName('');
                 setDescriptionMode('ai'); setManualDescription('');
             }
         }
     }, [isOpen, product, defaultType]);
+
+    // Sync displayed AI description with the carousel shot currently in view
+    useEffect(() => {
+        if (!isOpen || descriptionMode !== 'ai') return;
+        const images: string[] = [];
+        if (imageUrl) images.push(imageUrl);
+        if (productViews.length > 0) images.push(...productViews);
+        const url = images[currentViewIndex];
+        if (!url) return;
+        if (shotDescriptions[url]) {
+            setAnalysisResult(shotDescriptions[url]);
+        } else if (url === imageUrl && product?.visual_description) {
+            setAnalysisResult(product.visual_description);
+        } else {
+            setAnalysisResult(null);
+        }
+    }, [currentViewIndex, shotDescriptions, imageUrl, productViews, isOpen, descriptionMode, product]);
 
     if (!isOpen || !mounted) return null;
 
@@ -220,28 +241,60 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
 
     // ── AI Analysis (now works without saving — uses image_url directly) ──
     const handleAnalyze = async () => {
-        if (!imageUrl || analyzing) return;
+        if (analyzing) return;
         setAnalyzing(true);
+        setAnalyzeProgress('');
         try {
             if (isDigitalProduct && product?.id) {
                 const result = await apiFetch<any>(`/api/products/${product.id}/analyze-digital`, { method: 'POST' });
                 setAnalysisResult(result.analysis || result);
             } else {
-                // Use the new image_url-based endpoint (no product_id required)
-                const result = await apiFetch<any>('/api/products/analyze-image', {
+                const imagesToAnalyze: string[] = [];
+                if (imageUrl) imagesToAnalyze.push(imageUrl);
+                if (productViews.length > 0) imagesToAnalyze.push(...productViews);
+                if (imagesToAnalyze.length === 0) return;
+
+                const shotCount = imagesToAnalyze.length;
+                setAnalyzeProgress(
+                    shotCount > 1
+                        ? `Analyzing ${shotCount} product shots…`
+                        : 'Analyzing product image…',
+                );
+
+                const result = await apiFetch<{
+                    descriptions?: Record<string, any>;
+                    profile_description?: any;
+                    visual_description?: string;
+                }>('/api/products/analyze-image', {
                     method: 'POST',
                     body: JSON.stringify({
-                        image_url: imageUrl,
-                        product_id: product?.id || undefined, // persist if product exists
+                        image_urls: imagesToAnalyze,
+                        product_id: product?.id || undefined,
+                        force: true,
                     }),
                 });
-                setAnalysisResult(result);
+
+                if (result.descriptions) {
+                    setShotDescriptions(result.descriptions);
+                    const currentUrl = imagesToAnalyze[currentViewIndex] || imageUrl;
+                    setAnalysisResult(
+                        result.descriptions[currentUrl]
+                        || result.profile_description
+                        || null,
+                    );
+                } else {
+                    // Legacy single-shot response
+                    const map = { ...shotDescriptions, [imageUrl]: result };
+                    setShotDescriptions(map);
+                    setAnalysisResult(result);
+                }
             }
         } catch (err: any) {
             console.error(err);
             alert(err.message || 'Failed to analyze product.');
         } finally {
             setAnalyzing(false);
+            setAnalyzeProgress('');
         }
     };
 
@@ -255,9 +308,14 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
                 website_url: isDigitalProduct ? (websiteUrl || undefined) : undefined,
             };
             if (productViews.length > 0) basePayload.product_views = productViews;
-            // Pass description: AI result or manual text
+            if (Object.keys(shotDescriptions).length > 0) {
+                basePayload.product_view_descriptions = shotDescriptions;
+            }
+            // Pass description: AI result or manual text (hero/profile for legacy readers)
             if (descriptionMode === 'manual' && manualDescription.trim()) {
                 basePayload.visual_description = manualDescription.trim();
+            } else if (shotDescriptions[imageUrl]) {
+                basePayload.visual_description = shotDescriptions[imageUrl];
             } else if (analysisResult) {
                 basePayload.visual_description = analysisResult;
             }
@@ -294,7 +352,7 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
     // ── Analysis button state ──
     const analyzeDisabled = isDigitalProduct
         ? (!product?.id || analyzing)
-        : (!imageUrl || analyzing);
+        : (displayImages.length === 0 || analyzing);
 
     return createPortal(
         <>
@@ -798,11 +856,8 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
                                     >
                                         {analyzing ? (
                                             <>
-                                                <svg style={{ animation: 'spin 1s linear infinite', height: '16px', width: '16px' }} fill="none" viewBox="0 0 24 24">
-                                                    <circle style={{ opacity: 0.25 }} cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                                    <path style={{ opacity: 0.75 }} fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                                                </svg>
-                                                {isDigitalProduct ? 'Analysing website…' : 'Analysing product image…'}
+                                                <div style={{ width: '14px', height: '14px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+                                                {analyzeProgress || (isDigitalProduct ? 'Analysing website…' : 'Analysing product image…')}
                                             </>
                                         ) : (
                                             <>
@@ -810,8 +865,8 @@ export default function ProductModal({ isOpen, onClose, product, onSave, default
                                                     <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /><circle cx="12" cy="12" r="4" />
                                                 </svg>
                                                 {analysisResult
-                                                    ? (isDigitalProduct ? 'Re-analyse Website' : 'Re-analyse Product Image')
-                                                    : (isDigitalProduct ? 'Analyse Website with AI' : 'Analyse Product Image with AI')}
+                                                    ? (isDigitalProduct ? 'Re-analyse Website' : 'Re-analyse Product Shots')
+                                                    : (isDigitalProduct ? 'Analyse Website with AI' : 'Analyse Product Shots with AI')}
                                             </>
                                         )}
                                     </button>

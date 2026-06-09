@@ -146,7 +146,7 @@ If you genuinely believe a reference image is causing an issue, you MUST ask the
 - generate_video(prompt, mode, clip_length?, language?, multi_shot_mode?, reference_image_url?) — Text-to-video clip. mode: ugc | cinematic_video | ai_clone | seedance_2_ugc | seedance_2_cinematic | seedance_2_product. Clip lengths: 5/7/8/10/15s (mode-dependent). Language: en/es. multi_shot_mode for Kling 3.0 cinematic auto-split.
 
 ### Full UGC pipelines (gated by confirmed=true)
-- create_ugc_video(influencer_id, duration, product_id?, script_id?, ...) — Full 15s/30s UGC video. Takes 5-12 min; the tool blocks until done.
+- create_ugc_video(influencer_id, duration, product_id?, script_id?, ...) — Full 15s/30s UGC video. Dispatches immediately; takes 5-12 min in the gallery. Use get_job_status(job_id) to check progress.
 - create_clone_video(clone_id, script_text, duration, ...) — Lip-synced talking-head video. Blocking, 5-12 min.
 - create_bulk_campaign(influencer_id, count, duration, ...) — Dispatch N UGC videos at once. Returns immediately; track progress with list_jobs / get_job_status.
 
@@ -174,7 +174,7 @@ Gated tools cost real credits. You MUST get explicit user confirmation before sp
 1. User asks you to generate / produce / render something.
 2. You call the gated tool with `confirmed=false` (the default). It returns a `confirmation_required` payload with the credit cost and a summary — it does NOT spend credits.
 3. You present the cost in plain text: "This will cost **X credits**. Want me to proceed?" — and END YOUR TURN. Do NOT call the tool again until the user replies.
-4. When the user says yes / go ahead / proceed / confirm / etc., you MUST call the SAME tool again with `confirmed=true` and the same parameters. Now it actually runs. The tool will block while the generation is in progress — that is expected.
+4. When the user says yes / go ahead / proceed / confirm / etc., you MUST call the SAME tool again with `confirmed=true` and the same parameters. Now it actually runs. Most gated tools block while generation runs — that is expected. Exception: `create_ugc_video` returns immediately with `job_id`; tell the user to watch the Videos tab.
 5. If the user says no or wants changes, do not call the tool. Adjust based on their feedback.
 
 ⚠️ ANTI-HALLUCINATION RULE: After the user confirms, you MUST actually invoke the tool with `confirmed=true`. Do NOT respond with a text message describing or simulating tool execution without calling the tool. If your response to a user confirmation does NOT contain a tool_use block for the gated tool, you have failed this rule. The pipeline only starts when you emit the actual tool call. Saying "the pipeline has started" without calling the tool is a hallucination and the video will not be generated.
@@ -420,13 +420,15 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
 2. Reference real product_ids / influencer_ids / job_ids returned by the list tools — never invent UUIDs.
 3. When a generation finishes, summarize what you produced and report the actual credits spent. NEVER paste raw asset URLs (Supabase storage links, http(s) URLs to images/videos) or markdown links to assets into your reply. The chat panel automatically renders a thumbnail under your message from the tool's artifact frame — the user already sees the asset visually. Refer to it by name only ("Your 8s clip is ready"). The only exception is short identifiers like job_ids when the user explicitly asks for them.
 4. Pick the simplest tool chain that fulfills the brief. Don't run extra tools "to be safe".
-5. Long-running tools (create_ugc_video, create_clone_video, animate_image, render_edited_video, caption_video) block while polling. That's normal — let them finish.
+5. Long-running tools: `create_ugc_video` returns immediately with `status: started` and a `job_id` — tell the user to watch the Videos tab; do NOT block or poll inline. After `ugc_started`, give the ETA from the tool result: **~6 minutes for 15s**, **~9 minutes for 30s**. Never say "Done." or "ready" until `get_job_status` returns `success` with `final_video_url`. `create_clone_video`, `animate_image`, `render_edited_video`, and `caption_video` still block while polling — let them finish.
+5a. NEVER claim a video generation failed when the tool result has `status: started`, `still_processing`, or `action: ugc_started`. If the SSE connection dropped or the user asks mid-run, say the job is still rendering, restate the approximate time remaining (~6 min / ~9 min), and point them to the gallery (or call `get_job_status(job_id)`). Only report failure when `get_job_status` returns `status: failed` with an `error_message`.
 6. NEVER manually construct or modify caption/transcription JSON inside editor_state. Always use the caption_video tool — it runs real Whisper transcription on the audio and produces accurate, properly timed captions.
 7. You may call multiple tools in a single turn. For independent tasks (e.g., "generate 3 images"), dispatch all of them in the same turn and report all results together. For dependent tasks (e.g., "generate an image then animate it"), chain the tools sequentially within the same turn — call the first tool, receive its result, then immediately call the next without waiting for user input. Never ask for permission between chained steps.
 8. REFERENCED ASSETS — uploaded images the user attached directly from their computer appear in the brief preface as `[Referenced assets]` lines with synthetic tags like `@upload_xxxxxxxx (image), image_url='https://…'`. These are NOT database rows — there is no product_id / influencer_id for them. When the user asks you to generate / animate / compose using those images, you MUST forward the image_urls to the generation tool:
    - `generate_image` → pass every relevant upload URL via `reference_image_urls: [url1, url2, ...]`. NanoBanana Pro uses them as direct visual references so the output actually contains the uploaded product/person. Failing to pass them means the model generates from prompt text only and the attached images are ignored.
-   - `generate_video` → for Seedance modes (seedance_2_ugc / seedance_2_cinematic / seedance_2_product) pass EVERY relevant image URL via `reference_image_urls: [url1, url2, ...]` — the order matters: the first URL maps to `@Image1` in the prompt, the second to `@Image2`, etc. Seedance 2.0 accepts up to 4 references. Place the most important reference (e.g. the product) first. For Veo/Kling modes (ugc, cinematic_video) pass the most-relevant single URL via `reference_image_url` (first-frame / hero shot) since those models only accept one.
-   IMPORTANT — ALWAYS FORWARD IMAGE URLs: For EVERY @-mentioned product or influencer (whether DB entity or raw upload), you MUST read the `image_url` from the `[Referenced assets]` preface and pass it via `reference_image_urls` (Seedance) or `reference_image_url` (Veo/Kling). The image in the preface is the EXACT image the user selected — the pipeline must use it, not re-fetch from the database (which may return a different shot). Also pass `product_id` / `influencer_id` for metadata tracking, but the image URL is what the generation model actually uses.
+   - `generate_video` → for Seedance modes (seedance_2_ugc / seedance_2_cinematic / seedance_2_product) pass EVERY relevant image URL via `reference_image_urls: [url1, url2, ...]` — the order matters: the first URL maps to `@Image1` in the prompt, the second to `@Image2`, etc. Seedance 2.0 accepts up to 4 references. Place the most important reference (e.g. the product) first.
+   - `generate_video` UGC mode (`mode="ugc"`) with BOTH an @-mentioned influencer AND product: pass `reference_image_urls: [influencer_image_url, product_image_url]` from the `[Referenced assets]` preface (influencer first, product second). The pipeline uses these for the NanoBanana composite — passing only `product_id` / `influencer_id` without URLs causes the wrong default profile/hero shots to be used. For UGC with a single @-mention or one upload, pass that shot via `reference_image_urls` (one entry) or `reference_image_url`. For cinematic_video (Kling), a single `reference_image_url` is enough when only one first-frame ref is needed.
+   IMPORTANT — ALWAYS FORWARD IMAGE URLs: For EVERY @-mentioned product or influencer (whether DB entity or raw upload), you MUST read the `image_url` from the `[Referenced assets]` preface and pass it via `reference_image_urls` (UGC composite, Seedance) or `reference_image_url` when only one image applies. The image in the preface is the EXACT image the user selected — the pipeline must use it, not re-fetch from the database (which may return a different shot). Also pass `product_id` / `influencer_id` for metadata tracking, but the image URL is what the generation model actually uses.
    Exception: do NOT pass the app clip's `first_frame_url` or `video_url` as `reference_image_urls` / `reference_video_urls` — app clips are resolved server-side via `app_clip_id`. Only `product_id` and `influencer_id` entities need their image_url forwarded.
    RETRY RULE: if a generation fails, NEVER drop or reduce `reference_image_urls` on retry. The images are NOT the cause of failure — they are critical for visual identity. Always retry with the EXACT SAME `reference_image_urls`, `product_id`, `influencer_id`, and prompt. Do not "simplify" by removing product or influencer images.
 9. UGC mode does NOT require a registered product. If the user provides uploaded images (upload_* refs), generation can proceed with just the raw image URLs. However, you MUST FIRST follow the **MANDATORY PRE-FLIGHT** check above: offer the user the option to save the uploaded image as a product/model (via `[[SAVE_OR_GENERATE:...]]` marker) before starting any generation. If the user clicks "Generate Now" or says to proceed without saving, call `generate_image(mode="ugc", reference_image_urls=[...])` directly using the raw URLs.
@@ -452,7 +454,7 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
   2. THEN, if `duration_seconds` is still missing, ask only about length, ending with `[[DURATION_BUTTONS]]` on the last line (EN: `"And how long should it be? [[DURATION_BUTTONS]]"` / ES: `"¿Y cuánto debe durar? [[DURATION_BUTTONS]]"`). Wait for the choice.
   If only ONE of the two is missing, ask just that single question with its single marker. Always ask in the user's language. Frontend renders Vertical / Horizontal / Classic and 5s / 10s / 15s buttons. Once you have BOTH values, call propose. Do NOT skip this step.
 
-  HARD RULES for cinematic ads: resolution is ALWAYS 720p — never offer 480p, never ask. Each paid stage is its own confirmation; approval for storyboard does NOT carry to animate. If a call returns an `error` field, surface its `msg` field verbatim to the user — do NOT silently retry or silently swap models. Never describe the product or brand from memory; always rely on the @mentioned product or uploaded image.
+  HARD RULES for cinematic ads: resolution is ALWAYS 720p — never offer 480p, never ask. Each paid stage is its own confirmation; approval for storyboard does NOT carry to animate. If a call returns an `error` field, surface its `msg` field verbatim to the user — do NOT silently retry or silently swap models. Never describe the product or brand from memory; always rely on the @mentioned product or uploaded image. For model-led directions, the user MUST @-mention an influencer — pass `influencer_id` from the preface; the server uses the exact `image_url` from `ctx.refs` for the storyboard face lock (do not rely on DB default profile shots for product or influencer). On beauty model-led ads the server progressively retries storyboard generation (sharp face first, then hands-only panels) before falling back; animate passes the influencer as `@Image3` so Seedance can restore face identity. If the storyboard response includes `blur_fallback_warning`, quote it to the user before they confirm animate. When `create_cinematic_ad` returns `error` (e.g. `cinematic_ad failed: TypeError: ...`), quote the exact error string to the user — NEVER call it a "platform bug" or "server-side bug" and NEVER suggest switching to Kling/`generate_video` as a workaround unless the user explicitly asks for an alternative. When `error` is `fal_content_policy`, explain that Fal's image safety checker rejected the storyboard after all fallbacks (common on beauty lip-close-up + dual-ref prompts) — quote `msg` verbatim and offer Direction B (product-only, e.g. Soft Sculpture) as the in-flow alternative; do NOT auto-pivot to Kling.
 
 14. CROPPING / SPLITTING A STORYBOARD INTO INDIVIDUAL PANELS — when the user asks to "crop", "split", "cut", "separate", or "show me each panel / each image individually" from a storyboard (or any multi-panel sheet), you MUST call the `crop_storyboard` tool. It downloads the sheet, slices it into individual panel images, uploads each one, saves them to the project, and surfaces them in the Images tab. It is FREE and needs no confirmation. If the user references the storyboard you just made, you can omit `image_url` (it defaults to the latest storyboard); otherwise pass the sheet's `image_url`. Pass `num_panels` when you know the count (e.g. 4 or 6) so the splitter picks the right grid. NEVER fabricate this: do not write out panel descriptions as text and claim the files were "saved to Outputs" or "rendered in my view" — you have no such side effect. The ONLY way real cropped images appear for the user is by calling `crop_storyboard`. After it returns, refer to the panels by number/label; do not paste URLs."""
 
@@ -773,11 +775,13 @@ def _custom_tools_for_agent() -> list[dict]:
                         "type": "array",
                         "items": {"type": "string"},
                         "description": (
-                            "Multiple reference image URLs. REQUIRED for Seedance modes "
-                            "(seedance_2_ugc, seedance_2_cinematic, seedance_2_product) when the user "
-                            "attached multiple uploads (e.g. product + model) — Seedance 2.0 accepts up to "
-                            "4 references and blends them. Pass EVERY relevant upload URL from the "
-                            "'[Referenced assets]' preface. Not used by Veo/Kling modes."
+                            "Reference image URLs from the '[Referenced assets]' preface. "
+                            "REQUIRED for UGC mode (mode='ugc') when the user @-mentioned specific "
+                            "product and/or influencer shots — pass [influencer_image_url, product_image_url] "
+                            "(influencer first, product second) so the NanoBanana composite uses the exact "
+                            "shots the user picked, not DB default profile/hero images. Also REQUIRED for "
+                            "Seedance modes when multiple refs apply (up to 4). Always include every "
+                            "relevant image_url from the preface alongside product_id/influencer_id."
                         ),
                     },
                     "clip_length": {
@@ -1786,6 +1790,7 @@ def _custom_tools_for_agent() -> list[dict]:
                         "description": "propose=show 3 directions (FREE); storyboard=render 6-panel sheet (~4 cr); animate=render 15s ad (~96 cr); broll=5s clip from one panel (~32 cr); product_macro=product-only 5s (~32 cr).",
                     },
                     "product_id": {"type": "string", "description": "Product UUID from @mention. Either this OR image_url is required."},
+                    "influencer_id": {"type": "string", "description": "Influencer UUID from @mention. Required for model-led directions (server uses ctx.refs image_url for face lock)."},
                     "image_url": {"type": "string", "description": "Direct image URL when no product was @-mentioned (user uploaded a photo)."},
                     "brief": {"type": "string", "description": "User's vibe / direction / constraints, verbatim."},
                     "direction": {"type": "string", "enum": ["A", "B", "C"], "description": "Which proposed direction to use. Required for storyboard, animate, broll."},
@@ -1820,9 +1825,104 @@ class ToolContext:
     new_artifacts: list[dict] = field(default_factory=list)
     session_id: Optional[str] = None
     user_lang: str = "en"  # "en" or "es" — detected from brief, used to localize chips + Haiku output
+    # @-mention refs from the current agent turn (includes carry-forward on Confirm).
+    # Authoritative image_url per product/influencer — overrides agent tool kwargs.
+    refs: list[dict] = field(default_factory=list)
 
     def core(self) -> CoreAPIClient:
         return CoreAPIClient(token=self.user_token, project_id=self.project_id)
+
+
+def _image_overrides_from_turn_refs(
+    refs: list[dict],
+    kwargs: dict,
+) -> tuple[str | None, str | None]:
+    """Extract influencer/product shot URLs from UI @-mentions."""
+    if not refs:
+        return None, None
+
+    inf_url: str | None = None
+    prod_url: str | None = None
+    product_id = kwargs.get("product_id")
+    influencer_id = kwargs.get("influencer_id")
+
+    for r in refs:
+        url = r.get("image_url")
+        if not url:
+            continue
+        t = (r.get("type") or "").lower()
+        rid = r.get("id")
+        if t == "influencer":
+            if influencer_id and rid and rid != influencer_id:
+                continue
+            inf_url = url
+        elif t == "product":
+            if product_id and rid and rid != product_id:
+                continue
+            prod_url = url
+
+    return inf_url, prod_url
+
+
+def _merge_turn_refs_into_video_kwargs(kwargs: dict, refs: list[dict]) -> dict:
+    """Force reference_image_urls from UI @-mentions over agent/DB defaults."""
+    inf_url, prod_url = _image_overrides_from_turn_refs(refs, kwargs)
+    if not inf_url and not prod_url:
+        return kwargs
+
+    out = dict(kwargs)
+    merged: list[str] = []
+    if inf_url:
+        merged.append(inf_url)
+    if prod_url and prod_url not in merged:
+        merged.append(prod_url)
+    out["reference_image_urls"] = merged
+    print(
+        f"[generate_video] turn_refs override reference_image_urls "
+        f"(influencer={'yes' if inf_url else 'no'}, product={'yes' if prod_url else 'no'})"
+    )
+    return out
+
+
+def _element_refs_from_turn_refs(refs: list[dict], kwargs: dict) -> list[dict]:
+    """Build element_refs payloads for VideoGenerateRequest from turn refs."""
+    product_id = kwargs.get("product_id")
+    influencer_id = kwargs.get("influencer_id")
+    out: list[dict] = []
+    for r in refs:
+        t = (r.get("type") or "").lower()
+        if t not in ("product", "influencer"):
+            continue
+        url = r.get("image_url")
+        if not url:
+            continue
+        rid = r.get("id")
+        if t == "product" and product_id and rid and rid != product_id:
+            continue
+        if t == "influencer" and influencer_id and rid and rid != influencer_id:
+            continue
+        out.append({
+            "name": r.get("tag") or t,
+            "type": t,
+            "image_url": url,
+        })
+    return out
+
+
+def _resolve_cinematic_refs(ctx: ToolContext, kwargs: dict) -> dict:
+    """Extract @-mention image URLs and influencer_id for cinematic ads."""
+    inf_url, prod_url = _image_overrides_from_turn_refs(ctx.refs, kwargs)
+    influencer_id = kwargs.get("influencer_id")
+    if not influencer_id:
+        for r in ctx.refs:
+            if (r.get("type") or "").lower() == "influencer" and r.get("id"):
+                influencer_id = r["id"]
+                break
+    return {
+        "influencer_url": inf_url,
+        "product_url": prod_url,
+        "influencer_id": influencer_id,
+    }
 
 
 _ES_HINTS = (
@@ -2062,6 +2162,31 @@ def _compute_tool_fingerprint(tool_name: str, tool_input: dict) -> str:
     if _prompt:
         parts.append(f"prompt={_hashlib.sha1(_prompt.encode('utf-8')).hexdigest()[:8]}")
     return "|".join(parts)
+
+
+def _ugc_eta_seconds(duration: int) -> int:
+    """Expected wall-clock seconds for full UGC pipeline (15s / 30s)."""
+    return 540 if duration >= 30 else 360
+
+
+def _ugc_eta_minutes_approx(duration: int) -> int:
+    return _ugc_eta_seconds(duration) // 60
+
+
+def _ugc_started_ack_message(duration: int, *, lang: Optional[str] = None) -> str:
+    """User-facing chat ack when create_ugc_video dispatches in the background."""
+    eta_min = _ugc_eta_minutes_approx(duration)
+    if lang == "es":
+        return (
+            f"¡Manos a la obra! Tu vídeo de {duration}s se está generando ahora. "
+            f"Quedan aproximadamente **{eta_min} minutos** — sigue la tarjeta de progreso "
+            f"en la pestaña **Vídeos**; el clip aparecerá ahí automáticamente al terminar."
+        )
+    return (
+        f"On it — your {duration}s video is generating now. "
+        f"About **{eta_min} minutes** left — watch the progress card in the **Videos** tab; "
+        f"the finished clip will appear there automatically when it's done."
+    )
 
 
 def _pending_artifact_event_for(tool_name: str, tool_input: dict) -> Optional[dict]:
@@ -2896,6 +3021,9 @@ async def _tool_generate_video(ctx: ToolContext, **kwargs: Any) -> str:
             echo={k: v for k, v in kwargs.items() if k != "confirmed"},
         )
 
+    kwargs = _merge_turn_refs_into_video_kwargs(kwargs, ctx.refs)
+    element_refs = _element_refs_from_turn_refs(ctx.refs, kwargs) or None
+
     req = VideoGenerateRequest(
         prompt=kwargs["prompt"],
         hook=kwargs.get("hook") or None,
@@ -2913,6 +3041,7 @@ async def _tool_generate_video(ctx: ToolContext, **kwargs: Any) -> str:
         aspect_ratio=kwargs.get("aspect_ratio") or None,
         product_type=kwargs.get("product_type") or None,
         app_clip_id=kwargs.get("app_clip_id") or None,
+        element_refs=element_refs,
     )
     user = {"token": ctx.user_token, "id": "agent"}
     bg = BackgroundTasks()
@@ -3517,6 +3646,47 @@ async def _poll_job_until_terminal(
     return final_status
 
 
+async def _finalize_tool_batch_send(
+    client: Any,
+    session_id: str,
+    tasks: list[asyncio.Task],
+    pending_tool_calls: list[Any],
+) -> None:
+    """Await tool tasks and push results to the Anthropic session.
+
+    Runs detached when the SSE client disconnects mid-tool so the session
+    is not left waiting on responses.
+    """
+    results: list[tuple[str, str, bool]] = []
+    for t in tasks:
+        try:
+            results.append(await t)
+        except Exception as e:
+            results.append(("", json.dumps({"error": str(e)}), True))
+
+    tool_result_events: list[dict] = []
+    for tool_use_id, result_text, is_error in results:
+        if not tool_use_id or not isinstance(tool_use_id, str):
+            print(f"[ManagedAgent] orphan finalize: dropping empty tool_use_id")
+            continue
+        tool_result_events.append({
+            "type": "user.custom_tool_result",
+            "custom_tool_use_id": tool_use_id,
+            "content": [{"type": "text", "text": result_text}],
+            "is_error": is_error,
+        })
+
+    if not tool_result_events:
+        print("[ManagedAgent] orphan finalize: no tool results to send")
+        return
+
+    try:
+        await client.beta.sessions.events.send(session_id, events=tool_result_events)
+        print(f"[ManagedAgent] orphan finalize: sent {len(tool_result_events)} tool result(s) to session {session_id[:8]}…")
+    except Exception as e:
+        print(f"[ManagedAgent] orphan finalize: events.send failed: {e}")
+
+
 # ── Discovery / read-only tools ───────────────────────────────────────
 def _slim(items: list, keys: list[str], cap: int = 25) -> list[dict]:
     out = []
@@ -3896,6 +4066,20 @@ def _validate_script_for_video(
 
 async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
     """Full 15s/30s UGC video — script → TTS → scenes → captions → music → assemble."""
+    # Server-side @-mention overrides (same as generate_video short-clip path).
+    kwargs = _merge_turn_refs_into_video_kwargs(kwargs, ctx.refs)
+    inf_override, prod_override = _image_overrides_from_turn_refs(ctx.refs, kwargs)
+    if inf_override or prod_override:
+        print(
+            f"[create_ugc_video] turn_refs image override: "
+            f"influencer={'yes' if inf_override else 'no'} "
+            f"product={'yes' if prod_override else 'no'}"
+        )
+        if inf_override:
+            print(f"  influencer_url={inf_override[:80]}...")
+        if prod_override:
+            print(f"  product_url={prod_override[:80]}...")
+
     if not kwargs.get("influencer_id"):
         return json.dumps({"error": "influencer_id is required"})
     duration = int(kwargs.get("duration", 15))
@@ -4100,6 +4284,11 @@ async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
         # Respect model_api from the agent (seedance-2.0 when toggle is on)
         "model_api": kwargs.get("model_api", "veo-3.1-fast"),
     }
+    # @-mention shot URLs — persisted on job metadata before worker dispatch.
+    if inf_override:
+        payload["reference_image_url"] = inf_override
+    if prod_override:
+        payload["product_image_url"] = prod_override
     # Include app_clip_id so the worker can fetch the clip, build composite
     # images (NanoBanana), and use the correct scene structure.
     if kwargs.get("app_clip_id"):
@@ -4118,28 +4307,29 @@ async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
     if not job_id:
         return json.dumps({"error": "job created but no id returned", "raw": job})
 
-    final_status = await _poll_job_until_terminal(ctx, job_id, max_wait_s=900)
-    if final_status is None:
-        return json.dumps({
-            "job_id": job_id,
-            "status": "still_processing",
-            "warning": "Generation is taking longer than 15 minutes. Check the gallery.",
-        })
-    state = (final_status.get("status") or "").lower()
-    if state in ("success", "complete", "completed"):
-        video_url = final_status.get("final_video_url") or final_status.get("video_url")
-        if video_url:
-            _record_artifact(ctx, {"type": "video", "url": video_url, "job_id": job_id})
-        return json.dumps({
-            "job_id": job_id,
-            "video_url": video_url,
-            "status": "success",
-            "credits_spent": _credits_for_op("create_ugc_video", {"product_type": product_type, "duration": duration}),
-        })
+    # Dispatch-and-return: full 15s/30s pipelines take 5–12 min (clip gen +
+    # ffmpeg concat + upload). Blocking the SSE stream that long causes proxy
+    # disconnects and orphaned tool results. The gallery watches job_id via
+    # video_job_started + jobs-status polling.
+    credits = _credits_for_op("create_ugc_video", {"product_type": product_type, "duration": duration})
+    campaign = kwargs.get("campaign_name") or f"{duration}s UGC video"
+    eta_seconds = _ugc_eta_seconds(duration)
+    eta_min = _ugc_eta_minutes_approx(duration)
     return json.dumps({
-        "error": final_status.get("error_message") or "ugc video generation failed",
+        "action": "ugc_started",
         "job_id": job_id,
-        "status": state,
+        "status": "started",
+        "duration": duration,
+        "campaign_name": campaign,
+        "credits_spent": credits,
+        "eta_seconds": eta_seconds,
+        "eta_minutes_approx": eta_min,
+        "message": (
+            f"UGC video job started ({duration}s, {credits} credits). "
+            f"Estimated time remaining: ~{eta_min} minutes. "
+            "Tell the user to watch the Videos tab progress card. "
+            "Do NOT say Done or ready until get_job_status returns success with final_video_url."
+        ),
     })
 
 
@@ -4156,8 +4346,34 @@ async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
 #   - Never silent retry on Fal rejection (surface exact msg).
 #   - Resolution always 720p (no 480p toggle).
 #   - Each paid stage requires its own confirmation; approval doesn't carry.
+_cinematic_ads_module_checked = False
+
+
+def _log_cinematic_ads_module_once() -> None:
+    """Fail-fast log if the loaded prompts.cinematic_ads lacks storyboard API."""
+    global _cinematic_ads_module_checked
+    if _cinematic_ads_module_checked:
+        return
+    _cinematic_ads_module_checked = True
+    import inspect as _inspect
+    from prompts.cinematic_ads import build_storyboard_prompt as _bsp
+    _sig = _inspect.signature(_bsp).parameters
+    _has_ref = "has_influencer_ref" in _sig
+    _has_profile = "moderation_profile" in _sig
+    print(
+        f"[cinematic_ad] module={_bsp.__module__} "
+        f"has_influencer_ref={_has_ref} moderation_profile={_has_profile}"
+    )
+    if not _has_ref or not _has_profile:
+        print(
+            "[cinematic_ad] FATAL: stale prompts.cinematic_ads — "
+            "restart Creative OS to reload repo-root prompts/"
+        )
+
+
 async def _tool_create_cinematic_ad(ctx: ToolContext, **kwargs: Any) -> str:
     import traceback as _traceback
+    _log_cinematic_ads_module_once()
     print(f"[cinematic_ad] called stage={kwargs.get('stage')!r} product_id={kwargs.get('product_id')!r} image_url={(kwargs.get('image_url') or '')[:60]!r} direction={kwargs.get('direction')!r} confirmed={kwargs.get('confirmed')}")
     try:
         return await _tool_create_cinematic_ad_impl(ctx, **kwargs)
@@ -4194,9 +4410,11 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
         get_cached_beats,
         get_cached_directions,
         infer_category_from_text,
+        is_beauty_category,
         panel_beats_for,
         panels_for_duration,
         propose_directions,
+        sanitize_beats_for_fal,
         _category_key,
     )
 
@@ -4208,6 +4426,7 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
     # Haiku output (direction names + beat captions) and the hardcoded chip /
     # narration strings below.
     ctx.user_lang = _detect_user_lang(kwargs.get("brief") or "")
+    cine_refs = _resolve_cinematic_refs(ctx, kwargs)
 
     # ── Resolve product source (either product_id from @mention or image_url upload)
     async def _resolve_product() -> dict:
@@ -4250,6 +4469,19 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
         product_meta = await _resolve_product()
     except RuntimeError as e:
         return json.dumps({"error": str(e)})
+    if cine_refs["product_url"]:
+        product_meta["image_url"] = cine_refs["product_url"]
+        print(
+            f"[cinematic_ad] product image override from turn_refs "
+            f"({cine_refs['product_url'][:80]}...)"
+        )
+    elif kwargs.get("product_image_url"):
+        # Carried from storyboard echo when animate/broll runs without fresh @-refs.
+        product_meta["image_url"] = kwargs["product_image_url"]
+        print(
+            f"[cinematic_ad] product image from storyboard echo "
+            f"({kwargs['product_image_url'][:80]}...)"
+        )
     if not product_meta.get("image_url"):
         return json.dumps({"error": "product has no image — upload a product photo before generating a cinematic ad"})
 
@@ -4362,8 +4594,22 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
     # extra Confirm chip just to see the storyboard sheet.
     if stage == "storyboard":
         num_panels = panels_for_duration(duration_seconds)
-        print(f"[cinematic_storyboard] direction={direction_key} product={product_meta['name']!r} ar={aspect_ratio} dur={duration_seconds}s panels={num_panels}")
-        # Upload product photo to Fal storage so GPT Image 2 can read it
+        has_humans = direction_obj.get("model_or_product_only") == "model"
+        has_influencer_ref = bool(cine_refs["influencer_url"])
+        if has_humans and not has_influencer_ref:
+            return json.dumps({
+                "error": "influencer_ref_required",
+                "msg": (
+                    "This direction is model-led but no @influencer was attached. "
+                    "@-mention the character and retry."
+                ),
+            })
+        print(
+            f"[cinematic_storyboard] direction={direction_key} product={product_meta['name']!r} "
+            f"ar={aspect_ratio} dur={duration_seconds}s panels={num_panels} "
+            f"influencer_ref={'yes' if has_influencer_ref else 'no'}"
+        )
+        # Upload product photo to Fal storage so GPT Image 2 can read it (@Image1).
         try:
             product_fal_url = await upload_url_to_fal_storage(
                 product_meta["image_url"], content_type="image/png", file_name="product.png",
@@ -4371,9 +4617,20 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
         except FalError as e:
             return json.dumps({"error": f"product upload to Fal failed: {e}"})
 
+        influencer_fal_url = None
+        if has_influencer_ref:
+            try:
+                influencer_fal_url = await upload_url_to_fal_storage(
+                    cine_refs["influencer_url"],
+                    content_type="image/png",
+                    file_name="influencer.png",
+                )
+            except FalError as e:
+                return json.dumps({"error": f"influencer upload to Fal failed: {e}"})
+
         # Generate brief-aware panel beats via Haiku (falls back to hand-
         # authored panel_beats_for on any failure — never blocks render).
-        beats = await generate_beats_from_brief(
+        beats_raw = await generate_beats_from_brief(
             brief=kwargs.get("brief") or "",
             direction=direction_obj,
             category=category,
@@ -4382,20 +4639,95 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
             aspect_ratio=aspect_ratio,
             user_lang=ctx.user_lang,
         )
-        # Cache beats so the animate stage can rebuild the Seedance prompt
-        # from the same shot data without re-running Haiku.
-        cache_beats(ctx.session_id, direction_key, beats)
-        prompt = build_storyboard_prompt(
-            brand=product_meta["brand"], product=product_meta["name"],
-            direction=direction_obj, tagline=tagline, domain=domain, category=category,
-            num_panels=num_panels, duration_s=duration_seconds,
-            aspect_ratio=aspect_ratio, beats=beats,
-        )
-        try:
-            result = await generate_storyboard(prompt=prompt, image_urls=[product_fal_url], aspect_ratio=aspect_ratio)
-        except FalError as e:
-            # Skill Gate 2: surface the exact msg, never silently retry.
-            return json.dumps({"error": "fal_storyboard_failed", "msg": str(e), "raw": e.raw})
+
+        def _fal_content_policy_reject(err: FalError) -> bool:
+            msg = str(err).lower()
+            return any(
+                tok in msg
+                for tok in (
+                    "content_policy",
+                    "content checker",
+                    "content could not be processed",
+                    "flagged by a content",
+                    "422",
+                )
+            )
+
+        def _storyboard_attempt_ladder() -> list[dict]:
+            if has_humans and is_beauty_category(category):
+                return [
+                    {"profile": "sharp", "aggressive": False, "hands_only": False, "dual_ref": True},
+                    {"profile": "sharp", "aggressive": True, "hands_only": False, "dual_ref": True},
+                    {"profile": "hands_only", "aggressive": False, "hands_only": True, "dual_ref": True},
+                    {"profile": "product_ref_only", "aggressive": False, "hands_only": True, "dual_ref": False},
+                    {"profile": "blur_fallback", "aggressive": False, "hands_only": True, "dual_ref": False},
+                ]
+            return [
+                {"profile": "sharp", "aggressive": False, "hands_only": False, "dual_ref": has_influencer_ref},
+            ]
+
+        result = None
+        beats: list[dict] = beats_raw
+        storyboard_moderation_profile = "sharp"
+        last_policy_err: Optional[FalError] = None
+
+        for attempt in _storyboard_attempt_ladder():
+            beats = sanitize_beats_for_fal(
+                beats_raw,
+                category=category,
+                has_humans=has_humans,
+                aggressive=attempt["aggressive"],
+                hands_only=attempt["hands_only"],
+            )
+            cache_beats(ctx.session_id, direction_key, beats)
+
+            attempt_urls = [product_fal_url]
+            if attempt["dual_ref"] and influencer_fal_url:
+                attempt_urls.append(influencer_fal_url)
+
+            prompt_has_influencer = bool(attempt["dual_ref"] and has_influencer_ref)
+            profile = attempt["profile"]
+            prompt = build_storyboard_prompt(
+                brand=product_meta["brand"], product=product_meta["name"],
+                direction=direction_obj, tagline=tagline, domain=domain, category=category,
+                num_panels=num_panels, duration_s=duration_seconds,
+                aspect_ratio=aspect_ratio, beats=beats,
+                has_influencer_ref=prompt_has_influencer,
+                moderation_profile=profile,
+            )
+            print(
+                f"[cinematic_storyboard] attempt profile={profile} refs={len(attempt_urls)} "
+                f"aggressive={attempt['aggressive']} hands_only={attempt['hands_only']}"
+            )
+            try:
+                result = await generate_storyboard(
+                    prompt=prompt, image_urls=attempt_urls, aspect_ratio=aspect_ratio,
+                )
+                storyboard_moderation_profile = profile
+                print(
+                    f"[cinematic_storyboard] success profile={profile} "
+                    f"refs={len(attempt_urls)}"
+                )
+                break
+            except FalError as e:
+                if not _fal_content_policy_reject(e):
+                    return json.dumps({"error": "fal_storyboard_failed", "msg": str(e), "raw": e.raw})
+                last_policy_err = e
+                print(f"[cinematic_storyboard] content policy reject profile={profile}: {e}")
+                continue
+
+        if result is None:
+            return json.dumps({
+                "error": "fal_content_policy",
+                "msg": (
+                    "Fal's image safety checker rejected this beauty storyboard after "
+                    "all moderation fallbacks (sharp face, hands-only panels, product-only ref). "
+                    "Try Direction B (product-only, e.g. Soft Sculpture) or ask to "
+                    "regenerate with hand/forearm application instead of lip shots."
+                ),
+                "retry_hint": "direction_b_product_only",
+                "raw": last_policy_err.raw if last_policy_err else {},
+            })
 
         fal_png_url = result["url"]
         # Persist to Supabase so the URL is stable + ours.
@@ -4422,34 +4754,53 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
             metadata={
                 "source": "cinematic_ads", "stage": "storyboard",
                 "direction": direction_key, "label": f"Storyboard — {direction_obj['name']}",
+                "storyboard_moderation_profile": storyboard_moderation_profile,
             },
         )
         _record_artifact(ctx, {"type": "image", "url": storyboard_url, "label": "Storyboard"})
+
+        blur_fallback_warning = None
+        if storyboard_moderation_profile == "blur_fallback":
+            blur_fallback_warning = (
+                "Storyboard used blur-face fallback to pass Fal moderation. Animate will "
+                "pass the influencer as @Image3 to restore face identity, but results may "
+                "vary — Direction B (product-only) is the safer alternative if the face "
+                "still looks wrong."
+            )
 
         # Directly emit the animate cost chip in the same tool turn — the
         # storyboard image is already on screen via the artifact; the panels
         # themselves describe the scenes, so no separate beats narration. The
         # frontend renders the cost chip from this confirmation_required.
+        animate_echo = {
+            "stage": "animate",
+            "direction": direction_key,
+            "product_id": kwargs.get("product_id"),
+            "influencer_id": cine_refs.get("influencer_id") or kwargs.get("influencer_id"),
+            "image_url": kwargs.get("image_url"),
+            "product_image_url": product_meta["image_url"],
+            "tagline": tagline,
+            "domain": domain,
+            "storyboard_url": storyboard_url,
+            "aspect_ratio": aspect_ratio,
+            "duration_seconds": duration_seconds,
+            "brief": kwargs.get("brief") or "",
+            "storyboard_moderation_profile": storyboard_moderation_profile,
+        }
+        if blur_fallback_warning:
+            animate_echo["blur_fallback_warning"] = blur_fallback_warning
+
         return _confirmation_payload(
             operation="cinematic_animate",
             credits=_credits_for_op("cinematic_animate", {"duration_seconds": duration_seconds}),
             summary=(f"Animar anuncio cinemático ({direction_obj['name']}) — {duration_seconds}s @ 720p {aspect_ratio}" if ctx.user_lang == "es" else f"Animate cinematic ad ({direction_obj['name']}) — {duration_seconds}s @ 720p {aspect_ratio}"),
-            echo={
-                "stage": "animate",
-                "direction": direction_key,
-                "product_id": kwargs.get("product_id"),
-                "image_url": kwargs.get("image_url"),
-                "tagline": tagline,
-                "domain": domain,
-                "storyboard_url": storyboard_url,
-                "aspect_ratio": aspect_ratio,
-                "duration_seconds": duration_seconds,
-                "brief": kwargs.get("brief") or "",
-            },
+            echo=animate_echo,
             # Surface the storyboard URL + beats in the payload too so callers
             # that introspect the response (memory tools, frontend) can find them.
             storyboard_url=storyboard_url,
             beats=beats,
+            storyboard_moderation_profile=storyboard_moderation_profile,
+            blur_fallback_warning=blur_fallback_warning,
         )
 
     # ── stage=animate — paid, scales with duration (32 / 64 / 96 cr for 5 / 10 / 15s)
@@ -4466,7 +4817,7 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
             )
 
         print(f"[cinematic_animate] direction={direction_key} product={product_meta['name']!r} ar={aspect_ratio} dur={duration_seconds}s")
-        # Upload BOTH storyboard + product to Fal (skill's two-reference rule)
+        # Upload storyboard + product; add influencer as @Image3 when model-led.
         try:
             storyboard_fal_url = await upload_url_to_fal_storage(
                 kwargs["storyboard_url"], content_type="image/png", file_name="storyboard.png",
@@ -4478,6 +4829,20 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
             return json.dumps({"error": f"upload to Fal failed: {e}"})
 
         has_humans = direction_obj.get("model_or_product_only") == "model"
+        has_influencer_ref = bool(cine_refs.get("influencer_url"))
+        animate_image_urls = [storyboard_fal_url, product_fal_url]
+        if has_humans and has_influencer_ref:
+            try:
+                influencer_fal_url = await upload_url_to_fal_storage(
+                    cine_refs["influencer_url"],
+                    content_type="image/png",
+                    file_name="influencer.png",
+                )
+            except FalError as e:
+                return json.dumps({"error": f"influencer upload to Fal failed: {e}"})
+            animate_image_urls.append(influencer_fal_url)
+            print(f"[cinematic_animate] tri-ref: storyboard + product + influencer ({len(animate_image_urls)} images)")
+
         # Pull cached beats from the storyboard stage so the Seedance prompt
         # references the same shot sequence the storyboard image illustrates.
         _cached_beats = get_cached_beats(ctx.session_id, direction_key)
@@ -4485,6 +4850,7 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
             brand=product_meta["brand"], product=product_meta["name"],
             direction=direction_obj, duration_s=duration_seconds, has_humans=has_humans,
             has_storyboard=True, beats=_cached_beats, aspect_ratio=aspect_ratio,
+            has_influencer_ref=has_humans and has_influencer_ref,
         )
         # Keep negative prompt ≤10 words — long negatives hurt Seedance motion
         # quality. Style negatives belong in the storyboard prompt, not here.
@@ -4496,7 +4862,7 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
             negative_prompt = ""
         try:
             result = await animate_storyboard_kie_seedance(
-                prompt=prompt, image_urls=[storyboard_fal_url, product_fal_url],
+                prompt=prompt, image_urls=animate_image_urls,
                 duration=duration_seconds, resolution="720p", aspect_ratio=aspect_ratio,
                 negative_prompt=negative_prompt,
             )
@@ -4590,10 +4956,24 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
             return json.dumps({"error": f"no beat metadata for panel {panel_index}"})
 
         has_humans = direction_obj.get("model_or_product_only") == "model"
+        has_influencer_ref = bool(cine_refs.get("influencer_url"))
+        broll_image_urls = [storyboard_fal_url, product_fal_url]
+        if has_humans and has_influencer_ref:
+            try:
+                influencer_fal_url = await upload_url_to_fal_storage(
+                    cine_refs["influencer_url"],
+                    content_type="image/png",
+                    file_name="influencer.png",
+                )
+            except FalError as e:
+                return json.dumps({"error": f"influencer upload to Fal failed: {e}"})
+            broll_image_urls.append(influencer_fal_url)
+
         prompt = build_seedance_broll_prompt(
             brand=product_meta["brand"], product=product_meta["name"],
             panel=panel, has_humans=has_humans,
             direction=direction_obj, aspect_ratio=aspect_ratio,
+            has_influencer_ref=has_humans and has_influencer_ref,
         )
         negative_prompt_broll = (
             "letterbox bars, horizontal framing" if aspect_ratio == "9:16"
@@ -4601,7 +4981,7 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
         )
         try:
             result = await animate_storyboard_kie_seedance(
-                prompt=prompt, image_urls=[storyboard_fal_url, product_fal_url],
+                prompt=prompt, image_urls=broll_image_urls,
                 duration=5, resolution="720p", aspect_ratio=aspect_ratio,
                 negative_prompt=negative_prompt_broll,
             )
@@ -7542,6 +7922,7 @@ class ManagedAgentClient:
         prior_turns: Optional[list[dict]] = None,
         lang: Optional[str] = None,
         image_urls: Optional[list[str]] = None,
+        turn_refs: Optional[list[dict]] = None,
     ) -> AsyncIterator[dict]:
         """Wrap the inner implementation with a persistent heartbeat task.
 
@@ -7568,6 +7949,7 @@ class ManagedAgentClient:
                     prior_turns=prior_turns,
                     lang=lang,
                     image_urls=image_urls,
+                    turn_refs=turn_refs,
                 ):
                     await queue.put(ev)
             except asyncio.CancelledError:
@@ -7612,6 +7994,7 @@ class ManagedAgentClient:
         prior_turns: Optional[list[dict]] = None,
         lang: Optional[str] = None,
         image_urls: Optional[list[str]] = None,
+        turn_refs: Optional[list[dict]] = None,
     ) -> AsyncIterator[dict]:
         """Drive the agent through one user turn, yielding normalized events.
 
@@ -7754,7 +8137,13 @@ class ManagedAgentClient:
                 yield {"type": "done", "session_id": session_id}
                 return
 
-            ctx_af = ToolContext(user_token=user_token, project_id=project_id, session_id=session_id)
+            base_input = _merge_turn_refs_into_video_kwargs(base_input, turn_refs or [])
+            ctx_af = ToolContext(
+                user_token=user_token,
+                project_id=project_id,
+                session_id=session_id,
+                refs=list(turn_refs or []),
+            )
             # Record the auto-fire in _recent_tool_fires so the LLM idempotency
             # guard catches a follow-up LLM re-fire of the same stage (e.g. user
             # types "go" after auto-fired storyboard finishes — LLM must NOT
@@ -7959,6 +8348,30 @@ class ManagedAgentClient:
                     "summary": af_parsed.get("message") or "Video edit started",
                     "is_error": False,
                 }
+            elif isinstance(af_parsed, dict) and af_parsed.get("action") == "ugc_started":
+                _vjid = af_parsed.get("job_id")
+                _duration = int(af_parsed.get("duration") or 15)
+                _eta_seconds = int(af_parsed.get("eta_seconds") or _ugc_eta_seconds(_duration))
+                _af_lang = lang if lang in ("es", "en") else _detect_user_lang(brief)
+                if _vjid:
+                    yield {
+                        "type": "video_job_started",
+                        "job_id": str(_vjid),
+                        "label": af_parsed.get("campaign_name") or "UGC video",
+                        "tool_name": "create_ugc_video",
+                        "eta_seconds": _eta_seconds,
+                        "duration": _duration,
+                    }
+                yield {
+                    "type": "agent_message",
+                    "text": _ugc_started_ack_message(_duration, lang=_af_lang),
+                }
+                yield {
+                    "type": "tool_result",
+                    "tool_use_id": f"autofire_{tool_name}_result",
+                    "summary": af_parsed.get("message") or f"UGC video started ({_duration}s)",
+                    "is_error": False,
+                }
             else:
                 # Final result — surface a short user-facing message. The actual
                 # artifact (image / video) was already yielded above.
@@ -8075,7 +8488,12 @@ class ManagedAgentClient:
             session_id = await self._create_session(brief, project_id)
         yield {"type": "session", "session_id": session_id, "agent_id": current_agent_id}
 
-        ctx = ToolContext(user_token=user_token, project_id=project_id, session_id=session_id)
+        ctx = ToolContext(
+            user_token=user_token,
+            project_id=project_id,
+            session_id=session_id,
+            refs=list(turn_refs or []),
+        )
         tool_calls_made = 0
 
         # Build a compact context primer from prior turns. Sent only on
@@ -8503,25 +8921,39 @@ class ManagedAgentClient:
                     # pings every 15 s while they run. This preserves the existing SSE
                     # keepalive behavior (Railway's reverse proxy and browsers kill idle
                     # SSE connections around 30 s, and most tools take 30 s – 5 min).
-                    tasks = [asyncio.create_task(_execute_tool(ev)) for ev in pending_tool_calls]
+                    _batch_tool_tasks = [asyncio.create_task(_execute_tool(ev)) for ev in pending_tool_calls]
                     elapsed = 0
-                    while any(not t.done() for t in tasks):
-                        done, pending = await asyncio.wait(
-                            tasks,
-                            timeout=15.0,
-                            return_when=asyncio.FIRST_COMPLETED,
-                        )
-                        if pending:
-                            elapsed += 15
-                            yield {
-                                "type": "keepalive",
-                                "elapsed_seconds": elapsed,
-                                "pending_tools": len(pending),
-                            }
+                    try:
+                        while any(not t.done() for t in _batch_tool_tasks):
+                            done, pending = await asyncio.wait(
+                                _batch_tool_tasks,
+                                timeout=15.0,
+                                return_when=asyncio.FIRST_COMPLETED,
+                            )
+                            if pending:
+                                elapsed += 15
+                                yield {
+                                    "type": "keepalive",
+                                    "elapsed_seconds": elapsed,
+                                    "pending_tools": len(pending),
+                                }
+                    except asyncio.CancelledError:
+                        # SSE client disconnected — finish tools in background so
+                        # Anthropic session receives tool results.
+                        if any(not t.done() for t in _batch_tool_tasks):
+                            asyncio.create_task(
+                                _finalize_tool_batch_send(
+                                    self._client,
+                                    session_id,
+                                    _batch_tool_tasks,
+                                    pending_tool_calls,
+                                )
+                            )
+                        raise
 
                     # Collect results in the original order.
                     results: list[tuple[str, str, bool]] = []
-                    for t in tasks:
+                    for t in _batch_tool_tasks:
                         try:
                             results.append(t.result())
                         except Exception as e:
@@ -8580,6 +9012,24 @@ class ManagedAgentClient:
                                         "job_id": str(parsed["job_id"]),
                                         "label": "AI edit",
                                         "tool_name": _id_to_name.get(tool_use_id) or "edit_video",
+                                    }
+                                elif parsed.get("action") == "ugc_started" and parsed.get("job_id"):
+                                    _ugc_dur = int(parsed.get("duration") or 15)
+                                    _ugc_eta = int(parsed.get("eta_seconds") or _ugc_eta_seconds(_ugc_dur))
+                                    yield {
+                                        "type": "video_job_started",
+                                        "job_id": str(parsed["job_id"]),
+                                        "label": parsed.get("campaign_name") or "UGC video",
+                                        "tool_name": _id_to_name.get(tool_use_id) or "create_ugc_video",
+                                        "eta_seconds": _ugc_eta,
+                                        "duration": _ugc_dur,
+                                    }
+                                    yield {
+                                        "type": "agent_message",
+                                        "text": _ugc_started_ack_message(
+                                            _ugc_dur,
+                                            lang=_effective_lang if _effective_lang in ("es", "en") else None,
+                                        ),
                                     }
                                 elif "total_credits" in parsed and "line_items" in parsed:
                                     c = parsed.get("total_credits")
@@ -8690,9 +9140,8 @@ class ManagedAgentClient:
 
         except asyncio.CancelledError:
             # Client disconnected (SSE reader closed — idle timeout, tab close, etc.).
-            # Do NOT interrupt the Anthropic session — the tools may still be running
-            # and the user can refresh to reconnect. Explicit Stop uses /agent/stop
-            # which calls interrupt_session separately.
+            # Do NOT interrupt the Anthropic session — orphaned tool batches are
+            # finalized via _finalize_tool_batch_send. Explicit Stop uses /agent/stop.
             print(f"[ManagedAgent] stream cancelled (client disconnect) — leaving session {session_id} alive")
             raise
         except Exception as e:

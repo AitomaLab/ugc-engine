@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from typing import Optional
 from auth import get_current_user
 from core_api_client import CoreAPIClient
+from prompts.product_refs import resolve_product_visual_description as _resolve_product_visual_description
 from services.model_router import get_video_mode, get_clip_lengths
 
 
@@ -2016,6 +2017,138 @@ async def _generate_ugc_clip(
     }
 
 
+def _view_urls_for_entity(entity: dict | None, *, primary_key: str, views_key: str) -> set[str]:
+    if not entity:
+        return set()
+    urls: set[str] = set()
+    primary = entity.get(primary_key)
+    if primary:
+        urls.add(primary)
+    for u in entity.get(views_key) or []:
+        if u:
+            urls.add(u)
+    return urls
+
+
+def _assign_explicit_urls_to_entities(
+    urls: list[str],
+    inf: dict | None,
+    prod: dict | None,
+) -> tuple[str | None, str | None]:
+    """Map explicit URLs to influencer/product by view-set membership, not list position."""
+    if not urls:
+        return None, None
+
+    inf_views = _view_urls_for_entity(inf, primary_key="image_url", views_key="character_views")
+    prod_views = _view_urls_for_entity(prod, primary_key="image_url", views_key="product_views")
+    db_inf = (inf or {}).get("image_url") or ""
+    db_prod = (prod or {}).get("image_url") or ""
+
+    inf_override: str | None = None
+    prod_override: str | None = None
+    assigned: set[str] = set()
+
+    for u in urls:
+        in_inf = u in inf_views
+        in_prod = u in prod_views
+        if in_inf and not in_prod and inf is not None:
+            inf_override = u
+            assigned.add(u)
+        elif in_prod and not in_inf and prod is not None:
+            prod_override = u
+            assigned.add(u)
+
+    for u in urls:
+        if u in assigned:
+            continue
+        if inf is not None and prod is not None:
+            if u != db_inf and inf_override is None:
+                inf_override = u
+                assigned.add(u)
+            elif u != db_prod and prod_override is None:
+                prod_override = u
+                assigned.add(u)
+        elif inf is not None and inf_override is None:
+            inf_override = u
+        elif prod is not None and prod_override is None:
+            prod_override = u
+
+    return inf_override, prod_override
+
+
+def _resolve_ugc_composite_urls(
+    data: VideoGenerateRequest,
+    influencer: dict | None,
+    product: dict | None,
+) -> tuple[dict | None, dict | None]:
+    """Prefer explicit @-mention / agent-provided URLs over DB default image_url fields.
+
+    Mirrors the Seedance PRIORITY RULE: URLs from reference_image_urls or
+    element_refs are authoritative — the user picked a specific shot in the UI.
+    """
+    inf = dict(influencer) if influencer else None
+    prod = dict(product) if product else None
+    if prod is not None:
+        prod["_db_hero_image_url"] = (product or {}).get("image_url") or prod.get("image_url")
+
+    explicit: list[str] = []
+    for u in data.reference_image_urls or []:
+        if u and u not in explicit:
+            explicit.append(u)
+    if data.reference_image_url and data.reference_image_url not in explicit:
+        explicit.insert(0, data.reference_image_url)
+
+    if not explicit and not data.element_refs:
+        return inf, prod
+
+    inf_override: str | None = None
+    prod_override: str | None = None
+    source = "none"
+
+    # element_refs from turn refs are the most precise (@-mention shot picker).
+    if data.element_refs:
+        for ref in data.element_refs:
+            if not ref.image_url:
+                continue
+            t = (ref.type or "").lower()
+            if t == "influencer":
+                inf_override = ref.image_url
+            elif t == "product":
+                prod_override = ref.image_url
+        if inf_override or prod_override:
+            source = "element_refs"
+
+    if explicit:
+        smart_inf, smart_prod = _assign_explicit_urls_to_entities(explicit, inf, prod)
+        if smart_inf and inf_override is None:
+            inf_override = smart_inf
+            source = source if source != "none" else "reference_image_urls_smart"
+        if smart_prod and prod_override is None:
+            prod_override = smart_prod
+            source = source if source != "none" else "reference_image_urls_smart"
+
+    if inf is not None and inf_override:
+        inf["image_url"] = inf_override
+    if prod is not None and prod_override:
+        prod["image_url"] = prod_override
+
+    if inf_override or prod_override:
+        print(
+            f"[UGC Clip] Explicit ref override ({source}): "
+            f"influencer={'override' if inf_override else 'db'} "
+            f"product={'override' if prod_override else 'db'}"
+        )
+        if inf_override:
+            print(f"  influencer_url={inf_override[:80]}...")
+        if prod_override:
+            print(f"  product_url={prod_override[:80]}...")
+            db_prod_hero = (product or {}).get("image_url") if product else None
+            if db_prod_hero and prod_override != db_prod_hero:
+                print("  (product shot differs from DB default hero)")
+
+    return inf, prod
+
+
 async def _run_ugc_clip_pipeline(
     job_id: str,
     data: VideoGenerateRequest,
@@ -2229,6 +2362,8 @@ async def _run_ugc_clip_pipeline(
             print(f"[UGC Clip] Extracted action: {action_direction[:100]}...")
 
         # ── Step 4: Generate composite image or use reference ──
+        influencer, product = _resolve_ugc_composite_urls(data, influencer, product)
+
         has_reference_image = bool(data.reference_image_url)
 
         # KEY LOGIC: When the user uploaded an image (reference_image_url)
@@ -2313,12 +2448,12 @@ async def _run_ugc_clip_pipeline(
                     "progress": 20,
                 })
 
-                # Build context for prompt generation
-                visual_desc = product.get("visual_description") or {}
-                if isinstance(visual_desc, str):
-                    visual_desc_str = visual_desc
-                else:
-                    visual_desc_str = visual_desc.get("visual_description", product.get("name", "the product"))
+                # Build context for prompt generation (per-shot description when @-mention overrides URL)
+                visual_desc_str = _resolve_product_visual_description(
+                    product,
+                    product.get("image_url"),
+                    hero_image_url=product.get("_db_hero_image_url"),
+                )
 
                 poss = "his" if influencer.get("gender", "Female") == "Male" else "her"
                 ctx = {
@@ -2462,15 +2597,17 @@ async def _run_ugc_clip_pipeline(
             # Sanitize: the AI-generated description may embed a different name.
             # Replace any embedded first name with the actual influencer name.
             visuals_str = _sanitize_influencer_description(raw_desc, inf_name)
-            accent_str = influencer.get("accent", "neutral English")
             tone_str = influencer.get("tone", "Enthusiastic").lower()
             setting_str = influencer.get("setting", "") or "natural environment matching the background visible in the reference image"
 
             if data.language == "es":
                 from prompts import spanish_accent_line
-                # Honor explicit data.language_accent (spain/latam) when set,
-                # else fall back to the influencer's stored accent string.
                 accent_str = spanish_accent_line(
+                    getattr(data, "language_accent", None) or influencer.get("accent")
+                )
+            else:
+                from prompts import english_accent_line
+                accent_str = english_accent_line(
                     getattr(data, "language_accent", None) or influencer.get("accent")
                 )
 
@@ -2508,7 +2645,10 @@ async def _run_ugc_clip_pipeline(
                 from prompts import spanish_accent_line
                 accent_line = spanish_accent_line(getattr(data, "language_accent", None))
             else:
-                accent_line = "neutral English accent"
+                from prompts import english_accent_line
+                accent_line = english_accent_line(
+                    getattr(data, "language_accent", None) or (influencer.get("accent") if influencer else None)
+                )
             final_action = action_direction if action_direction else "person speaking directly to camera, casual and naturally engaging, relaxed face with regular natural blinking, holding product if visible in reference"
 
             if composite_url:
@@ -2754,7 +2894,10 @@ def _build_extend_prompt(ctx: dict, user_continuation: Optional[str]) -> str:
             ctx.get("language_accent") or (influencer.get("accent") if influencer else None)
         )
     else:
-        accent_line = "neutral English accent, speaking entirely in English"
+        from prompts import english_accent_line
+        accent_line = english_accent_line(
+            ctx.get("language_accent") or (influencer.get("accent") if influencer else None)
+        )
 
     parts: list[str] = []
     if dialogue:

@@ -536,7 +536,7 @@ class ProviderRouter:
 provider_router = ProviderRouter(probe_timeout=3.0, cache_ttl=60, window_seconds=600)
 
 
-def generate_video_wavespeed(prompt, reference_image_url=None, duration=8, aspect_ratio="9:16"):
+def generate_video_wavespeed(prompt, reference_image_url=None, duration=8, aspect_ratio="9:16", seed=None):
     """
     Generate video using WaveSpeed's Veo 3.1 API.
 
@@ -569,14 +569,18 @@ def generate_video_wavespeed(prompt, reference_image_url=None, duration=8, aspec
         # requested 9:16.
         endpoint = "https://api.wavespeed.ai/api/v3/google/veo3.1-fast/image-to-video"
         # Legacy: "https://api.wavespeed.ai/api/v3/google/veo3.1/reference-to-video"
+        ws_duration = min(8, max(4, int(duration or 8)))
+        if ws_duration not in (4, 6, 8):
+            ws_duration = 8
         payload = {
             "image": reference_image_url,  # singular for image-to-video (was "images" array)
             "prompt": prompt,
             "aspect_ratio": ar,
+            "duration": ws_duration,
             "resolution": "720p",
             "generate_audio": True,
         }
-        print(f"      [WaveSpeed] Using veo3.1-fast image-to-video (aspect={ar})")
+        print(f"      [WaveSpeed] Using veo3.1-fast image-to-video (duration={ws_duration}s, aspect={ar})")
     else:
         # ── Text-to-video ──
         endpoint = "https://api.wavespeed.ai/api/v3/google/veo3.1-fast/text-to-video"
@@ -596,6 +600,9 @@ def generate_video_wavespeed(prompt, reference_image_url=None, duration=8, aspec
         "no auditory hallucinations, no filler words, no stuttering, "
         "no extra limbs, no mutated hands, no extra fingers"
     )
+    if seed is not None:
+        payload["seed"] = int(seed)
+        print(f"      [WaveSpeed] seed={int(seed)}")
 
     print(f"      [WaveSpeed] Submitting to {endpoint}...")
     try:
@@ -653,7 +660,7 @@ def generate_video_wavespeed(prompt, reference_image_url=None, duration=8, aspec
     raise RuntimeError("WaveSpeed Veo 3.1 generation timed out after 20 minutes")
 
 
-def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, first_frame_url=None, return_last_frame=False, duration=12, max_retries=3, kling_elements=None, multi_prompt=None, aspect_ratio=None, force_kie: bool = False):
+def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, first_frame_url=None, return_last_frame=False, duration=12, max_retries=3, kling_elements=None, multi_prompt=None, aspect_ratio=None, force_kie: bool = False, seed=None):
     """
     Smart video generation with pre-flight health routing.
 
@@ -711,10 +718,18 @@ def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, 
     for provider in providers_to_try:
         try:
             if provider == "kie":
-                # Fast-fail 3min when Wavespeed fallback exists; full 20min when
-                # force_kie=True since there's no fallback to bail to.
-                kie_timeout = 1200 if force_kie else 180
-                label = "20-min full" if force_kie else "3-min fast-fail"
+                # Fast-fail 3min on primary Kie when WS fallback exists.
+                # After WS (or primary) already failed, Kie is the only option —
+                # give it 10min so parallel_i2v scenes don't false-fail on slow queue.
+                if force_kie:
+                    kie_timeout = 1200
+                    label = "20-min full"
+                elif last_error is not None:
+                    kie_timeout = 600
+                    label = "10-min fallback"
+                else:
+                    kie_timeout = 180
+                    label = "3-min fast-fail"
                 print(f"      [Router] → Sending job to Kie.ai ({label})...")
                 result = generate_video(
                     prompt, reference_image_url, model_api,
@@ -729,6 +744,7 @@ def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, 
                 result = generate_video_wavespeed(
                     prompt, reference_image_url, duration,
                     aspect_ratio=aspect_ratio or "9:16",
+                    seed=seed,
                 )
 
             # ✅ Success — record and return
@@ -756,9 +772,10 @@ def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, 
 
 def extend_video(task_id, prompt, seed=None, model="veo-3.1-fast"):
     """
-    Extend an existing Veo 3.1 video using the Extend API.
-    The extended video is a single continuous file containing
-    the original content plus the new extension seamlessly joined.
+    Extend an existing Veo 3.1 video using Kie's Extend API.
+
+    Returns an incremental extension segment (not a full replay of prior
+    scenes). The UGC pipeline concatenates scene 1 + these segments.
 
     Args:
         task_id: The taskId from the original generate or previous extend call.
@@ -767,7 +784,7 @@ def extend_video(task_id, prompt, seed=None, model="veo-3.1-fast"):
         model:   Friendly model name (e.g. 'veo-3.1-fast'). Resolved via MODEL_REGISTRY.
 
     Returns:
-        dict with 'taskId' (str) and 'videoUrl' (str).
+        dict with taskId, videoUrl, and extend_output_mode="segment".
     """
     # Resolve friendly name to Kie.ai API identifier (e.g. "veo-3.1-fast" -> "veo3_fast")
     model_api = config.MODEL_REGISTRY.get(model, model)
@@ -844,7 +861,11 @@ def extend_video(task_id, prompt, seed=None, model="veo-3.1-fast"):
                 result_urls = json.loads(result_urls)
             if result_urls:
                 print(f"      [EXTEND] Extension complete! ({i * 10}s)")
-                return {"taskId": new_task_id, "videoUrl": result_urls[0]}
+                return {
+                    "taskId": new_task_id,
+                    "videoUrl": result_urls[0],
+                    "extend_output_mode": "segment",
+                }
             print(f"      [EXTEND] Success but no resultUrls ({i * 10}s)")
             continue
         elif flag in (2, 3):
@@ -921,8 +942,9 @@ def _extend_video_wavespeed(video_url: str, prompt: str, seed=None) -> dict:
     """Extend a Veo video via Wavespeed's video-extend endpoint.
 
     Wavespeed's extend takes the previous scene's VIDEO URL (not a Kie task id),
-    inherits the source's aspect/resolution, and returns ONLY the extension
-    segment (just like Kie's extend does for our pipeline).
+    inherits the source's aspect/resolution, and returns a **cumulative** MP4:
+    the input video plus the new extension seamlessly joined (not an
+    incremental segment). Callers must NOT ffmpeg-concat this with the source.
     """
     if not os.getenv("WAVESPEED_API_KEY", ""):
         raise RuntimeError("WAVESPEED_API_KEY not set — cannot use Wavespeed extend")
@@ -974,8 +996,12 @@ def _extend_video_wavespeed(video_url: str, prompt: str, seed=None) -> dict:
             outputs = j.get("outputs") or []
             url = outputs[0] if outputs else None
             if url:
-                print(f"      ✨ Extend ready via WaveSpeed")
-                return {"taskId": pred_id, "videoUrl": url}
+                print(f"      ✨ Extend ready via WaveSpeed (cumulative output)")
+                return {
+                    "taskId": pred_id,
+                    "videoUrl": url,
+                    "extend_output_mode": "cumulative",
+                }
             raise RuntimeError("WaveSpeed extend completed with no output URL")
         if status in ("failed", "error", "canceled"):
             raise RuntimeError(f"WaveSpeed extend failed: {j.get('error') or j}")
@@ -1074,10 +1100,31 @@ def extend_via_lastframe_with_retry(
     raise RuntimeError(f"extend_via_lastframe failed after {max_retries} attempts: {last_err}")
 
 
+def _probe_extend_output_mode(
+    prior_duration: float | None,
+    new_duration: float | None,
+) -> str | None:
+    """Best-effort detect cumulative vs segment extend output from durations.
+
+    Cumulative outputs are roughly prior_duration + ~7s. Returns None if
+    inconclusive so callers can fall back to provider-tagged mode.
+    """
+    if prior_duration is None or new_duration is None:
+        return None
+    if new_duration >= prior_duration + 4.0:
+        return "cumulative"
+    if new_duration <= prior_duration * 0.9:
+        return "segment"
+    return None
+
+
 def extend_video_with_retry(task_id, prompt, seed=None, model="veo-3.1-fast", max_retries=3, video_url: str = None, force_kie: bool = False):
     """
     Extend video with automatic retry on transient errors.
     Retries on: 500 errors, internal errors, timeouts, and unknown generation errors.
+
+    Returns dict with taskId, videoUrl, and extend_output_mode ("cumulative" for
+    WaveSpeed merged output, "segment" for Kie incremental segments).
 
     Provider routing:
       - WAVESPEED_PRIMARY=true (default): try Wavespeed extend first using
@@ -1631,6 +1678,67 @@ def generate_composite_image(scene: dict, influencer: dict, product: dict, seed:
     raise RuntimeError("Nano Banana generation timed out")
 
 
+def animate_scenes_from_composite_parallel(
+    composite_url: str,
+    veo_scenes: list,
+    output_dir,
+    *,
+    force_kie: bool = False,
+    max_workers: int | None = None,
+) -> list:
+    """Animate multiple UGC scenes from one composite image in parallel.
+
+    Each scene uses the same first frame (correct product + character) but
+    its own ``video_animation_prompt``. Returns local MP4 paths in scene order.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from pathlib import Path
+
+    if not composite_url:
+        raise RuntimeError("animate_scenes_from_composite_parallel: composite_url is required")
+    if not veo_scenes:
+        return []
+
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    workers = max_workers or len(veo_scenes)
+    print(
+        f"      [PARALLEL-i2v] Animating {len(veo_scenes)} scene(s) "
+        f"from shared composite (workers={workers})"
+    )
+
+    def _animate_one(idx: int, scene: dict):
+        scene_name = scene.get("name", f"scene_{idx + 1}")
+        out_path = out_dir / f"extended_chunk_{idx}.mp4"
+        print(f"      [PARALLEL-i2v] Starting scene {idx + 1}: {scene_name}")
+        result = animate_image(composite_url, scene, force_kie=force_kie)
+        download_video(result["videoUrl"], out_path)
+        print(f"      [PARALLEL-i2v] Scene {idx + 1} ready: {out_path.name}")
+        return idx, out_path
+
+    ordered: dict[int, Path] = {}
+    errors: list[tuple[int, str]] = {}
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(_animate_one, i, scene): i
+            for i, scene in enumerate(veo_scenes)
+        }
+        for fut in as_completed(futures):
+            idx = futures[fut]
+            try:
+                scene_idx, path = fut.result()
+                ordered[scene_idx] = path
+            except Exception as e:
+                errors.append((idx, str(e)))
+                print(f"      [PARALLEL-i2v] Scene {idx + 1} failed: {e}")
+
+    if errors:
+        detail = "; ".join(f"scene {i + 1}: {msg}" for i, msg in errors)
+        raise RuntimeError(f"Parallel i2v failed — {detail}")
+
+    return [ordered[i] for i in range(len(veo_scenes))]
+
+
 def animate_image(image_url: str, scene: dict, force_kie: bool = False) -> dict:
     """Calls Veo 3.1 to animate a composite image.
 
@@ -1644,11 +1752,16 @@ def animate_image(image_url: str, scene: dict, force_kie: bool = False) -> dict:
     # Use the script part as the prompt for animation
     prompt = scene.get("video_animation_prompt") or scene.get("prompt")
 
+    duration = int(scene.get("target_duration") or 8)
+    seed = scene.get("seed")
+
     result = generate_video_with_retry(
         prompt=prompt,
         reference_image_url=image_url,
         model_api="veo-3.1-fast",
         force_kie=force_kie,
+        duration=duration,
+        seed=seed,
     )
     return result
 

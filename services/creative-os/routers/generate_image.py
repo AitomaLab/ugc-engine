@@ -279,11 +279,26 @@ async def execute_image_generation(data: ExecuteRequest, user: dict = Depends(ge
                 )
             else:
                 # Physical product: build product-holding composite prompt.
-                va = product.get("visual_description") or product.get("visual_analysis") or {}
-                if isinstance(va, str):
-                    visual_desc_str = va
-                else:
-                    visual_desc_str = va.get("visual_description", "the product")
+                from routers.generate_video import (
+                    _assign_explicit_urls_to_entities,
+                    _resolve_product_visual_description,
+                )
+
+                hero_url = product.get("image_url") if product else None
+                prod_image_url = hero_url
+                if product and data.reference_image_urls:
+                    _, prod_override = _assign_explicit_urls_to_entities(
+                        list(data.reference_image_urls),
+                        influencer,
+                        product,
+                    )
+                    if prod_override:
+                        prod_image_url = prod_override
+                visual_desc_str = _resolve_product_visual_description(
+                    product,
+                    prod_image_url,
+                    hero_image_url=hero_url,
+                )
 
                 composite_prompt = (
                     f"action: character {scene_description}, casually presenting the product\n"

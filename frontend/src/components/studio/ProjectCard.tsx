@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
+import { useApp } from '@/providers/AppProvider';
 import { useTranslation } from '@/lib/i18n';
 
 /**
@@ -48,6 +49,7 @@ const EMPTY_GRADIENTS = [
 ];
 
 export function ProjectCard({ project }: ProjectCardProps) {
+    const { setActiveProject } = useApp();
     const { t, lang } = useTranslation();
     const [hovered, setHovered] = useState(false);
     const [failedUrls, setFailedUrls] = useState<Set<string>>(new Set());
@@ -222,6 +224,7 @@ export function ProjectCard({ project }: ProjectCardProps) {
         <Link
             href={`/projects/${project.id}`}
             id={`project-card-${project.id}`}
+            onClick={() => setActiveProject(project.id)}
             style={{
                 display: 'flex',
                 flexDirection: 'column',

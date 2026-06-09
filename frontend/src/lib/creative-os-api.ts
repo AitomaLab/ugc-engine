@@ -9,6 +9,28 @@ import { supabase } from '@/lib/supabaseClient';
 
 const CREATIVE_OS_URL = process.env.NEXT_PUBLIC_CREATIVE_OS_URL || 'http://localhost:8001';
 
+/** Timeout + attempts for heavy `/full` gallery reload. */
+export const GALLERY_FETCH_TIMEOUT_MS = 45_000;
+export const GALLERY_FETCH_ATTEMPTS = 3;
+
+/** Lightweight status poll — fail fast when Creative OS is busy (agent SSE). */
+export const JOBS_STATUS_FETCH_TIMEOUT_MS = 15_000;
+export const JOBS_STATUS_FETCH_ATTEMPTS = 2;
+
+export class CreativeFetchAbortedError extends Error {
+    readonly kind: 'unmount' | 'timeout';
+
+    constructor(kind: 'unmount' | 'timeout') {
+        super(kind === 'timeout' ? 'Request timed out' : 'Request aborted');
+        this.name = 'CreativeFetchAbortedError';
+        this.kind = kind;
+    }
+
+    get silent(): boolean {
+        return this.kind === 'unmount';
+    }
+}
+
 async function getAuthToken(): Promise<string | null> {
     try {
         const { data: { session } } = await supabase.auth.getSession();
@@ -18,7 +40,23 @@ async function getAuthToken(): Promise<string | null> {
     }
 }
 
-export async function creativeFetch<T = unknown>(
+function isRetryableFetchError(err: unknown): boolean {
+    if (err instanceof CreativeFetchAbortedError) return err.kind === 'timeout';
+    if (err instanceof DOMException && err.name === 'AbortError') return false;
+    if (err instanceof TypeError) {
+        const msg = String(err.message || err).toLowerCase();
+        return msg.includes('failed to fetch')
+            || msg.includes('network')
+            || msg.includes('load failed');
+    }
+    return false;
+}
+
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function creativeFetchOnce<T = unknown>(
     path: string,
     options?: RequestInit,
     timeoutMs: number = 120_000,
@@ -42,9 +80,21 @@ export async function creativeFetch<T = unknown>(
         }
     }
 
-    // Configurable timeout — default 2 min, longer for heavy generation pipelines
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const externalSignal = options?.signal;
+    let timedOut = false;
+
+    if (externalSignal?.aborted) {
+        throw new CreativeFetchAbortedError('unmount');
+    }
+
+    const onExternalAbort = () => controller.abort();
+    externalSignal?.addEventListener('abort', onExternalAbort, { once: true });
+
+    const timeoutId = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+    }, timeoutMs);
 
     try {
         const res = await fetch(`${CREATIVE_OS_URL}${path}`, {
@@ -57,10 +107,42 @@ export async function creativeFetch<T = unknown>(
             const error = await res.json().catch(() => ({ detail: res.statusText }));
             throw new Error(error.detail || `Creative OS error: ${res.status}`);
         }
-        return res.json();
+        const json = await res.json();
+        return json;
+    } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') {
+            if (externalSignal?.aborted) {
+                throw new CreativeFetchAbortedError('unmount');
+            }
+            if (timedOut) {
+                throw new CreativeFetchAbortedError('timeout');
+            }
+        }
+        throw err;
     } finally {
         clearTimeout(timeoutId);
+        externalSignal?.removeEventListener('abort', onExternalAbort);
     }
+}
+
+export async function creativeFetch<T = unknown>(
+    path: string,
+    options?: RequestInit,
+    timeoutMs: number = 120_000,
+    maxAttempts: number = 3,
+): Promise<T> {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        try {
+            return await creativeFetchOnce<T>(path, options, timeoutMs);
+        } catch (err) {
+            lastErr = err;
+            const canRetry = attempt < maxAttempts - 1 && isRetryableFetchError(err);
+            if (!canRetry) throw err;
+            await sleep(400 * (2 ** attempt));
+        }
+    }
+    throw lastErr;
 }
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -250,6 +332,7 @@ export type AgentStreamEvent =
     | { type: 'tool_result'; tool_use_id: string; summary: string; is_error: boolean }
     | { type: 'artifact'; artifact: AgentArtifact }
     | { type: 'artifact_pending'; pending_id: string; kind: 'image' | 'video'; label: string; stage?: string; tool_name?: string; eta_seconds?: number }
+    | { type: 'video_job_started'; job_id: string; label?: string; tool_name?: string; eta_seconds?: number; duration?: number }
     | { type: 'confirmation_pending'; credits: number; summaries: string[] }
     | { type: 'done'; session_id: string }
     | { type: 'interrupted' }

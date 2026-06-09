@@ -3,7 +3,13 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useApp } from '@/providers/AppProvider';
-import { creativeFetch } from '@/lib/creative-os-api';
+import {
+    creativeFetch,
+    CreativeFetchAbortedError,
+    GALLERY_FETCH_ATTEMPTS,
+    GALLERY_FETCH_TIMEOUT_MS,
+} from '@/lib/creative-os-api';
+import { fetchJobsStatus } from '@/lib/jobs-status-poll';
 import { useTranslation } from '@/lib/i18n';
 import { AssetGallery } from '@/components/studio/AssetGallery';
 import { CreateBar } from '@/components/studio/CreateBar';
@@ -38,6 +44,14 @@ const isInFlightStatus = (status?: string) => {
     return s.includes('pending') || s.includes('processing') || s.includes('generating');
 };
 
+/** Video row still needs jobs-status polling (in-flight OR success without URL yet). */
+const videoNeedsStatusPoll = (v: { status?: string; final_video_url?: string; video_url?: string; is_placeholder?: boolean }) => {
+    if (v.is_placeholder) return false;
+    if (isInFlightStatus(v.status)) return true;
+    const s = (v.status || '').toLowerCase();
+    return s === 'success' && !(v.final_video_url || v.video_url);
+};
+
 type TabId = 'images' | 'videos';
 
 /* ── Mode label helper (mirrors VideoDetailModal) ─────────────── */
@@ -52,6 +66,46 @@ function modeLabel(api?: string): string {
         if (lower.includes(key)) return label;
     }
     return '';
+}
+
+function hasPlayableVideo(v: { final_video_url?: string; video_url?: string }) {
+    return !!(v.final_video_url || v.video_url);
+}
+
+/** Prefer poll-enriched video URLs when /full row lags behind jobs-status. */
+function mergeVideoRow(local: any, full: any): any {
+    if (!local) return full;
+    if (!full) return local;
+    const localHasUrl = hasPlayableVideo(local);
+    const fullHasUrl = hasPlayableVideo(full);
+    if (localHasUrl && !fullHasUrl) {
+        return {
+            ...full,
+            ...local,
+            final_video_url: local.final_video_url || full.final_video_url,
+            video_url: local.video_url || full.video_url,
+            status: local.status || full.status,
+        };
+    }
+    return { ...local, ...full };
+}
+
+function dedupeVideosById(rows: any[]): any[] {
+    const byId = new Map<string, any>();
+    for (const row of rows) {
+        if (!row?.id) continue;
+        const existing = byId.get(row.id);
+        byId.set(row.id, existing ? mergeVideoRow(existing, row) : row);
+    }
+    const ordered: any[] = [];
+    const seen = new Set<string>();
+    for (const row of rows) {
+        if (!row?.id || seen.has(row.id)) continue;
+        seen.add(row.id);
+        const merged = byId.get(row.id);
+        if (merged) ordered.push(merged);
+    }
+    return ordered;
 }
 
 /* ── Responsive hook: split layout only on >=1024px viewports ─── */
@@ -113,7 +167,7 @@ export default function ProjectContainerPage() {
         // Only run once on mount — we want the cleanup to happen exactly once.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
-    const { session } = useApp();
+    const { session, setActiveProject } = useApp();
 
     const [activeTab, setActiveTab] = useState<TabId>('images');
     const [projectName, setProjectName] = useState('');
@@ -124,8 +178,14 @@ export default function ProjectContainerPage() {
     const [loading, setLoading] = useState(true);
     const [createVideoImage, setCreateVideoImage] = useState<any>(null);
     const pollRef = useRef<NodeJS.Timeout | null>(null);
+    const pollTickRef = useRef(0);
     const burstRef = useRef<NodeJS.Timeout | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
+    const fetchAssetsInFlightRef = useRef<Promise<boolean> | null>(null);
+    const fetchAssetsInFlightProjectRef = useRef<string | null>(null);
+    const projectFetchGenRef = useRef(0);
+    const mountAbortRef = useRef<AbortController | null>(null);
+    const pollInFlightRef = useRef<() => Promise<void>>(async () => {});
 
     // ── Filter state ──
     const [filterProduct, setFilterProduct] = useState('');
@@ -195,7 +255,11 @@ export default function ProjectContainerPage() {
         });
     }, []);
 
-    const registerVideoJobWatch = useCallback((jobId: string, label?: string) => {
+    const fullRefreshTimersRef = useRef<number[]>([]);
+    const fetchAssetsRef = useRef<(silent?: boolean) => Promise<boolean>>(async () => false);
+
+    const registerVideoJobWatch = useCallback((payload: { job_id: string; label?: string; eta_seconds?: number; duration?: number }) => {
+        const { job_id: jobId, label, eta_seconds, duration } = payload;
         if (!jobId) return;
         watchedVideoJobIdsRef.current.add(jobId);
         setWatchPollTick((t) => t + 1);
@@ -208,81 +272,143 @@ export default function ProjectContainerPage() {
                 status_message: 'Generating video',
                 campaign_name: label || 'AI edit',
                 model_api: 'gemini-omni-video',
+                eta_seconds,
+                length: duration,
                 created_at: new Date().toISOString(),
             }, ...prev];
         });
         setActiveTab('videos');
     }, []);
 
-    const fetchAssets = useCallback(async (silent = false) => {
-        if (!session || !projectId) return;
-        if (!silent) setLoading(true);
-        try {
-            // Single merged endpoint — builds product/influencer lookup maps
-            // once on the backend instead of 3x. Cuts open-project from
-            // ~5-10s to ~1-2s on projects with many assets.
-            const full = await creativeFetch<{
-                project: any;
-                images: any[];
-                videos: any[];
-            }>(`/creative-os/projects/${projectId}/full`);
-            setProjectName(full.project?.name || 'Project');
-            // Preserve placeholders AND any in-flight processing rows that
-            // landed locally (via poll) but aren't in /full yet — fetchAssets
-            // used to wipe them on every burst refetch, making the progress
-            // card flash for a few seconds then vanish while KIE still ran.
-            // Keep local rows that /full hasn't caught up with yet — both
-            // in-flight AND just-finished (jobs-status often leads /full by
-            // several seconds; dropping success rows here made completed
-            // videos vanish until a manual page refresh).
-            const mergeFullAssets = <T extends { id?: string; is_placeholder?: boolean; status?: string; image_url?: string; final_video_url?: string; video_url?: string }>(
-                prev: T[],
-                fullRows: T[],
-                hasPlayableMedia: (v: T) => boolean,
-            ): T[] => {
-                const placeholders = prev.filter(v => v.is_placeholder);
-                const fullMap = new Map(fullRows.map(r => [r.id, r]));
-                const localOnly = prev.filter(v => {
-                    if (v.is_placeholder || !v.id || fullMap.has(v.id)) return false;
-                    if (isInFlightStatus(v.status)) return true;
-                    if ((v.status || '').toLowerCase() === 'success' && hasPlayableMedia(v)) return true;
-                    return false;
-                });
-                return [...placeholders, ...localOnly, ...fullRows];
-            };
-            setImages(prev => mergeFullAssets(prev, full.images || [], v => !!v.image_url));
-            setVideos(prev => {
-                const merged = mergeFullAssets(
-                    prev,
-                    full.videos || [],
-                    v => !!(v.final_video_url || v.video_url),
-                );
-                // Belt-and-suspenders: any processing row from /full gets watched
-                // even if the video_job_started SSE was missed.
-                let addedWatch = false;
-                for (const v of merged) {
-                    if (v.id && isInFlightStatus(v.status) && !watchedVideoJobIdsRef.current.has(v.id)) {
-                        watchedVideoJobIdsRef.current.add(v.id);
-                        addedWatch = true;
-                    }
-                }
-                if (addedWatch) setWatchPollTick((t) => t + 1);
-                return merged;
-            });
-        } catch (err) {
-            console.error('Failed to fetch assets:', err);
-        } finally {
+    const fetchAssets = useCallback(async (silent = false): Promise<boolean> => {
+        if (!session || !projectId) {
             if (!silent) setLoading(false);
+            return false;
         }
+        if (fetchAssetsInFlightRef.current && fetchAssetsInFlightProjectRef.current === projectId) {
+            return fetchAssetsInFlightRef.current;
+        }
+
+        fetchAssetsInFlightProjectRef.current = projectId;
+
+        const run = async (): Promise<boolean> => {
+            const gen = projectFetchGenRef.current;
+            if (!silent) setLoading(true);
+            try {
+                const full = await creativeFetch<{
+                    project: any;
+                    images: any[];
+                    videos: any[];
+                }>(
+                    `/creative-os/projects/${projectId}/full`,
+                    { signal: mountAbortRef.current?.signal },
+                    GALLERY_FETCH_TIMEOUT_MS,
+                    GALLERY_FETCH_ATTEMPTS,
+                );
+                if (gen !== projectFetchGenRef.current) return false;
+                setProjectName(full.project?.name || 'Project');
+                const mergeFullAssets = <T extends { id?: string; is_placeholder?: boolean; status?: string; image_url?: string; final_video_url?: string; video_url?: string }>(
+                    prev: T[],
+                    fullRows: T[],
+                    hasPlayableMedia: (v: T) => boolean,
+                ): T[] => {
+                    const placeholders = prev.filter(v => v.is_placeholder);
+                    const fullMap = new Map(fullRows.map(r => [r.id, r]));
+                    const localOnly = prev.filter(v => {
+                        if (v.is_placeholder || !v.id || fullMap.has(v.id)) return false;
+                        if (isInFlightStatus(v.status)) return true;
+                        if ((v.status || '').toLowerCase() === 'success' && hasPlayableMedia(v)) return true;
+                        return false;
+                    });
+                    return [...placeholders, ...localOnly, ...fullRows];
+                };
+                setImages(prev => mergeFullAssets(prev, full.images || [], v => !!v.image_url));
+                setVideos(prev => {
+                    const fullVideos = full.videos || [];
+                    const fullMap = new Map(fullVideos.map((r: any) => [r.id, r]));
+                    const placeholders = prev.filter(v => v.is_placeholder);
+                    const localOnly = prev.filter(v => {
+                        if (v.is_placeholder || !v.id || fullMap.has(v.id)) return false;
+                        if (isInFlightStatus(v.status)) return true;
+                        if (videoNeedsStatusPoll(v)) return true;
+                        if ((v.status || '').toLowerCase() === 'success' && hasPlayableVideo(v)) return true;
+                        return false;
+                    });
+                    const mergedFull = fullVideos.map((f: any) => {
+                        const local = prev.find((p) => p.id === f.id);
+                        return local ? mergeVideoRow(local, f) : f;
+                    });
+                    const merged = dedupeVideosById([...placeholders, ...localOnly, ...mergedFull]);
+                    let addedWatch = false;
+                    for (const v of merged) {
+                        if (v.id && isInFlightStatus(v.status) && !watchedVideoJobIdsRef.current.has(v.id)) {
+                            watchedVideoJobIdsRef.current.add(v.id);
+                            addedWatch = true;
+                        }
+                    }
+                    if (addedWatch) setWatchPollTick((t) => t + 1);
+                    return merged;
+                });
+                return true;
+            } catch (err) {
+                if (err instanceof CreativeFetchAbortedError && err.silent) {
+                    return false;
+                }
+                const isTimeout = err instanceof CreativeFetchAbortedError && err.kind === 'timeout';
+                if (silent && isTimeout) {
+                    return false;
+                }
+                if (silent) {
+                    console.warn('Failed to fetch assets (silent refresh):', err);
+                } else {
+                    console.error('Failed to fetch assets:', err);
+                }
+                return false;
+            } finally {
+                if (!silent && gen === projectFetchGenRef.current) setLoading(false);
+            }
+        };
+
+        fetchAssetsInFlightRef.current = run().finally(() => {
+            if (fetchAssetsInFlightProjectRef.current === projectId) {
+                fetchAssetsInFlightRef.current = null;
+                fetchAssetsInFlightProjectRef.current = null;
+            }
+        });
+        return fetchAssetsInFlightRef.current;
     }, [session, projectId]);
+
+    fetchAssetsRef.current = fetchAssets;
+
+    const refreshGallery = useCallback(() => {
+        void fetchAssets(true);
+    }, [fetchAssets]);
+
+    const scheduleFullRefresh = useCallback((delaysMs: number[] = [1500, 4000, 8000]) => {
+        for (const id of fullRefreshTimersRef.current) window.clearTimeout(id);
+        fullRefreshTimersRef.current = delaysMs.map((delay) =>
+            window.setTimeout(() => {
+                void (async () => {
+                    const ok = await fetchAssetsRef.current(true);
+                    if (!ok) {
+                        const retryId = window.setTimeout(() => {
+                            void fetchAssetsRef.current(true);
+                        }, 5000);
+                        fullRefreshTimersRef.current.push(retryId);
+                    }
+                })();
+            }, delay),
+        );
+    }, []);
 
     // Lightweight polling: only refresh status/preview for in-flight assets,
     // never re-pull the full project. Merges the small status payload back
     // into the cached lists.
     const pollInFlight = useCallback(async () => {
         if (!session || !projectId) return;
+
         const imageIds = images.filter(a => !a.is_placeholder && isInFlightStatus(a.status)).map(a => a.id).filter(Boolean);
-        const inflightVideoIds = videos.filter(a => !a.is_placeholder && isInFlightStatus(a.status)).map(a => a.id).filter(Boolean);
+        const inflightVideoIds = videos.filter(a => videoNeedsStatusPoll(a)).map(a => a.id).filter(Boolean);
         const watchedVideoIds = [...watchedVideoJobIdsRef.current];
         const videoIds = [...new Set([...inflightVideoIds, ...watchedVideoIds])];
         if (imageIds.length === 0 && videoIds.length === 0) return;
@@ -291,16 +417,19 @@ export default function ProjectContainerPage() {
         const polledVideoSet = new Set(videoIds);
 
         try {
-            const status = await creativeFetch<{
-                images: any[];
-                videos: any[];
-            }>(`/creative-os/projects/${projectId}/jobs-status`, {
-                method: 'POST',
-                body: JSON.stringify({ image_ids: imageIds, video_ids: videoIds }),
-            });
+            const status = await fetchJobsStatus(
+                projectId,
+                imageIds,
+                videoIds,
+                { signal: mountAbortRef.current?.signal },
+            );
 
-            const imageMap = new Map((status.images || []).map(u => [u.id, u]));
-            const videoMap = new Map((status.videos || []).map(u => [u.id, u]));
+            const imageMap = new Map(
+                (status.images || []).flatMap((u) => (u.id ? [[u.id, u] as const] : [])),
+            );
+            const videoMap = new Map(
+                (status.videos || []).flatMap((u) => (u.id ? [[u.id, u] as const] : [])),
+            );
             let shouldNotifyFailure = false;
             const fallbackErrors: string[] = [];
 
@@ -348,13 +477,11 @@ export default function ProjectContainerPage() {
             let anyVideoSuccess = false;
             let anyImageSuccess = false;
             for (const v of (status.videos || [])) {
-                const polled = polledVideoSet.has(v.id);
-                const wasInFlight = videos.some(
-                    (p) => p.id === v.id && isInFlightStatus(p.status),
-                );
-                if (polled && wasInFlight && (v.status || '').toLowerCase() === 'success' && (v.final_video_url || v.video_url)) {
-                    anyVideoSuccess = true;
-                }
+                if (!polledVideoSet.has(v.id)) continue;
+                if ((v.status || '').toLowerCase() !== 'success' || !(v.final_video_url || v.video_url)) continue;
+                const prev = videos.find((p) => p.id === v.id);
+                const hadPlayableUrl = !!(prev?.final_video_url || prev?.video_url);
+                if (!hadPlayableUrl) anyVideoSuccess = true;
             }
             for (const im of (status.images || [])) {
                 const polled = polledImageSet.has(im.id);
@@ -384,15 +511,19 @@ export default function ProjectContainerPage() {
             if (anyVideoSuccess) clearOnePlaceholder('video');
             if (anyImageSuccess) clearOnePlaceholder('image');
 
+            const isVideoTerminal = (row: { status?: string; final_video_url?: string; video_url?: string }) => {
+                const st = (row.status || '').toLowerCase();
+                if (st.includes('failed')) return true;
+                return st === 'success' && !!(row.final_video_url || row.video_url);
+            };
             for (const v of (status.videos || [])) {
-                const st = (v.status || '').toLowerCase();
-                if (st === 'success' || st.includes('failed')) {
+                if (isVideoTerminal(v)) {
                     watchedVideoJobIdsRef.current.delete(String(v.id));
                 }
             }
             if (watchedVideoIds.some((id) => {
                 const row = videoMap.get(id);
-                return row && ((row.status || '').toLowerCase() === 'success' || (row.status || '').toLowerCase().includes('failed'));
+                return row && isVideoTerminal(row);
             })) {
                 setWatchPollTick((t) => t + 1);
             }
@@ -415,23 +546,94 @@ export default function ProjectContainerPage() {
             }
 
             // Enriched metadata (product_name, mode, …) lives on /full only.
-            // Delay slightly so /full has the row — mergeFullAssets keeps the
-            // poll-merged playable URL visible until then.
+            // Retry /full a few times — transient "Failed to fetch" during long
+            // generations (backend reload, connection reset) used to leave the
+            // gallery stuck on a spinner even though jobs-status had the URL.
             if (anyVideoSuccess || anyImageSuccess) {
-                window.setTimeout(() => { fetchAssets(true); }, 1500);
+                if (anyVideoSuccess) setActiveTab('videos');
+                scheduleFullRefresh();
             }
         } catch (err) {
-            // Best-effort poll — transient backend/auth timeouts self-heal on
-            // the next tick. Warn (not error) so we don't trip the dev error
-            // overlay for an expected, recoverable condition.
-            console.warn('Status poll failed (will retry next tick):', err);
+            if (err instanceof CreativeFetchAbortedError && err.silent) return;
+            if (!(err instanceof CreativeFetchAbortedError && err.kind === 'timeout')) {
+                console.warn('Status poll failed (will retry next tick):', err);
+            }
         }
-    }, [session, projectId, images, videos, fetchAssets, watchPollTick, clearOnePlaceholder]);
+    }, [session, projectId, images, videos, watchPollTick, clearOnePlaceholder, scheduleFullRefresh]);
 
-    // Initial fetch
+    pollInFlightRef.current = pollInFlight;
+
+    // Client-side project switch reuses this page instance — reset gallery state
+    // so a stale in-flight fetch from the previous project cannot block the new one.
     useEffect(() => {
-        fetchAssets();
-    }, [fetchAssets]);
+        projectFetchGenRef.current += 1;
+        fetchAssetsInFlightRef.current = null;
+        fetchAssetsInFlightProjectRef.current = null;
+        if (pollRef.current) {
+            clearInterval(pollRef.current);
+            pollRef.current = null;
+        }
+        if (burstRef.current) {
+            clearInterval(burstRef.current);
+            burstRef.current = null;
+        }
+        for (const id of fullRefreshTimersRef.current) window.clearTimeout(id);
+        fullRefreshTimersRef.current = [];
+        pollTickRef.current = 0;
+        watchedVideoJobIdsRef.current.clear();
+        seenInPollRef.current.clear();
+        reportedFailuresRef.current.clear();
+        setImages([]);
+        setVideos([]);
+        setProjectName('');
+        setFilterProduct('');
+        setFilterInfluencer('');
+        setFilterMode('');
+        setWatchPollTick(0);
+        setLoading(true);
+        setActiveProject(projectId);
+        try {
+            localStorage.setItem('activeProjectId', projectId);
+        } catch { /* ignore */ }
+    }, [projectId, setActiveProject]);
+
+    // Mount-scoped abort for gallery fetches — silent on navigation away.
+    useEffect(() => {
+        mountAbortRef.current = new AbortController();
+        return () => {
+            mountAbortRef.current?.abort();
+            mountAbortRef.current = null;
+        };
+    }, [projectId]);
+
+    // Initial + session-ready fetch
+    useEffect(() => {
+        if (!session || !projectId) {
+            setLoading(false);
+            return;
+        }
+        void fetchAssets().then((ok) => {
+            if (!ok) void fetchAssets();
+        });
+    }, [session, projectId, fetchAssets]);
+
+    // Refetch on tab return / bfcache — fixes empty gallery after navigation.
+    useEffect(() => {
+        const handleReturn = () => {
+            if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+            void fetchAssetsRef.current(true);
+            void pollInFlightRef.current();
+        };
+        const onPageShow = (e: PageTransitionEvent) => {
+            if (e.persisted) handleReturn();
+        };
+        document.addEventListener('visibilitychange', handleReturn);
+        window.addEventListener('pageshow', onPageShow);
+        return () => {
+            document.removeEventListener('visibilitychange', handleReturn);
+            window.removeEventListener('pageshow', onPageShow);
+        };
+    }, []);
 
     // Short-term aggressive refetch when an agent-launched job starts.
     // The backend may take 1–8s to insert the "processing" shot/job row
@@ -449,17 +651,18 @@ export default function ProjectContainerPage() {
     const startJobRefetchBurst = useCallback(() => {
         if (burstRef.current) clearInterval(burstRef.current);
         const startedAt = Date.now();
-        const tick = () => {
-            fetchAssets(true);
-            void pollInFlight();
-        };
-        tick();
         const FAST_MS = 1500;
         const SLOW_MS = 5000;
         const FAST_UNTIL = 20000;
-        // Video edits (Omni) and UGC can run 5–12 min — keep burst alive long enough
-        // that fetchAssets catches the processing row even if SSE was delayed.
-        const TOTAL_MS = 600000;
+        const TOTAL_MS = 120000;
+        const tick = () => {
+            const elapsed = Date.now() - startedAt;
+            if (elapsed <= FAST_UNTIL) {
+                void fetchAssets(true);
+            }
+            void pollInFlight();
+        };
+        tick();
         const schedule = (intervalMs: number) => setInterval(() => {
             const elapsed = Date.now() - startedAt;
             if (elapsed > TOTAL_MS) {
@@ -467,7 +670,6 @@ export default function ProjectContainerPage() {
                 burstRef.current = null;
                 return;
             }
-            // Swap to slow interval once past the fast window.
             if (intervalMs === FAST_MS && elapsed > FAST_UNTIL) {
                 if (burstRef.current) clearInterval(burstRef.current);
                 burstRef.current = schedule(SLOW_MS);
@@ -482,10 +684,8 @@ export default function ProjectContainerPage() {
     // Stop the burst early once any pending row appears — auto-poll takes over.
     useEffect(() => {
         if (!burstRef.current) return;
-        const hasPending = [...images, ...videos].some(a => {
-            const s = (a.status || '').toLowerCase();
-            return s.includes('pending') || s.includes('processing') || s.includes('generating');
-        });
+        const hasPending = images.some(a => isInFlightStatus(a.status))
+            || videos.some(a => videoNeedsStatusPoll(a));
         if (hasPending) {
             clearInterval(burstRef.current);
             burstRef.current = null;
@@ -494,6 +694,7 @@ export default function ProjectContainerPage() {
 
     useEffect(() => () => {
         if (burstRef.current) clearInterval(burstRef.current);
+        for (const id of fullRefreshTimersRef.current) window.clearTimeout(id);
     }, []);
 
     // Kick an immediate status poll when a background video job id is registered.
@@ -507,29 +708,25 @@ export default function ProjectContainerPage() {
     // Pauses while the tab is hidden to avoid burning cycles for users
     // who switched away, and fires an immediate refetch when they return.
     useEffect(() => {
-        const hasPending = [
-            ...images,
-            ...videos,
-        ].some(a => {
-            const s = (a.status || '').toLowerCase();
-            return s.includes('pending') || s.includes('processing') || s.includes('generating');
-        });
+        const hasPending = images.some(a => isInFlightStatus(a.status))
+            || videos.some(a => videoNeedsStatusPoll(a));
         const hasWatchedVideos = watchedVideoJobIdsRef.current.size > 0;
 
         if (hasPending || hasWatchedVideos) {
+            pollTickRef.current = 0;
             void pollInFlight();
             pollRef.current = setInterval(() => {
                 if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
-                pollInFlight();
+                pollTickRef.current += 1;
+                void pollInFlight();
+                if (pollTickRef.current % 6 === 0) {
+                    void fetchAssetsRef.current(true);
+                }
             }, 2000);
-            const onVisible = () => {
-                if (document.visibilityState === 'visible') pollInFlight();
-            };
-            document.addEventListener('visibilitychange', onVisible);
             return () => {
                 if (pollRef.current) clearInterval(pollRef.current);
                 pollRef.current = null;
-                document.removeEventListener('visibilitychange', onVisible);
+                pollTickRef.current = 0;
             };
         }
 
@@ -861,10 +1058,10 @@ export default function ProjectContainerPage() {
             type={activeTab}
             loading={loading}
             projectId={projectId}
-            onRefresh={() => fetchAssets(true)}
+            onRefresh={refreshGallery}
             onAnimated={() => {
                 setActiveTab('videos');
-                fetchAssets(true);
+                refreshGallery();
             }}
             onCreateVideo={(asset) => {
                 setCreateVideoImage(asset);
@@ -877,7 +1074,7 @@ export default function ProjectContainerPage() {
         <CreateBar
             activeTab={activeTab}
             projectId={projectId}
-            onGenerated={() => fetchAssets(true)}
+            onGenerated={refreshGallery}
             preloadImage={createVideoImage}
             onPreloadConsumed={() => setCreateVideoImage(null)}
         />
@@ -895,7 +1092,7 @@ export default function ProjectContainerPage() {
                 {projectHeaderBar}
                 {galleryBlock}
                 {false && createBarOpen && createBarBlock}
-                <AgentPanel ref={agentRef} projectId={projectId} jobId={selectedJobId} onArtifact={() => { fetchAssets(true); }} onArtifactPending={addPendingPlaceholder} onArtifactReady={clearOnePlaceholder} onStateChange={setAgentState} initialBrief={initialBrief || undefined} initialRefs={initialRefs} initialUseSeedance={initialUseSeedance} onJobStart={(kind) => { setActiveTab(kind === 'video' ? 'videos' : 'images'); startJobRefetchBurst(); }} onVideoJobStarted={({ job_id, label }) => registerVideoJobWatch(job_id, label)} />
+                <AgentPanel ref={agentRef} projectId={projectId} jobId={selectedJobId} onArtifact={refreshGallery} onArtifactPending={addPendingPlaceholder} onArtifactReady={clearOnePlaceholder} onStateChange={setAgentState} initialBrief={initialBrief || undefined} initialRefs={initialRefs} initialUseSeedance={initialUseSeedance} onJobStart={(kind) => { setActiveTab(kind === 'video' ? 'videos' : 'images'); startJobRefetchBurst(); }} onVideoJobStarted={registerVideoJobWatch} />
             </div>
         );
     }
@@ -929,7 +1126,7 @@ export default function ProjectContainerPage() {
                             ref={agentRef}
                             projectId={projectId}
                             jobId={selectedJobId}
-                            onArtifact={() => { fetchAssets(true); }} onArtifactPending={addPendingPlaceholder} onArtifactReady={clearOnePlaceholder}
+                            onArtifact={refreshGallery} onArtifactPending={addPendingPlaceholder} onArtifactReady={clearOnePlaceholder}
                             embedded={true}
                             hideHeader={true}
                             onStateChange={setAgentState}
@@ -937,7 +1134,7 @@ export default function ProjectContainerPage() {
                             initialRefs={initialRefs}
                             initialUseSeedance={initialUseSeedance}
                             onJobStart={(kind) => { setActiveTab(kind === 'video' ? 'videos' : 'images'); startJobRefetchBurst(); }}
-                            onVideoJobStarted={({ job_id, label }) => registerVideoJobWatch(job_id, label)}
+                            onVideoJobStarted={registerVideoJobWatch}
                         />
                     </div>
                 )}

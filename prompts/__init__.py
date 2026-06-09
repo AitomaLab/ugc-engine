@@ -110,6 +110,38 @@ def spanish_accent_line(code, hint_text=None) -> str:
 
 
 # ---------------------------------------------------------------------------
+# English accent line for Veo voice_type (US vs UK)
+# ---------------------------------------------------------------------------
+def english_accent_line(code=None, hint_text=None) -> str:
+    """Return the `voice_type:` accent description for an English video.
+
+    Veo 3.1 drifts between US and UK accents when prompts only say
+    "neutral English" — especially harmful for parallel_i2v where each clip
+    is generated independently. Default to explicit General American US.
+
+    `code` may be an influencer accent string or language_accent override.
+    UK is used only when the code explicitly mentions British/UK markers.
+    """
+    del hint_text  # reserved for future script-based detection
+    norm = str(code or "").lower()
+    is_uk = any(w in norm for w in (
+        "uk", "british", "england", "scottish", "irish", "welsh",
+        "received pronunciation", "oxford", "bbc", "cockney",
+    )) or norm in ("en-gb", "en_gb", "gb")
+    if is_uk:
+        return (
+            "native British English from England (Received Pronunciation / London baseline, NOT American) — "
+            "non-rhotic pronunciation where applicable, British vocabulary and intonation, "
+            "speaking entirely in English with a consistent British UK accent"
+        )
+    return (
+        "native General American English from the United States (NOT British, NOT UK) — "
+        "standard American pronunciation with rhotic r sounds, American vocabulary and intonation, "
+        "speaking entirely in English with a consistent US American accent"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Number-to-words expansion (0-999)
 # ---------------------------------------------------------------------------
 _NUMBER_WORDS = {

@@ -643,6 +643,8 @@ class ProductCreate(BaseModel):
     image_url: Optional[str] = None      # Optional for digital products (auto-populated from clip frame)
     website_url: Optional[str] = None      # NEW: For dual-source AI analysis
     product_views: Optional[list] = None   # 4-view product shots from Generate Shots
+    visual_description: Optional[dict] = None
+    product_view_descriptions: Optional[dict] = None  # URL -> vision analysis per shot
 
 class AppClipUpdate(BaseModel):            # NEW: For PATCH endpoint
     product_id: Optional[str] = None
@@ -684,6 +686,9 @@ class JobCreate(BaseModel):
     language_accent: Optional[str] = None        # 'spain' | 'latam' — only consulted when video_language == 'es'
     # Music
     music_enabled: Optional[bool] = True
+    # @-mention shot overrides from agent UI (stored in job metadata)
+    reference_image_url: Optional[str] = None
+    product_image_url: Optional[str] = None
 
 class BulkJobCreate(BaseModel):
     influencer_id: str
@@ -912,39 +917,86 @@ def api_analyze_product(data: ProductAnalyzeRequest):
 
 
 class ProductAnalyzeImageRequest(BaseModel):
-    image_url: str
+    image_url: Optional[str] = None
+    image_urls: Optional[list] = None
     product_id: Optional[str] = None  # If provided, saves result to product
+    force: bool = False  # When false, skip URLs already in product_view_descriptions
 
 @app.post("/api/products/analyze-image")
 def api_analyze_product_image(data: ProductAnalyzeImageRequest):
-    """Analyze a product image directly — no saved product required.
+    """Analyze product image(s) directly — no saved product required.
 
-    If product_id is provided, also persists the result to the product record.
+    Single-image (legacy): pass image_url, returns the analysis dict.
+    Multi-shot: pass image_urls, returns { descriptions, profile_description }.
+
+    If product_id is provided, persists product_view_descriptions and syncs
+    visual_description from the hero (image_url) entry.
     """
     try:
         from ugc_backend.llm_vision_client import LLMVisionClient
+        from ugc_db.db_manager import get_product, update_product
 
-        if not data.image_url:
-            raise HTTPException(status_code=400, detail="image_url is required")
+        urls: list[str] = []
+        if data.image_urls:
+            urls = [u for u in data.image_urls if u]
+        elif data.image_url:
+            urls = [data.image_url]
 
-        print(f"DEBUG: Analyzing product image directly: {data.image_url[:80]}...")
+        if not urls:
+            raise HTTPException(status_code=400, detail="image_url or image_urls is required")
+
+        existing_map: dict = {}
+        hero_url: str | None = None
+        if data.product_id:
+            product = get_product(data.product_id)
+            if product:
+                existing_map = product.get("product_view_descriptions") or {}
+                hero_url = product.get("image_url")
+
+        if data.product_id and not data.force:
+            urls_to_analyze = [u for u in urls if u not in existing_map]
+        else:
+            urls_to_analyze = urls
+
+        if not urls_to_analyze:
+            descriptions = {u: existing_map[u] for u in urls if u in existing_map}
+            profile_description = descriptions.get(hero_url) if hero_url else None
+            if len(urls) == 1 and not data.image_urls:
+                return descriptions.get(urls[0]) or {}
+            return {"descriptions": descriptions, "profile_description": profile_description}
+
+        print(f"DEBUG: Analyzing {len(urls_to_analyze)} product image(s)...")
 
         client = LLMVisionClient()
-        analysis = client.describe_product_image(data.image_url)
+        new_descriptions: dict = {}
+        for url in urls_to_analyze:
+            print(f"DEBUG: Analyzing product image: {url[:80]}...")
+            analysis = client.describe_product_image(url)
+            if not analysis:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Vision analysis failed or returned empty for {url[:80]}",
+                )
+            new_descriptions[url] = analysis
 
-        if not analysis:
-            raise HTTPException(status_code=500, detail="Vision analysis failed or returned empty")
+        merged = {**existing_map, **new_descriptions}
+        descriptions = {u: merged[u] for u in urls if u in merged}
+        profile_description = merged.get(hero_url) if hero_url else None
 
-        print(f"DEBUG: Analysis result: {analysis}")
-
-        # Persist to product if product_id is provided
         if data.product_id:
-            from ugc_db.db_manager import update_product
-            update_product(data.product_id, {"visual_description": analysis})
-            print(f"DEBUG: Saved analysis to product {data.product_id}")
+            update_payload: dict = {"product_view_descriptions": merged}
+            if profile_description:
+                update_payload["visual_description"] = profile_description
+            update_product(data.product_id, update_payload)
+            print(f"DEBUG: Saved {len(new_descriptions)} shot description(s) to product {data.product_id}")
 
-        return analysis
+        if len(urls) == 1 and not data.image_urls:
+            return descriptions.get(urls[0]) or new_descriptions.get(urls[0]) or {}
 
+        return {"descriptions": descriptions, "profile_description": profile_description}
+
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"ERROR in api_analyze_product_image: {e}")
         import traceback
@@ -1266,6 +1318,10 @@ def api_create_job(
                 metadata["cinematic_shot_ids"] = job_data["cinematic_shot_ids"]
             if data.hook:
                 metadata["hook"] = data.hook
+            if data.reference_image_url:
+                metadata["reference_image_url"] = data.reference_image_url
+            if data.product_image_url:
+                metadata["product_image_url"] = data.product_image_url
             if metadata:
                 job_data["metadata"] = metadata
 

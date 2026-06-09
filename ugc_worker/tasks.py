@@ -223,6 +223,8 @@ def generate_ugc_video(self, job_id: str):
                     "category": prod.get("category", ""),
                     "visual_description": visual_desc,
                     "website_url": prod.get("website_url", ""),
+                    "product_view_descriptions": prod.get("product_view_descriptions") or {},
+                    "_db_hero_image_url": prod["image_url"],
                 }
                 print(f"      ✅ Product found: {prod['name']}")
             else:
@@ -249,15 +251,31 @@ def generate_ugc_video(self, job_id: str):
             "setting": influencer.get("setting", ""),
         }
 
-        # Override reference image if a custom one was provided via Creative OS.
-        # This is stored in job.metadata.reference_image_url by _generate_full_video().
-        # Core engine jobs don't set this field, so they're unaffected.
+        # Override reference/product images when @-mentions were provided via agent UI.
         job_metadata = job.get("metadata") or {}
         custom_ref_image = job_metadata.get("reference_image_url")
         if custom_ref_image:
             influencer_dict["image_url"] = custom_ref_image
             influencer_dict["reference_image_url"] = custom_ref_image
             print(f"      🖼️ Custom reference image from metadata: {custom_ref_image[:80]}...")
+
+        custom_prod_image = job_metadata.get("product_image_url")
+        if custom_prod_image and product_dict:
+            hero_url = product_dict.get("_db_hero_image_url") or product_dict.get("image_url")
+            product_dict["image_url"] = custom_prod_image
+            product_dict["_db_hero_image_url"] = hero_url
+            try:
+                from prompts.product_refs import resolve_product_visual_description
+                product_dict["_resolved_visual_description"] = resolve_product_visual_description(
+                    product_dict,
+                    image_url=custom_prod_image,
+                    hero_image_url=hero_url,
+                )
+            except Exception as e:
+                print(f"      ⚠️ Per-shot visual description resolve failed: {e}")
+            print(f"      🖼️ Custom product image from metadata: {custom_prod_image[:80]}...")
+            if hero_url and custom_prod_image != hero_url:
+                print(f"      (product shot differs from DB default hero)")
 
         print(f"      📦 Influencer Dict for Engine: {influencer_dict}")
 

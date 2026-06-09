@@ -71,6 +71,7 @@ export interface Product {
     job_count?: number;
     visual_description?: any;
     product_views?: string[];
+    product_view_descriptions?: Record<string, any>;
     created_at?: string;
 }
 

@@ -531,6 +531,7 @@ async def agent_stream(
                     prior_turns=prior_turns,
                     lang=_effective_lang,
                     image_urls=image_urls or None,
+                    turn_refs=[r.model_dump(exclude_none=True) for r in refs] if refs else None,
                 ):
                     t = ev.get("type")
                     if t == "session":

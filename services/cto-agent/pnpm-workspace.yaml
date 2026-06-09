@@ -1,0 +1,6 @@
+strictDepBuilds: false
+verifyDepsBeforeRun: false
+onlyBuiltDependencies:
+  - sharp
+allowBuilds:
+  sharp: set this to true or false

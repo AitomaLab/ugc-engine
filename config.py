@@ -177,6 +177,11 @@ CELERY_TRANSPORT_OPTIONS = {
     'visibility_timeout': 3600,
 }
 
+# Physical multi-scene UGC extend strategy:
+#   parallel_i2v     — one Nano Banana composite, parallel Veo i2v per scene (default)
+#   wavespeed_extend — legacy WS video-extend chain (product drift risk)
+PHYSICAL_EXTEND_STRATEGY = os.getenv("PHYSICAL_EXTEND_STRATEGY", "parallel_i2v")
+
 # Lip-Sync Model
 LIPSYNC_MODEL = os.getenv("LIPSYNC_MODEL", "infinitalk/from-audio")
 LIPSYNC_QUALITY = os.getenv("LIPSYNC_QUALITY", "720p")

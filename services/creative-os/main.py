@@ -316,10 +316,14 @@ async def get_config():
 # ── Run ─────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
+    _reload_dirs = [str(Path(__file__).parent)]
+    _repo_prompts = _repo_root / "prompts"
+    if _repo_prompts.is_dir():
+        _reload_dirs.append(str(_repo_prompts))
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
         port=8001,
         reload=True,
-        reload_dirs=[str(Path(__file__).parent)],
+        reload_dirs=_reload_dirs,
     )

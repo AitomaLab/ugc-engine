@@ -298,191 +298,290 @@ def run_generation_pipeline(
 
             print(f"      [EXTEND] {len(veo_scenes)} Veo scenes to chain, {len(remaining_scenes)} remaining")
 
-            # -- Step 1: Generate Scene 1 (first Veo scene) --
+            # -- Step 1: Generate Scene 1 / composite anchor --
             scene_1 = veo_scenes[0]
-            if status_callback:
-                status_callback(f"Gen: {scene_1['name'].title()} (1/{len(scenes)})")
-            print(f"      [EXTEND] Generating Scene 1: {scene_1['name']}")
-
             extend_chunks = []
             extended_video_path = output_dir / "extended_chain.mp4"
+            final_cumulative_path = None
+            trim_segment_overlap = True
+            current_task_id = None
+            current_video_url = None
 
-            if scene_1["type"] == "physical_product_scene":
-                # Nano Banana composite + Veo animation
+            use_physical_parallel_i2v = (
+                product_type == "physical"
+                and config.PHYSICAL_EXTEND_STRATEGY == "parallel_i2v"
+                and scene_1.get("type") == "physical_product_scene"
+            )
+
+            if use_physical_parallel_i2v:
+                # One composite → parallel Veo i2v per scene (pins product identity).
+                extend_assembly_mode = "segment"
+                trim_segment_overlap = False
                 if status_callback:
                     status_callback(f"Gen: Composite Image (1/{len(scenes)})")
+                print(f"      [EXTEND] Physical parallel-i2v: generating shared composite")
                 composite_url = generate_scenes.generate_composite_image_with_retry(
                     scene=scene_1,
                     influencer=influencer,
                     product=product,
-                    seed=global_seed
+                    seed=global_seed,
                 )
                 cached_composite_url = composite_url
                 print(f"      [EXTEND] Composite ready: {composite_url}")
-
-                # Preview: show composite image immediately
                 if status_callback:
-                    status_callback(f"Gen: Animating Scene (1/{len(scenes)})", preview_url=composite_url, preview_type="image")
-                # Digital products: route scene 1 to Kie so the downstream
-                # extend chain can reuse the Kie task_id for stateful
-                # continuation (Wavespeed extend is stateless and re-imagines
-                # the character + phone UI on every scene).
-                _force_kie_for_chain = (product_type == "digital")
-                result = generate_scenes.animate_image(
-                    image_url=composite_url,
-                    scene=scene_1,
-                    force_kie=_force_kie_for_chain,
-                )
-                current_task_id = result["taskId"]
-                current_video_url = result["videoUrl"]
-            else:
-                # Pure Veo generation
-                result = generate_scenes.generate_video(
-                    prompt=scene_1["prompt"],
-                    reference_image_url=scene_1.get("reference_image_url"),
-                    model_api="veo-3.1-fast"
-                )
-                current_task_id = result["taskId"]
-                current_video_url = result["videoUrl"]
-
-            chunk_0_path = output_dir / "extended_chunk_0.mp4"
-            generate_scenes.download_video(current_video_url, chunk_0_path)
-            extend_chunks.append(chunk_0_path)
-            print(f"      [EXTEND] Scene 1 downloaded: {chunk_0_path}")
-
-            # Preview: upload Scene 1 video
-            if status_callback:
-                preview = _upload_scene_preview(chunk_0_path)
-                if preview:
-                    status_callback(f"Gen: {scene_1['name'].title()} (1/{len(scenes)})", preview_url=preview, preview_type="video")
-
-            # -- Step 2: Extend chain (Scenes 2..N) --
-            for idx, ext_scene in enumerate(veo_scenes[1:], 2):
-                if status_callback:
-                    status_callback(f"Extend: {ext_scene['name'].title()} ({idx}/{len(scenes)})")
-                print(f"      [EXTEND] Extending with Scene {idx}: {ext_scene['name']}")
-
-                extension_prompt = ext_scene.get("video_animation_prompt") or ext_scene.get("prompt", "")
-                # Digital products: force Kie for the entire extend chain.
-                # Kie's extend is STATEFUL — it reuses the original generation's
-                # composite/seed/embeddings via task_id, so the character +
-                # phone UI stay pinned across scenes. Wavespeed's extend is
-                # stateless (only sees the prior video file), causing the
-                # character and phone screen to drift / hallucinate.
-                # Physical products keep Wavespeed-primary with video-extend
-                # — no on-screen UI to pin and continuity is acceptable there.
-                _force_kie = (product_type == "digital")
-                try:
-                    result = generate_scenes.extend_video_with_retry(
-                        task_id=current_task_id,
-                        prompt=extension_prompt,
-                        seed=ext_scene.get("seed"),
-                        video_url=current_video_url,
-                        force_kie=_force_kie,
-                        max_retries=5,
+                    status_callback(
+                        f"Gen: Animating {len(veo_scenes)} Scenes (parallel)",
+                        preview_url=composite_url,
+                        preview_type="image",
                     )
-                except RuntimeError as _ext_e:
-                    # Graceful degradation: if Kie / Wavespeed extend keeps
-                    # failing (e.g. "unknown extend error" under heavy queue
-                    # load), publish what we have rather than leaving the job
-                    # stuck in 'processing' forever. The user sees a shorter
-                    # video instead of a permanent spinner.
-                    print(f"      [EXTEND] ⚠ Scene {idx} failed after retries: {_ext_e} — finalizing with {len(extend_chunks)} scene(s) we have")
+                extend_chunks = generate_scenes.animate_scenes_from_composite_parallel(
+                    composite_url,
+                    veo_scenes,
+                    output_dir,
+                    force_kie=False,
+                )
+                for idx, chunk_path in enumerate(extend_chunks):
                     if status_callback:
-                        try:
-                            status_callback(f"Extend: scene {idx} failed — finalizing with {len(extend_chunks)} scene(s)")
-                        except Exception:
-                            pass
-                    break
-                # The returned video contains ONLY the new extension segment
-                chunk_idx_path = output_dir / f"extended_chunk_{idx-1}.mp4"
-                generate_scenes.download_video(result["videoUrl"], chunk_idx_path)
-                extend_chunks.append(chunk_idx_path)
-                current_task_id = result["taskId"]
-                current_video_url = result["videoUrl"]
-                print(f"      [EXTEND] Scene {idx} extended successfully")
-
-                # Preview: upload extended scene video
+                        preview = _upload_scene_preview(chunk_path)
+                        if preview:
+                            status_callback(
+                                f"Gen: {veo_scenes[idx]['name'].title()} ({idx + 1}/{len(scenes)})",
+                                preview_url=preview,
+                                preview_type="video",
+                            )
+            else:
+                # Digital Kie extend, or legacy physical WS video-extend.
+                extend_assembly_mode = "segment" if product_type == "digital" else "cumulative"
                 if status_callback:
-                    preview = _upload_scene_preview(chunk_idx_path)
-                    if preview:
-                        status_callback(f"Extend: {ext_scene['name'].title()} ({idx}/{len(scenes)}) ✓", preview_url=preview, preview_type="video")
+                    status_callback(f"Gen: {scene_1['name'].title()} (1/{len(scenes)})")
+                print(f"      [EXTEND] Generating Scene 1: {scene_1['name']}")
 
-            # -- Step 2(b): Concatenate extend chunks --
-            # -- Step 2(b): Concatenate extend chunks --
-            # Veo Extend natively overlays 1.0 seconds of context. To prevent dual-audio echoes,
-            # we truncate the trailing 1.0s off every chunk EXCEPT the final one.
-            # To cure the millisecond lag AND stop FFmpeg from desynchronizing the A/V streams,
-            # we MUST pre-trim and re-encode each chunk individually BEFORE concatenating them!
-            print(f"      [EXTEND] Trimming and re-encoding {len(extend_chunks)} extended chunks individually...")
-            from assemble_video import get_video_duration, ensure_audio_stream
-            
-            processed_chunks = []
-            for i, chunk_path in enumerate(extend_chunks):
-                chunk_path = ensure_audio_stream(chunk_path, output_dir)
-                safe_path = str(Path(chunk_path).resolve()).replace("\\", "/")
-                if i < len(extend_chunks) - 1:
-                    dur = get_video_duration(chunk_path)
-                    trim_dur = max(0.1, dur - 1.0)
-                    trimmed_path = safe_path.replace(".mp4", "_trimmed.mp4")
-                    # Build audio filter: fade-in (non-first) + fade-out at trim boundary
-                    af_parts = []
-                    if i > 0:
-                        af_parts.append("afade=t=in:st=0:d=0.3")
-                    af_parts.append(f"afade=t=out:st={max(0, trim_dur - 0.15):.3f}:d=0.15")
-                    af_filter = ",".join(af_parts)
-                    cmd_trim = [
-                        "ffmpeg", "-y", "-i", safe_path,
-                        "-t", f"{trim_dur:.3f}",
-                        "-c:v", "libx264", "-preset", "fast",
-                        "-g", "30", "-keyint_min", "1",
-                        "-af", af_filter,
-                        "-c:a", "aac",
-                        "-movflags", "+faststart",
-                        trimmed_path
-                    ]
-                    subprocess.run(cmd_trim, capture_output=True, check=True)
-                    processed_chunks.append(trimmed_path)
+                if scene_1["type"] == "physical_product_scene":
+                    if status_callback:
+                        status_callback(f"Gen: Composite Image (1/{len(scenes)})")
+                    composite_url = generate_scenes.generate_composite_image_with_retry(
+                        scene=scene_1,
+                        influencer=influencer,
+                        product=product,
+                        seed=global_seed,
+                    )
+                    cached_composite_url = composite_url
+                    print(f"      [EXTEND] Composite ready: {composite_url}")
+                    if status_callback:
+                        status_callback(
+                            f"Gen: Animating Scene (1/{len(scenes)})",
+                            preview_url=composite_url,
+                            preview_type="image",
+                        )
+                    _force_kie_for_chain = (product_type == "digital")
+                    result = generate_scenes.animate_image(
+                        image_url=composite_url,
+                        scene=scene_1,
+                        force_kie=_force_kie_for_chain,
+                    )
+                    current_task_id = result["taskId"]
+                    current_video_url = result["videoUrl"]
                 else:
-                    encoded_path = safe_path.replace(".mp4", "_encoded.mp4")
-                    final_dur = get_video_duration(chunk_path)
-                    fade_start = max(0, final_dur - 1.5)
-                    # Build audio filter: fade-in (non-first) + fade-out at end
-                    af_parts = []
-                    if i > 0:
-                        af_parts.append("afade=t=in:st=0:d=0.3")
-                    af_parts.append(f"afade=t=out:st={fade_start:.3f}:d=1.5")
-                    af_filter = ",".join(af_parts)
-                    cmd_enc = [
-                        "ffmpeg", "-y", "-i", safe_path,
-                        "-c:v", "libx264", "-preset", "fast",
-                        "-g", "30", "-keyint_min", "1",
-                        "-af", af_filter,
-                        "-c:a", "aac",
-                        "-movflags", "+faststart",
-                        encoded_path
-                    ]
-                    subprocess.run(cmd_enc, capture_output=True, check=True)
-                    processed_chunks.append(encoded_path)
+                    result = generate_scenes.generate_video(
+                        prompt=scene_1["prompt"],
+                        reference_image_url=scene_1.get("reference_image_url"),
+                        model_api="veo-3.1-fast",
+                    )
+                    current_task_id = result["taskId"]
+                    current_video_url = result["videoUrl"]
 
-            print(f"      [EXTEND] Concatenating perfectly processed uniform chunks...")
-            concat_list = output_dir / "extend_concat.txt"
-            with open(concat_list, "w") as f:
-                for chunk_path in processed_chunks:
-                    f.write(f"file '{Path(chunk_path).as_posix()}'\n")
+                scene_1_path = output_dir / "extended_chunk_0.mp4"
+                generate_scenes.download_video(current_video_url, scene_1_path)
+                if extend_assembly_mode == "segment":
+                    extend_chunks.append(scene_1_path)
+                print(f"      [EXTEND] Scene 1 downloaded: {scene_1_path}")
 
-            cmd = [
-                "ffmpeg", "-y",
-                "-f", "concat", "-safe", "0",
-                "-i", str(concat_list),
-                "-c:v", "libx264", "-preset", "fast",
-                "-crf", "18",
-                "-c:a", "aac", "-b:a", "192k",
-                "-movflags", "+faststart",
-                str(extended_video_path),
-            ]
-            subprocess.run(cmd, capture_output=True, check=True)
-            print(f"      [EXTEND] Chunks successfully concatenated to: {extended_video_path}")
+                if status_callback:
+                    preview = _upload_scene_preview(scene_1_path)
+                    if preview:
+                        status_callback(
+                            f"Gen: {scene_1['name'].title()} (1/{len(scenes)})",
+                            preview_url=preview,
+                            preview_type="video",
+                        )
+
+            # -- Step 2: Extend chain (Scenes 2..N) — skipped for physical parallel-i2v --
+            if not use_physical_parallel_i2v:
+                for idx, ext_scene in enumerate(veo_scenes[1:], 2):
+                    if status_callback:
+                        status_callback(f"Extend: {ext_scene['name'].title()} ({idx}/{len(scenes)})")
+                    print(f"      [EXTEND] Extending with Scene {idx}: {ext_scene['name']}")
+
+                    extension_prompt = ext_scene.get("video_animation_prompt") or ext_scene.get("prompt", "")
+                    # Digital: Kie extend (stateful task_id). Physical legacy: WS video-extend.
+                    _force_kie = (product_type == "digital")
+                    try:
+                        result = generate_scenes.extend_video_with_retry(
+                            task_id=current_task_id,
+                            prompt=extension_prompt,
+                            seed=ext_scene.get("seed"),
+                            video_url=current_video_url,
+                            force_kie=_force_kie,
+                            max_retries=5,
+                        )
+                    except RuntimeError as _ext_e:
+                        print(f"      [EXTEND] ⚠ Scene {idx} failed after retries: {_ext_e} — finalizing with {len(extend_chunks)} scene(s) we have")
+                        if status_callback:
+                            try:
+                                status_callback(f"Extend: scene {idx} failed — finalizing with {len(extend_chunks)} scene(s)")
+                            except Exception:
+                                pass
+                        break
+
+                    output_mode = result.get("extend_output_mode", "segment")
+                    chunk_idx_path = output_dir / f"extended_chunk_{idx-1}.mp4"
+                    generate_scenes.download_video(result["videoUrl"], chunk_idx_path)
+
+                    if output_mode == "segment" and extend_assembly_mode == "cumulative":
+                        try:
+                            from assemble_video import get_video_duration
+                            prior_path = final_cumulative_path or scene_1_path
+                            probed = generate_scenes._probe_extend_output_mode(
+                                get_video_duration(prior_path),
+                                get_video_duration(chunk_idx_path),
+                            )
+                            if probed:
+                                output_mode = probed
+                                print(f"      [EXTEND] Duration probe → {output_mode}")
+                        except Exception as probe_err:
+                            print(f"      [EXTEND] Duration probe skipped: {probe_err}")
+
+                    if output_mode == "cumulative":
+                        final_cumulative_path = chunk_idx_path
+                        extend_assembly_mode = "cumulative"
+                    else:
+                        if extend_assembly_mode == "cumulative":
+                            print(f"      [EXTEND] Switching to segment concat (Kie fallback)")
+                            extend_assembly_mode = "segment"
+                            extend_chunks = [scene_1_path]
+                        extend_chunks.append(chunk_idx_path)
+
+                    current_task_id = result["taskId"]
+                    current_video_url = result["videoUrl"]
+                    print(f"      [EXTEND] Scene {idx} extended successfully ({output_mode})")
+
+                    if status_callback:
+                        preview = _upload_scene_preview(chunk_idx_path)
+                        if preview:
+                            status_callback(f"Extend: {ext_scene['name'].title()} ({idx}/{len(scenes)}) ✓", preview_url=preview, preview_type="video")
+
+            # -- Step 2(b): Finalize extended chain --
+            from assemble_video import get_video_duration, ensure_audio_stream
+
+            if extend_assembly_mode == "cumulative":
+                source_path = final_cumulative_path or scene_1_path
+                print(f"      [EXTEND] Finalizing cumulative chain from {source_path.name}...")
+                source_path = ensure_audio_stream(source_path, output_dir)
+                safe_path = str(Path(source_path).resolve()).replace("\\", "/")
+                final_dur = get_video_duration(source_path)
+                fade_start = max(0, final_dur - 1.5)
+                cmd_enc = [
+                    "ffmpeg", "-y", "-i", safe_path,
+                    "-c:v", "libx264", "-preset", "fast",
+                    "-g", "30", "-keyint_min", "1",
+                    "-af", f"afade=t=out:st={fade_start:.3f}:d=1.5",
+                    "-c:a", "aac",
+                    "-movflags", "+faststart",
+                    str(extended_video_path),
+                ]
+                subprocess.run(cmd_enc, capture_output=True, check=True)
+                print(f"      [EXTEND] Cumulative chain finalized to: {extended_video_path}")
+            else:
+                # Segment concat: Kie extend trims ~1s overlap; parallel i2v keeps full clips.
+                print(
+                    f"      [EXTEND] Re-encoding {len(extend_chunks)} segment chunk(s) "
+                    f"(trim_overlap={trim_segment_overlap})..."
+                )
+                processed_chunks = []
+                for i, chunk_path in enumerate(extend_chunks):
+                    chunk_path = ensure_audio_stream(chunk_path, output_dir)
+                    safe_path = str(Path(chunk_path).resolve()).replace("\\", "/")
+                    is_last = i == len(extend_chunks) - 1
+                    if not is_last and trim_segment_overlap:
+                        dur = get_video_duration(chunk_path)
+                        trim_dur = max(0.1, dur - 1.0)
+                        trimmed_path = safe_path.replace(".mp4", "_trimmed.mp4")
+                        af_parts = []
+                        if i > 0:
+                            af_parts.append("afade=t=in:st=0:d=0.3")
+                        af_parts.append(f"afade=t=out:st={max(0, trim_dur - 0.15):.3f}:d=0.15")
+                        af_filter = ",".join(af_parts)
+                        cmd_trim = [
+                            "ffmpeg", "-y", "-i", safe_path,
+                            "-t", f"{trim_dur:.3f}",
+                            "-c:v", "libx264", "-preset", "fast",
+                            "-g", "30", "-keyint_min", "1",
+                            "-af", af_filter,
+                            "-c:a", "aac",
+                            "-movflags", "+faststart",
+                            trimmed_path
+                        ]
+                        subprocess.run(cmd_trim, capture_output=True, check=True)
+                        processed_chunks.append(trimmed_path)
+                    elif not is_last:
+                        encoded_mid = safe_path.replace(".mp4", "_encoded.mp4")
+                        af_parts = []
+                        if i > 0:
+                            af_parts.append("afade=t=in:st=0:d=0.3")
+                        af_filter = ",".join(af_parts) if af_parts else None
+                        cmd_mid = [
+                            "ffmpeg", "-y", "-i", safe_path,
+                            "-c:v", "libx264", "-preset", "fast",
+                            "-g", "30", "-keyint_min", "1",
+                        ]
+                        if af_filter:
+                            cmd_mid.extend(["-af", af_filter])
+                        cmd_mid.extend([
+                            "-c:a", "aac",
+                            "-movflags", "+faststart",
+                            encoded_mid,
+                        ])
+                        subprocess.run(cmd_mid, capture_output=True, check=True)
+                        processed_chunks.append(encoded_mid)
+                    else:
+                        encoded_path = safe_path.replace(".mp4", "_encoded.mp4")
+                        final_dur = get_video_duration(chunk_path)
+                        fade_start = max(0, final_dur - 1.5)
+                        af_parts = []
+                        if i > 0:
+                            af_parts.append("afade=t=in:st=0:d=0.3")
+                        af_parts.append(f"afade=t=out:st={fade_start:.3f}:d=1.5")
+                        af_filter = ",".join(af_parts)
+                        cmd_enc = [
+                            "ffmpeg", "-y", "-i", safe_path,
+                            "-c:v", "libx264", "-preset", "fast",
+                            "-g", "30", "-keyint_min", "1",
+                            "-af", af_filter,
+                            "-c:a", "aac",
+                            "-movflags", "+faststart",
+                            encoded_path
+                        ]
+                        subprocess.run(cmd_enc, capture_output=True, check=True)
+                        processed_chunks.append(encoded_path)
+
+                print(f"      [EXTEND] Concatenating {len(processed_chunks)} segment chunks...")
+                concat_list = output_dir / "extend_concat.txt"
+                with open(concat_list, "w") as f:
+                    for chunk_path in processed_chunks:
+                        f.write(f"file '{Path(chunk_path).as_posix()}'\n")
+
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-f", "concat", "-safe", "0",
+                    "-i", str(concat_list),
+                    "-c:v", "libx264", "-preset", "fast",
+                    "-crf", "18",
+                    "-c:a", "aac", "-b:a", "192k",
+                    "-movflags", "+faststart",
+                    str(extended_video_path),
+                ]
+                subprocess.run(cmd, capture_output=True, check=True)
+                print(f"      [EXTEND] Segment chunks concatenated to: {extended_video_path}")
 
             # -- Step 3: Transcribe the extended video for synced subtitles --
             try:

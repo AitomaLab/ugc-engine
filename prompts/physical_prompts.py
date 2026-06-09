@@ -2,8 +2,51 @@
 Prompt builder for Physical Products (Cosmetics, Bottles).
 """
 import random
+import re
 import config
-from prompts import sanitize_dialogue, spanish_accent_line
+from prompts import sanitize_dialogue, spanish_accent_line, english_accent_line
+from prompts.script_split import is_script_imbalanced, split_items_proportionally
+
+VOICE_CONSISTENCY_LINE = (
+    "voice_consistency: identical speaker voice timbre pitch and accent across all scenes, "
+    "same person same voice, MUST keep the exact same English accent in every scene"
+)
+
+
+def _resolve_accent_str(ctx, hint_text=""):
+    video_language = ctx.get("video_language", "en")
+    if video_language == "es":
+        return spanish_accent_line(
+            ctx.get("language_accent") or ctx.get("accent"),
+            hint_text=hint_text or ctx.get("hook"),
+        )
+    return english_accent_line(
+        ctx.get("language_accent") or ctx.get("accent"),
+    )
+
+
+def build_voice_descriptor(ctx, hint_text=""):
+    tone_str = ctx.get("tone", "Enthusiastic").lower()
+    accent_str = _resolve_accent_str(ctx, hint_text)
+    return (
+        f"clear confident pronunciation, casual, {tone_str}, "
+        f"conversational {accent_str}, consistent medium-fast pacing"
+    )
+
+
+def build_speech_constraint(word_count, is_final_scene=False):
+    base = (
+        "speak ONLY the exact dialogue words provided without alterations, "
+        "crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, "
+        f"no duplicate syllables, speak at a relaxed natural pace, approximately {word_count} words "
+        "over 8 seconds, do not rush"
+    )
+    if is_final_scene:
+        return (
+            f"{base}, MUST finish speaking all words entirely 1 second before the end of the video, "
+            "character remains completely silent and just smiles warmly during the final 1-2 seconds"
+        )
+    return base
 
 
 def build_scene_1_veo_prompt(ctx, script_part, product_desc="product", is_last_scene=False):
@@ -12,21 +55,10 @@ def build_scene_1_veo_prompt(ctx, script_part, product_desc="product", is_last_s
     visuals_str = ctx.get('visuals', 'casual style')
     gender_str = ctx.get('gender', 'Female').lower()
     energy_str = ctx.get('energy', 'High').lower()
-    accent_str = ctx.get('accent', 'neutral English')
-    tone_str = ctx.get('tone', 'Enthusiastic').lower()
     setting_str = ctx.get('setting', 'natural environment matching the background visible in the reference image')
-    # i18n: override accent for Spanish videos. Honor caller-provided
-    # `language_accent` (spain / latam) when set, else fall back to the
-    # influencer's stored accent string. spanish_accent_line picks Castilian
-    # vs LATAM wording — see prompts/__init__.py.
-    video_language = ctx.get('video_language', 'en')
-    if video_language == 'es':
-        accent_str = spanish_accent_line(
-            ctx.get('language_accent') or ctx.get('accent'),
-            hint_text=script_part or ctx.get('hook'),
-        )
-
+    voice_type = ctx.get("voice_descriptor") or build_voice_descriptor(ctx, script_part)
     dialogue = sanitize_dialogue(script_part) if script_part else "oh my god you guys have to see this"
+    word_count = len(dialogue.split())
 
     return (
         f"dialogue: {dialogue}\n"
@@ -35,9 +67,10 @@ def build_scene_1_veo_prompt(ctx, script_part, product_desc="product", is_last_s
         f"camera: amateur iPhone selfie video, slightly uneven framing, handheld\n"
         f"setting: {setting_str}, natural lighting\n"
         f"emotion: {energy_str}, genuine excitement\n"
-        f"voice_type: clear confident pronunciation, casual, {tone_str}, conversational {accent_str}, consistent medium-fast pacing\n"
+        f"voice_type: {voice_type}\n"
+        f"{VOICE_CONSISTENCY_LINE}\n"
         f"style: raw UGC, candid, not polished\n"
-        f"speech_constraint: {'speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, speaking pace is consistent, MUST finish speaking all words entirely 1 second before the end of the video, character remains completely silent and just smiles warmly during the final 1-2 seconds' if is_last_scene else 'speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, speak at a relaxed unhurried natural pace filling the full duration of the video, do not rush'}\n"
+        f"speech_constraint: {build_speech_constraint(word_count, is_final_scene=is_last_scene)}\n"
         f"negative: no auditory hallucinations, no filler words, no repeated words, no stuttering, no repeated syllables, no extra limbs, no smooth skin, no poreless skin, no beauty filter, no airbrushed skin, no extra fingers, no mutated hands"
     )
 
@@ -48,14 +81,10 @@ def build_scene_2_veo_prompt(ctx, script_part, product_desc="product", is_last_s
     visuals_str = ctx.get('visuals', 'casual style')
     gender_str = ctx.get('gender', 'Female').lower()
     energy_str = ctx.get('energy', 'High').lower()
-    accent_str = ctx.get('accent', 'neutral English')
-    tone_str = ctx.get('tone', 'Enthusiastic').lower()
     setting_str = ctx.get('setting', 'natural environment matching the background visible in the reference image')
-    video_language = ctx.get('video_language', 'en')
-    if video_language == 'es':
-        accent_str = 'native Spanish accent, speaking entirely in Spanish'
-
+    voice_type = ctx.get("voice_descriptor") or build_voice_descriptor(ctx, script_part)
     dialogue = sanitize_dialogue(script_part) if script_part else "the quality on this is honestly insane"
+    word_count = len(dialogue.split())
 
     return (
         f"dialogue: {dialogue}\n"
@@ -65,9 +94,10 @@ def build_scene_2_veo_prompt(ctx, script_part, product_desc="product", is_last_s
         f"camera: amateur iPhone selfie video, slightly uneven framing, handheld\n"
         f"setting: {setting_str}, natural lighting\n"
         f"emotion: {energy_str}, genuine excitement\n"
-        f"voice_type: clear confident pronunciation, casual, {tone_str}, conversational {accent_str}, consistent medium-fast pacing\n"
+        f"voice_type: {voice_type}\n"
+        f"{VOICE_CONSISTENCY_LINE}\n"
         f"style: raw UGC, candid, not polished\n"
-        f"speech_constraint: {'speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, speaking pace is consistent, MUST finish speaking all words entirely 1 second before the end of the video, character remains completely silent and just smiles warmly during the final 1-2 seconds' if is_last_scene else 'speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, speak at a relaxed unhurried natural pace filling the full duration of the video, do not rush'}\n"
+        f"speech_constraint: {build_speech_constraint(word_count, is_final_scene=is_last_scene)}\n"
         f"negative: no auditory hallucinations, no filler words, no repeated words, no stuttering, no repeated syllables, no extra limbs, no product disappearing, no change in product position, no dropping the product, no smooth skin, no poreless skin, no beauty filter, no airbrushed skin, no extra fingers, no mutated hands"
     )
 
@@ -78,14 +108,10 @@ def build_scene_3_veo_prompt(ctx, script_part, product_desc="product", is_last_s
     visuals_str = ctx.get('visuals', 'casual style')
     gender_str = ctx.get('gender', 'Female').lower()
     energy_str = ctx.get('energy', 'High').lower()
-    accent_str = ctx.get('accent', 'neutral English')
-    tone_str = ctx.get('tone', 'Enthusiastic').lower()
     setting_str = ctx.get('setting', 'natural environment matching the background visible in the reference image')
-    video_language = ctx.get('video_language', 'en')
-    if video_language == 'es':
-        accent_str = 'native Spanish accent, speaking entirely in Spanish'
-
+    voice_type = ctx.get("voice_descriptor") or build_voice_descriptor(ctx, script_part)
     dialogue = sanitize_dialogue(script_part) if script_part else "and the texture is seriously so good"
+    word_count = len(dialogue.split())
 
     return (
         f"dialogue: {dialogue}\n"
@@ -95,9 +121,10 @@ def build_scene_3_veo_prompt(ctx, script_part, product_desc="product", is_last_s
         f"camera: amateur iPhone selfie video, slightly uneven framing, handheld\n"
         f"setting: {setting_str}, natural lighting\n"
         f"emotion: {energy_str}, genuine excitement\n"
-        f"voice_type: clear confident pronunciation, casual, {tone_str}, conversational {accent_str}, consistent medium-fast pacing\n"
+        f"voice_type: {voice_type}\n"
+        f"{VOICE_CONSISTENCY_LINE}\n"
         f"style: raw UGC, candid, not polished\n"
-        f"speech_constraint: {'speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, speaking pace is consistent, MUST finish speaking all words entirely 1 second before the end of the video, character remains completely silent and just smiles warmly during the final 1-2 seconds' if is_last_scene else 'speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, speak at a relaxed unhurried natural pace filling the full duration of the video, do not rush'}\n"
+        f"speech_constraint: {build_speech_constraint(word_count, is_final_scene=is_last_scene)}\n"
         f"negative: no auditory hallucinations, no filler words, no repeated words, no stuttering, no repeated syllables, no extra limbs, no product disappearing, no change in product position, no dropping the product, no smooth skin, no poreless skin, no beauty filter, no airbrushed skin, no extra fingers, no mutated hands"
     )
 
@@ -108,14 +135,10 @@ def build_scene_4_veo_prompt(ctx, script_part, product_desc="product", is_last_s
     visuals_str = ctx.get('visuals', 'casual style')
     gender_str = ctx.get('gender', 'Female').lower()
     energy_str = ctx.get('energy', 'High').lower()
-    accent_str = ctx.get('accent', 'neutral English')
-    tone_str = ctx.get('tone', 'Enthusiastic').lower()
     setting_str = ctx.get('setting', 'natural environment matching the background visible in the reference image')
-    video_language = ctx.get('video_language', 'en')
-    if video_language == 'es':
-        accent_str = 'native Spanish accent, speaking entirely in Spanish'
-
+    voice_type = ctx.get("voice_descriptor") or build_voice_descriptor(ctx, script_part)
     dialogue = sanitize_dialogue(script_part) if script_part else "seriously you need to try this, link in my bio"
+    word_count = len(dialogue.split())
 
     return (
         f"dialogue: {dialogue}\n"
@@ -125,9 +148,10 @@ def build_scene_4_veo_prompt(ctx, script_part, product_desc="product", is_last_s
         f"camera: amateur iPhone selfie video, slightly uneven framing, handheld\n"
         f"setting: {setting_str}, natural lighting\n"
         f"emotion: warm, encouraging, genuine recommendation\n"
-        f"voice_type: clear confident pronunciation, casual, {tone_str}, conversational {accent_str}, consistent medium-fast pacing\n"
+        f"voice_type: {voice_type}\n"
+        f"{VOICE_CONSISTENCY_LINE}\n"
         f"style: raw UGC, candid, not polished\n"
-        f"speech_constraint: {'speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, speaking pace is consistent, MUST finish speaking all words entirely 1 second before the end of the video, character remains completely silent and just smiles warmly during the final 1-2 seconds' if is_last_scene else 'speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, speak at a relaxed unhurried natural pace filling the full duration of the video, do not rush'}\n"
+        f"speech_constraint: {build_speech_constraint(word_count, is_final_scene=is_last_scene)}\n"
         f"negative: no auditory hallucinations, no filler words, no repeated words, no stuttering, no repeated syllables, no extra limbs, no product disappearing, no change in product position, no dropping the product, no smooth skin, no poreless skin, no beauty filter, no airbrushed skin, no extra fingers, no mutated hands"
     )
 
@@ -278,22 +302,26 @@ def build_physical_product_scenes(fields, influencer, product, durations, ctx, m
         scene_descriptions = scene_descriptions[:max_scenes]
         print(f"      🎬 Cinematic mode: reduced UGC scenes to {max_scenes}")
     
-    # Get visual description safely
-    prod_desc = product.get("visual_description", {})
-    if isinstance(prod_desc, str):
-        # Handle case where it might be a string (legacy)
-        visual_desc_str = prod_desc
+    # Get visual description safely — prefer per-shot override from @-mention metadata.
+    if product.get("_resolved_visual_description"):
+        visual_desc_str = product["_resolved_visual_description"]
     else:
-        visual_desc_str = prod_desc.get("visual_description", "the product")
+        prod_desc = product.get("visual_description", {})
+        if isinstance(prod_desc, str):
+            visual_desc_str = prod_desc
+        else:
+            visual_desc_str = prod_desc.get("visual_description", "the product")
 
     # SPLIT SCRIPT LOGIC
     # The AI script generator outputs "Part1 ||| Part2" (15s) or
     # "Part1 ||| Part2 ||| Part3 ||| Part4" (30s) for clean pre-split dialogue.
     # Each part is timed to ~7s of speech (max ~17 words) to fit inside 8s Veo scenes.
     # NOTE: Split on ||| BEFORE sanitizing, since sanitize_dialogue strips | characters.
-    import re
-
     num_scenes = len(scene_descriptions)
+    ctx = {
+        **ctx,
+        "voice_descriptor": build_voice_descriptor(ctx, script[:80] if script else ""),
+    }
 
     # Single scene mode: use only the FIRST part of the script
     if num_scenes == 1:
@@ -342,7 +370,6 @@ def build_physical_product_scenes(fields, influencer, product, durations, ctx, m
         script_parts = combined_parts
 
     if num_scenes > 1:
-        # Pad to num_scenes with distinct fallbacks (never duplicate the last part)
         brand = product.get("name", "this")
         _fallbacks = [
             f"You guys, I literally just discovered {brand} and honestly it is so incredible, you seriously have to see this.",
@@ -352,24 +379,38 @@ def build_physical_product_scenes(fields, influencer, product, durations, ctx, m
         ]
         while len(script_parts) < num_scenes:
             script_parts.append(_fallbacks[len(script_parts) % len(_fallbacks)])
-        
+
         script_parts = script_parts[:num_scenes]
 
-        # POST-SPLIT VALIDATION: Replace any part outside word count range.
-        # IMPORTANT: Skip this when the user provided a verbatim script via the
-        # agent — the word-count ranges assume AI-generated English scripts and
-        # would incorrectly replace confirmed user dialogue (especially non-English)
-        # with generic English fallback text.
-        if not is_manual_script:
+        full_text = " ".join(script_parts).strip()
+        if full_text:
+            if is_script_imbalanced(script_parts, num_scenes):
+                print("      [Script] Imbalanced split detected — rebalancing proportionally")
+            split_ctx = {
+                **ctx,
+                "model_api": fields.get("model_api", ""),
+                "product_type": "physical",
+                "video_length": video_length,
+            }
+            script_parts = split_items_proportionally([full_text], num_scenes, split_ctx)
+            for idx, part in enumerate(script_parts):
+                print(f"      [Script] Part {idx + 1}: {len(part.split())} words")
+
+        if is_manual_script:
+            for idx, part in enumerate(script_parts):
+                wc = len(part.split())
+                if wc > 23:
+                    print(
+                        f"      [Script] Warning: Part {idx + 1} has {wc} words after rebalance "
+                        f"(user script preserved verbatim)"
+                    )
+        else:
             is_seedance = "seedance" in str(fields.get("model_api", "")).lower()
             if is_seedance and video_length == "15s":
-                # 15s physical: Part 1 (4s → 7-9 words), Part 2 (12s → 28-33 words)
                 word_ranges = [(5, 12), (25, 38)]
             elif is_seedance and video_length == "30s":
-                # 30s physical: Part 1 (4s), Part 2 (12s), Part 3 (12s), Part 4 (4s)
                 word_ranges = [(5, 12), (25, 38), (25, 38), (5, 12)]
             else:
-                # Veo: uniform 8s scenes → 17-23 words each
                 word_ranges = [(17, 23)] * num_scenes
 
             for idx, part in enumerate(script_parts):
@@ -383,8 +424,6 @@ def build_physical_product_scenes(fields, influencer, product, durations, ctx, m
                     old_part = part
                     script_parts[idx] = _fallbacks[idx % len(_fallbacks)]
                     print(f"      [Script] Part {idx+1} too long ({len(old_part.split())} words, max {max_w}). Replaced with fallback.")
-        else:
-            print(f"      [Script] User-provided script — skipping word-count validation (preserving verbatim dialogue)")
 
     # Generate Scenes
     for i, desc in enumerate(scene_descriptions):
