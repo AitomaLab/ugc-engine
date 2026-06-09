@@ -267,6 +267,11 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=Non
     #   cta         -> ctx['caption']
     # Skipped when script_json was already processed above.
     # -----------------------------------------------------------------------
+    elif length == "15s" and "|||" in hook:
+        parts = [p.strip() for p in hook.split("|||") if p.strip()]
+        if len(parts) >= 2:
+            ctx["hook"] = parts[0]
+            ctx["reaction_text"] = parts[1]
     elif length == "30s" and "|||" in hook:
         parts = [p.strip() for p in hook.split("|||") if p.strip()]
         if len(parts) >= 3:

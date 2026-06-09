@@ -81,11 +81,96 @@ def generate_ultra_prompt(scene_type, ctx, script_override=None, is_last_scene=F
 
 
 def build_15s(dur, app_clip, ctx):
-    """Simple 2-scene structure with ultra-realistic hook."""
+    """15s digital structure: 1 veo dialogue scene + app B-roll, or 2 veo extend scenes."""
+    import re
+    from prompts import sanitize_dialogue
+    from prompts.script_split import is_script_imbalanced
+
     scenes = []
 
+    _default_captions = {"link in bio!", "check the link in bio!", "link in my bio!"}
+    parts = []
+    if ctx.get("hook"):
+        parts.append(ctx["hook"])
+    if ctx.get("reaction_text"):
+        parts.append(ctx["reaction_text"])
+    caption_val = (ctx.get("caption") or "").strip()
+    if caption_val and caption_val.lower() not in _default_captions and len(caption_val.split()) > 5:
+        parts.append(caption_val)
+    full_script = " ||| ".join(parts) if parts else (
+        "Okay you guys, I found this app and I am obsessed. You need to check it out."
+    )
+
+    split_ctx = {**ctx, "product_type": "digital", "video_length": "15s"}
+
+    # With app_clip: one dialogue scene then silent B-roll (never split).
+    # Without app_clip: two veo scenes chained via extend — split evenly.
+    num_veo_dialogue_scenes = 1 if app_clip else 2
+
+    if app_clip:
+        if ctx.get("scene_dialogues"):
+            script_parts = [" ".join(s for s in ctx["scene_dialogues"] if s.strip())]
+        else:
+            script_parts = [sanitize_dialogue(full_script.replace("|||", " ").strip())]
+    elif ctx.get("scene_dialogues"):
+        script_parts = list(ctx["scene_dialogues"][:num_veo_dialogue_scenes])
+    elif "|||" in full_script:
+        raw_parts = [sanitize_dialogue(p.strip()) for p in full_script.split("|||") if p.strip()]
+        substantial = [p for p in raw_parts if len(p.split()) > 15]
+        if len(substantial) == 1 and len(raw_parts) < num_veo_dialogue_scenes:
+            words = substantial[0].split()
+            print(
+                f"      [build_15s] Lopsided ||| split — re-splitting "
+                f"{len(words)} words / {num_veo_dialogue_scenes} scenes"
+            )
+            script_parts = _split_items_proportionally(words, num_veo_dialogue_scenes, split_ctx)
+        else:
+            script_parts = raw_parts[:num_veo_dialogue_scenes]
+    else:
+        sanitized = sanitize_dialogue(full_script)
+        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', sanitized) if s.strip()]
+        if len(sentences) >= num_veo_dialogue_scenes:
+            script_parts = _split_items_proportionally(sentences, num_veo_dialogue_scenes, split_ctx)
+        else:
+            words = sanitized.split()
+            print(
+                f"      [build_15s] Word-based split: {len(words)} words / "
+                f"{num_veo_dialogue_scenes} scenes"
+            )
+            script_parts = _split_items_proportionally(words, num_veo_dialogue_scenes, split_ctx)
+
+    if num_veo_dialogue_scenes > 1 and script_parts:
+        joined = " ".join(script_parts).strip()
+        if joined and is_script_imbalanced(script_parts, num_veo_dialogue_scenes):
+            print("      [build_15s] Imbalanced split detected — rebalancing proportionally")
+            script_parts = _split_items_proportionally(joined.split(), num_veo_dialogue_scenes, split_ctx)
+
+    _hook_text = (ctx.get("hook") or "").strip()
+    _default_hooks = {
+        "",
+        "check this out!",
+        "okay you guys, i found this app and i am obsessed. you need to check it out.",
+    }
+    _is_user_script = bool(ctx.get("scene_dialogues")) or (
+        _hook_text and _hook_text.lower() not in _default_hooks
+    )
+
+    while len(script_parts) < num_veo_dialogue_scenes:
+        if _is_user_script and script_parts:
+            script_parts.append(script_parts[-1])
+        else:
+            script_parts.append(
+                "Seriously, go check it out right now, you are going to love it, link in my bio!"
+            )
+
+    script_parts = script_parts[:num_veo_dialogue_scenes]
+    print(
+        f"      [build_15s] num_veo_dialogue_scenes={num_veo_dialogue_scenes}, "
+        f"script_parts ({len(script_parts)}): {[p[:60] for p in script_parts]}"
+    )
+
     # Scene 1: HOOK
-    prompt, script_text = generate_ultra_prompt("hook", ctx)
+    prompt, script_text = generate_ultra_prompt("hook", ctx, script_override=script_parts[0])
     scenes.append({
         "name": "hook",
         "type": "veo",
@@ -98,7 +183,6 @@ def build_15s(dur, app_clip, ctx):
         "trim_mode": "start",
     })
 
-    # Scene 2: APP DEMO (or Fallback)
     if app_clip:
         scenes.append({
             "name": "app_demo",
@@ -111,16 +195,17 @@ def build_15s(dur, app_clip, ctx):
             "trim_mode": "end",
         })
     else:
-        # Fallback: Generic AI Lifestyle Scene if no clip provided
-        prompt_b, _ = generate_ultra_prompt("b-roll", ctx)
+        prompt_b, script_text_b = generate_ultra_prompt(
+            "reaction", ctx, script_override=script_parts[1], is_last_scene=True
+        )
         scenes.append({
-            "name": "lifestyle_fallback",
+            "name": "reaction",
             "type": "veo",
-            "prompt": f"{prompt_b} -- close up of phone screen showing app interface",
+            "prompt": prompt_b,
             "reference_image_url": ctx["ref_image"],
             "video_url": None,
             "target_duration": dur["app_demo"],
-            "subtitle_text": "Check out the link in bio!",
+            "subtitle_text": script_text_b,
             "voice_id": ctx["voice_id"],
             "trim_mode": "start",
         })
