@@ -19,6 +19,9 @@ from prompts.product_refs import resolve_product_visual_description as _resolve_
 from services.model_router import get_video_mode, get_clip_lengths
 
 
+_generate_scenes_load_logged = False
+
+
 def _load_creative_os_generate_scenes():
     """Load the creative-os local generate_scenes.py by absolute file path.
 
@@ -35,14 +38,39 @@ def _load_creative_os_generate_scenes():
     """
     import importlib.util
     from pathlib import Path
-    cached = sys.modules.get("creative_os_generate_scenes")
-    if cached is not None:
-        return cached
+
     path = Path(__file__).resolve().parent.parent / "generate_scenes.py"
+
+    def _is_valid(mod) -> bool:
+        return hasattr(mod, "_wavespeed_primary_enabled") and hasattr(
+            mod, "generate_video_with_retry"
+        )
+
+    cached = sys.modules.get("creative_os_generate_scenes")
+    if cached is not None and _is_valid(cached):
+        return cached
+    if cached is not None:
+        del sys.modules["creative_os_generate_scenes"]
+
     spec = importlib.util.spec_from_file_location("creative_os_generate_scenes", path)
     mod = importlib.util.module_from_spec(spec)
     sys.modules["creative_os_generate_scenes"] = mod
     spec.loader.exec_module(mod)
+
+    global _generate_scenes_load_logged
+    if not _generate_scenes_load_logged:
+        _generate_scenes_load_logged = True
+        print(
+            f"[generate_scenes] loaded path={path} "
+            f"mod.__file__={getattr(mod, '__file__', '?')} "
+            f"has_wavespeed={hasattr(mod, '_wavespeed_primary_enabled')}"
+        )
+
+    if not _is_valid(mod):
+        raise RuntimeError(
+            f"creative-os generate_scenes shim at {path} is missing required API "
+            f"(_wavespeed_primary_enabled / generate_video_with_retry)"
+        )
     return mod
 
 
@@ -1667,7 +1695,8 @@ async def _run_cinematic_clip_pipeline(
         # failure here just leaves element_ids empty → falls through to legacy
         # KIE chain unchanged. No clip generation depends on this path.
         resolved_element_ids: list[str] = []
-        if generate_scenes._wavespeed_primary_enabled() and kling_elements:
+        ws_primary = getattr(generate_scenes, "_wavespeed_primary_enabled", lambda: False)()
+        if ws_primary and kling_elements:
             try:
                 from services.kling_elements import ensure_element_id
                 for el in kling_elements:

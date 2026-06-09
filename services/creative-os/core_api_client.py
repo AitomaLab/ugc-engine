@@ -47,7 +47,19 @@ class CoreAPIClient:
                         headers=self._headers,
                         **kwargs,
                     )
-                    resp.raise_for_status()
+                    if resp.is_error:
+                        detail = resp.text
+                        try:
+                            body = resp.json()
+                            if isinstance(body, dict) and body.get("detail"):
+                                detail = body["detail"]
+                        except Exception:
+                            pass
+                        raise httpx.HTTPStatusError(
+                            f"{resp.status_code} {resp.reason_phrase}: {detail}",
+                            request=resp.request,
+                            response=resp,
+                        )
                     return resp.json()
             except (httpx.RemoteProtocolError, httpx.ReadError, httpx.ConnectError) as e:
                 last_exc = e

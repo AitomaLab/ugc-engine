@@ -4085,12 +4085,23 @@ async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
     duration = int(kwargs.get("duration", 15))
     if duration not in (15, 30):
         return json.dumps({"error": "duration must be 15 or 30"})
-    product_type = kwargs.get("product_type", "physical")
+    product_id = kwargs.get("product_id")
+    # Match short-clip UGC routing: physical requires a product_id in ugc-api.
+    # Influencer-only talking-head jobs (no @-mentioned product) must use digital.
+    product_type = kwargs.get("product_type") or ("physical" if product_id else "digital")
+    if product_type == "physical" and not product_id:
+        return json.dumps({
+            "error": "product_required_for_physical",
+            "message": (
+                "A physical-product UGC video requires a product. Ask the user to "
+                "@-mention a product or create one — or generate an influencer-only "
+                "talking-head video (no product attached)."
+            ),
+        })
 
     # Preflight: physical products must have an image — the cinematic pipeline
     # composites the influencer holding the product via NanoBanana, which fails
     # immediately on empty image_url. Catch this before charging credits.
-    product_id = kwargs.get("product_id")
     if product_id and product_type == "physical":
         try:
             product = await ctx.core().get_product(product_id)
