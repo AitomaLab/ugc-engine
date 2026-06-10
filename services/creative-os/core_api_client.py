@@ -429,6 +429,12 @@ class CoreAPIClient:
         return await self._request("POST", "/jobs/bulk", json=data)
 
     # ── AI Clone videos ───────────────────────────────────────────────
+    async def list_clones(self) -> list:
+        return await self._request("GET", "/api/clones")
+
+    async def list_clone_looks(self, clone_id: str) -> list:
+        return await self._request("GET", f"/api/clones/{clone_id}/looks")
+
     async def create_clone_job(self, data: dict) -> dict:
         return await self._request("POST", "/api/clone-jobs", json=data)
 

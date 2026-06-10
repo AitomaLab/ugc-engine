@@ -2921,6 +2921,13 @@ def create_clone_job(data: CloneJobCreate, request: Request, user: dict = Depend
     job = result.data[0]
     job_id = job["id"]
 
+    if not job.get("project_id"):
+        print(
+            f"[clone-jobs] WARNING: clone job {job_id} created without project_id — "
+            "it may not appear in the project gallery until /full is unscoped",
+            flush=True,
+        )
+
     # Dispatch to the isolated clone worker (Modal or in-process)
     _dispatch_clone_worker(job_id)
 

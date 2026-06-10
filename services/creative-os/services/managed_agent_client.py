@@ -115,8 +115,8 @@ If you genuinely believe a reference image is causing an issue, you MUST ask the
 ## Tool catalogue
 
 ### Discovery (read-only, free)
-- list_project_assets() — Products, influencers, recent shots in the active project. Call once at session start.
-- list_projects / list_influencers / list_products — Inventory across the user's account.
+- list_project_assets() — Products, influencers, AI clones, recent shots in the active project. Call once at session start.
+- list_projects / list_influencers / list_clones / list_products — Inventory across the user's account.
 - list_scripts(product_id?) — UGC scripts, optionally filtered by product.
 - list_jobs(status?) / get_job_status(job_id) — Track full UGC video jobs.
 - list_scheduled_posts() / list_social_connections() — Distribution status.
@@ -143,11 +143,11 @@ If you genuinely believe a reference image is causing an issue, you MUST ask the
 
 ### Animation & video clips (gated by confirmed=true)
 - animate_image(image_url, style, duration?) — Image → 5s or 10s Kling 3.0 clip with chosen camera move.
-- generate_video(prompt, mode, clip_length?, language?, multi_shot_mode?, reference_image_url?) — Text-to-video clip. mode: ugc | cinematic_video | ai_clone | seedance_2_ugc | seedance_2_cinematic | seedance_2_product. Clip lengths: 5/7/8/10/15s (mode-dependent). Language: en/es. multi_shot_mode for Kling 3.0 cinematic auto-split.
+- generate_video(prompt, mode, clip_length?, language?, multi_shot_mode?, reference_image_url?) — Text-to-video clip. mode: ugc | cinematic_video | seedance_2_ugc | seedance_2_cinematic | seedance_2_product. Clip lengths: 5/7/8/10/15s (mode-dependent). Language: en/es. multi_shot_mode for Kling 3.0 cinematic auto-split. AI Clone lip-sync uses create_clone_video, NOT generate_video.
 
 ### Full UGC pipelines (gated by confirmed=true)
 - create_ugc_video(influencer_id, duration, product_id?, script_id?, ...) — Full 15s/30s UGC video. Dispatches immediately; takes 5-12 min in the gallery. Use get_job_status(job_id) to check progress.
-- create_clone_video(clone_id, script_text, duration, ...) — Lip-synced talking-head video. Blocking, 5-12 min.
+- create_clone_video(clone_id, script_text, duration, look_id?, ...) — Lip-synced AI Clone talking-head (ElevenLabs + InfiniTalk). Use when user @-mentions type=clone. 15s/30s only. Returns immediately with job_id (~8–12 min in gallery). Script validation matches create_ugc_video.
 - create_bulk_campaign(influencer_id, count, duration, ...) — Dispatch N UGC videos at once. Returns immediately; track progress with list_jobs / get_job_status.
 
 ### Asset management (free)
@@ -210,7 +210,7 @@ Every user brief carries an explicit engine marker in the preface — either `[E
 **When the current brief carries `[ENGINE=default]`:**
 - **UGC videos** (all lengths): powered by **Veo 3.1**. Use `generate_video(mode="ugc")` for short clips (5-10s) or `create_ugc_video` for full 15/30s produced videos (script + scenes + captions + music).
 - **Cinematic videos**: powered by **Kling 3.0**. Use `generate_video(mode="cinematic_video")` for cinematic clips (5-10s).
-- **AI Clone** (lip-synced): use `create_clone_video`.
+- **AI Clone** (lip-synced talking head): use `create_clone_video` when the user @-mentions `type=clone` from Mis Clones IA. Pass `clone_id` + `look_id` from the `[Referenced assets]` preface. NEVER use `generate_video` for clone lip-sync.
 Do NOT use `seedance_2_ugc` / `seedance_2_cinematic` / `seedance_2_product` on a default-marker turn, even if an earlier turn used them.
 
 **🎯 UGC vs Cinematic — when to pick which (CRITICAL):**
@@ -324,7 +324,7 @@ You MUST do this check BEFORE starting any generation. Do NOT skip it.
 
 **Full UGC video (15-30s)**: list_project_assets → check if the user supplied their own script/dialogue text.
   - **User provided script**: When the user wrote actual dialogue lines (hook, body, CTA, or any spoken text), pass ALL of it verbatim as the `hook` argument to generate_video or create_ugc_video. The `hook` field carries the user's EXACT spoken words — NEVER paraphrase, rewrite, or embellish the user's dialogue. Put your visual/action direction in the `prompt` field instead. The pipeline will use `hook` as-is for the character's speech and enhance only the visual direction from `prompt`.
-  - **Script length auto-validation — DO NOT pre-judge from memory.** The create_ugc_video / generate_video tools validate the hook's word count against the target duration server-side BEFORE charging credits. **You MUST NOT** make any assertion about whether a script "fits" a duration before calling the tool — the math depends on `product_type` (digital videos end in a silent app-clip B-roll, so the dialogue budget is much smaller than for physical) and `app_clip_duration`, neither of which you can compute reliably. Always call the tool with `confirmed=false` first; trust its `script_validation` response over your own estimate.
+  - **Script length auto-validation — DO NOT pre-judge from memory.** The create_ugc_video / create_clone_video / generate_video tools validate script/hook word count against the target duration server-side BEFORE charging credits. **You MUST NOT** make any assertion about whether a script "fits" a duration before calling the tool — the math depends on `product_type` (digital videos end in a silent app-clip B-roll, so the dialogue budget is much smaller than for physical) and `app_clip_duration`, neither of which you can compute reliably. Always call the tool with `confirmed=false` first; trust its `script_validation` response over your own estimate.
     Word count guidelines (the tool enforces the exact numbers; these are for your reasoning only):
     - 5s clip → 10-18 words (ideal ~14)
     - 8s clip → 18-28 words (ideal ~22)
@@ -348,6 +348,15 @@ You MUST do this check BEFORE starting any generation. Do NOT skip it.
   Skip the follow-up offer entirely when the user explicitly opted out ("no music", "sin subtítulos") — and when they explicitly asked for music or captions UPFRONT (e.g. "create a UGC video with music and captions"), pass `music_enabled=true` and/or `subtitles_enabled=true` to `create_ugc_video` so they're baked into the first delivery and you don't need to offer a follow-up.
 
 **Cinematic clip (5-10s)**: list_project_assets → generate_video(mode="cinematic_video") (gated). Confirm completion in plain text.
+
+**AI Clone video (15-30s lip-sync)**: when `[Referenced assets]` includes `type=clone` and the user wants a talking-head / lip-sync / scripted video of themselves:
+  - Route to `create_clone_video` — NOT `generate_video` or `create_ugc_video`.
+  - Pass `clone_id` from `id=...`, `look_id` from preface (selected appearance), and the user's dialogue verbatim as `script_text`.
+  - Durations: 15s or 30s only — ask if unclear.
+  - **User provided script**: pass ALL spoken lines verbatim as `script_text`. On `confirmed=false`, the tool validates word count server-side (same rules as create_ugc_video). Trust `script_validation` over your own estimate — do NOT pre-judge length from memory.
+  - **No script, clear direction**: @product + @clone → `generate_scripts` first, flatten hook + scene dialogues into `script_text`. @clone only → `generate_ai_script(full_video_mode=true, clip_length=duration, context=<brief>)`. Present the draft, then call `create_clone_video` after user approves.
+  - **No script AND vague direction**: ask what the clone should say before generating.
+  - Spanish: pass `video_language='es'` and `language_accent` (spain | latam) like UGC.
 
 **Bulk campaign**: list_project_assets → create_bulk_campaign (gated). Returns immediately with job_ids; tell the user to watch the gallery or check back.
 
@@ -420,8 +429,8 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
 2. Reference real product_ids / influencer_ids / job_ids returned by the list tools — never invent UUIDs.
 3. When a generation finishes, summarize what you produced and report the actual credits spent. NEVER paste raw asset URLs (Supabase storage links, http(s) URLs to images/videos) or markdown links to assets into your reply. The chat panel automatically renders a thumbnail under your message from the tool's artifact frame — the user already sees the asset visually. Refer to it by name only ("Your 8s clip is ready"). The only exception is short identifiers like job_ids when the user explicitly asks for them.
 4. Pick the simplest tool chain that fulfills the brief. Don't run extra tools "to be safe".
-5. Long-running tools: `create_ugc_video` returns immediately with `status: started` and a `job_id` — tell the user to watch the Videos tab; do NOT block or poll inline. After `ugc_started`, give the ETA from the tool result: **~6 minutes for 15s**, **~9 minutes for 30s**. Never say "Done." or "ready" until `get_job_status` returns `success` with `final_video_url`. `create_clone_video`, `animate_image`, `render_edited_video`, and `caption_video` still block while polling — let them finish.
-5a. NEVER claim a video generation failed when the tool result has `status: started`, `still_processing`, or `action: ugc_started`. If the SSE connection dropped or the user asks mid-run, say the job is still rendering, restate the approximate time remaining (~6 min / ~9 min), and point them to the gallery (or call `get_job_status(job_id)`). Only report failure when `get_job_status` returns `status: failed` with an `error_message`.
+5. Long-running tools: `create_ugc_video` and `create_clone_video` return immediately with `status: started` and a `job_id` — tell the user to watch the Videos tab; do NOT block or poll inline. After `ugc_started`, give the ETA from the tool result: **~6 minutes for 15s**, **~9 minutes for 30s**. After `clone_started`: **~8 minutes for 15s**, **~12 minutes for 30s**. Never say "Done." or "ready" until the gallery shows the finished clip. `animate_image`, `render_edited_video`, and `caption_video` still block while polling — let them finish.
+5a. NEVER claim a video generation failed when the tool result has `status: started`, `still_processing`, `action: ugc_started`, or `action: clone_started`. If the SSE connection dropped or the user asks mid-run, say the job is still rendering, restate the approximate time remaining, and point them to the gallery (or call `get_job_status(job_id)`). Only report failure when the job status is `failed` with an `error_message`.
 6. NEVER manually construct or modify caption/transcription JSON inside editor_state. Always use the caption_video tool — it runs real Whisper transcription on the audio and produces accurate, properly timed captions.
 7. You may call multiple tools in a single turn. For independent tasks (e.g., "generate 3 images"), dispatch all of them in the same turn and report all results together. For dependent tasks (e.g., "generate an image then animate it"), chain the tools sequentially within the same turn — call the first tool, receive its result, then immediately call the next without waiting for user input. Never ask for permission between chained steps.
 8. REFERENCED ASSETS — uploaded images the user attached directly from their computer appear in the brief preface as `[Referenced assets]` lines with synthetic tags like `@upload_xxxxxxxx (image), image_url='https://…'`. These are NOT database rows — there is no product_id / influencer_id for them. When the user asks you to generate / animate / compose using those images, you MUST forward the image_urls to the generation tool:
@@ -464,7 +473,7 @@ def _custom_tools_for_agent() -> list[dict]:
     director_styles = sorted(DIRECTOR_STYLES)
     ugc_styles = sorted(UGC_STYLES)
     image_mode_ids = list(IMAGE_MODES.keys())
-    video_mode_ids = list(VIDEO_MODES.keys())
+    video_mode_ids = [m for m in VIDEO_MODES.keys() if m != "ai_clone"]
 
     confirmed_desc = (
         "Set to true ONLY after the user has explicitly confirmed the credit cost shown by the previous "
@@ -526,6 +535,12 @@ def _custom_tools_for_agent() -> list[dict]:
             "type": "custom",
             "name": "list_influencers",
             "description": "List all influencers (AI personas) the user has access to.",
+            "input_schema": {"type": "object", "properties": {}, "required": []},
+        },
+        {
+            "type": "custom",
+            "name": "list_clones",
+            "description": "List all AI Clones (user's own lip-sync avatars) with their appearance looks.",
             "input_schema": {"type": "object", "properties": {}, "required": []},
         },
         {
@@ -612,7 +627,7 @@ def _custom_tools_for_agent() -> list[dict]:
                                         "generate_influencer", "generate_identity", "generate_product_shots",
                                     ],
                                 },
-                                "mode": {"type": "string", "description": "For generate_video: ugc|cinematic_video|ai_clone."},
+                                "mode": {"type": "string", "description": "For generate_video: ugc|cinematic_video|seedance_2_*."},
                                 "clip_length": {"type": "integer", "description": "For generate_video."},
                             },
                             "required": ["operation"],
@@ -1302,18 +1317,40 @@ def _custom_tools_for_agent() -> list[dict]:
             "type": "custom",
             "name": "create_clone_video",
             "description": (
-                "Generate an AI Clone (lip-synced talking head) video using a previously trained voice clone. "
-                "Separate pipeline from standard UGC. Takes 5-12 minutes. "
+                "Generate an AI Clone (lip-synced talking head) video using the user's trained voice clone "
+                "and @-mentioned appearance (clone_id + look_id from refs). Separate pipeline from UGC/Veo. "
+                "15s or 30s only. Validates script length like create_ugc_video. Takes 5-12 minutes. "
                 "FIRST call returns a credit cost estimate. After user confirms, call again with confirmed=true."
             ),
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "clone_id": {"type": "string"},
-                    "script_text": {"type": "string"},
+                    "clone_id": {
+                        "type": "string",
+                        "description": "Clone UUID. Auto-filled from @clone ref in [Referenced assets] when omitted.",
+                    },
+                    "look_id": {
+                        "type": "string",
+                        "description": "Appearance look UUID from the @clone ref preface (which photo/look the user picked).",
+                    },
+                    "script_text": {
+                        "type": "string",
+                        "description": (
+                            "The user's VERBATIM spoken dialogue for the clone. Pass exact words — do NOT paraphrase. "
+                            "Also used when you generated a script via generate_scripts / generate_ai_script."
+                        ),
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": (
+                            "Creative direction for auto script generation when the user gave no dialogue "
+                            "(only used server-side if script_text is missing after confirm)."
+                        ),
+                    },
                     "duration": {"type": "integer", "enum": [15, 30]},
                     "product_id": {"type": "string"},
                     "product_type": {"type": "string", "enum": ["physical", "digital"]},
+                    "app_clip_id": {"type": "string", "description": "Digital product app clip from @product ref."},
                     "video_language": {"type": "string"},
                     "language_accent": {
                         "type": "string",
@@ -1327,7 +1364,7 @@ def _custom_tools_for_agent() -> list[dict]:
                     "subtitles_enabled": {"type": "boolean"},
                     "confirmed": {"type": "boolean", "description": confirmed_desc},
                 },
-                "required": ["clone_id", "script_text"],
+                "required": ["clone_id"],
             },
         },
         {
@@ -2105,6 +2142,7 @@ async def _tool_list_project_assets(ctx: ToolContext, **_: Any) -> str:
     core = ctx.core()
     products: list = []
     influencers: list = []
+    clones: list = []
     shots: list = []
     try:
         products = await global_core.list_products()
@@ -2114,6 +2152,25 @@ async def _tool_list_project_assets(ctx: ToolContext, **_: Any) -> str:
         influencers = await global_core.list_influencers()
     except Exception as e:
         influencers = [{"error": f"list_influencers failed: {e}"}]
+    try:
+        clone_rows = await global_core.list_clones()
+        for c in (clone_rows or [])[:20]:
+            if not isinstance(c, dict) or not c.get("id"):
+                continue
+            looks: list[dict] = []
+            try:
+                looks_raw = await global_core.list_clone_looks(c["id"])
+                for l in looks_raw or []:
+                    if not isinstance(l, dict):
+                        continue
+                    url = l.get("image_url")
+                    if url and url != "error" and str(url).startswith("http"):
+                        looks.append({"id": l.get("id"), "label": l.get("label"), "image_url": url})
+            except Exception:
+                pass
+            clones.append({"id": c.get("id"), "name": c.get("name"), "looks": looks})
+    except Exception as e:
+        clones = [{"error": f"list_clones failed: {e}"}]
     if ctx.project_id:
         try:
             shots = await core.list_project_shots(ctx.project_id)
@@ -2133,6 +2190,7 @@ async def _tool_list_project_assets(ctx: ToolContext, **_: Any) -> str:
             "project_id": ctx.project_id,
             "products": slim(products, ["id", "name", "description"]),
             "influencers": slim(influencers, ["id", "name", "image_url"]),
+            "clones": clones,
             "recent_shots": slim(shots, ["id", "image_url", "shot_type", "created_at"]),
         }
     )
@@ -2187,6 +2245,42 @@ def _ugc_started_ack_message(duration: int, *, lang: Optional[str] = None) -> st
         f"About **{eta_min} minutes** left — watch the progress card in the **Videos** tab; "
         f"the finished clip will appear there automatically when it's done."
     )
+
+
+def _clone_eta_seconds(duration: int) -> int:
+    """Expected wall-clock seconds for AI Clone lip-sync pipeline (InfiniTalk + TTS)."""
+    return 720 if duration >= 30 else 480
+
+
+def _clone_eta_minutes_approx(duration: int) -> int:
+    return _clone_eta_seconds(duration) // 60
+
+
+def _clone_started_ack_message(duration: int, *, lang: Optional[str] = None) -> str:
+    """User-facing chat ack when create_clone_video dispatches in the background."""
+    eta_min = _clone_eta_minutes_approx(duration)
+    if lang == "es":
+        return (
+            f"¡Listo! Tu vídeo de clon IA de {duration}s se está generando ahora. "
+            f"Quedan aproximadamente **{eta_min} minutos** — sigue la tarjeta en la pestaña **Vídeos**."
+        )
+    return (
+        f"On it — your {duration}s AI Clone lip-sync video is generating now. "
+        f"About **{eta_min} minutes** left — watch the progress card in the **Videos** tab."
+    )
+
+
+def _job_id_from_create_response(job: dict) -> Optional[str]:
+    """Normalize job id from core API create responses (UGC vs clone shapes differ)."""
+    if not isinstance(job, dict):
+        return None
+    jid = job.get("job_id") or job.get("id")
+    if jid:
+        return str(jid)
+    nested = job.get("job")
+    if isinstance(nested, dict) and nested.get("id"):
+        return str(nested["id"])
+    return None
 
 
 def _pending_artifact_event_for(tool_name: str, tool_input: dict) -> Optional[dict]:
@@ -3715,6 +3809,40 @@ async def _tool_list_influencers(ctx: ToolContext, **_: Any) -> str:
     })
 
 
+async def _tool_list_clones(ctx: ToolContext, **_: Any) -> str:
+    try:
+        rows = await ctx.core().list_clones()
+    except Exception as e:
+        return json.dumps({"error": f"list_clones failed: {e}"})
+    clones_out: list[dict] = []
+    for c in (rows or [])[:20]:
+        if not isinstance(c, dict) or not c.get("id"):
+            continue
+        looks: list[dict] = []
+        try:
+            looks_raw = await ctx.core().list_clone_looks(c["id"])
+            for l in looks_raw or []:
+                if not isinstance(l, dict):
+                    continue
+                url = l.get("image_url")
+                if url and url != "error" and str(url).startswith("http"):
+                    looks.append({
+                        "id": l.get("id"),
+                        "label": l.get("label"),
+                        "image_url": url,
+                        "is_base": l.get("is_base"),
+                    })
+        except Exception as e:
+            print(f"[list_clones] looks fetch failed for {c.get('id')}: {e}")
+        clones_out.append({
+            "id": c.get("id"),
+            "name": c.get("name"),
+            "elevenlabs_voice_id": c.get("elevenlabs_voice_id"),
+            "looks": looks,
+        })
+    return json.dumps({"clones": clones_out})
+
+
 async def _tool_list_products(ctx: ToolContext, **_: Any) -> str:
     try:
         rows = await ctx.core().list_products()
@@ -4314,7 +4442,7 @@ async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
     except Exception as e:
         return json.dumps({"error": f"create_ugc_video failed: {e}"})
 
-    job_id = job.get("id") or (job.get("job") or {}).get("id")
+    job_id = _job_id_from_create_response(job)
     if not job_id:
         return json.dumps({"error": "job created but no id returned", "raw": job})
 
@@ -5102,29 +5230,172 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
     return json.dumps({"error": f"unhandled stage: {stage}"})
 
 
+def _clone_ids_from_refs(refs: list[dict]) -> tuple[Optional[str], Optional[str]]:
+    for r in refs or []:
+        if (r.get("type") or "").lower() == "clone":
+            return r.get("id"), r.get("look_id")
+    return None, None
+
+
+def _merge_clone_refs_into_kwargs(kwargs: dict, refs: list[dict]) -> dict:
+    """Fill clone_id, look_id, and optional product refs from @-mentions."""
+    out = dict(kwargs)
+    clone_id, look_id = _clone_ids_from_refs(refs)
+    if clone_id and not out.get("clone_id"):
+        out["clone_id"] = clone_id
+    if look_id and not out.get("look_id"):
+        out["look_id"] = look_id
+    for r in refs or []:
+        t = (r.get("type") or "").lower()
+        if t == "product":
+            if not out.get("product_id") and r.get("id"):
+                out["product_id"] = r["id"]
+            if not out.get("product_type") and r.get("product_type"):
+                out["product_type"] = r["product_type"]
+            if not out.get("app_clip_id") and r.get("app_clip_id"):
+                out["app_clip_id"] = r["app_clip_id"]
+    return out
+
+
+async def _auto_generate_clone_script(
+    ctx: ToolContext,
+    kwargs: dict,
+    duration: int,
+    product_type: str,
+) -> Optional[str]:
+    """Safety net when create_clone_video fires without script_text."""
+    video_language = kwargs.get("video_language", "en")
+    if kwargs.get("product_id"):
+        try:
+            script_result = await ctx.core().generate_scripts(
+                product_id=kwargs["product_id"],
+                duration=duration,
+                product_type=product_type,
+                context=kwargs.get("context"),
+                video_language=video_language,
+            )
+            script_json = (script_result or {}).get("script_json") or {}
+            hook_line = (script_json.get("hook") or "").strip()
+            dialogue_lines = [
+                (sc.get("dialogue") or "").strip()
+                for sc in (script_json.get("scenes") or [])
+                if sc.get("dialogue")
+            ]
+            flattened = "\n".join([hook_line] + dialogue_lines).strip()
+            if flattened:
+                return flattened
+        except Exception as e:
+            print(f"[create_clone_video] auto generate_scripts failed (non-fatal): {e}")
+    elif kwargs.get("context") and ctx.project_id:
+        try:
+            from routers.generate_video import AIScriptRequest, generate_ai_script
+            result = await generate_ai_script(
+                data=AIScriptRequest(
+                    project_id=ctx.project_id,
+                    product_id=kwargs.get("product_id"),
+                    language=video_language,
+                    clip_length=duration,
+                    full_video_mode=True,
+                    context=kwargs.get("context"),
+                ),
+                user={"token": ctx.user_token, "id": "agent"},
+            )
+            script = ((result or {}).get("script") or "").strip()
+            if script:
+                return script
+        except Exception as e:
+            print(f"[create_clone_video] auto generate_ai_script failed (non-fatal): {e}")
+    return None
+
+
 async def _tool_create_clone_video(ctx: ToolContext, **kwargs: Any) -> str:
     """AI Clone (lip-synced) video — separate pipeline from standard UGC."""
+    kwargs = _merge_clone_refs_into_kwargs(kwargs, ctx.refs)
     if not kwargs.get("clone_id"):
-        return json.dumps({"error": "clone_id is required"})
-    if not kwargs.get("script_text"):
-        return json.dumps({"error": "script_text is required"})
+        return json.dumps({"error": "clone_id is required — @-mention your AI Clone or pass clone_id"})
     duration = int(kwargs.get("duration", 15))
+    product_type = kwargs.get("product_type", "physical")
+    script_text = (kwargs.get("script_text") or "").strip()
+
+    _DIGITAL_CLIP_DEFAULT_S = 8
+    _app_clip_duration_s = 0
+    if product_type == "digital" and not kwargs.get("confirmed"):
+        if kwargs.get("app_clip_id"):
+            try:
+                _clip = await ctx.core().get_app_clip(kwargs["app_clip_id"])
+                _raw = _clip.get("duration") if _clip else None
+                _app_clip_duration_s = int(round(float(_raw))) if _raw else _DIGITAL_CLIP_DEFAULT_S
+            except Exception as e:
+                print(f"[create_clone_video] app clip lookup for budget failed (using default {_DIGITAL_CLIP_DEFAULT_S}s): {e}")
+                _app_clip_duration_s = _DIGITAL_CLIP_DEFAULT_S
+        else:
+            _app_clip_duration_s = _DIGITAL_CLIP_DEFAULT_S
+
+    if script_text and not kwargs.get("confirmed"):
+        video_language = kwargs.get("video_language", "en")
+        validation = _validate_script_for_video(
+            script_text, duration, video_language,
+            product_type=product_type,
+            app_clip_duration=_app_clip_duration_s,
+        )
+        if not validation["valid"]:
+            return json.dumps({
+                "script_validation": "failed",
+                "word_count": validation["word_count"],
+                "duration": duration,
+                "issues": validation["issues"],
+                "suggestions": validation["suggestions"],
+                "budget": validation["budget"],
+                "action_required": (
+                    "Tell the user about the script length issue and share the suggestions. "
+                    "Ask if they'd like to: (1) adjust the script, (2) have you generate "
+                    "an optimized version, or (3) switch duration (15s ↔ 30s)."
+                ),
+                "original_script": script_text,
+            })
+        elif validation["suggestions"]:
+            print(f"[create_clone_video] Script valid with notes: {validation['suggestions']}")
 
     if not kwargs.get("confirmed"):
         credits = _credits_for_op("create_clone_video", {"duration": duration})
+        extra_info: dict[str, Any] = {}
+        if script_text:
+            validation = _validate_script_for_video(
+                script_text, duration, kwargs.get("video_language", "en"),
+                product_type=product_type,
+                app_clip_duration=_app_clip_duration_s,
+            )
+            extra_info["script_status"] = "validated"
+            extra_info["script_word_count"] = validation["word_count"]
+            extra_info["script_notes"] = validation["suggestions"] if validation["suggestions"] else ["Script length is good for this duration."]
+        elif not kwargs.get("context") and not kwargs.get("product_id"):
+            return json.dumps({
+                "error": "script_text or creative direction (context) is required",
+                "hint": "Ask the user what the clone should say, or call generate_scripts / generate_ai_script first.",
+            })
         return _confirmation_payload(
             operation="create_clone_video",
             credits=credits,
             summary=f"Generate {duration}s AI Clone (lip-synced) video",
             echo={k: v for k, v in kwargs.items() if k != "confirmed"},
+            **extra_info,
         )
+
+    if not script_text:
+        generated = await _auto_generate_clone_script(ctx, kwargs, duration, product_type)
+        if generated:
+            script_text = generated
+            kwargs["script_text"] = generated
+        else:
+            return json.dumps({"error": "script_text is required — no script could be auto-generated"})
 
     payload = {
         "clone_id": kwargs["clone_id"],
-        "script_text": kwargs["script_text"],
+        "look_id": kwargs.get("look_id"),
+        "script_text": script_text,
         "duration": duration,
         "product_id": kwargs.get("product_id"),
-        "product_type": kwargs.get("product_type", "physical"),
+        "product_type": product_type,
         "video_language": kwargs.get("video_language", "en"),
         "language_accent": kwargs.get("language_accent"),
         "subtitles_enabled": kwargs.get("subtitles_enabled", True),
@@ -5137,28 +5408,35 @@ async def _tool_create_clone_video(ctx: ToolContext, **kwargs: Any) -> str:
     except Exception as e:
         return json.dumps({"error": f"create_clone_video failed: {e}"})
 
-    job_id = job.get("id") or (job.get("job") or {}).get("id")
+    job_id = _job_id_from_create_response(job)
     if not job_id:
         return json.dumps({"error": "clone job created but no id returned", "raw": job})
 
-    final_status = await _poll_job_until_terminal(ctx, job_id, max_wait_s=900)
-    if final_status is None:
-        return json.dumps({"job_id": job_id, "status": "still_processing"})
-    state = (final_status.get("status") or "").lower()
-    if state in ("success", "complete", "completed"):
-        video_url = final_status.get("final_video_url") or final_status.get("video_url")
-        if video_url:
-            _record_artifact(ctx, {"type": "video", "url": video_url, "job_id": job_id})
-        return json.dumps({
-            "job_id": job_id,
-            "video_url": video_url,
-            "status": "success",
-            "credits_spent": _credits_for_op("create_clone_video", {"duration": duration}),
-        })
+    # Dispatch-and-return: clone lip-sync takes ~8–12 min (TTS + InfiniTalk).
+    # Blocking the SSE stream causes false errors even when the job started fine.
+    credits = _credits_for_op("create_clone_video", {"duration": duration})
+    eta_seconds = _clone_eta_seconds(duration)
+    eta_min = _clone_eta_minutes_approx(duration)
+    clone_name = kwargs.get("clone_name") or "AI Clone"
+    for r in ctx.refs or []:
+        if (r.get("type") or "").lower() == "clone" and r.get("name"):
+            clone_name = r["name"]
+            break
     return json.dumps({
-        "error": final_status.get("error_message") or "clone video generation failed",
+        "action": "clone_started",
         "job_id": job_id,
-        "status": state,
+        "status": "started",
+        "duration": duration,
+        "campaign_name": f"{duration}s {clone_name} lip-sync",
+        "credits_spent": credits,
+        "eta_seconds": eta_seconds,
+        "eta_minutes_approx": eta_min,
+        "message": (
+            f"AI Clone video job started ({duration}s, {credits} credits). "
+            f"Estimated time remaining: ~{eta_min} minutes. "
+            "Tell the user to watch the Videos tab progress card. "
+            "Do NOT say Done or ready until the job completes in the gallery."
+        ),
     })
 
 
@@ -7543,6 +7821,7 @@ TOOL_DISPATCH: dict[str, Callable[..., Awaitable[str]]] = {
     "list_project_assets": _tool_list_project_assets,
     "list_projects": _tool_list_projects,
     "list_influencers": _tool_list_influencers,
+    "list_clones": _tool_list_clones,
     "list_products": _tool_list_products,
     "list_scripts": _tool_list_scripts,
     "list_jobs": _tool_list_jobs,
@@ -8383,6 +8662,30 @@ class ManagedAgentClient:
                     "summary": af_parsed.get("message") or f"UGC video started ({_duration}s)",
                     "is_error": False,
                 }
+            elif isinstance(af_parsed, dict) and af_parsed.get("action") == "clone_started":
+                _vjid = af_parsed.get("job_id")
+                _duration = int(af_parsed.get("duration") or 15)
+                _eta_seconds = int(af_parsed.get("eta_seconds") or _clone_eta_seconds(_duration))
+                _af_lang = lang if lang in ("es", "en") else _detect_user_lang(brief)
+                if _vjid:
+                    yield {
+                        "type": "video_job_started",
+                        "job_id": str(_vjid),
+                        "label": af_parsed.get("campaign_name") or "AI Clone video",
+                        "tool_name": "create_clone_video",
+                        "eta_seconds": _eta_seconds,
+                        "duration": _duration,
+                    }
+                yield {
+                    "type": "agent_message",
+                    "text": _clone_started_ack_message(_duration, lang=_af_lang),
+                }
+                yield {
+                    "type": "tool_result",
+                    "tool_use_id": f"autofire_{tool_name}_result",
+                    "summary": af_parsed.get("message") or f"AI Clone video started ({_duration}s)",
+                    "is_error": False,
+                }
             else:
                 # Final result — surface a short user-facing message. The actual
                 # artifact (image / video) was already yielded above.
@@ -9039,6 +9342,24 @@ class ManagedAgentClient:
                                         "type": "agent_message",
                                         "text": _ugc_started_ack_message(
                                             _ugc_dur,
+                                            lang=_effective_lang if _effective_lang in ("es", "en") else None,
+                                        ),
+                                    }
+                                elif parsed.get("action") == "clone_started" and parsed.get("job_id"):
+                                    _clone_dur = int(parsed.get("duration") or 15)
+                                    _clone_eta = int(parsed.get("eta_seconds") or _clone_eta_seconds(_clone_dur))
+                                    yield {
+                                        "type": "video_job_started",
+                                        "job_id": str(parsed["job_id"]),
+                                        "label": parsed.get("campaign_name") or "AI Clone video",
+                                        "tool_name": _id_to_name.get(tool_use_id) or "create_clone_video",
+                                        "eta_seconds": _clone_eta,
+                                        "duration": _clone_dur,
+                                    }
+                                    yield {
+                                        "type": "agent_message",
+                                        "text": _clone_started_ack_message(
+                                            _clone_dur,
                                             lang=_effective_lang if _effective_lang in ("es", "en") else None,
                                         ),
                                     }

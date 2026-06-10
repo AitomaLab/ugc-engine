@@ -91,6 +91,8 @@ interface MentionItem {
     // For digital products: maps a first_frame_url (shown in the picker grid)
     // to its underlying app clip so finalizeMention can attach app_clip_id.
     clipsByFrame?: Record<string, { clip_id: string; video_url?: string }>;
+    // For AI clones: maps look image_url to look_id for create_clone_video.
+    looksByImage?: Record<string, { look_id: string; label?: string }>;
 }
 
 interface AttachedFile {
@@ -546,6 +548,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
     // ── @ mention state ─────────────────────────────────────────────────
     const [products, setProducts] = useState<any[]>([]);
     const [influencers, setInfluencers] = useState<any[]>([]);
+    const [clones, setClones] = useState<any[]>([]);
     const [projectImages, setProjectImages] = useState<any[]>([]);
     const [projectVideos, setProjectVideos] = useState<any[]>([]);
     const [mentionsLoaded, setMentionsLoaded] = useState(false);
@@ -578,14 +581,28 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
             const token = (await supabase.auth.getSession()).data.session?.access_token;
             const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-            const [prodRes, infRes, imgs, vids] = await Promise.all([
+            const [prodRes, infRes, cloneRes, imgs, vids] = await Promise.all([
                 fetch(`${apiBase}/api/products`, { headers }).then(r => r.ok ? r.json() : []),
                 fetch(`${apiBase}/influencers`, { headers }).then(r => r.ok ? r.json() : []),
+                fetch(`${apiBase}/api/clones`, { headers }).then(r => r.ok ? r.json() : []),
                 creativeFetch<any[]>(`/creative-os/projects/${projectId}/assets/images`).catch(() => []),
                 creativeFetch<any[]>(`/creative-os/projects/${projectId}/assets/videos`).catch(() => []),
             ]);
+            const cloneRows = cloneRes || [];
+            const clonesWithLooks = await Promise.all(
+                cloneRows.map(async (c: any) => {
+                    try {
+                        const looks = await fetch(`${apiBase}/api/clones/${c.id}/looks`, { headers })
+                            .then(r => r.ok ? r.json() : []);
+                        return { ...c, looks: looks || [] };
+                    } catch {
+                        return { ...c, looks: [] };
+                    }
+                }),
+            );
             setProducts(prodRes || []);
             setInfluencers(infRes || []);
+            setClones(clonesWithLooks);
             setProjectImages((imgs || []).filter((i: any) => i.image_url));
             setProjectVideos((vids || []).filter((v: any) => v.final_video_url || v.preview_url));
             setMentionsLoaded(true);
@@ -599,6 +616,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         setMentionsLoaded(false);
         setProducts([]);
         setInfluencers([]);
+        setClones([]);
         setProjectImages([]);
         setProjectVideos([]);
         // Drop any queued messages — they belong to the previous project.
@@ -676,6 +694,38 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                 ref: { type: 'influencer', tag, name, id: inf.id, image_url: inf.image_url },
             });
         }
+        const seenCloneTags = new Set<string>();
+        for (const clone of clones) {
+            const name = clone.name || 'clone';
+            const tag = `${slugify(name)}_clone`;
+            if (seenCloneTags.has(tag)) continue;
+            seenCloneTags.add(tag);
+            const validLooks = (Array.isArray(clone.looks) ? clone.looks : []).filter(
+                (l: any) => l.image_url && l.image_url !== 'error' && String(l.image_url).startsWith('http'),
+            );
+            if (!validLooks.length) continue;
+            const baseLook = validLooks.find((l: any) => l.is_base) || validLooks[0];
+            const thumb = baseLook.image_url;
+            const looksByImage = Object.fromEntries(
+                validLooks.map((l: any) => [l.image_url, { look_id: l.id, label: l.label }]),
+            );
+            items.push({
+                type: 'clone',
+                tag,
+                name,
+                image_url: thumb,
+                views: validLooks.length > 1 ? validLooks.map((l: any) => l.image_url) : undefined,
+                looksByImage,
+                ref: {
+                    type: 'clone',
+                    tag,
+                    name,
+                    id: clone.id,
+                    image_url: thumb,
+                    look_id: baseLook.id,
+                },
+            });
+        }
         // Just-attached uploads: surface them at the top of the matching tab
         // (image → Images, video → Videos) with a "Just attached" badge so users
         // can @-reference the file they're about to send in the same prompt body.
@@ -729,7 +779,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             });
         }
         return items;
-    }, [products, influencers, projectImages, projectVideos, attachments]);
+    }, [products, influencers, clones, projectImages, projectVideos, attachments]);
 
     const filteredMentions = useMemo(() => {
         const f = mentionFilter.toLowerCase();
@@ -743,14 +793,16 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
     const groupedMentions = useMemo(() => ({
         product: filteredMentions.filter(m => m.type === 'product'),
         influencer: filteredMentions.filter(m => m.type === 'influencer'),
+        clone: filteredMentions.filter(m => m.type === 'clone'),
         image: filteredMentions.filter(m => m.type === 'image'),
         video: filteredMentions.filter(m => m.type === 'video'),
     }), [filteredMentions]);
 
     const orderedMentions = useMemo(
         () => [
-            ...groupedMentions.product,
             ...groupedMentions.influencer,
+            ...groupedMentions.clone,
+            ...groupedMentions.product,
             ...groupedMentions.image,
             ...groupedMentions.video,
         ],
@@ -1612,6 +1664,8 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             : item.ref;
         if (chosenImageUrl && item.clipsByFrame && item.clipsByFrame[chosenImageUrl]) {
             finalRef = { ...finalRef, app_clip_id: item.clipsByFrame[chosenImageUrl].clip_id };
+        } else if (chosenImageUrl && item.looksByImage && item.looksByImage[chosenImageUrl]) {
+            finalRef = { ...finalRef, look_id: item.looksByImage[chosenImageUrl].look_id };
         } else if (!chosenImageUrl && item.clipsByFrame) {
             // Digital product with a single app clip — auto-attach it.
             const entries = Object.entries(item.clipsByFrame);
@@ -1639,7 +1693,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         // Products and models with multiple shots open a sub-picker so the
         // user can choose which image to reference. Everything else inserts
         // immediately with its primary image.
-        if ((item.type === 'product' || item.type === 'influencer') && item.views && item.views.length > 1) {
+        if ((item.type === 'product' || item.type === 'influencer' || item.type === 'clone') && item.views && item.views.length > 1) {
             setShotPickerItem(item);
             return;
         }
@@ -3942,7 +3996,7 @@ function AttachmentChip({ att, onRemove }: { att: AttachedFile; onRemove: () => 
 }
 
 interface MentionDropdownProps {
-    groups: Record<'product' | 'influencer' | 'image' | 'video', MentionItem[]>;
+    groups: Record<'product' | 'influencer' | 'clone' | 'image' | 'video', MentionItem[]>;
     ordered: MentionItem[];
     activeIndex: number;
     onPick: (item: MentionItem) => void;
@@ -3957,10 +4011,11 @@ function MentionDropdown({ groups, ordered, activeIndex, onPick, onHover, shotPi
     const GROUP_LABELS_T: Record<MentionItem['type'], string> = {
         product: t('creativeOs.mention.products'),
         influencer: t('creativeOs.mention.models'),
+        clone: t('creativeOs.mention.clones'),
         image: t('creativeOs.mention.images'),
         video: t('creativeOs.mention.videos'),
     };
-    const groupOrder: MentionItem['type'][] = ['influencer', 'product', 'image', 'video'];
+    const groupOrder: MentionItem['type'][] = ['influencer', 'clone', 'product', 'image', 'video'];
     const availableGroups = groupOrder.filter((g) => (groups[g]?.length || 0) > 0);
     const [activeTab, setActiveTab] = useState<MentionItem['type']>(availableGroups[0] || 'influencer');
 

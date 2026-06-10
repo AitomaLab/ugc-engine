@@ -662,26 +662,16 @@ async def generate_video(
           f"reference={data.reference_image_url is not None}")
 
     if data.mode == "ai_clone":
-        return await _generate_clone_video(data, client)
+        raise HTTPException(
+            status_code=400,
+            detail="AI Clone lip-sync videos use create_clone_video in agent chat — @-mention your clone and provide a script.",
+        )
     elif data.mode == "cinematic_video":
         return await _generate_kling_video(data, client, user, background_tasks)
     elif data.mode in ("seedance_2_ugc", "seedance_2_cinematic", "seedance_2_product"):
         return await _generate_seedance_video(data, client, user, background_tasks)
     else:
         return await _generate_veo_video(data, client, user, background_tasks)
-
-
-# ── AI Clone ─────────────────────────────────────────────────────────
-
-async def _generate_clone_video(data: VideoGenerateRequest, client: CoreAPIClient) -> dict:
-    """Generate AI Clone video via InfiniTalk + ElevenLabs (proxied through core API)."""
-    payload = {
-        "prompt": data.prompt,
-        "language": data.language,
-        "influencer_id": data.influencer_id,
-        "clip_length": data.clip_length,
-    }
-    return await client._request("POST", "/clone-jobs", json=payload)
 
 
 # ── Seedance 2.0 Fast ─────────────────────────────────────────────────

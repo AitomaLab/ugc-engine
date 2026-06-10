@@ -44,12 +44,17 @@ const isInFlightStatus = (status?: string) => {
     return s.includes('pending') || s.includes('processing') || s.includes('generating');
 };
 
+const isSuccessLikeStatus = (status?: string) => {
+    const s = (status || '').toLowerCase();
+    return s === 'success' || s === 'complete';
+};
+
 /** Video row still needs jobs-status polling (in-flight OR success without URL yet). */
 const videoNeedsStatusPoll = (v: { status?: string; final_video_url?: string; video_url?: string; is_placeholder?: boolean }) => {
     if (v.is_placeholder) return false;
     if (isInFlightStatus(v.status)) return true;
-    const s = (v.status || '').toLowerCase();
-    return s === 'success' && !(v.final_video_url || v.video_url);
+    if (isSuccessLikeStatus(v.status) && !(v.final_video_url || v.video_url)) return true;
+    return false;
 };
 
 type TabId = 'images' | 'videos';
@@ -331,7 +336,7 @@ export default function ProjectContainerPage() {
                         if (v.is_placeholder || !v.id || fullMap.has(v.id)) return false;
                         if (isInFlightStatus(v.status)) return true;
                         if (videoNeedsStatusPoll(v)) return true;
-                        if ((v.status || '').toLowerCase() === 'success' && hasPlayableVideo(v)) return true;
+                        if (isSuccessLikeStatus(v.status) && hasPlayableVideo(v)) return true;
                         return false;
                     });
                     const mergedFull = fullVideos.map((f: any) => {
@@ -478,7 +483,7 @@ export default function ProjectContainerPage() {
             let anyImageSuccess = false;
             for (const v of (status.videos || [])) {
                 if (!polledVideoSet.has(v.id)) continue;
-                if ((v.status || '').toLowerCase() !== 'success' || !(v.final_video_url || v.video_url)) continue;
+                if (!isSuccessLikeStatus(v.status) || !(v.final_video_url || v.video_url)) continue;
                 const prev = videos.find((p) => p.id === v.id);
                 const hadPlayableUrl = !!(prev?.final_video_url || prev?.video_url);
                 if (!hadPlayableUrl) anyVideoSuccess = true;
@@ -514,7 +519,7 @@ export default function ProjectContainerPage() {
             const isVideoTerminal = (row: { status?: string; final_video_url?: string; video_url?: string }) => {
                 const st = (row.status || '').toLowerCase();
                 if (st.includes('failed')) return true;
-                return st === 'success' && !!(row.final_video_url || row.video_url);
+                return isSuccessLikeStatus(row.status) && !!(row.final_video_url || row.video_url);
             };
             for (const v of (status.videos || [])) {
                 if (isVideoTerminal(v)) {

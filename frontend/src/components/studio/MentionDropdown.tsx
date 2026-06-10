@@ -12,7 +12,7 @@ export interface MentionItem {
 }
 
 export interface MentionDropdownProps {
-    groups: Record<'product' | 'influencer' | 'image' | 'video', MentionItem[]>;
+    groups: Record<'product' | 'influencer' | 'clone' | 'image' | 'video', MentionItem[]>;
     ordered: MentionItem[];
     activeIndex: number;
     onPick: (item: MentionItem) => void;
@@ -27,10 +27,11 @@ export function MentionDropdown({ groups, ordered, activeIndex, onPick, onHover,
     const GROUP_LABELS: Record<MentionItem['type'], string> = {
         product: t('creativeOs.mention.products'),
         influencer: t('creativeOs.mention.models'),
+        clone: t('creativeOs.mention.clones'),
         image: t('creativeOs.mention.images'),
         video: t('creativeOs.mention.videos'),
     };
-    const groupOrder: MentionItem['type'][] = ['product', 'influencer', 'image', 'video'];
+    const groupOrder: MentionItem['type'][] = ['influencer', 'clone', 'product', 'image', 'video'];
     const containerStyle: React.CSSProperties = {
         position: 'absolute',
         left: '14px',
@@ -166,7 +167,7 @@ export function MentionDropdown({ groups, ordered, activeIndex, onPick, onHover,
                                                     <img src={item.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                                 ) : (
                                                     <span style={{ fontSize: '12px' }}>
-                                                        {item.type === 'product' ? '📦' : item.type === 'influencer' ? '👤' : item.type === 'image' ? '🖼' : '🎬'}
+                                                        {item.type === 'product' ? '📦' : item.type === 'influencer' ? '👤' : item.type === 'clone' ? '🧬' : item.type === 'image' ? '🖼' : '🎬'}
                                                     </span>
                                                 )}
                                             </div>

@@ -283,7 +283,7 @@ export interface AgentToolCallSummary {
     mode?: string | null;
 }
 
-export type AgentRefType = 'product' | 'influencer' | 'image' | 'video';
+export type AgentRefType = 'product' | 'influencer' | 'clone' | 'image' | 'video';
 
 export interface AgentRef {
     type: AgentRefType;
@@ -295,6 +295,7 @@ export interface AgentRef {
     shot_id?: string;
     job_id?: string;
     app_clip_id?: string;
+    look_id?: string;
     product_type?: 'physical' | 'digital';
 }
 

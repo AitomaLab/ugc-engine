@@ -1113,6 +1113,7 @@
   "creativeOs.mention.empty": "No matches",
   "creativeOs.mention.hint": "Type to filter",
   "creativeOs.mention.models": "Models",
+  "creativeOs.mention.clones": "AI Clones",
   "creativeOs.mention.noMatches": "No matches found",
   "creativeOs.mention.pickShotFor": "Pick a shot for {name}",
   "creativeOs.mention.profile": "Profile",

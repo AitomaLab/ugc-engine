@@ -109,7 +109,7 @@ function relativeTime(d: string, t: (k: string) => string, lang: 'en' | 'es'): s
 }
 
 interface MentionItem {
-  type: 'product' | 'influencer' | 'image' | 'video';
+  type: 'product' | 'influencer' | 'clone' | 'image' | 'video';
   tag: string;
   name: string;
   image_url?: string;
@@ -117,6 +117,7 @@ interface MentionItem {
   views?: string[];
   product_type?: 'physical' | 'digital';
   clipsByFrame?: Record<string, { clip_id: string; video_url?: string }>;
+  looksByImage?: Record<string, { look_id: string; label?: string }>;
 }
 function slugify(s: string): string {
   return (s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
@@ -163,7 +164,7 @@ export default function StudioPage() {
   const [mentionCursorStart, setMentionCursorStart] = useState(-1);
   const [mentionsLoaded, setMentionsLoaded] = useState(false);
   const [mentionItems, setMentionItems] = useState<MentionItem[]>([]);
-  const [activeRefs, setActiveRefs] = useState<Map<string, { type: string; tag: string; name: string; id?: string; image_url?: string; app_clip_id?: string; product_type?: 'physical' | 'digital' }>>(new Map());
+  const [activeRefs, setActiveRefs] = useState<Map<string, { type: string; tag: string; name: string; id?: string; image_url?: string; app_clip_id?: string; look_id?: string; product_type?: 'physical' | 'digital' }>>(new Map());
   const [shotPickerItem, setShotPickerItem] = useState<MentionItem | null>(null);
   const [mentionTab, setMentionTab] = useState<MentionItem['type']>('influencer');
 
@@ -174,10 +175,23 @@ export default function StudioPage() {
       const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       const token = (await supabase.auth.getSession()).data.session?.access_token;
       const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-      const [prodRes, infRes] = await Promise.all([
+      const [prodRes, infRes, cloneRes] = await Promise.all([
          fetch(`${apiBase}/api/products`, { headers }).then(r => r.ok ? r.json() : []),
-         fetch(`${apiBase}/influencers`, { headers }).then(r => r.ok ? r.json() : [])
+         fetch(`${apiBase}/influencers`, { headers }).then(r => r.ok ? r.json() : []),
+         fetch(`${apiBase}/api/clones`, { headers }).then(r => r.ok ? r.json() : []),
       ]);
+      const cloneRows = cloneRes || [];
+      const clonesWithLooks = await Promise.all(
+        cloneRows.map(async (c: any) => {
+          try {
+            const looks = await fetch(`${apiBase}/api/clones/${c.id}/looks`, { headers })
+              .then(r => r.ok ? r.json() : []);
+            return { ...c, looks: looks || [] };
+          } catch {
+            return { ...c, looks: [] };
+          }
+        }),
+      );
       const items: MentionItem[] = [];
       for (const p of (prodRes || [])) {
         const name = p.name || p.product_name || 'product';
@@ -218,6 +232,38 @@ export default function StudioPage() {
           image_url: inf.image_url,
           ref: inf,
           views: views.length > 1 ? views : undefined,
+        });
+      }
+      const seenCloneTags = new Set<string>();
+      for (const clone of clonesWithLooks) {
+        const name = clone.name || 'clone';
+        const tag = `${slugify(name)}_clone`;
+        if (seenCloneTags.has(tag)) continue;
+        seenCloneTags.add(tag);
+        const validLooks = (Array.isArray(clone.looks) ? clone.looks : []).filter(
+          (l: any) => l.image_url && l.image_url !== 'error' && String(l.image_url).startsWith('http'),
+        );
+        if (!validLooks.length) continue;
+        const baseLook = validLooks.find((l: any) => l.is_base) || validLooks[0];
+        const thumb = baseLook.image_url;
+        const looksByImage = Object.fromEntries(
+          validLooks.map((l: any) => [l.image_url, { look_id: l.id, label: l.label }]),
+        );
+        items.push({
+          type: 'clone',
+          tag,
+          name,
+          image_url: thumb,
+          views: validLooks.length > 1 ? validLooks.map((l: any) => l.image_url) : undefined,
+          looksByImage,
+          ref: {
+            type: 'clone',
+            tag,
+            name,
+            id: clone.id,
+            image_url: thumb,
+            look_id: baseLook.id,
+          },
         });
       }
       // Add recent images
@@ -297,6 +343,7 @@ export default function StudioPage() {
   const groupedMentions = useMemo(() => ({
     product: filteredMentions.filter(m => m.type === 'product'),
     influencer: filteredMentions.filter(m => m.type === 'influencer'),
+    clone: filteredMentions.filter(m => m.type === 'clone'),
     image: filteredMentions.filter(m => m.type === 'image'),
     video: filteredMentions.filter(m => m.type === 'video'),
   }), [filteredMentions]);
@@ -304,6 +351,7 @@ export default function StudioPage() {
   const orderedMentions = useMemo(
     () => [
       ...groupedMentions.influencer,
+      ...groupedMentions.clone,
       ...groupedMentions.product,
       ...groupedMentions.image,
       ...groupedMentions.video,
@@ -346,6 +394,7 @@ export default function StudioPage() {
     const newPrompt = before + tagText + ' ' + after;
     setPrompt(newPrompt);
     let clipInfo = chosenImageUrl && item.clipsByFrame ? item.clipsByFrame[chosenImageUrl] : undefined;
+    let lookInfo = chosenImageUrl && item.looksByImage ? item.looksByImage[chosenImageUrl] : undefined;
     let imgUrl = chosenImageUrl || item.image_url;
     if (!clipInfo && !chosenImageUrl && item.clipsByFrame) {
       const entries = Object.entries(item.clipsByFrame);
@@ -363,6 +412,7 @@ export default function StudioPage() {
         id: item.ref?.id,
         image_url: imgUrl,
         ...(clipInfo ? { app_clip_id: clipInfo.clip_id } : {}),
+        ...(lookInfo ? { look_id: lookInfo.look_id } : item.ref?.look_id ? { look_id: item.ref.look_id } : {}),
         ...(item.product_type ? { product_type: item.product_type } : {}),
       });
       return next;
@@ -932,11 +982,12 @@ export default function StudioPage() {
               {typeof document !== 'undefined' && mentionOpen && (() => {
                 const GROUP_LABELS: Record<MentionItem['type'], string> = {
                   influencer: t('creativeOs.mention.models'),
+                  clone: t('creativeOs.mention.clones'),
                   product: t('creativeOs.mention.products'),
                   image: t('creativeOs.mention.images'),
                   video: t('creativeOs.mention.videos'),
                 };
-                const groupOrder: MentionItem['type'][] = ['influencer', 'product', 'image', 'video'];
+                const groupOrder: MentionItem['type'][] = ['influencer', 'clone', 'product', 'image', 'video'];
                 const availableGroups = groupOrder.filter(g => (groupedMentions[g]?.length || 0) > 0);
                 const effectiveTab = availableGroups.includes(mentionTab) ? mentionTab : (availableGroups[0] || 'influencer');
                 const tabItems = groupedMentions[effectiveTab] || [];

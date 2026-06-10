@@ -1113,6 +1113,7 @@
   "creativeOs.mention.empty": "Sin coincidencias",
   "creativeOs.mention.hint": "Escribe para filtrar",
   "creativeOs.mention.models": "Modelos",
+  "creativeOs.mention.clones": "Mis Clones IA",
   "creativeOs.mention.noMatches": "No se encontraron coincidencias",
   "creativeOs.mention.pickShotFor": "Elige una toma para {name}",
   "creativeOs.mention.profile": "Perfil",

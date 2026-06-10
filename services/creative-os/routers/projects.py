@@ -825,19 +825,29 @@ async def project_jobs_status(
             ))
         else:
             fetches.append(None)
+        video_fetches = []
         if video_ids:
-            fetches.append(http.get(
-                f"{supabase_url}/rest/v1/video_jobs",
-                headers=headers,
-                params={
-                    "id": f"in.({','.join(video_ids)})",
-                    "select": "id,status,status_message,progress,preview_url,preview_type,final_video_url,thumbnail_url,created_at",
-                },
-            ))
-        else:
-            fetches.append(None)
+            video_fetches = [
+                http.get(
+                    f"{supabase_url}/rest/v1/video_jobs",
+                    headers=headers,
+                    params={
+                        "id": f"in.({','.join(video_ids)})",
+                        "select": "id,status,status_message,progress,preview_url,preview_type,final_video_url,thumbnail_url,created_at",
+                    },
+                ),
+                http.get(
+                    f"{supabase_url}/rest/v1/clone_video_jobs",
+                    headers=headers,
+                    params={
+                        "id": f"in.({','.join(video_ids)})",
+                        "select": _CLONE_JOB_SELECT,
+                    },
+                ),
+            ]
         results = await asyncio.gather(
             *[f for f in fetches if f is not None],
+            *(video_fetches or [asyncio.sleep(0)]),
             return_exceptions=True,
         )
 
@@ -848,9 +858,16 @@ async def project_jobs_status(
         if not isinstance(r, Exception) and r.status_code == 200:
             out["images"] = r.json() or []
     if video_ids:
-        r = results[idx]
-        if not isinstance(r, Exception) and r.status_code == 200:
-            out["videos"] = r.json() or []
+        regular_rows: list = []
+        clone_rows: list = []
+        r_regular = results[idx]
+        r_clone = results[idx + 1] if idx + 1 < len(results) else None
+        if not isinstance(r_regular, Exception) and r_regular.status_code == 200:
+            regular_rows = r_regular.json() or []
+        if r_clone is not None and not isinstance(r_clone, Exception) and r_clone.status_code == 200:
+            clone_rows = [_normalize_clone_status_row(r) for r in (r_clone.json() or [])]
+        seen_ids = {str(r.get("id")) for r in regular_rows if r.get("id")}
+        out["videos"] = regular_rows + [r for r in clone_rows if str(r.get("id")) not in seen_ids]
 
     # Reconcile orphaned shots: a generation writes its result back from an
     # in-process background task. If the worker/process is restarted (deploy,
@@ -860,7 +877,11 @@ async def project_jobs_status(
     # render time) flip such shots to "failed" so the card resolves and the
     # user can retry instead of staring at an eternal spinner.
     await _reconcile_stale_image_shots(http_headers=headers, supabase_url=supabase_url, rows=out["images"])
-    await _reconcile_stale_video_jobs(http_headers=headers, supabase_url=supabase_url, rows=out["videos"])
+    regular_videos = [r for r in out["videos"] if r.get("_source") != "clone"]
+    clone_videos = [r for r in out["videos"] if r.get("_source") == "clone"]
+    await _reconcile_stale_video_jobs(http_headers=headers, supabase_url=supabase_url, rows=regular_videos)
+    await _reconcile_stale_clone_jobs(http_headers=headers, supabase_url=supabase_url, rows=clone_videos)
+    out["videos"] = regular_videos + clone_videos
     return out
 
 
@@ -868,6 +889,20 @@ async def project_jobs_status(
 _STALE_IMAGE_SECONDS = 8 * 60
 # Video renders (Kie polls, multi-chunk edits) can run longer — generous grace.
 _STALE_VIDEO_SECONDS = 25 * 60
+
+_CLONE_JOB_SELECT = (
+    "id,status,status_message,progress,preview_url,preview_type,final_video_url,created_at"
+)
+
+
+def _normalize_clone_status_row(row: dict) -> dict:
+    """Map clone_video_jobs shape to the video_jobs fields the gallery expects."""
+    out = dict(row)
+    out["_source"] = "clone"
+    if (out.get("status") or "").lower() == "complete":
+        out["status"] = "success"
+        out["progress"] = 100
+    return out
 
 
 def _is_stale_processing_row(row: dict, *, media_keys: str | list[str], grace_seconds: int) -> bool:
@@ -952,6 +987,45 @@ async def _reconcile_stale_video_jobs(*, http_headers: dict, supabase_url: str, 
             )
     except Exception as e:
         print(f"[jobs-status] stale video delete failed: {e}")
+
+
+async def _reconcile_stale_clone_jobs(*, http_headers: dict, supabase_url: str, rows: list) -> None:
+    """Mark clone jobs stuck in processing as failed so ghost cards resolve."""
+    stale_ids: list[str] = []
+    for row in list(rows):
+        if _is_stale_processing_row(
+            row, media_keys=["final_video_url", "video_url"], grace_seconds=_STALE_VIDEO_SECONDS
+        ):
+            stale_ids.append(str(row["id"]))
+            row["status"] = "failed"
+            row["error_message"] = row.get("error_message") or "Generation timed out — please try again."
+            rows.remove(row)
+
+    if not stale_ids:
+        return
+
+    import httpx as _httpx
+    patch_headers = {**http_headers, "Prefer": "return=minimal"}
+    payload = {
+        "status": "failed",
+        "error_message": "Generation timed out — please try again.",
+    }
+    try:
+        async with _httpx.AsyncClient(timeout=10.0) as http:
+            await asyncio.gather(
+                *(
+                    http.patch(
+                        f"{supabase_url}/rest/v1/clone_video_jobs",
+                        headers=patch_headers,
+                        params={"id": f"eq.{sid}"},
+                        json=payload,
+                    )
+                    for sid in stale_ids
+                ),
+                return_exceptions=True,
+            )
+    except Exception as e:
+        print(f"[jobs-status] stale clone job patch failed: {e}")
 
 
 @router.delete("/{project_id}")

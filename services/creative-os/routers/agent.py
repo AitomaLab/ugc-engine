@@ -36,7 +36,7 @@ _active_streams: dict[str, asyncio.Lock] = {}
 
 # ── Schemas ────────────────────────────────────────────────────────────
 class AgentRef(BaseModel):
-    type: str  # 'product' | 'influencer' | 'image' | 'video'
+    type: str  # 'product' | 'influencer' | 'clone' | 'image' | 'video'
     tag: str   # the @-token the user typed, e.g. 'tea_94802f09'
     name: Optional[str] = None
     id: Optional[str] = None
@@ -45,6 +45,7 @@ class AgentRef(BaseModel):
     shot_id: Optional[str] = None
     job_id: Optional[str] = None
     app_clip_id: Optional[str] = None
+    look_id: Optional[str] = None
     product_type: Optional[str] = None  # 'physical' | 'digital'
 
 
@@ -371,6 +372,8 @@ async def agent_stream(
                 parts.append(f"video_url={r.video_url}")
             if r.app_clip_id:
                 parts.append(f"app_clip_id={r.app_clip_id}")
+            if r.look_id:
+                parts.append(f"look_id={r.look_id}")
             if r.product_type:
                 parts.append(f"product_type={r.product_type}")
             if r in carried_refs:

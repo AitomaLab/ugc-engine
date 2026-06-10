@@ -486,8 +486,10 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
     const hasPlayableMedia = type === 'videos'
         ? !!(asset.final_video_url || asset.video_url)
         : !!asset.image_url;
+    const statusLower = status.toLowerCase();
     const isProcessing = !hasPlayableMedia && (
-        status.includes('pending') || status.includes('processing') || status.includes('generating')
+        statusLower.includes('pending') || statusLower.includes('processing') || statusLower.includes('generating')
+        || (statusLower === 'complete' && !hasPlayableMedia)
     );
     const isFailed = !isProcessing && status.includes('failed') && !imageUrl && !videoUrl;
 

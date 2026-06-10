@@ -273,7 +273,15 @@ def list_jobs(status: str = None, limit: int = 50):
 def get_job(job_id: str):
     sb = get_supabase()
     result = sb.table("video_jobs").select("*").eq("id", job_id).execute()
-    return result.data[0] if result.data else None
+    if result.data:
+        return result.data[0]
+    clone = get_clone_job(job_id)
+    if not clone:
+        return None
+    if (clone.get("status") or "").lower() == "complete":
+        clone = {**clone, "status": "success", "progress": 100}
+    clone["_source"] = "clone"
+    return clone
 
 def create_job(data: dict):
     sb = get_supabase()
