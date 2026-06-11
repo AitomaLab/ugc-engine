@@ -1,20 +1,23 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
+import useSWR from 'swr';
 import Link from 'next/link';
 import { apiFetch, formatDate } from '@/lib/utils';
+import { useApp } from '@/providers/AppProvider';
 import { VideoJob, Influencer } from '@/lib/types';
 import Select from '@/components/ui/Select';
 import MediaPreviewModal from '@/components/ui/MediaPreviewModal';
 import SchedulePostModal from '@/components/modals/SchedulePostModal';
 import { useProgressiveList } from '@/hooks/useProgressiveList';
 import { useTranslation } from '@/lib/i18n';
+import { useVideoThumbnails } from '@/hooks/useVideoThumbnails';
+import { HoverPlayVideo } from '@/components/ui/HoverPlayVideo';
+import { thumbUrl, videoPosterCandidate } from '@/lib/media';
 
 export default function VideosPage() {
     const { t } = useTranslation();
-    const [jobs, setJobs] = useState<VideoJob[]>([]);
-    const [influencers, setInfluencers] = useState<Influencer[]>([]);
-    const [loading, setLoading] = useState(true);
+    const { activeProject } = useApp();
     const [search, setSearch] = useState('');
     const [influencerFilter, setInfluencerFilter] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
@@ -25,45 +28,36 @@ export default function VideosPage() {
     const [copiedFeedback, setCopiedFeedback] = useState(false);
     const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
 
-    const [clones, setClones] = useState<any[]>([]);
-
-    const fetchData = useCallback(async () => {
-        try {
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 15000);
-            const opts = { signal: controller.signal };
-            const [jobsData, infData, clonesData] = await Promise.all([
-                apiFetch<any[]>('/jobs?limit=200&include_clones=true', opts).catch(() => []),
-                apiFetch<Influencer[]>('/influencers', opts).catch(() => []),
-                apiFetch<any[]>('/api/clones', opts).catch(() => []),
-            ]);
-            clearTimeout(timeout);
-            setJobs(jobsData);
-            setInfluencers(infData);
-            setClones(clonesData);
-        } catch (err) {
-            console.error('Videos fetch error:', err);
-        } finally {
-            setLoading(false);
-        }
-    }, []);
-
-    useEffect(() => { fetchData(); }, [fetchData]);
-
-    // Poll every 5s while there are processing/pending jobs
-    useEffect(() => {
-        const hasActiveJobs = jobs.some(j => j.status === 'processing' || j.status === 'pending');
-        if (!hasActiveJobs) return;
-        const interval = setInterval(fetchData, 5000);
-        return () => clearInterval(interval);
-    }, [jobs, fetchData]);
-
-    // Re-fetch when user switches projects
-    useEffect(() => {
-        const handler = () => { setLoading(true); fetchData(); };
-        window.addEventListener('projectChanged', handler);
-        return () => window.removeEventListener('projectChanged', handler);
-    }, [fetchData]);
+    // ── Data layer (SWR) ────────────────────────────────────────────
+    // Keys include the active project id: apiFetch scopes requests via the
+    // X-Project-Id header, so a project switch must produce a fresh cache
+    // entry (this also replaces the old 'projectChanged' listener).
+    const pid = activeProject?.id ?? '';
+    const { data: jobsData, isLoading: jobsLoading, mutate: mutateJobs } = useSWR(
+        ['/jobs?limit=200&include_clones=true', pid],
+        ([path]: [string, string]) => apiFetch<VideoJob[]>(path),
+        {
+            keepPreviousData: true,
+            revalidateOnFocus: true,
+            // Poll every 5s only while jobs are in flight.
+            refreshInterval: (latest) =>
+                (latest ?? []).some((j: VideoJob) => j.status === 'processing' || j.status === 'pending') ? 5000 : 0,
+        },
+    );
+    const { data: infData } = useSWR(
+        ['/influencers', pid],
+        ([path]: [string, string]) => apiFetch<Influencer[]>(path),
+        { keepPreviousData: true },
+    );
+    const { data: clonesData } = useSWR(
+        ['/api/clones', pid],
+        ([path]: [string, string]) => apiFetch<any[]>(path),
+        { keepPreviousData: true },
+    );
+    const jobs = jobsData ?? [];
+    const influencers = infData ?? [];
+    const clones = clonesData ?? [];
+    const loading = jobsLoading && !jobsData;
 
     async function handleDelete(jobId: string) {
         if (!confirm('Delete this video? This cannot be undone.')) return;
@@ -75,7 +69,7 @@ export default function VideosPage() {
             } else {
                 await apiFetch(`/jobs/${jobId}`, { method: 'DELETE' });
             }
-            setJobs(prev => prev.filter(j => j.id !== jobId));
+            mutateJobs(prev => (prev ?? []).filter(j => j.id !== jobId), { revalidate: false });
             setSelectedIds(prev => { const next = new Set(prev); next.delete(jobId); return next; });
         } catch (err) { console.error('Delete error:', err); }
     }
@@ -101,7 +95,8 @@ export default function VideosPage() {
     const influencerMap = new Map(influencers.map((i) => [i.id, i]));
     const campaignNames = [...new Set(jobs.map(j => j.campaign_name).filter(Boolean))] as string[];
 
-    let filteredJobs = jobs;
+    // Copy before filter/sort — .sort() below must not mutate the SWR cache.
+    let filteredJobs = [...jobs];
 
     if (search) {
         const q = search.toLowerCase();
@@ -131,6 +126,10 @@ export default function VideosPage() {
     });
 
     const { visibleItems: visibleJobs, sentinelRef, hasMore } = useProgressiveList(filteredJobs, 12);
+
+    // Lazily generate poster thumbnails so completed cards render an <img>
+    // instead of pulling every MP4's metadata.
+    const videoThumbs = useVideoThumbnails(visibleJobs as any[]);
 
     if (loading) {
         return <div className='content-area'><div className='text-[#94A3B8] text-sm italic animate-pulse py-12 text-center'>{t('common.loading')}</div></div>;
@@ -246,7 +245,12 @@ export default function VideosPage() {
                                     onClick={() => job.final_video_url && setPreviewAssetUrl(job.final_video_url)}
                                 >
                                     {job.final_video_url ? (
-                                        <video src={job.final_video_url} style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', inset: 0 }} muted loop playsInline preload="metadata" />
+                                        <HoverPlayVideo
+                                            src={job.final_video_url}
+                                            poster={videoThumbs[job.id] || videoPosterCandidate(job as any)}
+                                            posterWidth={480}
+                                            style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', inset: 0 }}
+                                        />
                                     ) : (job.status === 'processing' || job.status === 'pending') ? (
                                         <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
                                             {/* Progressive preview: show scene image or video */}
@@ -261,7 +265,7 @@ export default function VideosPage() {
                                             ) : (job as any).preview_url && (job as any).preview_type === 'image' ? (
                                                 <img
                                                     key={(job as any).preview_url}
-                                                    src={(job as any).preview_url}
+                                                    src={thumbUrl((job as any).preview_url, 480)}
                                                     alt="Scene preview"
                                                     style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
                                                     onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}

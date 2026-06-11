@@ -44,12 +44,16 @@ async def animate_storyboard_kie_seedance(
     negative_prompt: str = "",
     poll_interval: float = 10.0,
     max_iters: int = 240,
+    on_submitted=None,
 ) -> dict:
     """Animate via Kie.ai Seedance 2.0.
 
     Returns {"url": <mp4 url>, "task_id": str, "seed": None, "raw": <poll data>}.
     `seed` is always None — Kie does not surface a seed in its response. Kept
     in the return dict for shape-compat with the Fal wrapper.
+
+    `on_submitted("kie:<taskId>")` fires right after the create call so the
+    caller can persist the provider job reference for crash recovery.
     """
     if not image_urls:
         raise KieError("animate_storyboard_kie_seedance requires at least one image_url")
@@ -90,6 +94,11 @@ async def animate_storyboard_kie_seedance(
         if not task_id:
             raise KieError(f"Kie create returned no taskId: {create_data}", raw=create_data)
         print(f"[kie] seedance task_id={task_id}, polling every {poll_interval}s (max {max_iters})")
+        if on_submitted:
+            try:
+                await on_submitted(f"kie:{task_id}")
+            except Exception as cb_err:
+                print(f"[kie] on_submitted callback failed: {cb_err}")
 
         for i in range(max_iters):
             await asyncio.sleep(poll_interval)

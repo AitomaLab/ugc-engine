@@ -321,7 +321,7 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                                 ref={videoRef}
                                 src={videoUrl}
                                 playsInline
-                                preload="auto"
+                                preload="metadata"
                                 style={{
                                     maxWidth: '100%',
                                     maxHeight: '100%',

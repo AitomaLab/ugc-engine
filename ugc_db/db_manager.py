@@ -11,6 +11,9 @@ from dotenv import load_dotenv
 
 # Load SaaS production environment
 load_dotenv(".env.saas")
+load_dotenv("env.saas")
+load_dotenv(".env")
+load_dotenv("env")
 
 # ---------------------------------------------------------------------------
 # Supabase Client Singleton
@@ -216,6 +219,13 @@ def list_app_clips_by_product(product_id: str):
     sb = get_supabase()
     return sb.table("app_clips").select("*").eq("product_id", product_id).execute().data
 
+
+def list_app_clips_for_user(user_id: str):
+    """All app clips owned by a user — not filtered by project_id."""
+    sb = get_supabase()
+    return sb.table("app_clips").select("*").eq("user_id", user_id).execute().data or []
+
+
 def update_app_clip(clip_id: str, data: dict):
     """Updates fields on an existing app clip record."""
     sb = get_supabase()
@@ -233,6 +243,16 @@ def list_products(category: str = None):
     if category:
         q = q.eq("category", category)
     return q.execute().data
+
+
+def list_products_for_user(user_id: str, category: str = None):
+    """All products owned by a user — not filtered by project_id."""
+    sb = get_supabase()
+    q = sb.table("products").select("*").eq("user_id", user_id)
+    if category:
+        q = q.eq("category", category)
+    return q.execute().data or []
+
 
 def get_product(product_id: str):
     sb = get_supabase()
@@ -263,9 +283,37 @@ def delete_product(product_id: str):
 # CRUD Helpers — Video Jobs
 # ---------------------------------------------------------------------------
 
+# Columns returned by LIST endpoints. Deliberately excludes the two heavy
+# JSONB blobs — `transcription` (Whisper word-level output) and `editor_state`
+# (Remotion Editor UndoableState) — which can be hundreds of KB per row and
+# are only consumed by the editor's per-job endpoints (which use get_job /
+# their own queries). Detail fetches (get_job) still return full rows.
+JOB_LIST_COLUMNS = ", ".join([
+    "id", "user_id", "influencer_id", "app_clip_id", "product_id", "script_id",
+    "project_id", "campaign_name", "assistant_type", "product_type",
+    "status", "status_message", "progress", "error_message",
+    "final_video_url", "preview_url", "preview_type",
+    "hook", "length", "metadata", "model_api", "variation_prompt",
+    "music_enabled", "subtitles_enabled", "subtitle_style", "subtitle_placement",
+    "video_language", "language_accent", "auto_transition_type",
+    "cinematic_shot_ids", "video_duration_seconds", "video_width", "video_height",
+    "cost_image", "cost_video", "cost_voice", "cost_music", "cost_processing", "total_cost",
+    "created_at", "updated_at",
+])
+
+# Same idea for clone_video_jobs (excludes `transcription`).
+CLONE_JOB_LIST_COLUMNS = ", ".join([
+    "id", "user_id", "clone_id", "look_id", "app_clip_id", "product_id",
+    "project_id", "product_type", "status", "status_message", "progress",
+    "error_message", "final_video_url", "script_text", "duration",
+    "music_enabled", "subtitles_enabled", "subtitle_style", "subtitle_placement",
+    "video_language", "cinematic_shot_ids", "created_at", "updated_at",
+])
+
+
 def list_jobs(status: str = None, limit: int = 50):
     sb = get_supabase()
-    q = sb.table("video_jobs").select("*").order("created_at", desc=True).limit(limit)
+    q = sb.table("video_jobs").select(JOB_LIST_COLUMNS).order("created_at", desc=True).limit(limit)
     if status:
         q = q.eq("status", status)
     return q.execute().data
@@ -752,7 +800,7 @@ def list_app_clips_scoped(user_id: str, project_id: str):
 
 def list_jobs_scoped(user_id: str, project_id: str = None, status: str = None, limit: int = 50):
     sb = get_supabase()
-    q = sb.table("video_jobs").select("*").eq("user_id", user_id).order("created_at", desc=True).limit(limit)
+    q = sb.table("video_jobs").select(JOB_LIST_COLUMNS).eq("user_id", user_id).order("created_at", desc=True).limit(limit)
     if project_id:
         q = q.eq("project_id", project_id)
     if status:

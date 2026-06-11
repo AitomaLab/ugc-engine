@@ -18,7 +18,7 @@ def load_env(start: Path | None = None) -> Path | None:
     """
     here = (start or Path(__file__)).resolve().parent
     for ancestor in (here, *here.parents):
-        if (ancestor / ".env").exists() or (ancestor / ".env.saas").exists():
+        if any((ancestor / name).exists() for name in ("env.saas", ".env.saas", "env", ".env")):
             for candidate in ("env.saas", ".env.saas", "env", ".env"):
                 load_dotenv(ancestor / candidate, override=False)
             return ancestor

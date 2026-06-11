@@ -29,12 +29,15 @@ const IconCalendar = () => <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18"
 
 const IconEdit = () => <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="2" /><line x1="7" y1="2" x2="7" y2="22" /><line x1="2" y1="7" x2="7" y2="7" /><line x1="2" y1="12" x2="7" y2="12" /><line x1="2" y1="17" x2="7" y2="17" /><polygon points="11,8 11,16 18,12" /></svg>;
 
-const NAV_ITEMS = [
+const NAV_ITEMS: Array<
+    | { divider: true }
+    | { href: string; labelKey: string; label: string; Icon: React.ComponentType; hidden?: boolean }
+> = [
     { href: '/', labelKey: 'nav.dashboard', label: 'Home', Icon: IconHome },
     { divider: true },
     { href: '/projects', labelKey: 'nav.studio', label: 'Projects', Icon: IconGrid },
     { href: '/influencers', labelKey: 'nav.influencers', label: 'Influencers', Icon: IconUser },
-    { href: '/scripts', labelKey: 'nav.scripts', label: 'Scripts', Icon: IconFile },
+    { href: '/scripts', labelKey: 'nav.scripts', label: 'Scripts', Icon: IconFile, hidden: true },
     { href: '/products', labelKey: 'nav.products', label: 'Products', Icon: IconBox },
     { href: '/schedule', labelKey: 'nav.schedule', label: 'Publish', Icon: IconCalendar },
     { href: '/editor', labelKey: 'nav.editor', label: 'Editor', Icon: IconEdit },
@@ -168,8 +171,45 @@ const NOTIF_ICONS: Record<string, { color: string; path: string }> = {
     script_created: { color: '#6B4EFF',       path: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6' },
 };
 
+const TOAST_SEEN_STORAGE_KEY = 'notif_toast_seen_keys';
+const TOAST_SEEN_MAX = 200;
+/** Only surface toasts for completions within this window (prevents replay of old jobs). */
+const TOAST_RECENCY_MS = 15 * 60 * 1000;
+
+function notifCompositeKey(n: Notification): string {
+    return `${n.id}:${n.type}`;
+}
+
+function loadToastSeenKeys(): Set<string> {
+    try {
+        const stored = localStorage.getItem(TOAST_SEEN_STORAGE_KEY);
+        if (stored) return new Set(JSON.parse(stored) as string[]);
+    } catch { /* ignore */ }
+    return new Set();
+}
+
+function persistToastSeenKeys(keys: Set<string>) {
+    try {
+        const arr = [...keys].slice(-TOAST_SEEN_MAX);
+        localStorage.setItem(TOAST_SEEN_STORAGE_KEY, JSON.stringify(arr));
+    } catch { /* ignore */ }
+}
+
+function markToastSeen(keys: Set<string>, key: string) {
+    keys.add(key);
+    persistToastSeenKeys(keys);
+}
+
+function isRecentNotification(n: Notification): boolean {
+    if (!n.timestamp) return false;
+    const ts = new Date(n.timestamp).getTime();
+    if (Number.isNaN(ts)) return false;
+    return Date.now() - ts <= TOAST_RECENCY_MS;
+}
+
 function NotificationDropdown() {
     const { t } = useTranslation();
+    const { session, isLoading: authLoading } = useApp();
     const [open, setOpen] = useState(false);
     const [notifications, setNotifications] = useState<Notification[]>([]);
     const [readIds, setReadIds] = useState<Set<string>>(new Set());
@@ -179,16 +219,18 @@ function NotificationDropdown() {
     // ── Toast notification system ─────────────────────────────────────
     interface ToastItem {
         id: string;
+        seenKey: string;
         message: string;
         type: 'success' | 'error';
         projectId?: string;
     }
     const [toasts, setToasts] = useState<ToastItem[]>([]);
-    const seenIdsRef = useRef<Set<string>>(new Set());
+    const seenIdsRef = useRef<Set<string>>(loadToastSeenKeys());
     const firstLoadDoneRef = useRef(false);
 
     // Load read IDs from localStorage on mount
     useEffect(() => {
+        seenIdsRef.current = loadToastSeenKeys();
         try {
             const stored = localStorage.getItem('notif_read_ids');
             if (stored) setReadIds(new Set(JSON.parse(stored)));
@@ -234,7 +276,11 @@ function NotificationDropdown() {
     useEffect(() => { tRef.current = t; }, [t]);
 
     useEffect(() => {
-        // Request browser notification permission on mount
+        // Wait for auth before polling — avoids 401 on first fetch and the
+        // empty-bootstrap race that re-toasts historical completions.
+        if (authLoading || !session) return;
+
+        // Request browser notification permission once session is ready
         if (typeof window !== 'undefined' && 'Notification' in window && window.Notification.permission === 'default') {
             window.Notification.requestPermission().catch(() => {});
         }
@@ -242,60 +288,57 @@ function NotificationDropdown() {
         const poll = () => {
             apiFetch<Notification[]>('/api/notifications?limit=5')
                 .then(data => {
-                    // Use composite key "id:type" so status transitions
-                    // (e.g. job_processing → job_success) are detected as new events.
-                    const compositeKey = (n: Notification) => `${n.id}:${n.type}`;
-
                     if (!firstLoadDoneRef.current) {
-                        // Seed on first load — don't toast for existing notifications
-                        data.forEach(n => seenIdsRef.current.add(compositeKey(n)));
+                        // Seed on first successful load — don't toast for existing notifications
+                        data.forEach(n => markToastSeen(seenIdsRef.current, notifCompositeKey(n)));
                         firstLoadDoneRef.current = true;
                         setNotifications(prev => prev.length === 0 ? data : prev);
                         return;
                     }
 
-                    const newItems = data.filter(n => !seenIdsRef.current.has(compositeKey(n)));
-                    newItems.forEach(n => seenIdsRef.current.add(compositeKey(n)));
+                    const newItems = data.filter(n => !seenIdsRef.current.has(notifCompositeKey(n)));
 
                     const tr = tRef.current;
                     for (const n of newItems) {
-                        if (n.type === 'job_success' || n.type === 'job_failed') {
-                            const isSuccess = n.type === 'job_success';
-                            const toastMsg = isSuccess
-                                ? (n.message?.includes('image') ? tr('toast.imageReady') : tr('toast.videoReady'))
-                                : tr('toast.generationFailed');
+                        const key = notifCompositeKey(n);
+                        markToastSeen(seenIdsRef.current, key);
 
-                            const toast: ToastItem = {
-                                id: n.id,
-                                message: toastMsg,
-                                type: isSuccess ? 'success' : 'error',
-                                projectId: (n as unknown as Record<string, unknown>).project_id as string | undefined,
-                            };
+                        if (n.type !== 'job_success' && n.type !== 'job_failed') continue;
+                        // Skip toasts for old completions even if seen state was reset
+                        if (!isRecentNotification(n)) continue;
 
-                            setToasts(prev => {
-                                // Dedupe: don't show if a toast for this job is already visible
-                                if (prev.some(t => t.id === toast.id)) return prev;
-                                return [...prev, toast].slice(-3);
-                            });
+                        const isSuccess = n.type === 'job_success';
+                        const toastMsg = isSuccess
+                            ? (n.message?.includes('image') ? tr('toast.imageReady') : tr('toast.videoReady'))
+                            : tr('toast.generationFailed');
 
-                            // Auto-dismiss after 5s
-                            setTimeout(() => {
-                                setToasts(prev => prev.filter(t => t.id !== toast.id));
-                            }, 5000);
+                        const toast: ToastItem = {
+                            id: n.id,
+                            seenKey: key,
+                            message: toastMsg,
+                            type: isSuccess ? 'success' : 'error',
+                            projectId: (n as unknown as Record<string, unknown>).project_id as string | undefined,
+                        };
 
-                            // Browser notification if tab is not focused
-                            if (document.hidden && 'Notification' in window && window.Notification.permission === 'granted') {
-                                try {
-                                    new window.Notification('Aitoma Studio', {
-                                        body: toastMsg,
-                                        icon: '/StudioLogo_Black.svg',
-                                    });
-                                } catch { /* ignore */ }
-                            }
+                        setToasts(prev => {
+                            if (prev.some(t => t.id === toast.id)) return prev;
+                            return [...prev, toast].slice(-3);
+                        });
+
+                        setTimeout(() => {
+                            setToasts(prev => prev.filter(t => t.id !== toast.id));
+                        }, 5000);
+
+                        if (document.hidden && 'Notification' in window && window.Notification.permission === 'granted') {
+                            try {
+                                new window.Notification('Aitoma Studio', {
+                                    body: toastMsg,
+                                    icon: '/StudioLogo_Black.svg',
+                                });
+                            } catch { /* ignore */ }
                         }
                     }
 
-                    // Merge new items into the main notifications list
                     if (newItems.length > 0) {
                         setNotifications(prev => {
                             const merged = [...newItems, ...prev];
@@ -308,15 +351,18 @@ function NotificationDropdown() {
                         });
                     }
                 })
-                .catch(() => {});
+                .catch(() => {
+                    // Never mark bootstrap done on error — retry on next poll
+                });
         };
 
-        poll(); // initial fetch
+        poll();
         const interval = setInterval(poll, 10000);
         return () => clearInterval(interval);
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [session, authLoading]);
 
-    const dismissToast = (id: string) => {
+    const dismissToast = (seenKey: string, id: string) => {
+        markToastSeen(seenIdsRef.current, seenKey);
         setToasts(prev => prev.filter(t => t.id !== id));
     };
 
@@ -380,7 +426,7 @@ function NotificationDropdown() {
                                 cursor: 'pointer',
                             }}
                             onClick={() => {
-                                dismissToast(toast.id);
+                                dismissToast(toast.seenKey, toast.id);
                                 if (toast.projectId) {
                                     window.location.href = `/projects/${toast.projectId}`;
                                 } else {
@@ -421,7 +467,7 @@ function NotificationDropdown() {
                             </div>
                             {/* Close button */}
                             <button
-                                onClick={(e) => { e.stopPropagation(); dismissToast(toast.id); }}
+                                onClick={(e) => { e.stopPropagation(); dismissToast(toast.seenKey, toast.id); }}
                                 style={{
                                     width: '20px', height: '20px',
                                     borderRadius: '50%', border: 'none',
@@ -605,7 +651,7 @@ export function Header() {
             </Link>
 
             <nav className={`main-nav ${menuOpen ? 'open' : ''}`}>
-                {NAV_ITEMS.map((item, i) =>
+                {NAV_ITEMS.filter(item => !('hidden' in item && item.hidden)).map((item, i) =>
                     'divider' in item ? (
                         <div key={`div-${i}`} className="nav-divider" />
                     ) : (

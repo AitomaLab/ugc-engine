@@ -18,7 +18,9 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 from dotenv import load_dotenv
 load_dotenv(".env.saas")
+load_dotenv("env.saas")
 load_dotenv(".env")
+load_dotenv("env")
 
 import uuid
 import random
@@ -33,6 +35,7 @@ from ugc_backend.credit_cost_service import get_video_credit_cost, get_shot_cred
 from ugc_db.db_manager import (
     get_supabase,
     get_stats,
+    CLONE_JOB_LIST_COLUMNS,
     list_influencers, get_influencer, create_influencer, update_influencer, delete_influencer,
     list_projects,
     list_scripts, create_script, update_script, delete_script, get_script,
@@ -50,7 +53,8 @@ from ugc_db.db_manager import (
     upsert_subscription, cancel_subscription,
     get_user_id_by_stripe_customer, add_credits,
     list_influencers_scoped, list_scripts_scoped, list_products_scoped,
-    list_app_clips_scoped, list_jobs_scoped, list_product_shots_scoped,
+    list_products_for_user, list_app_clips_scoped, list_app_clips_for_user,
+    list_jobs_scoped, list_product_shots_scoped,
     get_stats_scoped,
     get_notifications,
 )
@@ -734,36 +738,41 @@ class CostEstimateRequest(BaseModel):
 def api_list_products(request: Request, category: Optional[str] = None, user: dict = Depends(get_optional_user)):
     try:
         if user:
-            pid = _resolve_project_id(request, user)
-            if pid:
-                products = list_products_scoped(user["id"], pid, category)
-            else:
-                # Skip-scope: list products across ALL of the user's projects
-                sb = get_supabase()
-                q = sb.table("products").select("*").eq("user_id", user["id"])
-                if category:
-                    q = q.eq("category", category)
-                products = q.execute().data or []
+            # Account-wide catalog: products are owned by user_id, not gated
+            # by the active project (accessible from every project / AgentPanel).
+            products = list_products_for_user(user["id"], category)
         else:
             products = list_products(category)
 
-        for p in products:
-            if p.get("type") == "digital":
-                try:
-                    clips = list_app_clips_by_product(p["id"]) or []
-                    p["app_clips"] = [
-                        {
+        # Attach app clips for digital products with ONE batched query
+        # (was: one query per digital product — N+1 on every products load).
+        digital_ids = [p["id"] for p in products if p.get("type") == "digital"]
+        if digital_ids:
+            clips_by_product: dict = {pid: [] for pid in digital_ids}
+            try:
+                sb = get_supabase()
+                clips = (
+                    sb.table("app_clips")
+                    .select("id, name, video_url, first_frame_url, duration_seconds, product_id")
+                    .in_("product_id", digital_ids)
+                    .execute()
+                    .data or []
+                )
+                for c in clips:
+                    cpid = c.get("product_id")
+                    if cpid in clips_by_product:
+                        clips_by_product[cpid].append({
                             "id": c.get("id"),
                             "name": c.get("name"),
                             "video_url": c.get("video_url"),
                             "first_frame_url": c.get("first_frame_url"),
-                            "duration_seconds": c.get("duration_seconds"),
-                        }
-                        for c in clips
-                    ]
-                except Exception as clip_err:
-                    print(f"WARN: failed to load app clips for product {p.get('id')}: {clip_err}")
-                    p["app_clips"] = []
+                            "duration_seconds": c.get("duration_seconds") or c.get("duration"),
+                        })
+            except Exception as clip_err:
+                print(f"WARN: failed to batch-load app clips: {clip_err}")
+            for p in products:
+                if p.get("type") == "digital":
+                    p["app_clips"] = clips_by_product.get(p["id"], [])
         return products
     except Exception as e:
         print(f"ERROR in api_list_products: {e}")
@@ -1840,10 +1849,7 @@ def api_find_trending(
 @app.get("/app-clips")
 def api_list_app_clips(request: Request, user: dict = Depends(get_optional_user)):
     if user:
-        pid = _resolve_project_id(request, user)
-        if pid:
-            return list_app_clips_scoped(user["id"], pid)
-        return []
+        return list_app_clips_for_user(user["id"])
     return list_app_clips()
 
 @app.post("/app-clips")
@@ -1914,16 +1920,28 @@ def api_delete_app_clip(clip_id: str):
 
 
 @app.get("/api/app-clips")
-def api_list_app_clips_filtered(product_id: Optional[str] = None):
+def api_list_app_clips_filtered(
+    product_id: Optional[str] = None,
+    user: dict = Depends(get_optional_user),
+):
     """
     List app clips, optionally filtered by product_id.
-    GET /api/app-clips                    -> all clips (backwards compatible)
+    GET /api/app-clips                    -> all clips for the authenticated user
     GET /api/app-clips?product_id={id}    -> clips linked to a specific product
     """
     try:
         if product_id:
-            return list_app_clips_by_product(product_id)
+            clips = list_app_clips_by_product(product_id)
+            if user:
+                product = get_product(product_id)
+                if not product or (product.get("user_id") and product["user_id"] != user["id"]):
+                    raise HTTPException(status_code=404, detail="Product not found")
+            return clips
+        if user:
+            return list_app_clips_for_user(user["id"])
         return list_app_clips()
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -2203,7 +2221,7 @@ def api_list_jobs(request: Request, status: Optional[str] = None, limit: int = Q
     try:
         q = (
             sb.table("clone_video_jobs")
-            .select("*")
+            .select(CLONE_JOB_LIST_COLUMNS)
             .eq("user_id", user["id"])
             .order("created_at", desc=True)
             .limit(limit)
@@ -2217,7 +2235,7 @@ def api_list_jobs(request: Request, status: Optional[str] = None, limit: int = Q
         # Fallback: project_id column may not exist yet (pre-migration)
         q = (
             sb.table("clone_video_jobs")
-            .select("*")
+            .select(CLONE_JOB_LIST_COLUMNS)
             .eq("user_id", user["id"])
             .order("created_at", desc=True)
             .limit(limit)

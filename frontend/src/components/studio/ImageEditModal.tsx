@@ -11,17 +11,24 @@ import { SharePopover } from './SharePopover';
    The container is a fixed 9:16 box to match Kling's output aspect ratio. */
 function AnimationPreview({ style }: { style: { emoji: string; previewUrl?: string } }) {
     const [failed, setFailed] = useState(false);
+    const [active, setActive] = useState(false);
+    // Don't autoload 12 preview MP4s when the style grid opens — mount each
+    // video only while its card is hovered.
     return (
-        <div style={{
-            width: '100%',
-            aspectRatio: '9 / 16',
-            background: 'linear-gradient(180deg, #F4F6FA 0%, #E9EEF6 100%)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            overflow: 'hidden',
-        }}>
-            {style.previewUrl && !failed ? (
+        <div
+            onMouseEnter={() => setActive(true)}
+            onMouseLeave={() => setActive(false)}
+            style={{
+                width: '100%',
+                aspectRatio: '9 / 16',
+                background: 'linear-gradient(180deg, #F4F6FA 0%, #E9EEF6 100%)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                overflow: 'hidden',
+            }}
+        >
+            {style.previewUrl && !failed && active ? (
                 <video
                     src={style.previewUrl}
                     autoPlay

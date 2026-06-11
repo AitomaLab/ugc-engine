@@ -514,7 +514,13 @@ async def agent_stream(
                     except Exception as _e:
                         print(f"[agent_stream] memory preface failed: {_e}")
 
-                image_urls = [r.image_url for r in refs if r.image_url]
+                image_urls = []
+                _seen_img_urls: set[str] = set()
+                for r in refs:
+                    url = r.image_url
+                    if url and url not in _seen_img_urls:
+                        _seen_img_urls.add(url)
+                        image_urls.append(url)
                 # Mirror the user's actual input language. The EN/ES dropdown
                 # (`data.lang`) becomes a fallback for short or ambiguous
                 # input (button clicks, "ok", numbers) — when the user

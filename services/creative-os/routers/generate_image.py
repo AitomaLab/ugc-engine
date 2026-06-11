@@ -31,22 +31,59 @@ async def _persist_and_complete_shot(
     project_id: str,
     path_prefix: str = "project_shots",
 ) -> str:
-    """Mirror provider URL to Supabase product-images, then mark shot complete."""
+    """Mark shot complete with the provider URL, then mirror to Supabase storage.
+
+    Status-first on purpose: mirroring a 4K image (download + re-upload) takes
+    tens of seconds; flipping status first lets the 2s gallery poll show the
+    finished image immediately via the provider URL, with the durable Supabase
+    URL swapped in once the mirror finishes.
+    """
     from utils.persist_media import finalize_image_url
 
     client = CoreAPIClient(token=token, project_id=project_id)
 
+    # 1. Flip immediately with the provider URL — the card shows the image now.
+    await client.update_shot(shot_id, {"status": "image_completed", "image_url": image_url})
+
     async def _on_persisted(stored: str) -> None:
         await client.update_shot(shot_id, {"image_url": stored})
 
-    stored = await finalize_image_url(
-        image_url,
-        shot_id=shot_id,
-        path_prefix=path_prefix,
-        on_persisted=_on_persisted,
-    )
-    await client.update_shot(shot_id, {"status": "image_completed", "image_url": stored})
-    return stored
+    # 2. Mirror to Supabase storage, then swap the URL. Mirror failures must
+    # not mark the shot failed — the provider URL works and the deferred
+    # retry / asset-heal sweep will re-attempt persistence.
+    try:
+        stored = await finalize_image_url(
+            image_url,
+            shot_id=shot_id,
+            path_prefix=path_prefix,
+            on_persisted=_on_persisted,
+        )
+        if stored and stored != image_url:
+            await client.update_shot(shot_id, {"image_url": stored})
+            return stored
+    except Exception as e:
+        print(f"[Image Gen] WARN: mirror failed for shot {shot_id}, keeping provider URL: {e}")
+    return image_url
+
+
+def _shot_job_id_recorder(shot_id, token: str, project_id: str):
+    """Returns an async callback that persists the provider job reference
+    (wavespeed:<id> | kie:<taskId>) onto the shot row right after submit.
+
+    The background writeback task lives only in this process — if it dies
+    (restart/deploy) the persisted provider_job_id lets the jobs-status
+    recovery sweep finish the job from the provider's result endpoint.
+    """
+    async def _record(provider_job_id: str) -> None:
+        if not shot_id:
+            return
+        try:
+            c = CoreAPIClient(token=token, project_id=project_id)
+            await c.update_shot(shot_id, {"provider_job_id": provider_job_id})
+            print(f"[Image Gen] shot {shot_id} provider_job_id={provider_job_id}")
+        except Exception as e:
+            print(f"[Image Gen] WARN: could not persist provider_job_id for {shot_id}: {e}")
+    return _record
 
 
 class EnhanceRequest(BaseModel):
@@ -386,6 +423,7 @@ async def execute_image_generation(data: ExecuteRequest, user: dict = Depends(ge
                         has_influencer=has_influencer,
                         aspect_ratio=aspect_ratio,
                         quality=quality,
+                        on_submitted=_shot_job_id_recorder(shot_id, token, project_id),
                     )
                     if shot_id:
                         stored = await _persist_and_complete_shot(
@@ -468,6 +506,7 @@ async def execute_image_generation(data: ExecuteRequest, user: dict = Depends(ge
                     image_url = await _generate_image_with_fallback(
                         prompt=prompt, image_input=image_input,
                         has_influencer=has_inf, aspect_ratio=ar, quality=q,
+                        on_submitted=_shot_job_id_recorder(shot_id, token, pid),
                     )
                     if shot_id:
                         await _persist_and_complete_shot(
@@ -548,6 +587,7 @@ async def execute_image_generation(data: ExecuteRequest, user: dict = Depends(ge
                     image_url = await _generate_image_with_fallback(
                         prompt=prompt, image_input=image_input,
                         has_influencer=has_inf, aspect_ratio=ar, quality=q,
+                        on_submitted=_shot_job_id_recorder(shot_id, token, pid),
                     )
                     if shot_id:
                         await _persist_and_complete_shot(
@@ -617,6 +657,7 @@ async def execute_image_generation(data: ExecuteRequest, user: dict = Depends(ge
                 image_url = await _generate_image_with_fallback(
                     prompt=prompt, image_input=image_input,
                     has_influencer=has_inf, aspect_ratio=ar, quality=q,
+                    on_submitted=_shot_job_id_recorder(shot_id, token, pid),
                 )
                 if shot_id:
                     await _persist_and_complete_shot(
@@ -655,6 +696,7 @@ async def _generate_nanobanana_direct(
     has_influencer: bool = False,
     aspect_ratio: str = "9:16",
     quality: str = "4k",
+    on_submitted=None,
 ) -> str:
     """Call NanoBanana Pro API directly (not via core API worker).
 
@@ -729,6 +771,12 @@ async def _generate_nanobanana_direct(
         task_id = result["data"]["taskId"]
         print(f"[NanoBanana Direct] Task: {task_id}")
 
+    if on_submitted:
+        try:
+            await on_submitted(f"kie:{task_id}")
+        except Exception as cb_err:
+            print(f"[NanoBanana Direct] on_submitted callback failed: {cb_err}")
+
     # Poll for completion
     import asyncio
     poll_endpoint = f"{kie_url}/api/v1/jobs/recordInfo"
@@ -788,6 +836,7 @@ async def _generate_nanobanana_wavespeed(
     prompt: str,
     image_input: list,
     aspect_ratio: str = "9:16",
+    on_submitted=None,
 ) -> str:
     """Generate image via WaveSpeed's NanoBanana Pro endpoint (fallback).
 
@@ -838,6 +887,12 @@ async def _generate_nanobanana_wavespeed(
 
         print(f"[WaveSpeed NanoBanana] Task: {prediction_id}")
 
+    if on_submitted:
+        try:
+            await on_submitted(f"wavespeed:{prediction_id}")
+        except Exception as cb_err:
+            print(f"[WaveSpeed NanoBanana] on_submitted callback failed: {cb_err}")
+
     # Poll for completion (images typically <60s on WaveSpeed)
     for i in range(60):  # 5 minutes max
         await asyncio.sleep(5)
@@ -867,6 +922,7 @@ async def _generate_nanobanana_wavespeed(
 
 async def _wavespeed_primary_image_attempt(
     *, prompt: str, image_input: list, aspect_ratio: str, quality: str,
+    on_submitted=None,
 ) -> str:
     """WaveSpeed-primary attempt using the new wavespeed_client with full images[]."""
     import asyncio
@@ -892,6 +948,11 @@ async def _wavespeed_primary_image_attempt(
             resolution=resolution,
         )
     pred_id = data["id"]
+    if on_submitted:
+        try:
+            await on_submitted(f"wavespeed:{pred_id}")
+        except Exception as cb_err:
+            print(f"[WaveSpeed primary] on_submitted callback failed: {cb_err}")
     result = await asyncio.to_thread(ws.poll_until_done, pred_id, label="WS NanoBanana", max_poll_seconds=600)
     return ws.first_output_url(result)
 
@@ -902,12 +963,17 @@ async def _generate_image_with_fallback(
     has_influencer: bool = False,
     aspect_ratio: str = "9:16",
     quality: str = "4k",
+    on_submitted=None,
 ) -> str:
     """Generate image via KIE NanoBanana Pro, falling back to WaveSpeed on unavailability.
 
     When USE_WAVESPEED_PRIMARY=true, attempt WaveSpeed first with the full
     `images[]` array. Any error falls through to the legacy KIE+single-image
     chain unchanged.
+
+    `on_submitted(provider_job_id)` fires right after each provider submit so
+    callers can persist the job reference for crash recovery. On fallback the
+    latest submit wins (the recoverable job is the one actually running).
     """
     import os
 
@@ -921,6 +987,7 @@ async def _generate_image_with_fallback(
                 image_input=image_input,
                 aspect_ratio=aspect_ratio,
                 quality=quality,
+                on_submitted=on_submitted,
             )
         except Exception as ws_primary_err:
             print(f"[WaveSpeed primary failed: {ws_primary_err}] — falling through to KIE chain")
@@ -932,6 +999,7 @@ async def _generate_image_with_fallback(
             has_influencer=has_influencer,
             aspect_ratio=aspect_ratio,
             quality=quality,
+            on_submitted=on_submitted,
         )
     except RuntimeError as e:
         error_lower = str(e).lower()
@@ -949,6 +1017,7 @@ async def _generate_image_with_fallback(
             prompt=prompt,
             image_input=image_input,
             aspect_ratio=aspect_ratio,
+            on_submitted=on_submitted,
         )
 
 

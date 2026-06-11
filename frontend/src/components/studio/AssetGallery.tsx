@@ -1,30 +1,18 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import dynamic from 'next/dynamic';
 import { creativeFetch } from '@/lib/creative-os-api';
-import { ImageEditModal } from './ImageEditModal';
-import { VideoDetailModal } from './VideoDetailModal';
 import { useTranslation } from '@/lib/i18n';
 
-/**
- * Rewrite a Supabase storage object URL to the on-the-fly render endpoint
- * so card thumbnails get a small webp instead of the full-resolution original.
- * Pass-through for non-Supabase URLs.
- */
-function thumbUrl(url: string | null | undefined, width: number): string {
-    if (!url) return url || '';
-    if (url.includes('/storage/v1/object/public/')) {
-        const rewritten = url.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/');
-        const sep = rewritten.includes('?') ? '&' : '?';
-        // resize=contain with both width AND height bounds keeps aspect ratio
-        // proportional (image fits inside the box, longest side ≤ width).
-        // Without both bounds OR with resize=cover, Supabase's renderer returns
-        // a broken width-clamped/height-untouched image (e.g. 1792x2560 →
-        // 480x2560) which makes intrinsic-dimension measurement nonsensical.
-        return `${rewritten}${sep}width=${width}&height=${width}&resize=contain&quality=70`;
-    }
-    return url;
-}
+// Modal code only loads when a card is actually clicked — keeps the heavy
+// edit/detail bundles (animation styles, re-render flows) out of the
+// project page's initial chunk.
+const ImageEditModal = dynamic(() => import('./ImageEditModal').then(m => m.ImageEditModal), { ssr: false });
+const VideoDetailModal = dynamic(() => import('./VideoDetailModal').then(m => m.VideoDetailModal), { ssr: false });
+import { thumbUrl, videoPosterCandidate } from '@/lib/media';
+import { useVideoThumbnails } from '@/hooks/useVideoThumbnails';
+import { HoverPlayVideo } from '@/components/ui/HoverPlayVideo';
 
 /** Extract file extension from URL path or Content-Type header */
 function getFileExtension(url: string, contentType: string | null, fallbackType: 'images' | 'videos'): string {
@@ -83,6 +71,11 @@ export function AssetGallery({ assets, type, loading, projectId, onRefresh, onAn
 
     const totalPages = Math.ceil(assets.length / PAGE_SIZE);
     const paged = useMemo(() => assets.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE), [assets, page]);
+
+    // Lazily generate poster thumbnails for visible completed videos that
+    // lack an image preview — lets cards render an <img> instead of
+    // downloading the MP4.
+    const videoThumbs = useVideoThumbnails(type === 'videos' ? paged : []);
 
     const isSelecting = selectedIds.size > 0;
 
@@ -308,6 +301,7 @@ export function AssetGallery({ assets, type, loading, projectId, onRefresh, onAn
                         key={asset.id || i}
                         asset={asset}
                         type={type}
+                        generatedThumb={videoThumbs[asset.id]}
                         projectId={projectId}
                         isSelected={selectedIds.has(asset.id)}
                         isSelecting={isSelecting}
@@ -449,9 +443,10 @@ function BulkButton({
 
 /* ── AssetCard ─────────────────────────────────────────────────── */
 
-function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmingDelete, onToggleSelect, onDeleteClick, onConfirmDelete, onCancelDelete, onClick }: {
+function AssetCard({ asset, type, generatedThumb, projectId, isSelected, isSelecting, isConfirmingDelete, onToggleSelect, onDeleteClick, onConfirmDelete, onCancelDelete, onClick }: {
     asset: any;
     type: 'images' | 'videos';
+    generatedThumb?: string;
     projectId: string;
     isSelected: boolean;
     isSelecting: boolean;
@@ -492,6 +487,13 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
         || (statusLower === 'complete' && !hasPlayableMedia)
     );
     const isFailed = !isProcessing && status.includes('failed') && !imageUrl && !videoUrl;
+
+    // Poster image for video cards: lazily generated FFmpeg thumb first,
+    // then any image-typed URL stored on the job. Image-tab assets that
+    // carry an animation use their own still as the poster.
+    const videoPoster = type === 'videos'
+        ? (generatedThumb || videoPosterCandidate(asset))
+        : imageUrl;
 
     // Track elapsed time for pending assets
     useEffect(() => {
@@ -562,18 +564,18 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
                 />
             )}
             {videoUrl && !isProcessing && !mediaError && (
-                <video
+                <HoverPlayVideo
                     src={videoUrl}
-                    muted
-                    loop
-                    playsInline
-                    preload="metadata"
-                    onMouseEnter={e => (e.target as HTMLVideoElement).play().catch(() => {})}
-                    onMouseLeave={e => { (e.target as HTMLVideoElement).pause(); (e.target as HTMLVideoElement).currentTime = 0; }}
-                    onLoadedMetadata={e => {
-                        const v = e.currentTarget;
+                    poster={videoPoster}
+                    posterWidth={640}
+                    onVideoMetadata={v => {
                         if (!_recordedAR && v.videoWidth && v.videoHeight) {
                             setMeasuredAR(`${v.videoWidth}/${v.videoHeight}`);
+                        }
+                    }}
+                    onPosterLoad={img => {
+                        if (!_recordedAR && img.naturalWidth && img.naturalHeight) {
+                            setMeasuredAR(`${img.naturalWidth}/${img.naturalHeight}`);
                         }
                     }}
                     onError={() => { if (isLegacyExpiredHost(imageUrl || videoUrl)) setMediaError(true); }}
@@ -807,8 +809,9 @@ function AssetCard({ asset, type, projectId, isSelected, isSelecting, isConfirmi
                             // eslint-disable-next-line @next/next/no-img-element
                             <img
                                 key={previewUrl}
-                                src={previewUrl}
+                                src={thumbUrl(previewUrl, 640)}
                                 alt="Preview"
+                                decoding="async"
                                 style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
                                 onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                             />

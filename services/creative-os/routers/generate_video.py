@@ -317,6 +317,49 @@ async def _update_video_job_via_api(token: str, project_id: str, job_id: str, up
         print(f"[Creative OS] WARNING: Failed to update job {job_id}: {e}")
 
 
+def _video_job_id_recorder(token: str, job_id: str):
+    """Sync callback factory: persists provider_job_id onto the video_jobs row
+    right after submit. Runs inside asyncio.to_thread worker threads, so it
+    uses a blocking HTTP call (requests) rather than the async helper.
+
+    If the in-process pipeline dies (restart/deploy) the persisted reference
+    lets the jobs-status recovery sweep finish the job from the provider.
+    """
+    def _record(provider_job_id: str) -> None:
+        if not job_id:
+            return
+        import requests as _requests
+        from pathlib import Path
+        from env_loader import load_env
+        load_env(Path(__file__))
+
+        supabase_url = os.getenv("SUPABASE_URL")
+        anon_key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+        if not (supabase_url and anon_key):
+            return
+        service_role_jwt = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        auth_token = service_role_jwt if service_role_jwt else token
+        try:
+            resp = _requests.patch(
+                f"{supabase_url}/rest/v1/video_jobs?id=eq.{job_id}",
+                headers={
+                    "apikey": anon_key,
+                    "Authorization": f"Bearer {auth_token}",
+                    "Content-Type": "application/json",
+                    "Prefer": "return=minimal",
+                },
+                json={"provider_job_id": provider_job_id},
+                timeout=10,
+            )
+            if resp.status_code < 300:
+                print(f"[Video Gen] job {job_id} provider_job_id={provider_job_id}")
+            else:
+                print(f"[Video Gen] WARN: provider_job_id patch failed ({resp.status_code}): {resp.text[:150]}")
+        except Exception as e:
+            print(f"[Video Gen] WARN: could not persist provider_job_id for {job_id}: {e}")
+    return _record
+
+
 # ── Kie.ai task polling ──────────────────────────────────────────────
 
 async def _poll_kie_task(
@@ -1112,6 +1155,7 @@ async def _run_seedance_clip_pipeline(
                 reference_video_urls=reference_video_urls or None,
                 first_frame_url=seedance_first_frame,
                 aspect_ratio=data.aspect_ratio or "9:16",
+                on_submitted=_video_job_id_recorder(token, job_id),
             )
 
         result = await asyncio.to_thread(_submit)
@@ -1725,6 +1769,7 @@ async def _run_cinematic_clip_pipeline(
                 multi_prompt=multi_prompt_payload,
                 aspect_ratio=data.aspect_ratio or "9:16",
                 element_ids=resolved_element_ids or None,
+                on_submitted=_video_job_id_recorder(token, job_id),
             )
             video_url = result["videoUrl"]
             print(f"[Cinematic] Kling animation complete: {video_url[:80]}...")
@@ -2719,6 +2764,7 @@ async def _run_ugc_clip_pipeline(
                     model_api="veo-3.1-fast",
                     duration=data.clip_length,
                     aspect_ratio=data.aspect_ratio or "9:16",
+                    on_submitted=_video_job_id_recorder(token, job_id),
                 )
             else:
                 # Text-to-video (no reference image)
@@ -2729,6 +2775,7 @@ async def _run_ugc_clip_pipeline(
                     model_api="veo-3.1-fast",
                     duration=data.clip_length,
                     aspect_ratio=data.aspect_ratio or "9:16",
+                    on_submitted=_video_job_id_recorder(token, job_id),
                 )
             video_url = result["videoUrl"]
             print(f"[UGC Clip] Veo animation complete: {video_url[:80]}...")

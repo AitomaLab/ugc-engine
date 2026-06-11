@@ -4,22 +4,10 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { useApp } from '@/providers/AppProvider';
 import { useTranslation } from '@/lib/i18n';
+import { thumbUrl as sharedThumbUrl } from '@/lib/media';
 
-/**
- * Rewrite a Supabase public-storage URL to the on-the-fly image render
- * endpoint so the CDN ships a small webp instead of the multi-MB original.
- * Falls through unchanged for non-Supabase URLs.
- */
-function thumbUrl(url: string, width: number): string {
-    if (!url) return url;
-    // /storage/v1/object/public/<bucket>/<path>  →  /storage/v1/render/image/public/<bucket>/<path>?...
-    if (url.includes('/storage/v1/object/public/')) {
-        const rewritten = url.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/');
-        const sep = rewritten.includes('?') ? '&' : '?';
-        return `${rewritten}${sep}width=${width}&quality=70&resize=cover`;
-    }
-    return url;
-}
+/** Project-card thumbnails crop to fill their grid cell. */
+const thumbUrl = (url: string, width: number) => sharedThumbUrl(url, width, 'cover');
 
 interface PreviewAsset {
     url: string;

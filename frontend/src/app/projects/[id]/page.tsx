@@ -12,7 +12,6 @@ import {
 import { fetchJobsStatus } from '@/lib/jobs-status-poll';
 import { useTranslation } from '@/lib/i18n';
 import { AssetGallery } from '@/components/studio/AssetGallery';
-import { CreateBar } from '@/components/studio/CreateBar';
 import dynamic from 'next/dynamic';
 import type { AgentPanelHandle, AgentPanelState } from '@/components/studio/AgentPanel';
 
@@ -210,7 +209,6 @@ export default function ProjectContainerPage() {
 
     // ── Agent panel visibility (split-panel layout only) ──
     const [agentOpen, setAgentOpen] = useState(true);
-    const [createBarOpen, setCreateBarOpen] = useState(true);
     const agentRef = useRef<AgentPanelHandle>(null);
     const reportedFailuresRef = useRef<Set<string>>(new Set()); // dedupe chat error injection
     const seenInPollRef = useRef<Set<string>>(new Set()); // ids confirmed present in jobs-status
@@ -493,7 +491,10 @@ export default function ProjectContainerPage() {
                 const wasInFlight = images.some(
                     (p) => p.id === im.id && isInFlightStatus(p.status),
                 );
-                if (polled && wasInFlight && (im.status || '').toLowerCase() === 'success' && im.image_url) {
+                // Backend writes "image_completed" (not "success") when a shot
+                // finishes — accept both so placeholder clearing + full refresh fire.
+                const st = (im.status || '').toLowerCase();
+                if (polled && wasInFlight && (st === 'success' || st === 'image_completed') && im.image_url) {
                     anyImageSuccess = true;
                 }
             }
@@ -1075,16 +1076,6 @@ export default function ProjectContainerPage() {
         />
     );
 
-    const createBarBlock = (
-        <CreateBar
-            activeTab={activeTab}
-            projectId={projectId}
-            onGenerated={refreshGallery}
-            preloadImage={createVideoImage}
-            onPreloadConsumed={() => setCreateVideoImage(null)}
-        />
-    );
-
     // Narrow viewports (<1024px): single-column layout with floating AgentPanel.
     if (!isWide) {
         return (
@@ -1096,7 +1087,6 @@ export default function ProjectContainerPage() {
             }}>
                 {projectHeaderBar}
                 {galleryBlock}
-                {false && createBarOpen && createBarBlock}
                 <AgentPanel ref={agentRef} projectId={projectId} jobId={selectedJobId} onArtifact={refreshGallery} onArtifactPending={addPendingPlaceholder} onArtifactReady={clearOnePlaceholder} onStateChange={setAgentState} initialBrief={initialBrief || undefined} initialRefs={initialRefs} initialUseSeedance={initialUseSeedance} onJobStart={(kind) => { setActiveTab(kind === 'video' ? 'videos' : 'images'); startJobRefetchBurst(); }} onVideoJobStarted={registerVideoJobWatch} />
             </div>
         );
@@ -1158,11 +1148,6 @@ export default function ProjectContainerPage() {
                     }}>
                         {galleryBlock}
                     </div>
-                    {false && createBarOpen && (
-                        <div style={{ flexShrink: 0, zIndex: 10 }}>
-                            {createBarBlock}
-                        </div>
-                    )}
                 </div>
             </div>
         </div>

@@ -297,6 +297,7 @@ function ProductsContent() {
   // Products state
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -327,20 +328,28 @@ function ProductsContent() {
 
   const fetchProducts = useCallback(async () => {
     try {
-      const data = await apiFetch<Product[]>('/api/products');
+      const data = await apiFetch<Product[]>('/api/products', { skipProjectScope: true });
       setProducts(data);
-    } catch (e) { console.error(e); }
+      setFetchError(null);
+    } catch (e) {
+      console.error(e);
+      setFetchError(t('common.error'));
+    }
     setLoading(false);
-  }, []);
+  }, [t]);
 
   // Clip handlers (migrated from app-clips, unchanged)
   const fetchClips = useCallback(async () => {
     try {
-      const data = await apiFetch<Clip[]>('/app-clips');
+      const data = await apiFetch<Clip[]>('/app-clips', { skipProjectScope: true });
       setClips(data);
-    } catch (e) { console.error(e); }
+      setFetchError(null);
+    } catch (e) {
+      console.error(e);
+      setFetchError(t('common.error'));
+    }
     setClipsLoading(false);
-  }, []);
+  }, [t]);
 
   async function handleDeleteClip(id: string) {
     if (!confirm('Delete this app clip? This cannot be undone.')) return;
@@ -420,6 +429,13 @@ function ProductsContent() {
           </div>
           {loading ? (
             <div className='empty-state'><div className='empty-title'>{t('products.loadingProducts')}</div></div>
+          ) : fetchError ? (
+            <div className='empty-state'>
+              <div className='empty-title'>{fetchError}</div>
+              <button className='btn-primary' onClick={() => { setLoading(true); setClipsLoading(true); setFetchError(null); fetchProducts(); fetchClips(); }}>
+                Try again
+              </button>
+            </div>
           ) : physicalFiltered.length === 0 ? (
             <div className='empty-state'>
               <div className='empty-icon'>
@@ -497,6 +513,13 @@ function ProductsContent() {
 
               {loading ? (
                 <div className='empty-state'><div className='empty-title'>{t('products.loadingDigital')}</div></div>
+              ) : fetchError ? (
+                <div className='empty-state'>
+                  <div className='empty-title'>{fetchError}</div>
+                  <button className='btn-primary' onClick={() => { setLoading(true); setClipsLoading(true); setFetchError(null); fetchProducts(); fetchClips(); }}>
+                    Try again
+                  </button>
+                </div>
               ) : digitalProducts.filter(p => (p.name || '').toLowerCase().includes(clipSearch.toLowerCase())).length === 0 ? (
                 <div className='empty-state'>
                   <div className='empty-icon'>

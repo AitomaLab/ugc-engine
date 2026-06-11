@@ -75,6 +75,16 @@ MODEL_ENDPOINTS = {
 # ---------------------------------------------------------------------------
 # generate_video  (synchronous — called via asyncio.to_thread)
 # ---------------------------------------------------------------------------
+def _safe_on_submitted(on_submitted, provider_job_id: str) -> None:
+    """Invoke the submit callback without ever breaking the generation flow."""
+    if not on_submitted:
+        return
+    try:
+        on_submitted(provider_job_id)
+    except Exception as cb_err:
+        print(f"      [on_submitted] callback failed for {provider_job_id}: {cb_err}")
+
+
 def generate_video(
     prompt,
     reference_image_url=None,
@@ -88,10 +98,14 @@ def generate_video(
     reference_image_urls=None,
     reference_video_urls=None,
     aspect_ratio="9:16",
+    on_submitted=None,
 ):
     """Submit a video generation job to KIE and poll until completion.
 
     Returns dict: {"taskId": str, "videoUrl": str, "lastFrameUrl": str|None}
+
+    `on_submitted("kie:<taskId>")` fires right after the submit succeeds so
+    callers can persist the provider job reference for crash recovery.
     """
     if model_api is None:
         model_api = "kling-3.0/video"
@@ -200,6 +214,7 @@ def generate_video(
 
     task_id = result["data"]["taskId"]
     print(f"      Task: {task_id[:30]}...")
+    _safe_on_submitted(on_submitted, f"kie:{task_id}")
 
     # Poll for completion
     poll_limit = (max_poll_seconds // 10) if max_poll_seconds else 120  # default 20 min
@@ -327,7 +342,7 @@ def _wavespeed_headers() -> dict:
     }
 
 
-def _wavespeed_submit_and_poll(endpoint: str, payload: dict, label: str, max_poll_seconds: int = 1200) -> dict:
+def _wavespeed_submit_and_poll(endpoint: str, payload: dict, label: str, max_poll_seconds: int = 1200, on_submitted=None) -> dict:
     """Submit job to a WaveSpeed endpoint and poll for completion.
 
     Returns {"taskId": prediction_id, "videoUrl": first_output_url}.
@@ -348,6 +363,7 @@ def _wavespeed_submit_and_poll(endpoint: str, payload: dict, label: str, max_pol
         raise RuntimeError(f"WaveSpeed {label} — no prediction ID: {str(api_result)[:300]}")
     status_url = (result_data.get("urls") or {}).get("get") or f"{WAVESPEED_API_URL}/predictions/{prediction_id}/result"
     print(f"      [WaveSpeed {label}] Task: {prediction_id}")
+    _safe_on_submitted(on_submitted, f"wavespeed:{prediction_id}")
 
     poll_interval = 10
     for i in range(max_poll_seconds // poll_interval):
@@ -374,7 +390,7 @@ def _wavespeed_submit_and_poll(endpoint: str, payload: dict, label: str, max_pol
     raise RuntimeError(f"WaveSpeed {label} timed out after {max_poll_seconds}s")
 
 
-def generate_video_wavespeed(prompt, reference_image_url=None, duration=8, family="veo", aspect_ratio="9:16"):
+def generate_video_wavespeed(prompt, reference_image_url=None, duration=8, family="veo", aspect_ratio="9:16", on_submitted=None):
     """Generate a video via WaveSpeed for Veo / Kling / Seedance families.
 
     Returns {"taskId": ..., "videoUrl": ...} on success.
@@ -399,7 +415,7 @@ def generate_video_wavespeed(prompt, reference_image_url=None, duration=8, famil
             "sound": True,
             "negative_prompt": "no extra limbs, no mutated hands, no extra fingers, no blurry, no distortion",
         }
-        return _wavespeed_submit_and_poll(WAVESPEED_KLING_I2V_ENDPOINT, payload, "Kling")
+        return _wavespeed_submit_and_poll(WAVESPEED_KLING_I2V_ENDPOINT, payload, "Kling", on_submitted=on_submitted)
 
     if family == "seedance":
         if not reference_image_url:
@@ -415,7 +431,7 @@ def generate_video_wavespeed(prompt, reference_image_url=None, duration=8, famil
             "aspect_ratio": "9:16",
             "resolution": "720p",
         }
-        return _wavespeed_submit_and_poll(WAVESPEED_SEEDANCE_ENDPOINT, payload, "Seedance")
+        return _wavespeed_submit_and_poll(WAVESPEED_SEEDANCE_ENDPOINT, payload, "Seedance", on_submitted=on_submitted)
 
     # Default: Veo (supports text-to-video and image-to-video)
     negative = (
@@ -435,7 +451,7 @@ def generate_video_wavespeed(prompt, reference_image_url=None, duration=8, famil
             "generate_audio": True,
             "negative_prompt": negative,
         }
-        return _wavespeed_submit_and_poll(WAVESPEED_VEO_I2V_ENDPOINT, payload, "Veo i2v")
+        return _wavespeed_submit_and_poll(WAVESPEED_VEO_I2V_ENDPOINT, payload, "Veo i2v", on_submitted=on_submitted)
 
     if not WAVESPEED_VEO_T2V_ENDPOINT:
         raise RuntimeError("WAVESPEED_VEO_T2V_ENDPOINT not configured")
@@ -450,13 +466,13 @@ def generate_video_wavespeed(prompt, reference_image_url=None, duration=8, famil
         "generate_audio": True,
         "negative_prompt": negative,
     }
-    return _wavespeed_submit_and_poll(WAVESPEED_VEO_T2V_ENDPOINT, payload, "Veo t2v")
+    return _wavespeed_submit_and_poll(WAVESPEED_VEO_T2V_ENDPOINT, payload, "Veo t2v", on_submitted=on_submitted)
 
 
 def _wavespeed_primary_video_attempt(
     *, prompt, reference_image_url, family, duration, aspect_ratio, multi_prompt,
     element_ids=None, reference_image_urls=None, reference_video_urls=None,
-    model_api=None,
+    model_api=None, on_submitted=None,
 ):
     """Try video generation via WaveSpeed first using the new wavespeed_client.
 
@@ -532,6 +548,7 @@ def _wavespeed_primary_video_attempt(
         )
 
     pred_id = data["id"]
+    _safe_on_submitted(on_submitted, f"wavespeed:{pred_id}")
     result = ws.poll_until_done(pred_id, label=f"WS {family}", max_poll_seconds=1200)
     video_url = ws.first_output_url(result)
     return {"taskId": pred_id, "videoUrl": video_url, "lastFrameUrl": None}
@@ -551,6 +568,7 @@ def generate_video_with_retry(
     element_ids=None,
     reference_image_urls=None,
     reference_video_urls=None,
+    on_submitted=None,
 ):
     """Try KIE (with short retries) then fall back to WaveSpeed for the same family.
 
@@ -583,6 +601,7 @@ def generate_video_with_retry(
                 reference_image_urls=reference_image_urls,
                 reference_video_urls=reference_video_urls,
                 model_api=model_api,
+                on_submitted=on_submitted,
             )
         except Exception as ws_primary_err:
             print(f"      [WaveSpeed primary failed: {ws_primary_err}] — falling through to KIE chain")
@@ -604,6 +623,7 @@ def generate_video_with_retry(
                 aspect_ratio=aspect_ratio,
                 reference_image_urls=reference_image_urls,
                 reference_video_urls=reference_video_urls,
+                on_submitted=on_submitted,
             )
         except RuntimeError as e:
             last_error = e
@@ -626,6 +646,7 @@ def generate_video_with_retry(
             return generate_video_wavespeed(
                 prompt, reference_image_url, duration, family,
                 aspect_ratio=aspect_ratio or "9:16",
+                on_submitted=on_submitted,
             )
         except RuntimeError as ws_err:
             print(f"      [Router] WaveSpeed also failed: {ws_err}")

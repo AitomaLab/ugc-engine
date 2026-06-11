@@ -954,20 +954,33 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             // the final text (user may have deleted a tag manually).
             refsForRequest = [];
             const seenIds = new Set<string>();
+            const seenRefTags = new Set<string>();
+            const seenMediaUrls = new Set<string>();
+            const pushUniqueRef = (ref: AgentRef) => {
+                const url = ref.image_url || ref.video_url;
+                if (url && seenMediaUrls.has(url)) return;
+                if (ref.tag && seenRefTags.has(ref.tag)) return;
+                if (url) seenMediaUrls.add(url);
+                if (ref.tag) seenRefTags.add(ref.tag);
+                refsForRequest.push(ref);
+            };
             for (const [tag, ref] of activeRefs.entries()) {
                 if (text.includes(`@${tag}`) || initialRefTagsRef.current.has(tag)) {
-                    refsForRequest.push(ref);
+                    pushUniqueRef(ref);
                     if (ref.id) seenIds.add(ref.id);
                 }
             }
             // Always include initialRefs (survives stale activeRefs closures)
             for (const ref of initialRefsArrayRef.current) {
                 if (ref.id && !seenIds.has(ref.id)) {
-                    refsForRequest.push(ref);
+                    pushUniqueRef(ref);
                     seenIds.add(ref.id);
                 }
             }
             // Include uploaded attachments as refs (always sent — user explicitly attached them).
+            // Skip if the same URL/tag was already added via an @-mention of the
+            // "Just attached" picker entry — that double-counts one file as two
+            // images in the bubble and triggers Claude's multi-image size cap.
             for (const att of readyAttachments) {
                 const ref: AgentRef = {
                     type: att.type,
@@ -977,7 +990,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                         ? { image_url: att.url }
                         : { video_url: att.url }),
                 };
-                refsForRequest.push(ref);
+                pushUniqueRef(ref);
             }
 
             // ── Auto-attach current video for music/soundtrack intents ──
@@ -1100,6 +1113,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             setBrief('');
             setActiveRefs(new Map());
             initialRefsArrayRef.current = [];
+            initialRefTagsRef.current = new Set();
             setAttachments((prev) => {
                 for (const a of prev) {
                     if (a.previewUrl) URL.revokeObjectURL(a.previewUrl);

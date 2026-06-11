@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import useSWR from "swr";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/utils";
@@ -8,8 +9,18 @@ import { useApp } from "@/providers/AppProvider";
 import { useTranslation } from "@/lib/i18n";
 import Link from "next/link";
 import { createProject } from "@/lib/supabaseData";
+import dynamic from "next/dynamic";
 import { creativeFetch, transcribeAudio, uploadAgentFile } from "@/lib/creative-os-api";
-import { OnboardingModal } from "@/components/studio/OnboardingModal";
+
+// Only new users ever see onboarding — keep its bundle (and its autoplay
+// walkthrough videos) out of the dashboard's initial chunk.
+const OnboardingModal = dynamic(
+  () => import("@/components/studio/OnboardingModal").then(m => m.OnboardingModal),
+  { ssr: false },
+);
+import { thumbUrl, videoPosterCandidate } from "@/lib/media";
+import { useVideoThumbnails } from "@/hooks/useVideoThumbnails";
+import { HoverPlayVideo } from "@/components/ui/HoverPlayVideo";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -130,14 +141,45 @@ function slugify(s: string): string {
 export default function StudioPage() {
   const { t, lang } = useTranslation();
   const router = useRouter();
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [influencers, setInfluencers] = useState<Influencer[]>([]);
-  const [projects, setProjects] = useState<any[]>([]);
-  const [recentImages, setRecentImages] = useState<RecentImage[]>([]);
-  const [loading, setLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [activeBottomTab, setActiveBottomTab] = useState<'projects' | 'videos' | 'images' | 'campaigns'>('projects');
-  const { profile } = useApp();
+  const { profile, activeProject } = useApp();
+
+  // ── Data layer (SWR) ──────────────────────────────────────────────
+  // 30s background refresh, revalidate on tab focus, keepPreviousData so
+  // back-navigation renders instantly from cache instead of a spinner.
+  const swrOpts = {
+    refreshInterval: 30000,
+    revalidateOnFocus: true,
+    keepPreviousData: true,
+  } as const;
+  const { data: jobsData, isLoading: jobsLoading } = useSWR(
+    "/jobs?limit=100&include_clones=true",
+    (path: string) => apiFetch<Job[]>(path, { skipProjectScope: true }),
+    swrOpts,
+  );
+  // /influencers is scoped by the active project header — key it by project
+  // so switching projects revalidates instead of serving the old cache.
+  const { data: infData } = useSWR(
+    ["/influencers", activeProject?.id ?? ""],
+    ([path]: [string, string]) => apiFetch<Influencer[]>(path),
+    swrOpts,
+  );
+  const { data: projectsData } = useSWR(
+    "/creative-os/projects/",
+    (path: string) => creativeFetch<any[]>(path).catch(() => [] as any[]),
+    swrOpts,
+  );
+  const { data: recentImgs } = useSWR(
+    "/creative-os/projects/recent-images?limit=20",
+    (path: string) => creativeFetch<RecentImage[]>(path).catch(() => [] as RecentImage[]),
+    swrOpts,
+  );
+  const jobs = jobsData ?? [];
+  const influencers = infData ?? [];
+  const projects = projectsData ?? [];
+  const recentImages = recentImgs ?? [];
+  const loading = jobsLoading;
   const userName = profile?.name || profile?.email?.split('@')[0] || 'Creator';
 
   // Onboarding — show for first-time users (per-user localStorage flag)
@@ -493,46 +535,18 @@ export default function StudioPage() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
 
-  const fetchData = useCallback(async () => {
-    try {
-      const [jobsData, infData, projectsData, recentImgs] = await Promise.all([
-        apiFetch<Job[]>("/jobs?limit=100&include_clones=true", { skipProjectScope: true }),
-        apiFetch<Influencer[]>("/influencers"),
-        creativeFetch<any[]>('/creative-os/projects/').catch(() => []),
-        creativeFetch<RecentImage[]>('/creative-os/projects/recent-images?limit=20').catch(() => []),
-      ]);
-      setJobs(jobsData);
-      setInfluencers(infData);
-      setProjects(projectsData || []);
-      setRecentImages(recentImgs || []);
-    } catch (err) {
-      console.error("Dashboard fetch error:", err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchData();
-    const interval = setInterval(() => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
-      fetchData();
-    }, 30000);
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') fetchData();
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => {
-      clearInterval(interval);
-      document.removeEventListener('visibilitychange', onVisible);
-    };
-  }, [fetchData]);
+  // Polling/visibility refresh is handled by SWR (refreshInterval pauses
+  // while the tab is hidden; revalidateOnFocus covers the return).
 
   // Derived data
   const campaigns = groupByCampaign(jobs);
   const recentVideos = jobs
     .filter((j) => j.status === "success" && j.final_video_url)
     .slice(0, 20);
+
+  // Poster thumbnails for the recent-videos tab — render an <img> per card
+  // instead of mounting 20 <video> elements against full MP4s.
+  const recentVideoThumbs = useVideoThumbnails(activeBottomTab === 'videos' ? recentVideos : []);
 
   // ── File attachment handling (uploads to creative-os, mirrors AgentPanel) ──
   const handleFilePicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1591,7 +1605,7 @@ export default function StudioPage() {
                       <div style={{
                         height: '200px',
                         background: previewUrl && !previewIsVideo
-                          ? `url(${previewUrl}) center/cover no-repeat`
+                          ? `url(${thumbUrl(previewUrl, 640, 'cover')}) center/cover no-repeat`
                           : fallbackGradient,
                         position: 'relative',
                         overflow: 'hidden',
@@ -1693,12 +1707,11 @@ export default function StudioPage() {
                     {/* 9:16 portrait thumbnail */}
                     <div style={{ aspectRatio: '9/16', position: 'relative', background: '#f0f2f5', overflow: 'hidden' }}>
                       {job.final_video_url && (
-                        <video
+                        <HoverPlayVideo
                           src={job.final_video_url}
+                          poster={recentVideoThumbs[job.id] || videoPosterCandidate(job)}
+                          posterWidth={480}
                           style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                          muted loop playsInline
-                          onMouseEnter={(e) => (e.target as HTMLVideoElement).play().catch(() => {})}
-                          onMouseLeave={(e) => { const v = e.target as HTMLVideoElement; v.pause(); v.currentTime = 0; }}
                         />
                       )}
                     </div>
@@ -1748,8 +1761,10 @@ export default function StudioPage() {
                         {url && (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img
-                            src={url}
+                            src={thumbUrl(url, 480, 'cover')}
                             alt={img.product_name || 'Image'}
+                            loading="lazy"
+                            decoding="async"
                             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                           />
                         )}

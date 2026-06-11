@@ -10,6 +10,16 @@ import sys
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+# Windows consoles often default to cp1252 ("charmap"); any print containing
+# → / … / emoji then raises UnicodeEncodeError, which except-blocks convert
+# into bogus 500s (e.g. uploads "failing" after a successful storage write).
+# Reconfigure stdout/stderr to UTF-8 with replacement so logging never throws.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 _service_dir = Path(__file__).parent
 # Monorepo root (repo-root `prompts/`, `scene_builder.py`, etc.). On Railway
 # the full repo is cloned even when the service root is services/creative-os.
@@ -144,7 +154,9 @@ async def upload_image_base64(request: dict, user: dict = Depends(get_current_us
             file_options={"content-type": content_type, "upsert": "true"},
         )
         url = sb.storage.from_("user-uploads").get_public_url(filename)
-        print(f"[Upload] OK: {filename} ({len(image_bytes)} bytes) → {url[:80]}...")
+        # ASCII only: non-ASCII in prints crashes under cp1252 console stdout
+        # (UnicodeEncodeError lands in the except -> bogus 500 on a good upload).
+        print(f"[Upload] OK: {filename} ({len(image_bytes)} bytes) -> {url[:80]}...")
         return {"url": url}
     except Exception as e:
         print(f"[Upload] FAILED: {e}")
@@ -210,7 +222,7 @@ async def upload_file_multipart(
             file_options={"content-type": content_type, "upsert": "true"},
         )
         url = sb.storage.from_("user-uploads").get_public_url(filename)
-        print(f"[Upload] {kind} {filename} ({len(contents)} bytes) → {url[:80]}…")
+        print(f"[Upload] {kind} {filename} ({len(contents)} bytes) -> {url[:80]}...")
         return {"url": url, "type": kind, "name": orig_name or filename, "size": len(contents)}
     except Exception as e:
         from fastapi import HTTPException

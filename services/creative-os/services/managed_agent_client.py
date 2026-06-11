@@ -4999,24 +4999,12 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
             negative_prompt = "widescreen letterbox"
         else:
             negative_prompt = ""
-        try:
-            result = await animate_storyboard_kie_seedance(
-                prompt=prompt, image_urls=animate_image_urls,
-                duration=duration_seconds, resolution="720p", aspect_ratio=aspect_ratio,
-                negative_prompt=negative_prompt,
-            )
-        except KieError as e:
-            return json.dumps({"error": "kie_animate_failed", "msg": str(e), "raw": e.raw})
-
-        mp4_url = result["url"]
-        from utils.persist_media import finalize_video_url, is_supabase_storage_url, schedule_video_persist_retry
-
-        storage_name = f"cinematic_ad_{_uuid.uuid4().hex[:12]}.mp4"
-        final_video_url = await finalize_video_url(mp4_url, storage_filename=storage_name)
-
+        # Insert the video_jobs row BEFORE the render: the Videos tab shows a
+        # real processing card immediately, and persisting provider_job_id on
+        # submit makes the job recoverable if creative-os restarts mid-render.
         job_id = await _insert_agent_video_job(
             ctx,
-            final_video_url=final_video_url,
+            final_video_url=None,
             model_api="seedance-2.0-pro",
             campaign_name=f"{product_meta['brand']} cinematic ad — {direction_obj['name']} ({duration_seconds}s {aspect_ratio})",
             duration_seconds=float(duration_seconds),
@@ -5032,7 +5020,40 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
                 "aspect_ratio": aspect_ratio,
                 "duration_seconds": duration_seconds,
             },
+            status="processing",
+            progress=10,
+            status_message="Generating cinematic video...",
         )
+
+        async def _on_animate_submitted(provider_job_id: str) -> None:
+            if job_id:
+                await _update_agent_video_job(ctx, job_id=job_id, fields={"provider_job_id": provider_job_id})
+
+        try:
+            result = await animate_storyboard_kie_seedance(
+                prompt=prompt, image_urls=animate_image_urls,
+                duration=duration_seconds, resolution="720p", aspect_ratio=aspect_ratio,
+                negative_prompt=negative_prompt,
+                on_submitted=_on_animate_submitted,
+            )
+        except KieError as e:
+            if job_id:
+                await _update_agent_video_job(ctx, job_id=job_id, fields={
+                    "status": "failed", "error_message": str(e)[:500], "status_message": None,
+                })
+            return json.dumps({"error": "kie_animate_failed", "msg": str(e), "raw": e.raw})
+
+        mp4_url = result["url"]
+        from utils.persist_media import finalize_video_url, is_supabase_storage_url, schedule_video_persist_retry
+
+        storage_name = f"cinematic_ad_{_uuid.uuid4().hex[:12]}.mp4"
+        final_video_url = await finalize_video_url(mp4_url, storage_filename=storage_name)
+
+        if job_id:
+            await _update_agent_video_job(ctx, job_id=job_id, fields={
+                "status": "success", "progress": 100,
+                "final_video_url": final_video_url, "status_message": None,
+            })
         if job_id and not is_supabase_storage_url(final_video_url):
             async def _on_persisted(stored: str) -> None:
                 await _update_agent_video_job(ctx, job_id=job_id, fields={"final_video_url": stored})
@@ -5118,13 +5139,36 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
             "letterbox bars, horizontal framing" if aspect_ratio == "9:16"
             else ("widescreen letterbox" if aspect_ratio == "4:3" else "")
         )
+        job_id = await _insert_agent_video_job(
+            ctx, final_video_url=None, model_api="seedance-2.0-pro",
+            campaign_name=f"{product_meta['brand']} b-roll panel {panel_index}",
+            duration_seconds=5.0, hook=panel["scene"],
+            metadata={
+                "source": "cinematic_ads", "stage": "broll",
+                "panel_index": panel_index, "panel": panel,
+                "product_id": product_meta.get("id"),
+            },
+            status="processing",
+            progress=10,
+            status_message="Generating b-roll clip...",
+        )
+
+        async def _on_broll_submitted(provider_job_id: str) -> None:
+            if job_id:
+                await _update_agent_video_job(ctx, job_id=job_id, fields={"provider_job_id": provider_job_id})
+
         try:
             result = await animate_storyboard_kie_seedance(
                 prompt=prompt, image_urls=broll_image_urls,
                 duration=5, resolution="720p", aspect_ratio=aspect_ratio,
                 negative_prompt=negative_prompt_broll,
+                on_submitted=_on_broll_submitted,
             )
         except KieError as e:
+            if job_id:
+                await _update_agent_video_job(ctx, job_id=job_id, fields={
+                    "status": "failed", "error_message": str(e)[:500], "status_message": None,
+                })
             return json.dumps({"error": "kie_broll_failed", "msg": str(e), "raw": e.raw})
 
         mp4_url = result["url"]
@@ -5133,16 +5177,11 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
         storage_name = f"cinematic_broll_{_uuid.uuid4().hex[:12]}.mp4"
         final_video_url = await finalize_video_url(mp4_url, storage_filename=storage_name)
 
-        job_id = await _insert_agent_video_job(
-            ctx, final_video_url=final_video_url, model_api="seedance-2.0-pro",
-            campaign_name=f"{product_meta['brand']} b-roll panel {panel_index}",
-            duration_seconds=5.0, hook=panel["scene"],
-            metadata={
-                "source": "cinematic_ads", "stage": "broll",
-                "panel_index": panel_index, "panel": panel,
-                "product_id": product_meta.get("id"),
-            },
-        )
+        if job_id:
+            await _update_agent_video_job(ctx, job_id=job_id, fields={
+                "status": "success", "progress": 100,
+                "final_video_url": final_video_url, "status_message": None,
+            })
         if job_id and not is_supabase_storage_url(final_video_url):
             async def _on_persisted(stored: str) -> None:
                 await _update_agent_video_job(ctx, job_id=job_id, fields={"final_video_url": stored})
@@ -5186,13 +5225,35 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
             "letterbox bars, horizontal framing" if aspect_ratio == "9:16"
             else ("widescreen letterbox" if aspect_ratio == "4:3" else "")
         )
+        job_id = await _insert_agent_video_job(
+            ctx, final_video_url=None, model_api="seedance-2.0-pro",
+            campaign_name=f"{product_meta['brand']} product macro",
+            duration_seconds=5.0, hook=f"{product_meta['brand']} product macro",
+            metadata={
+                "source": "cinematic_ads", "stage": "product_macro",
+                "product_id": product_meta.get("id"),
+            },
+            status="processing",
+            progress=10,
+            status_message="Generating product macro shot...",
+        )
+
+        async def _on_macro_submitted(provider_job_id: str) -> None:
+            if job_id:
+                await _update_agent_video_job(ctx, job_id=job_id, fields={"provider_job_id": provider_job_id})
+
         try:
             result = await animate_storyboard_kie_seedance(
                 prompt=prompt, image_urls=[product_fal_url],
                 duration=5, resolution="720p", aspect_ratio=aspect_ratio,
                 negative_prompt=negative_prompt_macro,
+                on_submitted=_on_macro_submitted,
             )
         except KieError as e:
+            if job_id:
+                await _update_agent_video_job(ctx, job_id=job_id, fields={
+                    "status": "failed", "error_message": str(e)[:500], "status_message": None,
+                })
             return json.dumps({"error": "kie_product_macro_failed", "msg": str(e), "raw": e.raw})
 
         mp4_url = result["url"]
@@ -5201,15 +5262,11 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
         storage_name = f"cinematic_product_macro_{_uuid.uuid4().hex[:12]}.mp4"
         final_video_url = await finalize_video_url(mp4_url, storage_filename=storage_name)
 
-        job_id = await _insert_agent_video_job(
-            ctx, final_video_url=final_video_url, model_api="seedance-2.0-pro",
-            campaign_name=f"{product_meta['brand']} product macro",
-            duration_seconds=5.0, hook=f"{product_meta['brand']} product macro",
-            metadata={
-                "source": "cinematic_ads", "stage": "product_macro",
-                "product_id": product_meta.get("id"),
-            },
-        )
+        if job_id:
+            await _update_agent_video_job(ctx, job_id=job_id, fields={
+                "status": "success", "progress": 100,
+                "final_video_url": final_video_url, "status_message": None,
+            })
         if job_id and not is_supabase_storage_url(final_video_url):
             async def _on_persisted(stored: str) -> None:
                 await _update_agent_video_job(ctx, job_id=job_id, fields={"final_video_url": stored})

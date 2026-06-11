@@ -66,6 +66,61 @@ def _ensure_fal_env() -> None:
     _api_key()
 
 
+async def _submit_and_wait(
+    model: str,
+    arguments: dict,
+    *,
+    label: str,
+    on_submitted=None,
+) -> dict:
+    """submit_async + await result, surfacing the request_id immediately.
+
+    Replaces blocking `subscribe_async`: with submit_async we get the
+    `request_id` up front and report it through `on_submitted(
+    "fal:<model>:<request_id>")` so callers can persist it for crash
+    recovery (a restart mid-render can then re-fetch via result_async).
+    Same return shape as subscribe_async (the raw result dict).
+    """
+    handle = await fal_client.submit_async(model, arguments=arguments)
+    request_id = getattr(handle, "request_id", None)
+    print(f"[fal] {label} submitted request_id={request_id}")
+    if on_submitted and request_id:
+        try:
+            await on_submitted(f"fal:{model}:{request_id}")
+        except Exception as cb_err:
+            print(f"[fal] {label} on_submitted callback failed: {cb_err}")
+    return await handle.get()
+
+
+async def get_request_status(model: str, request_id: str) -> str:
+    """Poll a previously submitted Fal request. Returns 'completed' |
+    'failed' | 'running'. Used by the jobs-status recovery sweep."""
+    _ensure_fal_env()
+    try:
+        status = await fal_client.status_async(model, request_id, with_logs=False)
+    except Exception as e:
+        # A 404/410/NOT_FOUND means Fal no longer knows the request — failed.
+        msg = str(e).lower()
+        if "404" in msg or "not found" in msg or "not_found" in msg or "410" in msg:
+            return "failed"
+        raise FalError(f"Fal status lookup failed: {e}")
+    name = type(status).__name__.lower()
+    if "completed" in name:
+        return "completed"
+    if "failed" in name or "error" in name:
+        return "failed"
+    return "running"
+
+
+async def get_request_result(model: str, request_id: str) -> dict:
+    """Fetch the result payload of a completed Fal request."""
+    _ensure_fal_env()
+    try:
+        return await fal_client.result_async(model, request_id)
+    except Exception as e:
+        raise FalError(f"Fal result fetch failed: {e}")
+
+
 # ── Storage upload ────────────────────────────────────────────────────
 async def upload_to_fal_storage(
     data: bytes,
@@ -109,10 +164,12 @@ async def generate_storyboard(
     width: Optional[int] = None,
     height: Optional[int] = None,
     aspect_ratio: str = "16:9",
+    on_submitted=None,
 ) -> dict:
     """Generate a single storyboard sheet via GPT Image 2 /edit.
 
     Returns {"url": <png url>, "raw": <full Fal response>}.
+    `on_submitted("fal:<model>:<request_id>")` fires right after submit.
     """
     _ensure_fal_env()
     if not image_urls:
@@ -132,13 +189,16 @@ async def generate_storyboard(
         "num_images": 1,
         "output_format": "png",
     }
-    print(f"[fal] storyboard subscribe model={STORYBOARD_MODEL} ar={aspect_ratio} size={width}x{height} image_count={len(image_urls)}")
+    print(f"[fal] storyboard submit model={STORYBOARD_MODEL} ar={aspect_ratio} size={width}x{height} image_count={len(image_urls)}")
     try:
-        result = await fal_client.subscribe_async(
+        result = await _submit_and_wait(
             STORYBOARD_MODEL,
-            arguments=arguments,
-            with_logs=False,
+            arguments,
+            label="storyboard",
+            on_submitted=on_submitted,
         )
+    except FalError:
+        raise
     except Exception as e:
         raise FalError(f"Fal storyboard call failed: {e}", raw={"exception": str(e)})
 
@@ -161,6 +221,7 @@ async def animate_storyboard_seedance(
     resolution: str = "720p",
     aspect_ratio: str = "16:9",
     generate_audio: bool = True,
+    on_submitted=None,
 ) -> dict:
     """Animate with Seedance 2.0 Pro ref-to-video.
 
@@ -180,13 +241,16 @@ async def animate_storyboard_seedance(
         "aspect_ratio": aspect_ratio,
         "generate_audio": generate_audio,
     }
-    print(f"[fal] seedance subscribe model={SEEDANCE_MODEL} duration={duration} res={resolution} image_count={len(image_urls)}")
+    print(f"[fal] seedance submit model={SEEDANCE_MODEL} duration={duration} res={resolution} image_count={len(image_urls)}")
     try:
-        result = await fal_client.subscribe_async(
+        result = await _submit_and_wait(
             SEEDANCE_MODEL,
-            arguments=arguments,
-            with_logs=False,
+            arguments,
+            label="seedance",
+            on_submitted=on_submitted,
         )
+    except FalError:
+        raise
     except Exception as e:
         _err_str = str(e)
         # Detect Fal's downstream-service-unavailable response — translate to a

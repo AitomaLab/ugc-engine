@@ -99,6 +99,34 @@ def _mode_label_from_shot_type(shot_type: str) -> str:
     return shot_type.replace("_", " ").title()
 
 
+def _products_for_project(products: list, project_id: str) -> list:
+    """Return only products owned by the given project."""
+    if not project_id:
+        return []
+    return [p for p in (products or []) if p.get("project_id") == project_id]
+
+
+def _shot_belongs_to_project(
+    shot: dict,
+    project_id: str,
+    product_to_project: dict[str, str],
+) -> bool:
+    """True when a product_shots row belongs to project_id.
+
+    Matches dashboard card bucketing in _bulk_project_previews: prefer
+    shot.project_id on the row. Legacy rows with a null project_id are
+    routed via the owning product only when the shot was fetched through
+    that product (never when another project's id is already set).
+    """
+    pid = shot.get("project_id")
+    if pid:
+        return pid == project_id
+    prod_id = shot.get("product_id")
+    if prod_id:
+        return product_to_project.get(prod_id) == project_id
+    return False
+
+
 async def _fetch_project_images(
     client: CoreAPIClient,
     influencer_map: dict | None = None,
@@ -125,18 +153,26 @@ async def _fetch_project_images(
     supabase_url = os.getenv("SUPABASE_URL")
     anon_key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
 
-    # 1. Get product IDs for this project (fast — single core API call).
-    # The caller can pass a pre-fetched products list to avoid a duplicate
-    # round-trip when this helper is invoked alongside _fetch_project_videos.
+    # 1. Get product IDs for this project only. list_products is account-wide
+    # (for agent @mentions); gallery must not pull shots from other projects.
     if products is None:
         products = await _cached_list_products(client)
-    product_ids = [p["id"] for p in products] if products else []
+    product_to_project: dict[str, str] = {
+        p["id"]: p.get("project_id")
+        for p in (products or [])
+        if p.get("id")
+    }
+    project_products = _products_for_project(products, client.project_id)
+    product_ids = [p["id"] for p in project_products]
 
     # Build influencer map if not passed
     if influencer_map is None:
         influencer_map = await _build_influencer_map(client)
 
-    # 2. Batch-fetch shots via Supabase — single query with IN filter
+    # 2. Fetch shots tagged with this project_id only — same rule as
+    # dashboard cards (_bulk_project_previews). Never fan out by product_id
+    # across account-wide products; that pulled every shot for products
+    # linked to the workspace even when shot.project_id pointed elsewhere.
     all_shots = []
     if supabase_url and anon_key:
         headers = {
@@ -146,22 +182,12 @@ async def _fetch_project_images(
         }
         import httpx as _httpx
         async with _httpx.AsyncClient(timeout=15.0) as http:
-            fetches = []
-            # Shots linked via product_id
-            if product_ids:
-                ids_str = ",".join(product_ids)
-                fetches.append(http.get(
-                    f"{supabase_url}/rest/v1/product_shots",
-                    headers=headers,
-                    params={"product_id": f"in.({ids_str})", "order": "created_at.desc"},
-                ))
-            # Standalone shots linked via project_id directly
-            fetches.append(http.get(
+            resp = await http.get(
                 f"{supabase_url}/rest/v1/product_shots",
                 headers=headers,
                 params={"project_id": f"eq.{client.project_id}", "order": "created_at.desc"},
-            ))
-            results = await asyncio.gather(*fetches, return_exceptions=True)
+            )
+            results = [resp]
 
             seen_ids = set()
             for resp in results:
@@ -173,8 +199,8 @@ async def _fetch_project_images(
                         seen_ids.add(sid)
                         # Enrich with product name
                         pid = shot.get("product_id")
-                        if pid and products:
-                            match = next((p for p in products if p["id"] == pid), None)
+                        if pid and project_products:
+                            match = next((p for p in project_products if p["id"] == pid), None)
                             if match:
                                 shot["product_name"] = match.get("name", "")
                         # Enrich with influencer name
@@ -191,15 +217,17 @@ async def _fetch_project_images(
                             shot["mode"] = mode
                         all_shots.append(shot)
     else:
-        # Fallback: N parallel calls via core API
+        # Fallback: project-scoped products only; keep rows tagged for this project.
         shot_results = await asyncio.gather(
-            *(client.list_product_shots(p["id"]) for p in products),
+            *(client.list_product_shots(p["id"]) for p in project_products),
             return_exceptions=True,
         )
-        for product, shots in zip(products, shot_results):
+        for product, shots in zip(project_products, shot_results):
             if isinstance(shots, Exception):
                 continue
             for shot in shots:
+                if shot.get("project_id") != client.project_id:
+                    continue
                 shot["product_name"] = product.get("name", "")
                 # Enrich influencer + mode in fallback path too
                 analysis = shot.get("analysis_json") or {}
@@ -212,6 +240,10 @@ async def _fetch_project_images(
                     shot["mode"] = mode
             all_shots.extend(shots)
 
+    all_shots = [
+        s for s in all_shots
+        if _shot_belongs_to_project(s, client.project_id, product_to_project)
+    ]
     all_shots.sort(key=lambda s: s.get("created_at", ""), reverse=True)
     return all_shots
 
@@ -239,6 +271,37 @@ async def _heal_assets_for_client(
         update_shot_fn=_update_shot,
         update_job_fn=_update_job,
     )
+
+
+def _schedule_asset_heal(
+    client: CoreAPIClient,
+    images: list | None = None,
+    videos: list | None = None,
+) -> None:
+    """Fire-and-forget healing so list endpoints return immediately.
+
+    Healing downloads + re-uploads any non-Supabase asset URL (up to 4
+    concurrent) — done inline it could add seconds to every gallery load.
+    Rows are copied so the background task never mutates dicts that are
+    being serialized into the HTTP response; healed URLs are persisted to
+    the DB by the update callbacks and picked up on the next fetch.
+    """
+    imgs = [dict(r) for r in (images or [])]
+    vids = [dict(r) for r in (videos or [])]
+    if not imgs and not vids:
+        return
+
+    async def _run():
+        try:
+            await _heal_assets_for_client(client, images=imgs, videos=vids)
+        except Exception as e:
+            print(f"[persist_media] background heal failed: {e}")
+
+    try:
+        asyncio.get_running_loop().create_task(_run())
+    except RuntimeError:
+        # No running loop (shouldn't happen inside FastAPI handlers) — skip.
+        pass
 
 
 async def _fetch_project_videos(
@@ -451,6 +514,10 @@ async def _bulk_project_previews(
                     f"{supabase_url}/rest/v1/product_shots",
                     headers=headers,
                     params={
+                        # Card previews only need routing keys + the image URL.
+                        # Skips heavy columns (analysis_json JSONB, prompt text)
+                        # across up to 500 rows.
+                        "select": "id,project_id,product_id,image_url,created_at",
                         "project_id": f"in.({','.join(project_ids)})",
                         "order": "created_at.desc",
                         "limit": "500",
@@ -654,11 +721,15 @@ async def list_recent_images(limit: int = 20, user: dict = Depends(get_current_u
                 product_name_by_id[pid] = p.get("name", "")
 
     async with _httpx.AsyncClient(timeout=15.0) as http:
+        # Dashboard grid only consumes id, image_url, product_name (joined
+        # below) — skip analysis_json / prompt payloads.
+        _recent_select = "id,image_url,product_id,project_id,created_at"
         fetches = [
             http.get(
                 f"{supabase_url}/rest/v1/product_shots",
                 headers=headers,
                 params={
+                    "select": _recent_select,
                     "project_id": f"in.({','.join(project_ids)})",
                     "order": "created_at.desc",
                     "limit": str(limit),
@@ -670,6 +741,7 @@ async def list_recent_images(limit: int = 20, user: dict = Depends(get_current_u
                 f"{supabase_url}/rest/v1/product_shots",
                 headers=headers,
                 params={
+                    "select": _recent_select,
                     "product_id": f"in.({','.join(product_ids)})",
                     "order": "created_at.desc",
                     "limit": str(limit),
@@ -757,7 +829,8 @@ async def get_project_full(project_id: str, user: dict = Depends(get_current_use
         _fetch_project_videos(client, influencer_map=influencer_map, products=products),
     )
 
-    images, videos = await _heal_assets_for_client(client, images, videos)
+    # Heal ephemeral URLs in the background — never block the gallery load.
+    _schedule_asset_heal(client, images, videos)
 
     if not project:
         from fastapi import HTTPException
@@ -815,18 +888,22 @@ async def project_jobs_status(
     async with _httpx.AsyncClient(timeout=10.0) as http:
         fetches = []
         if image_ids:
+            # NOTE: product_shots has NO status_message/progress/preview_url
+            # columns — selecting them makes PostgREST 400 and the image poll
+            # silently returns [] (cards never flip). Only existing columns here.
             fetches.append(http.get(
                 f"{supabase_url}/rest/v1/product_shots",
                 headers=headers,
                 params={
                     "id": f"in.({','.join(image_ids)})",
-                    "select": "id,status,status_message,progress,preview_url,image_url,created_at",
+                    "select": "id,status,image_url,created_at,provider_job_id",
                 },
             ))
         else:
             fetches.append(None)
         video_fetches = []
         if video_ids:
+<<<<<<< Updated upstream
             video_fetches = [
                 http.get(
                     f"{supabase_url}/rest/v1/video_jobs",
@@ -845,6 +922,18 @@ async def project_jobs_status(
                     },
                 ),
             ]
+=======
+            fetches.append(http.get(
+                f"{supabase_url}/rest/v1/video_jobs",
+                headers=headers,
+                params={
+                    "id": f"in.({','.join(video_ids)})",
+                    "select": "id,status,status_message,progress,preview_url,preview_type,final_video_url,thumbnail_url,created_at,provider_job_id",
+                },
+            ))
+        else:
+            fetches.append(None)
+>>>>>>> Stashed changes
         results = await asyncio.gather(
             *[f for f in fetches if f is not None],
             *(video_fetches or [asyncio.sleep(0)]),
@@ -869,13 +958,30 @@ async def project_jobs_status(
         seen_ids = {str(r.get("id")) for r in regular_rows if r.get("id")}
         out["videos"] = regular_rows + [r for r in clone_rows if str(r.get("id")) not in seen_ids]
 
+    # Recovery sweep: rows stranded in "processing" (the in-process writeback
+    # task died on a restart/deploy) that carry a provider_job_id are checked
+    # against the provider (wavespeed/kie/fal) and finalized in place, so the
+    # UI flips on this very poll instead of spinning forever.
+    await _recover_inflight_rows(
+        out["images"], kind="image",
+        token=user["token"], project_id=project_id,
+        http_headers=headers, supabase_url=supabase_url,
+    )
+    await _recover_inflight_rows(
+        out["videos"], kind="video",
+        token=user["token"], project_id=project_id,
+        http_headers=headers, supabase_url=supabase_url,
+    )
+
     # Reconcile orphaned shots: a generation writes its result back from an
     # in-process background task. If the worker/process is restarted (deploy,
     # code reload, crash) while that task is mid-flight, the shot is stranded
     # in "processing" forever and the UI spins indefinitely even though the
     # provider finished. After a generous grace period (well beyond any real
     # render time) flip such shots to "failed" so the card resolves and the
-    # user can retry instead of staring at an eternal spinner.
+    # user can retry instead of staring at an eternal spinner. Rows with a
+    # provider_job_id are owned by the recovery sweep above and are skipped
+    # here (until a hard cap, see _PROVIDER_ROW_HARD_CAP_FACTOR).
     await _reconcile_stale_image_shots(http_headers=headers, supabase_url=supabase_url, rows=out["images"])
     regular_videos = [r for r in out["videos"] if r.get("_source") != "clone"]
     clone_videos = [r for r in out["videos"] if r.get("_source") == "clone"]
@@ -890,6 +996,7 @@ _STALE_IMAGE_SECONDS = 8 * 60
 # Video renders (Kie polls, multi-chunk edits) can run longer — generous grace.
 _STALE_VIDEO_SECONDS = 25 * 60
 
+<<<<<<< Updated upstream
 _CLONE_JOB_SELECT = (
     "id,status,status_message,progress,preview_url,preview_type,final_video_url,created_at"
 )
@@ -903,6 +1010,285 @@ def _normalize_clone_status_row(row: dict) -> dict:
         out["status"] = "success"
         out["progress"] = 100
     return out
+=======
+# ── Provider recovery sweep ──────────────────────────────────────────
+# Only start querying the provider once a row has been in-flight this long —
+# below it the in-process poller is almost certainly still alive and will
+# finish the job itself.
+_RECOVERY_MIN_AGE_SECONDS = 90
+# Per-row throttle so a 2s gallery poll doesn't hammer provider APIs.
+_RECOVERY_THROTTLE_SECONDS = 30
+# Rows WITH a provider_job_id are exempt from the stale delete, but past
+# grace*this factor we stop waiting and mark them failed (provider lookups
+# keep erroring / job never resolves).
+_PROVIDER_ROW_HARD_CAP_FACTOR = 3
+
+# row id -> monotonic seconds of last recovery attempt
+_recovery_last_attempt: dict[str, float] = {}
+
+
+def _row_age_seconds(row: dict) -> float:
+    from datetime import datetime, timezone
+    created = row.get("created_at")
+    if not created:
+        return 0.0
+    try:
+        ts = datetime.fromisoformat(str(created).replace("Z", "+00:00"))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - ts).total_seconds()
+    except Exception:
+        return 0.0
+
+
+def _is_inflight_row(row: dict, media_keys: list[str]) -> bool:
+    if not isinstance(row, dict):
+        return False
+    status = (row.get("status") or "").lower()
+    if not ("processing" in status or "pending" in status or "generating" in status):
+        return False
+    return not any(row.get(k) for k in media_keys)
+
+
+async def _provider_job_lookup(provider_job_id: str) -> tuple[str, str | None]:
+    """Query the provider encoded in the job id prefix.
+
+    Returns (outcome, media_url):
+      ("completed", url) — job done, url is the output asset
+      ("failed", None)   — provider reports failure or no longer knows the job
+      ("running", None)  — still in progress, leave the row alone
+    Raises on transient lookup errors (network etc.) — caller treats as running.
+    """
+    import httpx as _httpx
+
+    if provider_job_id.startswith("wavespeed:"):
+        pred_id = provider_job_id.split(":", 1)[1]
+        ws_key = os.getenv("WAVESPEED_API_KEY", "")
+        if not ws_key:
+            return ("running", None)
+        ws_base = os.getenv("WAVESPEED_BASE_URL", "https://api.wavespeed.ai/api/v3")
+        url = f"{ws_base}/predictions/{pred_id}/result"
+        async with _httpx.AsyncClient(timeout=15.0) as http:
+            resp = await http.get(url, headers={"Authorization": f"Bearer {ws_key}"})
+        # 400 = invalid/unknown prediction id; 404/410 = gone — all unrecoverable.
+        if resp.status_code in (400, 404, 410):
+            return ("failed", None)
+        if resp.status_code != 200:
+            raise RuntimeError(f"wavespeed lookup {resp.status_code}")
+        body = resp.json()
+        inner = body.get("data", body)
+        status = (inner.get("status") or "processing").lower()
+        if status == "completed":
+            outputs = inner.get("outputs") or []
+            first = outputs[0] if outputs else None
+            media = first if isinstance(first, str) else ((first or {}).get("url") or (first or {}).get("output"))
+            return ("completed", media) if media else ("failed", None)
+        if status == "failed":
+            return ("failed", None)
+        return ("running", None)
+
+    if provider_job_id.startswith("kie:"):
+        task_id = provider_job_id.split(":", 1)[1]
+        kie_key = os.getenv("KIE_API_KEY", "")
+        if not kie_key:
+            return ("running", None)
+        kie_url = os.getenv("KIE_API_URL", "https://api.kie.ai")
+        async with _httpx.AsyncClient(timeout=15.0) as http:
+            resp = await http.get(
+                f"{kie_url}/api/v1/jobs/recordInfo",
+                headers={"Authorization": f"Bearer {kie_key}"},
+                params={"taskId": task_id},
+            )
+        if resp.status_code in (400, 404, 410):
+            return ("failed", None)
+        if resp.status_code != 200:
+            raise RuntimeError(f"kie lookup {resp.status_code}")
+        body = resp.json() or {}
+        # KIE wraps errors in HTTP 200: {"code":422,"msg":"recordInfo is null","data":null}
+        # means the task is unknown — unrecoverable.
+        if body.get("data") is None:
+            return ("failed", None)
+        pd = body.get("data") or {}
+        state = (pd.get("state") or pd.get("status") or "").lower()
+        if state in ("success", "succeed", "completed"):
+            media = None
+            try:
+                import json as _json
+                result_json = _json.loads(pd.get("resultJson") or "{}")
+                media = (result_json.get("resultUrls") or [None])[0]
+            except Exception:
+                pass
+            media = media or pd.get("outputUrl") or pd.get("resultUrl") or pd.get("videoUrl")
+            return ("completed", media) if media else ("failed", None)
+        if state in ("fail", "failed", "error"):
+            return ("failed", None)
+        return ("running", None)
+
+    if provider_job_id.startswith("fal:"):
+        rest = provider_job_id.split(":", 1)[1]
+        # format is fal:<model>:<request_id> — model ids contain "/" but not ":"
+        if ":" not in rest:
+            return ("failed", None)
+        model, request_id = rest.rsplit(":", 1)
+        from services import fal_client as _falc
+        status = await _falc.get_request_status(model, request_id)
+        if status == "failed":
+            return ("failed", None)
+        if status != "completed":
+            return ("running", None)
+        result = await _falc.get_request_result(model, request_id)
+        video = (result or {}).get("video") or {}
+        media = video.get("url") if isinstance(video, dict) else None
+        if not media:
+            images = (result or {}).get("images") or []
+            if images and isinstance(images[0], dict):
+                media = images[0].get("url")
+        return ("completed", media) if media else ("failed", None)
+
+    # Unknown prefix — nothing we can do; let the stale reconciler handle it.
+    return ("running", None)
+
+
+def _service_write_headers(fallback_headers: dict | None = None) -> dict:
+    """REST headers for reconcile/recovery writes.
+
+    Prefer the service-role key: legacy zombie rows can have user_id NULL,
+    which user-JWT RLS refuses to touch — those rows could never be cleaned.
+    Falls back to the caller's (user) headers when no service key is set.
+    """
+    service_key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    if service_key:
+        return {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal",
+        }
+    return {**(fallback_headers or {}), "Prefer": "return=minimal"}
+
+
+async def _mark_row_failed(
+    *, kind: str, row_id: str, http_headers: dict, supabase_url: str, message: str,
+) -> None:
+    import httpx as _httpx
+    table = "product_shots" if kind == "image" else "video_jobs"
+    fields: dict = {"status": "failed"}
+    if kind == "video":
+        fields["error_message"] = message[:500]
+    try:
+        async with _httpx.AsyncClient(timeout=10.0) as http:
+            await http.patch(
+                f"{supabase_url}/rest/v1/{table}",
+                headers=_service_write_headers(http_headers),
+                params={"id": f"eq.{row_id}"},
+                json=fields,
+            )
+    except Exception as e:
+        print(f"[recovery] mark-failed PATCH failed for {table}/{row_id}: {e}")
+
+
+async def _recover_inflight_rows(
+    rows: list,
+    *,
+    kind: str,  # "image" | "video"
+    token: str,
+    project_id: str,
+    http_headers: dict,
+    supabase_url: str,
+) -> None:
+    """Finalize stuck rows by querying their provider via provider_job_id.
+
+    Mutates `rows` in place so the same jobs-status response carries the
+    completed asset and the UI flips without waiting for another poll.
+    """
+    import time as _time
+
+    media_keys = ["image_url"] if kind == "image" else ["final_video_url", "video_url"]
+    candidates = [
+        r for r in rows
+        if _is_inflight_row(r, media_keys)
+        and r.get("provider_job_id")
+        and _row_age_seconds(r) >= _RECOVERY_MIN_AGE_SECONDS
+    ]
+    if not candidates:
+        return
+
+    now = _time.monotonic()
+    # Opportunistic prune so the throttle dict can't grow unbounded.
+    if len(_recovery_last_attempt) > 1000:
+        cutoff = now - 3600
+        for k in [k for k, v in _recovery_last_attempt.items() if v < cutoff]:
+            _recovery_last_attempt.pop(k, None)
+
+    for row in candidates:
+        row_id = str(row["id"])
+        last = _recovery_last_attempt.get(row_id, 0.0)
+        if now - last < _RECOVERY_THROTTLE_SECONDS:
+            continue
+        _recovery_last_attempt[row_id] = now
+
+        provider_job_id = str(row["provider_job_id"])
+        try:
+            outcome, media_url = await _provider_job_lookup(provider_job_id)
+        except Exception as e:
+            print(f"[recovery] {kind} {row_id} lookup error ({provider_job_id}): {e}")
+            continue
+
+        if outcome == "running":
+            continue
+
+        if outcome == "failed":
+            print(f"[recovery] {kind} {row_id} provider says failed/gone ({provider_job_id})")
+            await _mark_row_failed(
+                kind=kind, row_id=row_id,
+                http_headers=http_headers, supabase_url=supabase_url,
+                message=f"Generation failed at provider ({provider_job_id.split(':', 1)[0]})",
+            )
+            row["status"] = "failed"
+            row["status_message"] = None
+            _recovery_last_attempt.pop(row_id, None)
+            continue
+
+        # completed — finalize: mirror to Supabase storage + flip status.
+        print(f"[recovery] {kind} {row_id} recovered from provider ({provider_job_id})")
+        try:
+            if kind == "image":
+                from routers.generate_image import _persist_and_complete_shot
+                stored = await _persist_and_complete_shot(
+                    row_id, media_url, token=token, project_id=project_id,
+                )
+                row["status"] = "image_completed"
+                row["image_url"] = stored
+                row["status_message"] = None
+            else:
+                from datetime import datetime as _dt
+                from routers.generate_video import (
+                    _mirror_video_to_supabase,
+                    _update_video_job_via_api,
+                )
+                ts = _dt.now().strftime("%Y%m%d_%H%M%S")
+                final_url = await _mirror_video_to_supabase(
+                    media_url,
+                    storage_filename=f"recovered_{row_id[:8]}_{ts}.mp4",
+                    token=token,
+                    project_id=project_id,
+                    job_id=row_id,
+                )
+                await _update_video_job_via_api(token, project_id, row_id, {
+                    "status": "success",
+                    "progress": 100,
+                    "final_video_url": final_url,
+                    "preview_url": None,
+                    "status_message": None,
+                })
+                row["status"] = "success"
+                row["final_video_url"] = final_url
+                row["progress"] = 100
+                row["status_message"] = None
+            _recovery_last_attempt.pop(row_id, None)
+        except Exception as e:
+            print(f"[recovery] {kind} {row_id} finalize failed: {e}")
+>>>>>>> Stashed changes
 
 
 def _is_stale_processing_row(row: dict, *, media_keys: str | list[str], grace_seconds: int) -> bool:
@@ -930,18 +1316,38 @@ def _is_stale_processing_row(row: dict, *, media_keys: str | list[str], grace_se
 
 
 async def _reconcile_stale_image_shots(*, http_headers: dict, supabase_url: str, rows: list) -> None:
-    """Delete image shots stuck in processing — ghost cards must not linger."""
+    """Delete image shots stuck in processing — ghost cards must not linger.
+
+    Rows with a provider_job_id are recoverable (the sweep queries the
+    provider), so they're exempt until the hard cap, at which point they're
+    marked failed (never deleted — the asset may still exist at the provider).
+
+    Deleted rows are kept in the response with status='failed' (not removed):
+    the frontend only drops a card cleanly when it sees the failed transition;
+    a row that silently vanishes from the response before the client ever saw
+    it in a poll stays stuck as a local-only "Generating..." card forever.
+    """
     stale_ids: list[str] = []
     for row in list(rows):
-        if _is_stale_processing_row(row, media_keys="image_url", grace_seconds=_STALE_IMAGE_SECONDS):
-            stale_ids.append(str(row["id"]))
-            rows.remove(row)
+        if not _is_stale_processing_row(row, media_keys="image_url", grace_seconds=_STALE_IMAGE_SECONDS):
+            continue
+        if row.get("provider_job_id"):
+            if _row_age_seconds(row) >= _STALE_IMAGE_SECONDS * _PROVIDER_ROW_HARD_CAP_FACTOR:
+                await _mark_row_failed(
+                    kind="image", row_id=str(row["id"]),
+                    http_headers=http_headers, supabase_url=supabase_url,
+                    message="Generation timed out (unrecoverable)",
+                )
+                row["status"] = "failed"
+            continue
+        stale_ids.append(str(row["id"]))
+        row["status"] = "failed"
 
     if not stale_ids:
         return
 
     import httpx as _httpx
-    del_headers = {**http_headers, "Prefer": "return=minimal"}
+    del_headers = _service_write_headers(http_headers)
     try:
         async with _httpx.AsyncClient(timeout=10.0) as http:
             await asyncio.gather(
@@ -955,23 +1361,42 @@ async def _reconcile_stale_image_shots(*, http_headers: dict, supabase_url: str,
                 ),
                 return_exceptions=True,
             )
+        print(f"[jobs-status] deleted {len(stale_ids)} stale image shot(s): {stale_ids}")
     except Exception as e:
         print(f"[jobs-status] stale shot delete failed: {e}")
 
 
 async def _reconcile_stale_video_jobs(*, http_headers: dict, supabase_url: str, rows: list) -> None:
-    """Delete video jobs stuck in processing — ghost cards must not linger."""
+    """Delete video jobs stuck in processing — ghost cards must not linger.
+
+    Rows with a provider_job_id are recoverable (the sweep queries the
+    provider), so they're exempt until the hard cap, at which point they're
+    marked failed (never deleted — the asset may still exist at the provider).
+
+    Deleted rows are kept in the response with status='failed' (not removed),
+    so the frontend sees the transition and drops the card cleanly.
+    """
     stale_ids: list[str] = []
     for row in list(rows):
-        if _is_stale_processing_row(row, media_keys=["final_video_url", "video_url"], grace_seconds=_STALE_VIDEO_SECONDS):
-            stale_ids.append(str(row["id"]))
-            rows.remove(row)
+        if not _is_stale_processing_row(row, media_keys=["final_video_url", "video_url"], grace_seconds=_STALE_VIDEO_SECONDS):
+            continue
+        if row.get("provider_job_id"):
+            if _row_age_seconds(row) >= _STALE_VIDEO_SECONDS * _PROVIDER_ROW_HARD_CAP_FACTOR:
+                await _mark_row_failed(
+                    kind="video", row_id=str(row["id"]),
+                    http_headers=http_headers, supabase_url=supabase_url,
+                    message="Generation timed out (unrecoverable)",
+                )
+                row["status"] = "failed"
+            continue
+        stale_ids.append(str(row["id"]))
+        row["status"] = "failed"
 
     if not stale_ids:
         return
 
     import httpx as _httpx
-    del_headers = {**http_headers, "Prefer": "return=minimal"}
+    del_headers = _service_write_headers(http_headers)
     try:
         async with _httpx.AsyncClient(timeout=10.0) as http:
             await asyncio.gather(
@@ -985,6 +1410,7 @@ async def _reconcile_stale_video_jobs(*, http_headers: dict, supabase_url: str, 
                 ),
                 return_exceptions=True,
             )
+        print(f"[jobs-status] deleted {len(stale_ids)} stale video job(s): {stale_ids}")
     except Exception as e:
         print(f"[jobs-status] stale video delete failed: {e}")
 
@@ -1039,7 +1465,7 @@ async def list_project_images(project_id: str, user: dict = Depends(get_current_
     """List all image assets (product shots) for a project."""
     client = CoreAPIClient(token=user["token"], project_id=project_id)
     images = await _fetch_project_images(client)
-    images, _ = await _heal_assets_for_client(client, images=images, videos=[])
+    _schedule_asset_heal(client, images=images)
     return images
 
 
@@ -1048,7 +1474,7 @@ async def list_project_videos(project_id: str, user: dict = Depends(get_current_
     """List all video assets (jobs) for a project."""
     client = CoreAPIClient(token=user["token"], project_id=project_id)
     videos = await _fetch_project_videos(client)
-    _, videos = await _heal_assets_for_client(client, images=[], videos=videos)
+    _schedule_asset_heal(client, videos=videos)
     return videos
 
 
