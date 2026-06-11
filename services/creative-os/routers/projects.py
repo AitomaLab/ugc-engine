@@ -903,14 +903,13 @@ async def project_jobs_status(
             fetches.append(None)
         video_fetches = []
         if video_ids:
-<<<<<<< Updated upstream
             video_fetches = [
                 http.get(
                     f"{supabase_url}/rest/v1/video_jobs",
                     headers=headers,
                     params={
                         "id": f"in.({','.join(video_ids)})",
-                        "select": "id,status,status_message,progress,preview_url,preview_type,final_video_url,thumbnail_url,created_at",
+                        "select": "id,status,status_message,progress,preview_url,preview_type,final_video_url,thumbnail_url,created_at,provider_job_id",
                     },
                 ),
                 http.get(
@@ -922,18 +921,6 @@ async def project_jobs_status(
                     },
                 ),
             ]
-=======
-            fetches.append(http.get(
-                f"{supabase_url}/rest/v1/video_jobs",
-                headers=headers,
-                params={
-                    "id": f"in.({','.join(video_ids)})",
-                    "select": "id,status,status_message,progress,preview_url,preview_type,final_video_url,thumbnail_url,created_at,provider_job_id",
-                },
-            ))
-        else:
-            fetches.append(None)
->>>>>>> Stashed changes
         results = await asyncio.gather(
             *[f for f in fetches if f is not None],
             *(video_fetches or [asyncio.sleep(0)]),
@@ -996,7 +983,6 @@ _STALE_IMAGE_SECONDS = 8 * 60
 # Video renders (Kie polls, multi-chunk edits) can run longer — generous grace.
 _STALE_VIDEO_SECONDS = 25 * 60
 
-<<<<<<< Updated upstream
 _CLONE_JOB_SELECT = (
     "id,status,status_message,progress,preview_url,preview_type,final_video_url,created_at"
 )
@@ -1010,7 +996,8 @@ def _normalize_clone_status_row(row: dict) -> dict:
         out["status"] = "success"
         out["progress"] = 100
     return out
-=======
+
+
 # ── Provider recovery sweep ──────────────────────────────────────────
 # Only start querying the provider once a row has been in-flight this long —
 # below it the in-process poller is almost certainly still alive and will
@@ -1288,7 +1275,6 @@ async def _recover_inflight_rows(
             _recovery_last_attempt.pop(row_id, None)
         except Exception as e:
             print(f"[recovery] {kind} {row_id} finalize failed: {e}")
->>>>>>> Stashed changes
 
 
 def _is_stale_processing_row(row: dict, *, media_keys: str | list[str], grace_seconds: int) -> bool:
