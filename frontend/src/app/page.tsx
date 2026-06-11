@@ -143,7 +143,7 @@ export default function StudioPage() {
   const router = useRouter();
   const [isCreating, setIsCreating] = useState(false);
   const [activeBottomTab, setActiveBottomTab] = useState<'projects' | 'videos' | 'images' | 'campaigns'>('projects');
-  const { profile, activeProject } = useApp();
+  const { session, profile, activeProject } = useApp();
 
   // ── Data layer (SWR) ──────────────────────────────────────────────
   // 30s background refresh, revalidate on tab focus, keepPreviousData so
@@ -182,15 +182,33 @@ export default function StudioPage() {
   const loading = jobsLoading;
   const userName = profile?.name || profile?.email?.split('@')[0] || 'Creator';
 
-  // Onboarding — show for first-time users (per-user localStorage flag)
-  const onboardingKey = profile?.id ? `aitoma_onboarding_done_${profile.id}` : '';
+  // Onboarding — show only for genuinely new users (localStorage + activity gate)
+  const userId = session?.user?.id;
+  const onboardingKey = userId ? `aitoma_onboarding_done_${userId}` : '';
   const [showOnboarding, setShowOnboarding] = useState(false);
+
+  const hasExistingActivity = useMemo(() => {
+    if (projects.some((p) => (p.asset_counts?.images ?? 0) + (p.asset_counts?.videos ?? 0) > 0)) return true;
+    if (jobs.some((j) => j.status === 'success')) return true;
+    if (recentImages.length > 0) return true;
+    return false;
+  }, [projects, jobs, recentImages]);
+
+  const markOnboardingDone = useCallback(() => {
+    if (onboardingKey) localStorage.setItem(onboardingKey, '1');
+    setShowOnboarding(false);
+  }, [onboardingKey]);
+
   useEffect(() => {
-    if (!loading && onboardingKey) {
-      const dismissed = localStorage.getItem(onboardingKey);
-      if (!dismissed) setShowOnboarding(true);
+    if (!onboardingKey || jobsLoading || projectsData === undefined) return;
+    const dismissed = localStorage.getItem(onboardingKey);
+    if (dismissed || hasExistingActivity) {
+      if (hasExistingActivity && !dismissed) localStorage.setItem(onboardingKey, '1');
+      setShowOnboarding(false);
+      return;
     }
-  }, [loading, onboardingKey]);
+    setShowOnboarding(true);
+  }, [onboardingKey, jobsLoading, projectsData, hasExistingActivity]);
 
   // Composer state
   const [prompt, setPrompt] = useState('');
@@ -719,8 +737,7 @@ export default function StudioPage() {
         <OnboardingModal
           onComplete={async ({ productId, productName, productImageUrl, influencerId, influencerName, influencerImageUrl, prompt: selectedPrompt }) => {
             try {
-              if (onboardingKey) localStorage.setItem(onboardingKey, '1');
-              setShowOnboarding(false);
+              markOnboardingDone();
               // Create a new project and navigate to it with the prompt pre-filled
               const name = `${productName} × ${influencerName}`;
               const newProject = await creativeFetch<{ id: string }>('/creative-os/projects/', {
@@ -740,14 +757,10 @@ export default function StudioPage() {
               }
             } catch (err) {
               console.error('Onboarding project creation failed:', err);
-              setShowOnboarding(false);
+              markOnboardingDone();
             }
           }}
-          onSkip={() => {
-            // Onboarding is mandatory — skip just marks it done
-            if (onboardingKey) localStorage.setItem(onboardingKey, '1');
-            setShowOnboarding(false);
-          }}
+          onSkip={markOnboardingDone}
         />
       )}
       {/* ── HERO SECTION ─────────────────────────────────────────────── */}

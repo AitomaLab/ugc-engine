@@ -589,20 +589,45 @@ export function OnboardingModal({ onComplete, onSkip }: OnboardingModalProps) {
                     display: 'flex',
                     flexDirection: 'column',
                 }}>
-                    {/* Step indicator */}
+                    {/* Step indicator + skip */}
                     <div style={{
-                        display: 'flex', gap: '4px', justifyContent: 'center',
-                        padding: '16px 0 0',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        position: 'relative',
+                        padding: '16px 20px 0',
                     }}>
-                        {[0, 1, 2, 3].map(i => (
-                            <div key={i} style={{
-                                width: step === i ? '24px' : '8px',
-                                height: '4px',
-                                borderRadius: '2px',
-                                background: step === i ? '#337AFF' : 'rgba(0,0,0,0.1)',
-                                transition: 'all 0.3s',
-                            }} />
-                        ))}
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                            {[0, 1, 2, 3].map(i => (
+                                <div key={i} style={{
+                                    width: step === i ? '24px' : '8px',
+                                    height: '4px',
+                                    borderRadius: '2px',
+                                    background: step === i ? '#337AFF' : 'rgba(0,0,0,0.1)',
+                                    transition: 'all 0.3s',
+                                }} />
+                            ))}
+                        </div>
+                        <button
+                            type="button"
+                            onClick={onSkip}
+                            style={{
+                                position: 'absolute',
+                                right: '20px',
+                                top: '12px',
+                                padding: '4px 8px',
+                                border: 'none',
+                                background: 'transparent',
+                                color: '#8A93B0',
+                                fontSize: '13px',
+                                fontWeight: 500,
+                                cursor: 'pointer',
+                                fontFamily: 'inherit',
+                                transition: 'color 0.15s',
+                            }}
+                            onMouseEnter={(e) => { e.currentTarget.style.color = '#337AFF'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.color = '#8A93B0'; }}
+                        >
+                            {t('onboarding.skip')}
+                        </button>
                     </div>
                     {renderStep()}
                 </div>
