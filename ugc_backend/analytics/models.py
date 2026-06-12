@@ -289,6 +289,10 @@ class StatsResponse(BaseModel):
     total_engagement: int = 0
     avg_engagement_rate: float = 0.0
     posts_tracked: int = 0
+    posts_total: int = Field(
+        default=0,
+        description="All scraped posts for the account in library (ignores period window).",
+    )
     # Period-over-period change in raw values (delta vs. the previous window
     # of the same length). 0 when there's no prior window to compare to.
     views_delta_pct: float = 0.0
@@ -358,6 +362,19 @@ class AccountStrategyReportResponse(BaseModel):
     )
     generated_at: Optional[str] = Field(
         default=None, description="ISO timestamp of the last generation.",
+    )
+
+
+class EnsureThumbnailsRequest(BaseModel):
+    post_ids: List[str] = Field(default_factory=list)
+
+
+class EnsureThumbnailsResponse(BaseModel):
+    thumbnails: dict[str, str] = Field(default_factory=dict)
+    pending: int = Field(
+        default=0,
+        ge=0,
+        description="Posts queued for slow background mirroring.",
     )
 
 

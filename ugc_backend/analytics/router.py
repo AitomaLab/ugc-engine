@@ -40,6 +40,8 @@ from .models import (
     AnalyzeVideoResponse,
     BreakdownOut,
     CumulativeStatsResponse,
+    EnsureThumbnailsRequest,
+    EnsureThumbnailsResponse,
     PostDetailResponse,
     PostDurationPatch,
     PostRefreshRequest,
@@ -144,6 +146,7 @@ async def _scrape_account_for_user(
     *, user_id: str, platform: str, username: str,
     top_n: Optional[int] = None,
     follower_count: Optional[int] = None,
+    job_id: Optional[str] = None,
 ) -> dict:
     """Run an account-scrape end-to-end and return the result envelope used by
     `POST /tracked-accounts` and `POST /tracked-accounts/{id}/refresh`.
@@ -159,10 +162,13 @@ async def _scrape_account_for_user(
                 "error_message": f"Unsupported platform: {platform}"}
 
     cap = _effective_top_n(user_id, top_n, follower_count=follower_count)
-    job = analytics_db.create_scrape_job(
-        user_id, kind="account", input_value=profile_url, platform=platform
-    )
-    job_id = job["id"]
+    if job_id:
+        analytics_db.update_scrape_job(job_id, {"status": "running"})
+    else:
+        job = analytics_db.create_scrape_job(
+            user_id, kind="account", input_value=profile_url, platform=platform
+        )
+        job_id = job["id"]
     result = await scraper_service.scrape(
         input_value=profile_url,
         user_id=user_id,
@@ -218,9 +224,12 @@ async def _scrape_account_for_user(
 
     annotated = _annotate_breakdown_status(user_id, saved)
     account_extras: dict = {
-        "last_scraped_at": _iso_now(),
         "total_posts": len(saved) or None,
     }
+    # Only stamp last_scraped_at when the scrape finished in this request.
+    # Pending BrightData snapshots update the timestamp when resume completes.
+    if result.status == "completed":
+        account_extras["last_scraped_at"] = _iso_now()
     if follower_count is not None:
         # Migration 035 added `follower_count`; legacy `followers` from
         # migration 033 is kept in lock-step so any older code path that
@@ -799,19 +808,21 @@ async def api_create_tracked_account(
     )
 
 
-@router.post("/tracked-accounts/{account_id}/refresh", response_model=TrackedAccountWithJob)
-async def api_refresh_tracked_account(
+async def _refresh_tracked_account_pipeline(
+    user_id: str,
     account_id: str,
-    user: dict = Depends(get_current_user),
-):
-    """Refresh metrics for a tracked account.
-
-    Studio-linked accounts (OAuth via Connections) refresh Ayrshare metrics
-    for Studio-published posts only. External accounts re-run BrightData."""
-    user_id = user["id"]
+    *,
+    job_id: Optional[str] = None,
+) -> dict:
+    """Full refresh pipeline for one tracked account (scrape + metrics)."""
     account = analytics_db.get_tracked_account(user_id, account_id)
     if not account:
-        raise HTTPException(status_code=404, detail="Tracked account not found")
+        return {
+            "job_id": job_id,
+            "status": "failed",
+            "posts": [],
+            "error_message": "Tracked account not found",
+        }
 
     if account.get("linked_via_connections"):
         profile_key = analytics_db.get_ayrshare_profile_key(user_id)
@@ -820,15 +831,13 @@ async def api_refresh_tracked_account(
             if profile_key
             else {}
         )
-        # Always re-scrape + sync Studio publications when the user opens an
-        # account — OAuth-linked handles need both the public feed and any
-        # posts published via Schedule.
-        await _scrape_account_for_user(
+        result = await _scrape_account_for_user(
             user_id=user_id,
             platform=account["platform"],
             username=account["username"],
             top_n=account.get("top_n_retention"),
             follower_count=_account_follower_count(account),
+            job_id=job_id,
         )
         if profile_key and usernames:
             await studio_service.run_connected_accounts_pipeline(
@@ -843,22 +852,7 @@ async def api_refresh_tracked_account(
             username=account["username"],
             profile_key=profile_key,
         )
-        refreshed = analytics_db.get_tracked_account(user_id, account_id) or account
-        posts = analytics_db.list_account_posts(
-            user_id,
-            platform=account["platform"],
-            username=account["username"],
-            source=None,
-            sort="recent",
-            limit=50,
-        )
-        annotated = _annotate_breakdown_status(user_id, posts)
-        return TrackedAccountWithJob(
-            account=TrackedAccountOut(**refreshed),
-            job_id=None,
-            status="completed",
-            posts=[AnalyticsPostOut(**p) for p in annotated],
-        )
+        return result
 
     result = await _scrape_account_for_user(
         user_id=user_id,
@@ -866,6 +860,7 @@ async def api_refresh_tracked_account(
         username=account["username"],
         top_n=account.get("top_n_retention"),
         follower_count=_account_follower_count(account),
+        job_id=job_id,
     )
     await studio_service.refresh_account_metrics(
         user_id,
@@ -873,22 +868,49 @@ async def api_refresh_tracked_account(
         username=account["username"],
         profile_key=None,
     )
-    refreshed = analytics_db.get_tracked_account(user_id, account_id) or account
-    posts = analytics_db.list_account_posts(
+    return result
+
+
+@router.post("/tracked-accounts/{account_id}/refresh", response_model=TrackedAccountWithJob)
+async def api_refresh_tracked_account(
+    account_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Refresh metrics for a tracked account.
+
+    Returns immediately with a scrape ``job_id`` while BrightData / Ayrshare
+    work runs in a background thread. Poll ``GET /scrape-jobs/{job_id}`` for
+    completion, then re-fetch account posts.
+    """
+    user_id = user["id"]
+    account = analytics_db.get_tracked_account(user_id, account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Tracked account not found")
+
+    profile_url = _platform_profile_url(account["platform"], account["username"])
+    if not profile_url:
+        raise HTTPException(status_code=400, detail=f"Unsupported platform: {account['platform']}")
+
+    job = analytics_db.create_scrape_job(
         user_id,
+        kind="account",
+        input_value=profile_url,
         platform=account["platform"],
-        username=account["username"],
-        source=None,
-        sort="recent",
-        limit=50,
     )
-    annotated = _annotate_breakdown_status(user_id, posts)
+    job_id = job["id"]
+    analytics_db.update_scrape_job(job_id, {"status": "running"})
+
+    analytics_jobs.run_account_refresh_in_background(
+        user_id,
+        account_id,
+        job_id,
+    )
+
     return TrackedAccountWithJob(
-        account=TrackedAccountOut(**refreshed),
-        job_id=result["job_id"],
-        status=result["status"],
-        posts=[AnalyticsPostOut(**p) for p in annotated],
-        error_message=result["error_message"],
+        account=TrackedAccountOut(**account),
+        job_id=job_id,
+        status="running",
+        posts=[],
     )
 
 
@@ -1104,6 +1126,7 @@ def api_list_accounts_with_aggregates(
         total_views = sum(int(p.get("views") or 0) for p in posts)
         total_eng = sum(int(p.get("total_engagement") or 0) for p in posts)
         posts_in_period = len(posts)
+        posts_total = len(posts_for_er)
         followers = int(a.get("follower_count") or a.get("followers") or 0)
         avg_eng_rate = analytics_db.compute_engagement_rate(posts_for_er, followers)
         total_posts_all += posts_in_period
@@ -1188,39 +1211,45 @@ def api_account_trend(
 @router.get("/accounts/{account_id}/top-posts", response_model=AccountTopPostsResponse)
 def api_account_top_posts(
     account_id: str,
-    limit: int = Query(default=200, ge=1, le=200),
+    limit: int = Query(default=48, ge=1, le=200),
     sort: str = Query(default="recent", pattern="^(recent|engagement)$"),
     user: dict = Depends(get_current_user),
 ):
     account = analytics_db.get_tracked_account(user["id"], account_id)
     if not account:
         raise HTTPException(status_code=404, detail="Tracked account not found")
+
+    plat = account["platform"]
+    username = account["username"]
+    user_id = user["id"]
+
+    # Sync Studio metrics onto matching scraped duplicates (cheap DB patches).
+    metrics_updated = studio_service.propagate_studio_metrics_to_scraped_posts(
+        user_id,
+        platform=plat,
+        username=username,
+    )
+
+    # One full fetch for header averages; re-fetch only when propagation changed rows.
     all_posts = analytics_db.list_account_posts(
-        user["id"],
-        platform=account["platform"],
-        username=account["username"],
+        user_id,
+        platform=plat,
+        username=username,
         source=None,
         sort=sort,
         limit=500,
     )
-    studio_service.propagate_studio_metrics_to_scraped_posts(
-        user["id"],
-        platform=account["platform"],
-        username=account["username"],
-    )
-    all_posts = analytics_db.list_account_posts(
-        user["id"],
-        platform=account["platform"],
-        username=account["username"],
-        source=None,
-        sort=sort,
-        limit=500,
-    )
-    top_posts = _annotate_breakdown_status(user["id"], all_posts)
-    top_posts = scraper_service.ensure_post_thumbnails_sync(
-        top_posts, user_id=user["id"],
-    )
-    # Studio-vs-external delta for the modal header.
+    if metrics_updated > 0:
+        all_posts = analytics_db.list_account_posts(
+            user_id,
+            platform=plat,
+            username=username,
+            source=None,
+            sort=sort,
+            limit=500,
+        )
+
+    # Studio-vs-external delta for the modal header (computed from full set).
     internal_eng = [int(p.get("total_engagement") or 0) for p in all_posts if p.get("source") == "internal"]
     external_eng = [int(p.get("total_engagement") or 0) for p in all_posts if p.get("source") == "external"]
     studio_avg = round(sum(internal_eng) / len(internal_eng), 1) if internal_eng else None
@@ -1228,6 +1257,21 @@ def api_account_top_posts(
     delta_pct: Optional[float] = None
     if studio_avg is not None and external_avg and external_avg > 0:
         delta_pct = round(((studio_avg - external_avg) / external_avg) * 100.0, 1)
+
+    # Return only the requested page — no synchronous thumbnail mirroring on GET.
+    page_posts = all_posts[:limit]
+    top_posts = _annotate_breakdown_status(user_id, page_posts)
+
+    # Kick off background mirroring for cards that still lack a stable poster.
+    needs_mirror = [
+        p for p in top_posts
+        if not scraper_service._stable_image_thumbnail(p.get("thumbnail_url"))
+    ]
+    if needs_mirror:
+        scraper_service._mirror_posts_in_background([
+            {**p, "user_id": user_id} for p in needs_mirror
+        ])
+
     return AccountTopPostsResponse(
         account_id=account_id,
         posts=[AnalyticsPostOut(**p) for p in top_posts],
@@ -1238,6 +1282,47 @@ def api_account_top_posts(
 
 
 # ── Thumbnail backfill (one-shot maintenance) ─────────────────────────────
+
+@router.post("/posts/ensure-thumbnails", response_model=EnsureThumbnailsResponse)
+def api_ensure_post_thumbnails(
+    body: EnsureThumbnailsRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Mirror or generate stable poster images for analytics post cards.
+
+    Fast path (image CDN copy + ffmpeg remote frame grab) runs synchronously.
+    Full video mirrors are queued in the background so the UI can paint
+    thumbnails progressively without blocking the account modal.
+    """
+    user_id = user["id"]
+    post_ids = [pid for pid in (body.post_ids or []) if pid][:48]
+    if not post_ids:
+        return EnsureThumbnailsResponse(thumbnails={}, pending=0)
+
+    rows = analytics_db.list_posts_by_ids(user_id, post_ids)
+    if not rows:
+        return EnsureThumbnailsResponse(thumbnails={}, pending=0)
+
+    updated, deferred = scraper_service.ensure_post_thumbnails_sync(
+        rows,
+        user_id=user_id,
+        allow_full_video_mirror=False,
+    )
+    if deferred:
+        scraper_service._mirror_posts_in_background(deferred)
+
+    thumbnails: dict[str, str] = {}
+    for post in updated:
+        pid = str(post.get("id") or "")
+        thumb = post.get("thumbnail_url")
+        if pid and scraper_service._stable_image_thumbnail(thumb):
+            thumbnails[pid] = thumb
+
+    return EnsureThumbnailsResponse(
+        thumbnails=thumbnails,
+        pending=len(deferred),
+    )
+
 
 @router.post("/posts/backfill-thumbnails")
 def api_backfill_thumbnails(

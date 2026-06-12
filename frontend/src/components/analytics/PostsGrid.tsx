@@ -2,7 +2,7 @@
 
 import { useTranslation } from '@/lib/i18n';
 import PostCard from './PostCard';
-import type { AnalyticsPost, TrackedAccount } from './analytics-types';
+import { useAnalyticsPostThumbnails, type AnalyticsPost, type TrackedAccount } from './analytics-types';
 
 interface Props {
     posts: AnalyticsPost[];
@@ -103,6 +103,7 @@ export default function PostsGrid({
     trackedAccounts, onDelete,
 }: Props) {
     const { t } = useTranslation();
+    const thumbMap = useAnalyticsPostThumbnails(posts);
     if (loading) return <GridSkeleton />;
     if (!posts.length) return <EmptyState />;
     return (
@@ -118,6 +119,7 @@ export default function PostsGrid({
                     <PostCard
                         key={p.id}
                         post={p}
+                        thumbnailUrl={thumbMap[p.id]}
                         onOpen={onOpen}
                         trackedAccounts={trackedAccounts}
                         onDelete={onDelete}

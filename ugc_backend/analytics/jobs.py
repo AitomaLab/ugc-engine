@@ -125,6 +125,47 @@ def run_linked_account_analyze_in_background(
     ).start()
 
 
+def run_account_refresh_in_background(
+    user_id: str,
+    account_id: str,
+    job_id: str,
+) -> None:
+    """Run the full tracked-account refresh pipeline without blocking HTTP."""
+
+    def _runner() -> None:
+        try:
+            from ugc_backend.analytics.router import _refresh_tracked_account_pipeline
+
+            asyncio.run(
+                _refresh_tracked_account_pipeline(
+                    user_id,
+                    account_id,
+                    job_id=job_id,
+                )
+            )
+        except Exception as exc:
+            logger.warning(
+                "[analytics] account refresh failed account=%s job=%s: %s",
+                account_id,
+                job_id,
+                exc,
+            )
+            analytics_db.update_scrape_job(
+                job_id,
+                {
+                    "status": "failed",
+                    "error_message": str(exc)[:500],
+                    "completed_at": _iso_now(),
+                },
+            )
+
+    threading.Thread(
+        target=_runner,
+        daemon=True,
+        name=f"analytics-account-refresh-{job_id[:8]}",
+    ).start()
+
+
 def run_scrape_resume_in_background(
     user_id: str,
     job_id: str,

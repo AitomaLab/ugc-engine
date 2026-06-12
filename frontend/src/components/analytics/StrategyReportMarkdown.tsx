@@ -11,8 +11,16 @@ import React from 'react';
  * syntax simply falls through as plain text.
  */
 
+type OrderedItem = {
+    content: string;
+    subItems: string[];
+};
+
+type ListBuffer =
+    | { ordered: true; items: OrderedItem[] }
+    | { ordered: false; items: string[] };
+
 function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
-    // Split on **bold** spans, keeping the delimiters via capture group.
     const parts = text.split(/(\*\*[^*]+\*\*)/g);
     return parts.map((part, i) => {
         const bold = /^\*\*([^*]+)\*\*$/.exec(part);
@@ -27,34 +35,138 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
     });
 }
 
+function renderOrderedList(items: OrderedItem[], key: string): React.ReactNode {
+    return (
+        <div
+            key={key}
+            style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+                margin: '8px 0 14px',
+            }}
+        >
+            {items.map((item, i) => (
+                <div
+                    key={`${key}-${i}`}
+                    style={{
+                        display: 'flex',
+                        gap: 12,
+                        padding: '12px 14px',
+                        background: 'var(--blue-light)',
+                        border: '1px solid var(--border)',
+                        borderRadius: 10,
+                    }}
+                >
+                    <div
+                        aria-hidden
+                        style={{
+                            width: 28,
+                            height: 28,
+                            borderRadius: '50%',
+                            background: 'var(--blue)',
+                            color: '#fff',
+                            fontSize: 13,
+                            fontWeight: 700,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flexShrink: 0,
+                        }}
+                    >
+                        {i + 1}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                        <div
+                            style={{
+                                fontSize: 13,
+                                fontWeight: 600,
+                                color: 'var(--text-1)',
+                                lineHeight: 1.45,
+                                marginBottom: item.subItems.length ? 6 : 0,
+                            }}
+                        >
+                            {renderInline(item.content, `${key}-${i}-c`)}
+                        </div>
+                        {item.subItems.length > 0 && (
+                            <ul
+                                style={{
+                                    margin: 0,
+                                    paddingLeft: 18,
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: 4,
+                                    fontSize: 13,
+                                    lineHeight: 1.55,
+                                    color: 'var(--text-2)',
+                                }}
+                            >
+                                {item.subItems.map((sub, j) => (
+                                    <li key={`${key}-${i}-s-${j}`}>
+                                        {renderInline(sub, `${key}-${i}-s-${j}`)}
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                    </div>
+                </div>
+            ))}
+        </div>
+    );
+}
+
+function renderUnorderedList(items: string[], key: string): React.ReactNode {
+    return (
+        <ul
+            key={key}
+            style={{
+                margin: '4px 0 10px',
+                paddingLeft: 20,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 4,
+                fontSize: 13,
+                lineHeight: 1.55,
+                color: 'var(--text-2)',
+            }}
+        >
+            {items.map((it, i) => (
+                <li key={`${key}-i-${i}`}>{renderInline(it, `${key}-i-${i}`)}</li>
+            ))}
+        </ul>
+    );
+}
+
 export default function StrategyReportMarkdown({ source }: { source: string }) {
     const lines = source.replace(/\r\n/g, '\n').split('\n');
     const blocks: React.ReactNode[] = [];
-    let listBuffer: { ordered: boolean; items: string[] } | null = null;
+    let listBuffer: ListBuffer | null = null;
 
     const flushList = () => {
         if (!listBuffer) return;
-        const { ordered, items } = listBuffer;
         const key = `list-${blocks.length}`;
-        const style: React.CSSProperties = {
-            margin: '4px 0 10px',
-            paddingLeft: 20,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 4,
-            fontSize: 13,
-            lineHeight: 1.55,
-            color: 'var(--text-2)',
-        };
-        const children = items.map((it, i) => (
-            <li key={`${key}-i-${i}`}>{renderInline(it, `${key}-i-${i}`)}</li>
-        ));
-        blocks.push(
-            ordered
-                ? <ol key={key} style={style}>{children}</ol>
-                : <ul key={key} style={style}>{children}</ul>,
-        );
+        if (listBuffer.ordered) {
+            blocks.push(renderOrderedList(listBuffer.items, key));
+        } else {
+            blocks.push(renderUnorderedList(listBuffer.items, key));
+        }
         listBuffer = null;
+    };
+
+    const appendOrderedItem = (content: string) => {
+        if (!listBuffer || !listBuffer.ordered) {
+            flushList();
+            listBuffer = { ordered: true, items: [] };
+        }
+        listBuffer.items.push({ content, subItems: [] });
+    };
+
+    const appendBulletToOrdered = (content: string) => {
+        if (listBuffer?.ordered && listBuffer.items.length > 0) {
+            listBuffer.items[listBuffer.items.length - 1].subItems.push(content);
+            return true;
+        }
+        return false;
     };
 
     lines.forEach((raw, idx) => {
@@ -62,7 +174,8 @@ export default function StrategyReportMarkdown({ source }: { source: string }) {
         const trimmed = line.trim();
 
         if (!trimmed) {
-            flushList();
+            // Blank lines do not terminate lists — LLM output often separates
+            // numbered items and their sub-bullets with empty lines.
             return;
         }
 
@@ -89,23 +202,20 @@ export default function StrategyReportMarkdown({ source }: { source: string }) {
             return;
         }
 
-        const bullet = /^[-*]\s+(.*)$/.exec(trimmed);
+        const ordered = /^\d+\.\s+(.*)$/.exec(trimmed);
+        if (ordered) {
+            appendOrderedItem(ordered[1]);
+            return;
+        }
+
+        const bullet = /^[-*•]\s+(.*)$/.exec(trimmed);
         if (bullet) {
+            if (appendBulletToOrdered(bullet[1])) return;
             if (!listBuffer || listBuffer.ordered) {
                 flushList();
                 listBuffer = { ordered: false, items: [] };
             }
             listBuffer.items.push(bullet[1]);
-            return;
-        }
-
-        const ordered = /^\d+\.\s+(.*)$/.exec(trimmed);
-        if (ordered) {
-            if (!listBuffer || !listBuffer.ordered) {
-                flushList();
-                listBuffer = { ordered: true, items: [] };
-            }
-            listBuffer.items.push(ordered[1]);
             return;
         }
 

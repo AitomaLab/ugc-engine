@@ -8,7 +8,7 @@
  * './analytics-types'` without polluting `lib/types.ts` with React hooks.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '@/lib/utils';
 import { clearAllAuthState } from '@/lib/supabaseClient';
 import type {
@@ -78,6 +78,19 @@ const VIDEO_URL_RE = /\.(mp4|webm|mov|avi|mkv|m4v)(\?.*)?$/i;
 export function isVideoMediaUrl(url: string | undefined): boolean {
     if (!url) return false;
     return VIDEO_URL_RE.test(url);
+}
+
+const SUPABASE_STORAGE_RE = /\/storage\/v1\/object\/public\//i;
+
+/** True when the post already has a durable Supabase-hosted poster image. */
+export function hasStablePostThumbnail(post: AnalyticsPost): boolean {
+    const thumb = post.thumbnail_url;
+    if (!thumb || isVideoMediaUrl(thumb)) return false;
+    return SUPABASE_STORAGE_RE.test(thumb);
+}
+
+export function postNeedsThumbnailFetch(post: AnalyticsPost): boolean {
+    return !hasStablePostThumbnail(post);
 }
 
 /**
@@ -203,8 +216,6 @@ export interface ScrapeJobPollResponse {
     posts_found: number;
     error_message?: string | null;
 }
-
-/** Poll a scrape job until BrightData finishes or times out. */
 export async function pollScrapeJob(
     jobId: string,
     opts?: { maxMs?: number; intervalMs?: number },
@@ -265,6 +276,7 @@ export interface AnalyticsStats {
     total_engagement: number;
     avg_engagement_rate: number;
     posts_tracked: number;
+    posts_total?: number;
     views_delta_pct: number;
     engagement_delta_pct: number;
     posts_delta_pct: number;
@@ -473,8 +485,47 @@ export function useAnalyticsStats(
 ) {
     const [data, setData] = useState<AnalyticsStats | null>(null);
     const [loading, setLoading] = useState(true);
+    const requestGen = useRef(0);
+    const prevAccountKey = useRef('');
 
     const accountKey = account ? `${account.platform}:${account.username}` : '';
+    const scopeKey = `${periodToApiParam(period)}|${platform}|${source}|${accountKey}|${refreshKey}`;
+
+    useEffect(() => {
+        let cancelled = false;
+        const gen = ++requestGen.current;
+        if (prevAccountKey.current !== accountKey) {
+            setData(null);
+            prevAccountKey.current = accountKey;
+        }
+        setLoading(true);
+
+        const effectivePlatform = account ? account.platform : platform;
+        const params = new URLSearchParams({
+            period: periodToApiParam(period),
+            platform: effectivePlatform,
+            source,
+        });
+        if (account) params.set('username', account.username);
+
+        (async () => {
+            try {
+                const res = await analyticsFetch<AnalyticsStats>(
+                    `/api/analytics/stats?${params.toString()}`,
+                    { skipProjectScope: true },
+                );
+                if (!cancelled && gen === requestGen.current) setData(res);
+            } catch {
+                if (!cancelled && gen === requestGen.current) setData(emptyStats());
+            } finally {
+                if (!cancelled && gen === requestGen.current) setLoading(false);
+            }
+        })();
+
+        return () => { cancelled = true; };
+    // scopeKey encodes period, platform, source, accountKey, refreshKey
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [scopeKey]);
 
     const reload = useCallback(async () => {
         setLoading(true);
@@ -496,11 +547,7 @@ export function useAnalyticsStats(
         } finally {
             setLoading(false);
         }
-    }, [period, platform, source, accountKey, refreshKey]);
-
-    useEffect(() => {
-        reload();
-    }, [reload]);
+    }, [period, platform, source, accountKey, refreshKey, account]);
 
     return { data, loading, reload };
 }
@@ -511,6 +558,7 @@ function emptyStats(): AnalyticsStats {
         total_engagement: 0,
         avg_engagement_rate: 0,
         posts_tracked: 0,
+        posts_total: 0,
         views_delta_pct: 0,
         engagement_delta_pct: 0,
         posts_delta_pct: 0,
@@ -534,8 +582,49 @@ export function useAnalyticsCumulative(
 ) {
     const [data, setData] = useState<CumulativeStatsResponse | null>(null);
     const [loading, setLoading] = useState(true);
+    const requestGen = useRef(0);
+    const prevAccountKey = useRef('');
 
     const accountKey = account ? `${account.platform}:${account.username}` : '';
+    const scopeKey = `${periodToApiParam(period)}|${platform}|${source}|${accountKey}|${refreshKey}`;
+
+    useEffect(() => {
+        let cancelled = false;
+        const gen = ++requestGen.current;
+        if (prevAccountKey.current !== accountKey) {
+            setData(null);
+            prevAccountKey.current = accountKey;
+        }
+        setLoading(true);
+
+        const effectivePlatform = account ? account.platform : platform;
+        const params = new URLSearchParams({
+            period: periodToApiParam(period),
+            platform: effectivePlatform,
+            source,
+        });
+        if (account) params.set('username', account.username);
+
+        (async () => {
+            try {
+                const res = await analyticsFetch<CumulativeStatsResponse>(
+                    `/api/analytics/stats/cumulative?${params.toString()}`,
+                    { skipProjectScope: true },
+                );
+                if (!cancelled && gen === requestGen.current) setData(res);
+            } catch {
+                if (!cancelled && gen === requestGen.current) {
+                    setData({ points: [], total_views: 0, total_engagement: 0, total_posts: 0 });
+                }
+            } finally {
+                if (!cancelled && gen === requestGen.current) setLoading(false);
+            }
+        })();
+
+        return () => { cancelled = true; };
+    // scopeKey encodes period, platform, source, accountKey, refreshKey
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [scopeKey]);
 
     const reload = useCallback(async () => {
         setLoading(true);
@@ -557,11 +646,7 @@ export function useAnalyticsCumulative(
         } finally {
             setLoading(false);
         }
-    }, [period, platform, source, accountKey, refreshKey]);
-
-    useEffect(() => {
-        reload();
-    }, [reload]);
+    }, [period, platform, source, accountKey, refreshKey, account]);
 
     return { data, loading, reload };
 }
@@ -686,8 +771,11 @@ export interface AccountTopPostsResponse {
     studio_vs_external_pct: number | null;
 }
 
+const topPostsCache = new Map<string, { data: AccountTopPostsResponse; fetchedAt: number }>();
+const TOP_POSTS_CACHE_MS = 60_000;
+
 /** Latest posts + Studio-vs-External delta for the account detail modal. */
-export function useAccountTopPosts(accountId: string | null, limit = 200, refreshKey = 0) {
+export function useAccountTopPosts(accountId: string | null, limit = 48, refreshKey = 0) {
     const [data, setData] = useState<AccountTopPostsResponse | null>(null);
     const [loading, setLoading] = useState(false);
 
@@ -697,13 +785,24 @@ export function useAccountTopPosts(accountId: string | null, limit = 200, refres
             return;
         }
         let cancelled = false;
+        const cacheKey = `${accountId}:${limit}`;
+        const cached = topPostsCache.get(cacheKey);
+        if (cached && refreshKey === 0 && Date.now() - cached.fetchedAt < TOP_POSTS_CACHE_MS) {
+            setData(cached.data);
+            setLoading(false);
+            return;
+        }
+
         setLoading(true);
         analyticsFetch<AccountTopPostsResponse>(
             `/api/analytics/accounts/${accountId}/top-posts?limit=${limit}&sort=recent`,
             { skipProjectScope: true },
         )
             .then((res) => {
-                if (!cancelled) setData(res);
+                if (!cancelled) {
+                    setData(res);
+                    topPostsCache.set(cacheKey, { data: res, fetchedAt: Date.now() });
+                }
             })
             .catch(() => {
                 if (!cancelled) setData({
@@ -720,6 +819,69 @@ export function useAccountTopPosts(accountId: string | null, limit = 200, refres
     }, [accountId, limit, refreshKey]);
 
     return { data, loading };
+}
+
+export interface EnsureThumbnailsResponse {
+    thumbnails: Record<string, string>;
+    pending: number;
+}
+
+const THUMBNAIL_BATCH_LIMIT = 48;
+const THUMBNAIL_RETRY_MS = 10_000;
+
+/**
+ * Lazily mirrors / generates stable poster thumbnails for analytics posts
+ * whose cards would otherwise show the gray placeholder (expired CDN URLs,
+ * video-only reels, missing thumbnail_url rows).
+ */
+export function useAnalyticsPostThumbnails(posts: AnalyticsPost[]) {
+    const [thumbMap, setThumbMap] = useState<Record<string, string>>({});
+    const inFlight = useRef<Set<string>>(new Set());
+    const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const postsRef = useRef(posts);
+    postsRef.current = posts;
+    const postIdsKey = posts.map((p) => p.id).join(',');
+
+    const fetchThumbnails = useCallback(async (candidates: AnalyticsPost[]) => {
+        const need = candidates
+            .filter((p) => p.id && postNeedsThumbnailFetch(p) && !inFlight.current.has(p.id))
+            .slice(0, THUMBNAIL_BATCH_LIMIT);
+        if (!need.length) return;
+
+        need.forEach((p) => inFlight.current.add(p.id));
+
+        try {
+            const res = await analyticsFetch<EnsureThumbnailsResponse>(
+                '/api/analytics/posts/ensure-thumbnails',
+                {
+                    method: 'POST',
+                    body: JSON.stringify({ post_ids: need.map((p) => p.id) }),
+                    skipProjectScope: true,
+                },
+            );
+            if (res?.thumbnails && Object.keys(res.thumbnails).length > 0) {
+                setThumbMap((prev) => ({ ...prev, ...res.thumbnails }));
+            }
+            if (res?.pending > 0) {
+                if (retryTimer.current) clearTimeout(retryTimer.current);
+                retryTimer.current = setTimeout(() => {
+                    need.forEach((p) => inFlight.current.delete(p.id));
+                    fetchThumbnails(need);
+                }, THUMBNAIL_RETRY_MS);
+            }
+        } catch {
+            need.forEach((p) => inFlight.current.delete(p.id));
+        }
+    }, []);
+
+    useEffect(() => {
+        fetchThumbnails(postsRef.current);
+        return () => {
+            if (retryTimer.current) clearTimeout(retryTimer.current);
+        };
+    }, [postIdsKey, fetchThumbnails]);
+
+    return thumbMap;
 }
 
 export interface AccountStrategyReportResponse {

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from '@/lib/i18n';
 import {
     analyticsFetch,
+    pollScrapeJob,
     timeAgo,
     type AnalyticsPlatform,
     type TrackedAccount,
@@ -89,7 +90,15 @@ export default function TrackedAccountsManager({ onChanged }: Props) {
                 `/api/analytics/tracked-accounts/${id}/refresh`,
                 { method: 'POST', skipProjectScope: true },
             );
-            if (res.status === 'failed' && res.error_message) {
+            if (
+                (res.status === 'pending' || res.status === 'running')
+                && res.job_id
+            ) {
+                const polled = await pollScrapeJob(res.job_id);
+                if (polled.status === 'failed') {
+                    setError(polled.error_message || 'Scrape failed');
+                }
+            } else if (res.status === 'failed' && res.error_message) {
                 setError(res.error_message);
             }
             await reload();

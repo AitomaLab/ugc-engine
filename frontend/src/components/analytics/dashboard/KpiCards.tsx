@@ -23,12 +23,17 @@ interface Props {
  */
 export default function KpiCards({ stats, loading }: Props) {
     const { t } = useTranslation();
-    const data = stats ?? FALLBACK;
+    if (loading || !stats) {
+        return null;
+    }
+    const data = stats;
 
     const enRatePct = Math.min(100, Math.max(0, data.avg_engagement_rate));
+    const hasPosts = (data.posts_total ?? data.posts_tracked) > 0;
+    const showPostsTotal = (data.posts_total ?? 0) > data.posts_tracked;
 
     return (
-        <div className="dash-kpi-grid" style={{ opacity: loading ? 0.7 : 1, transition: 'opacity 0.15s ease' }}>
+        <div className="dash-kpi-grid">
             <DashCard>
                 <CardLabel icon={<EyeIcon />}>{t('analytics.dashboard.kpi.totalViews')}</CardLabel>
                 <CardValue>{formatCount(data.total_views)}</CardValue>
@@ -39,8 +44,14 @@ export default function KpiCards({ stats, loading }: Props) {
             <DashCard>
                 <CardLabel icon={<HeartIcon />}>{t('analytics.dashboard.kpi.engagementRate')}</CardLabel>
                 <CardValue>
-                    {enRatePct.toFixed(1)}
-                    <span style={{ fontSize: 24, color: '#94A3B8', marginLeft: 4 }}>%</span>
+                    {hasPosts ? (
+                        <>
+                            {enRatePct.toFixed(1)}
+                            <span style={{ fontSize: 24, color: '#94A3B8', marginLeft: 4 }}>%</span>
+                        </>
+                    ) : (
+                        <span style={{ fontSize: 28, color: '#94A3B8' }}>—</span>
+                    )}
                 </CardValue>
                 <DeltaPill delta={data.engagement_delta_pct} />
                 <CardSpark values={data.daily_engagement} />
@@ -49,6 +60,11 @@ export default function KpiCards({ stats, loading }: Props) {
             <DashCard accent>
                 <CardLabel icon={<StackIcon />}>{t('analytics.dashboard.kpi.totalPosted')}</CardLabel>
                 <CardValue>{formatCount(data.posts_tracked)}</CardValue>
+                {showPostsTotal && (
+                    <div style={{ marginTop: 4, fontSize: 11, fontWeight: 600, color: '#64748B' }}>
+                        {formatCount(data.posts_total)} total in library
+                    </div>
+                )}
                 <DeltaPill delta={data.posts_delta_pct} />
                 <CardSpark values={data.daily_posts} />
             </DashCard>
@@ -171,18 +187,3 @@ function StackIcon() {
         </svg>
     );
 }
-
-const FALLBACK = {
-    total_views: 0,
-    total_engagement: 0,
-    avg_engagement_rate: 0,
-    posts_tracked: 0,
-    views_delta_pct: 0,
-    engagement_delta_pct: 0,
-    posts_delta_pct: 0,
-    daily_views: [] as number[],
-    daily_engagement: [] as number[],
-    daily_posts: [] as number[],
-    platform_distribution: [],
-    content_type_distribution: [],
-};

@@ -63,24 +63,102 @@ def compute_engagement_rate(
     posts: Iterable[dict],
     follower_count: Optional[int],
 ) -> float:
-    """Industry-standard Engagement Rate:
+    """Engagement Rate for dashboard KPIs.
+
+    Primary (industry standard when followers are known):
 
     ``(average_engagement_per_post / follower_count) × 100``
 
-    where engagement-per-post = likes + comments + shares + saves (read from
-    the stored ``total_engagement`` column when present). Division-by-zero
-    safe — returns ``0.0`` when there are no posts or no known follower count.
+    Fallback when follower count is missing (common on freshly-added
+    external accounts before the next profile scrape patches
+    ``follower_count``):
+
+    ``(total_engagement / total_views) × 100`` — the "engagement per view"
+    rate IG/TikTok surface in native analytics when plays are available.
     """
-    fc = int(follower_count or 0)
-    if fc <= 0:
-        return 0.0
     rows = list(posts)
     if not rows:
         return 0.0
     n = len(rows)
     total_eng = sum(post_engagement(p) for p in rows)
-    avg_eng = total_eng / n
-    return round(avg_eng / fc * 100.0, 2)
+    fc = int(follower_count or 0)
+    if fc > 0:
+        return round((total_eng / n) / fc * 100.0, 2)
+    total_views = sum(int(p.get("views") or 0) for p in rows)
+    if total_views > 0:
+        return round(total_eng / total_views * 100.0, 2)
+    total_reach = sum(
+        int(p.get("impressions") or p.get("reach") or 0) for p in rows
+    )
+    if total_reach > 0:
+        return round(total_eng / total_reach * 100.0, 2)
+    return 0.0
+
+
+def _post_activity_date(post: dict):
+    """Best-effort calendar date for period filtering / sparklines."""
+    ts = post.get("posted_at") or post.get("added_at") or post.get("scraped_at")
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(str(ts).replace("Z", "+00:00")).date()
+    except Exception:
+        return None
+
+
+def _filter_posts_by_period(
+    posts: Iterable[dict],
+    period_days: Optional[int],
+) -> list[dict]:
+    """Keep posts whose activity date falls inside the rolling window."""
+    rows = list(posts)
+    if not period_days or period_days <= 0:
+        return rows
+    today = datetime.now(timezone.utc).date()
+    cutoff = today - timedelta(days=int(period_days) - 1)
+    filtered = [p for p in rows if (_d := _post_activity_date(p)) and _d >= cutoff]
+    # If timestamps are missing across the board, fall back to the full set
+    # rather than reporting zero — the scrape still happened.
+    if not filtered and rows and all(_post_activity_date(p) is None for p in rows):
+        return rows
+    return filtered
+
+
+def _fetch_dashboard_posts(
+    user_id: str,
+    *,
+    period_days: Optional[int] = None,
+    platform: Optional[str] = None,
+    source: Optional[str] = None,
+    username: Optional[str] = None,
+    limit: int = 500,
+) -> tuple[list[dict], list[dict]]:
+    """Return ``(period_rows, all_rows)`` for KPI / distribution helpers.
+
+    Account-scoped queries pull the full scraped library (up to ``limit``)
+    then slice by ``posted_at`` in Python so metrics aren't tied to
+    ``added_at`` (which clusters to the scrape timestamp).
+    """
+    cap = min(max(int(limit or 500), 1), 500)
+    if username and platform and platform != "all":
+        all_rows = list_account_posts(
+            user_id,
+            platform=platform,
+            username=username,
+            source=source if source and source != "all" else None,
+            limit=cap,
+        )
+    else:
+        all_rows = list_posts(
+            user_id,
+            platform=platform,
+            source=source,
+            username=username,
+            limit=cap,
+            tracked_only=True,
+        )
+    period_rows = _filter_posts_by_period(all_rows, period_days)
+    return period_rows, all_rows
 
 
 def mean_engagement_rate_for_accounts(
@@ -304,12 +382,6 @@ def list_posts(
         qry = qry.eq("source", source)
     if username:
         qry = qry.eq("username", username.lower())
-    if period_days:
-        cutoff = datetime.now(timezone.utc).timestamp() - period_days * 86400
-        iso = datetime.fromtimestamp(cutoff, tz=timezone.utc).isoformat()
-        # Filter by "when the user added the post to their tracking" rather
-        # than by the post's original publish date — see migration 034.
-        qry = qry.gte("added_at", iso)
     if q:
         qry = qry.ilike("caption", f"%{q}%")
 
@@ -333,9 +405,11 @@ def list_posts(
         # Cursor is an ISO scraped_at timestamp; paginate by recency to keep
         # things simple and stateless.
         qry = qry.lt("scraped_at", cursor)
-    qry = qry.limit(min(limit, 100))
+    qry = qry.limit(min(limit, 500))
     result = qry.execute()
     rows = result.data or []
+    if period_days:
+        rows = _filter_posts_by_period(rows, period_days)
     if tracked_only and not username:
         rows = _scope_rows_to_tracked_accounts(user_id, rows)
     return rows
@@ -392,6 +466,22 @@ def get_post(user_id: str, post_id: str) -> Optional[dict]:
         .execute()
     )
     return (result.data or [None])[0]
+
+
+def list_posts_by_ids(user_id: str, post_ids: list[str]) -> list[dict]:
+    """Fetch analytics posts by primary key, scoped to the user."""
+    ids = [pid for pid in post_ids if pid]
+    if not ids:
+        return []
+    sb = get_supabase()
+    res = (
+        sb.table("analytics_posts")
+        .select("*")
+        .eq("user_id", user_id)
+        .in_("id", ids)
+        .execute()
+    )
+    return res.data or []
 
 
 def list_internal_posts(user_id: str) -> list[dict]:
@@ -479,7 +569,7 @@ def stats(
     live in dedicated helpers (`stats_extras`, `stats_distribution`,
     `stats_cumulative`) so this contract stays stable.
     """
-    rows = list_posts(
+    rows, all_rows = _fetch_dashboard_posts(
         user_id,
         period_days=period_days,
         platform=platform,
@@ -490,14 +580,12 @@ def stats(
     total_views = sum(int(r.get("views") or 0) for r in rows)
     total_eng = sum(int(r.get("total_engagement") or 0) for r in rows)
     posts_tracked = len(rows)
+    posts_total = len(all_rows)
 
     if username and platform and platform != "all":
         acct = get_tracked_account_by_slug(user_id, platform=platform, username=username)
-        sample = list_account_posts(
-            user_id, platform=platform, username=username, source=source, limit=500,
-        ) if acct else rows
         fc = (acct or {}).get("follower_count") or (acct or {}).get("followers")
-        avg_rate = compute_engagement_rate(sample, fc)
+        avg_rate = compute_engagement_rate(all_rows, fc)
     else:
         accounts = list_tracked_accounts(user_id)
         if platform and platform != "all":
@@ -510,6 +598,7 @@ def stats(
         "total_engagement": total_eng,
         "avg_engagement_rate": avg_rate,
         "posts_tracked": posts_tracked,
+        "posts_total": posts_total,
     }
 
 
@@ -556,7 +645,7 @@ def stats_extras(
         - {views,engagement,posts}_delta_pct: % change vs. the equal-length
           previous window, ``0.0`` when there's no prior data to compare
     """
-    rows = list_posts(
+    rows, all_rows = _fetch_dashboard_posts(
         user_id,
         period_days=period_days,
         platform=platform,
@@ -590,23 +679,13 @@ def stats_extras(
         total_views = sum(int(r.get("views") or 0) for r in rows)
         total_eng = sum(int(r.get("total_engagement") or 0) for r in rows)
         posts_tracked = len(rows)
-        prev_end = datetime.now(timezone.utc) - timedelta(days=period_days)
-        prev_start = prev_end - timedelta(days=period_days)
-        sb = get_supabase()
-        prev_qry = (
-            sb.table("analytics_posts")
-            .select("views,total_engagement,added_at")
-            .eq("user_id", user_id)
-            .gte("added_at", prev_start.isoformat())
-            .lt("added_at", prev_end.isoformat())
-        )
-        if platform and platform != "all":
-            prev_qry = prev_qry.eq("platform", platform)
-        if source and source != "all":
-            prev_qry = prev_qry.eq("source", source)
-        if username:
-            prev_qry = prev_qry.eq("username", username.lower())
-        prev_rows = (prev_qry.limit(500).execute()).data or []
+        span = int(period_days)
+        prev_end = today - timedelta(days=span)
+        prev_start = today - timedelta(days=2 * span - 1)
+        prev_rows = [
+            p for p in all_rows
+            if (d := _post_activity_date(p)) and prev_start <= d <= prev_end
+        ]
         prev_views = sum(int(p.get("views") or 0) for p in prev_rows)
         prev_eng = sum(int(p.get("total_engagement") or 0) for p in prev_rows)
         prev_posts = len(prev_rows)
@@ -641,7 +720,7 @@ def stats_distribution(
     ``{platforms: {...}, media_types: {...}}`` shape promised by the
     architecture-reference doc — endpoint consumers can pick either.
     """
-    rows = list_posts(
+    rows, _all_rows = _fetch_dashboard_posts(
         user_id,
         period_days=period_days,
         platform=platform,
@@ -1103,15 +1182,16 @@ def list_account_posts(
     )
     if source:
         qry = qry.eq("source", source)
-    if period_days:
-        cutoff = datetime.now(timezone.utc).timestamp() - period_days * 86400
-        iso = datetime.fromtimestamp(cutoff, tz=timezone.utc).isoformat()
-        qry = qry.gte("added_at", iso)
+    # Period filtering is applied in Python via ``_filter_posts_by_period`` so
+    # dashboard metrics use publish date (``posted_at``) rather than scrape
+    # ingest time (``added_at``).
     if sort == "recent":
         qry = qry.order("posted_at", desc=True)
     else:
         qry = qry.order("total_engagement", desc=True)
     rows = qry.limit(min(limit, 500)).execute().data or []
+    if period_days:
+        rows = _filter_posts_by_period(rows, period_days)
     if sort == "recent":
         rows.sort(
             key=lambda r: str(r.get("posted_at") or r.get("added_at") or r.get("scraped_at") or ""),

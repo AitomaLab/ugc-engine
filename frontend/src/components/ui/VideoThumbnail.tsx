@@ -99,6 +99,7 @@ export default function VideoThumbnail({ previewUrl, videoUrl, alt = '', style }
           src={imageUrl}
           alt={alt}
           loading="lazy"
+          referrerPolicy="no-referrer"
           onLoad={() => setImgLoaded(true)}
           onError={() => setImgError(true)}
           style={{ ...baseStyle, opacity: imgLoaded ? 1 : 0, transition: 'opacity 0.2s ease' }}

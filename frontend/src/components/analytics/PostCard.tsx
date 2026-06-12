@@ -15,6 +15,8 @@ const PLATFORM_COLORS: Record<string, string> = {
 interface Props {
     post: AnalyticsPost;
     onOpen: (postId: string) => void;
+    /** Server-mirrored poster URL — merged over `post.thumbnail_url` when set. */
+    thumbnailUrl?: string;
     /**
      * Optional — passed by AnalyticsTab so we can derive a virality score
      * (`total_engagement / follower_count * 100`) for any post whose
@@ -59,7 +61,7 @@ function virialityScore(post: AnalyticsPost, followers: number | undefined): num
     return Math.round(score * 10) / 10;
 }
 
-export default function PostCard({ post, onOpen, trackedAccounts, onDelete }: Props) {
+export default function PostCard({ post, onOpen, thumbnailUrl, trackedAccounts, onDelete }: Props) {
     const { t } = useTranslation();
     const accent = PLATFORM_COLORS[post.platform] || 'var(--text-3)';
     const hasBreakdown = post.breakdown_status === 'completed';
@@ -68,7 +70,9 @@ export default function PostCard({ post, onOpen, trackedAccounts, onDelete }: Pr
     const virality = virialityScore(post, followers);
     const avatarUrl = owner?.avatar_url || undefined;
     const [removeHover, setRemoveHover] = useState(false);
-    const preview = resolvePostPreviewUrl(post);
+    const preview = resolvePostPreviewUrl(
+        thumbnailUrl ? { ...post, thumbnail_url: thumbnailUrl } : post,
+    );
     const displayViews = resolveDisplayViews(post);
 
     const handleRemove = (e: React.MouseEvent) => {

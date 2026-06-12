@@ -462,6 +462,13 @@ def _explode_instagram_profile(raw: dict, parsed: ParsedInput) -> list[dict]:
             or item.get("image_url") or item.get("cover_image")
             or item.get("display_uri")
         )
+        video_url = _instagram_video_url(item)
+        media_urls: list[dict] = []
+        if video_url:
+            media_urls.append({"url": video_url, "type": "video"})
+        elif thumb:
+            media_urls.append({"url": thumb, "type": "image"})
+        media_type = "video" if (item.get("is_video") or video_url) else "image"
         out.append({
             "source": "external",
             "platform": "instagram",
@@ -470,8 +477,8 @@ def _explode_instagram_profile(raw: dict, parsed: ParsedInput) -> list[dict]:
             "external_post_id": str(shortcode or item.get("id") or ""),
             "caption": item.get("description") or item.get("caption"),
             "hashtags": item.get("hashtags") or [],
-            "media_type": "video" if item.get("is_video") or item.get("video_url") else None,
-            "media_urls": [],
+            "media_type": media_type,
+            "media_urls": media_urls,
             "thumbnail_url": thumb,
             "duration_seconds": _coerce_float(
                 item.get("video_duration") or item.get("duration")
@@ -791,6 +798,69 @@ def _download_video_to_temp(video_url: str) -> Optional[Path]:
         return None
 
 
+def _thumbnail_from_raw_payload(post: dict) -> Optional[str]:
+    """Best-effort poster URL from the persisted BrightData envelope."""
+    raw = post.get("raw_payload")
+    if not isinstance(raw, dict):
+        return None
+    for key in (
+        "display_url", "thumbnail_url", "image_url", "display_uri",
+        "cover_url", "cover_image", "thumbnail",
+    ):
+        val = raw.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()[:8000]
+    return None
+
+
+def _extract_poster_from_remote_video_url(
+    *, video_url: str, user_id: str, post_id: str,
+) -> Optional[str]:
+    """Extract a single JPEG frame via ffmpeg without downloading the full video.
+
+    Much faster than ``_mirror_video_to_storage`` for card thumbnails. Falls
+    back gracefully when the CDN blocks direct reads or ffmpeg is unavailable.
+    """
+    binary = _ffmpeg_binary()
+    if not binary:
+        return None
+    import tempfile
+    fd, raw_path = tempfile.mkstemp(prefix="analytics_poster_", suffix=".jpg")
+    os.close(fd)
+    out_path = Path(raw_path)
+    try:
+        for seek in ("1", "0"):
+            proc = subprocess.run(
+                [
+                    binary, "-y",
+                    "-ss", seek,
+                    "-i", video_url,
+                    "-vframes", "1",
+                    "-q:v", "4",
+                    "-loglevel", "error",
+                    str(out_path),
+                ],
+                timeout=25,
+                capture_output=True,
+            )
+            if (
+                proc.returncode == 0
+                and out_path.exists()
+                and out_path.stat().st_size > 0
+            ):
+                return _upload_poster_to_storage(
+                    poster_path=out_path, user_id=user_id, post_id=post_id,
+                )
+        return None
+    except Exception:
+        return None
+    finally:
+        try:
+            out_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 def _extract_and_store_poster_from_video_url(
     *, video_url: str, user_id: str, post_id: str,
 ) -> Optional[str]:
@@ -828,17 +898,20 @@ def ensure_post_thumbnails_sync(
     posts: list[dict],
     *,
     user_id: str,
-) -> list[dict]:
+    allow_full_video_mirror: bool = True,
+) -> tuple[list[dict], list[dict]]:
     """Synchronously ensure each post has a Supabase-hosted poster image.
 
-    Called before returning account-detail post lists so cards never render
-    the gray placeholder while a background mirror thread is still running.
-    Updates the DB and returns post dicts with patched ``thumbnail_url``.
+    Returns ``(updated_posts, deferred_posts)``. Rows in ``deferred_posts``
+    still need a full video mirror and should be handed to
+    ``_mirror_posts_in_background`` when ``allow_full_video_mirror`` is
+    False (keeps API responses fast).
     """
     if not posts or not user_id:
-        return posts
+        return posts, []
 
     updated: list[dict] = []
+    deferred: list[dict] = []
     for post in posts:
         post_id = str(post.get("id") or "")
         if not post_id:
@@ -853,6 +926,7 @@ def ensure_post_thumbnails_sync(
         new_thumb: Optional[str] = None
         storage_video = post.get("storage_video_url")
         media_video = _first_media_video_url(post)
+        candidate_thumb = thumb or _thumbnail_from_raw_payload(post)
 
         # Prefer poster extraction from an already-mirrored Studio video.
         if storage_video:
@@ -860,27 +934,45 @@ def ensure_post_thumbnails_sync(
                 video_url=storage_video, user_id=user_id, post_id=post_id,
             )
         elif media_video and not post.get("storage_video_url"):
-            mirrored = _mirror_video_to_storage(
+            new_thumb = _extract_poster_from_remote_video_url(
                 video_url=media_video, user_id=user_id, post_id=post_id,
             )
-            if mirrored:
-                if mirrored.get("video_url"):
-                    try:
-                        analytics_db.set_post_storage_video_url(
-                            post_id, mirrored["video_url"],
-                        )
-                        post = {**post, "storage_video_url": mirrored["video_url"]}
-                    except Exception:
-                        pass
-                new_thumb = mirrored.get("thumbnail_url")
-        elif thumb and _looks_like_video_url(thumb):
-            new_thumb = _extract_and_store_poster_from_video_url(
-                video_url=thumb, user_id=user_id, post_id=post_id,
+            if not new_thumb and allow_full_video_mirror:
+                mirrored = _mirror_video_to_storage(
+                    video_url=media_video, user_id=user_id, post_id=post_id,
+                )
+                if mirrored:
+                    if mirrored.get("video_url"):
+                        try:
+                            analytics_db.set_post_storage_video_url(
+                                post_id, mirrored["video_url"],
+                            )
+                            post = {**post, "storage_video_url": mirrored["video_url"]}
+                        except Exception:
+                            pass
+                    new_thumb = mirrored.get("thumbnail_url")
+            elif not new_thumb:
+                deferred.append({**post, "user_id": user_id})
+        elif candidate_thumb and _looks_like_video_url(candidate_thumb):
+            new_thumb = _extract_poster_from_remote_video_url(
+                video_url=candidate_thumb, user_id=user_id, post_id=post_id,
             )
-        elif thumb and not _is_supabase_storage_url(thumb):
+            if not new_thumb and allow_full_video_mirror:
+                new_thumb = _extract_and_store_poster_from_video_url(
+                    video_url=candidate_thumb, user_id=user_id, post_id=post_id,
+                )
+            elif not new_thumb:
+                deferred.append({**post, "user_id": user_id})
+        elif candidate_thumb and not _is_supabase_storage_url(candidate_thumb):
             new_thumb = _mirror_thumbnail_to_storage(
-                image_url=thumb, user_id=user_id, post_id=post_id,
+                image_url=candidate_thumb, user_id=user_id, post_id=post_id,
             )
+        elif media_video:
+            new_thumb = _extract_poster_from_remote_video_url(
+                video_url=media_video, user_id=user_id, post_id=post_id,
+            )
+            if not new_thumb:
+                deferred.append({**post, "user_id": user_id})
 
         if new_thumb:
             try:
@@ -890,7 +982,7 @@ def ensure_post_thumbnails_sync(
             post = {**post, "thumbnail_url": new_thumb}
 
         updated.append(post)
-    return updated
+    return updated, deferred
 
 
 def mirror_avatar_to_storage(
@@ -1065,7 +1157,7 @@ def _mirror_posts_in_background(saved_posts: list[dict]) -> None:
             video_candidates.append((str(post_id), video_url))
             continue
         storage_video = post.get("storage_video_url")
-        thumb_url = post.get("thumbnail_url")
+        thumb_url = post.get("thumbnail_url") or _thumbnail_from_raw_payload(post)
         if storage_video and not _stable_image_thumbnail(thumb_url):
             poster_candidates.append((str(post_id), storage_video))
             continue
@@ -1474,11 +1566,23 @@ async def scrape(
             status="failed",
             error_message="Empty trigger payload — no URL could be derived from input.",
         )
-    trigger_row = {"url": trigger_url}
+    trigger_row: dict = {"url": trigger_url}
+    if parsed.kind == "account":
+        cap = min(int(top_n or analytics_db.DEFAULT_TOP_N), analytics_db.MAX_TOP_N)
+        if parsed.platform in ("instagram", "tiktok"):
+            trigger_row["num_of_posts"] = cap
 
     try:
         async with httpx.AsyncClient() as client:
-            snapshot_id = await _trigger_brightdata(dataset_id, [trigger_row], client=client)
+            rows_to_send = [trigger_row]
+            try:
+                snapshot_id = await _trigger_brightdata(dataset_id, rows_to_send, client=client)
+            except RuntimeError as trigger_err:
+                if "num_of_posts" in trigger_row and "validation" in str(trigger_err).lower():
+                    rows_to_send = [{"url": trigger_url}]
+                    snapshot_id = await _trigger_brightdata(dataset_id, rows_to_send, client=client)
+                else:
+                    raise
             if job_id:
                 analytics_db.update_scrape_job(job_id, {"status": "running", "snapshot_id": snapshot_id})
             records = await _poll_snapshot(snapshot_id, client=client)

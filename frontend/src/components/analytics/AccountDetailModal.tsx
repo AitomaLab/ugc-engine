@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from '@/lib/i18n';
 import Modal from './Modal';
 import PostCard from './PostCard';
@@ -9,11 +9,14 @@ import StrategyReportMarkdown from './StrategyReportMarkdown';
 import {
     analyticsFetch,
     formatCount,
+    pollScrapeJob,
     timeAgo,
     useAccountStrategyReport,
     useAccountTopPosts,
     useAccountTrend,
+    useAnalyticsPostThumbnails,
     type TrackedAccountAggregate,
+    type TrackedAccountWithJob,
 } from './analytics-types';
 
 interface Props {
@@ -59,9 +62,12 @@ const PLATFORM_ACCENT: Record<string, string> = {
  * URL is available (e.g. a freshly-added @handle whose BrightData scrape
  * didn't surface `profile_pic_url`).
  */
-function AvatarPuck({ url, platform }: { url?: string; platform: string }) {
+function AvatarPuck({ url, platform, pulsing }: { url?: string; platform: string; pulsing?: boolean }) {
     const accent = PLATFORM_ACCENT[platform] || 'var(--text-3)';
     const [broken, setBroken] = useState(false);
+    const ringStyle = pulsing
+        ? { boxShadow: `0 0 0 3px ${accent}33`, animation: 'accountRefreshPulse 1.2s ease-in-out infinite' }
+        : {};
     if (url && !broken) {
         return (
             // eslint-disable-next-line @next/next/no-img-element
@@ -77,6 +83,7 @@ function AvatarPuck({ url, platform }: { url?: string; platform: string }) {
                     border: '2px solid var(--border)',
                     background: 'var(--blue-light)',
                     flexShrink: 0,
+                    ...ringStyle,
                 }}
             />
         );
@@ -92,6 +99,7 @@ function AvatarPuck({ url, platform }: { url?: string; platform: string }) {
                 fontSize: 22, fontWeight: 800,
                 border: '2px solid var(--border)',
                 flexShrink: 0,
+                ...ringStyle,
             }}
         >
             {platform.slice(0, 1).toUpperCase()}
@@ -99,32 +107,86 @@ function AvatarPuck({ url, platform }: { url?: string; platform: string }) {
     );
 }
 
+function RefreshSpinner() {
+    return (
+        <span
+            aria-hidden
+            style={{
+                width: 14,
+                height: 14,
+                borderRadius: '50%',
+                border: '2px solid rgba(51,122,255,0.25)',
+                borderTopColor: 'var(--blue)',
+                animation: 'accountRefreshSpin 0.8s linear infinite',
+                flexShrink: 0,
+            }}
+        />
+    );
+}
+
 export default function AccountDetailModal({ account, onClose, onOpenPost, onRefreshed, avatarUrl }: Props) {
     const { t } = useTranslation();
     const [refreshKey, setRefreshKey] = useState(0);
-    const [syncing, setSyncing] = useState(true);
+    const [isRefreshing, setIsRefreshing] = useState(false);
+    const [lastScrapedAt, setLastScrapedAt] = useState<string | null>(account.last_scraped_at ?? null);
+    const [justUpdated, setJustUpdated] = useState(false);
     const [displayCount, setDisplayCount] = useState(24);
+    const justUpdatedTimer = useRef<number | null>(null);
+    const refreshInFlight = useRef(false);
+
+    const fetchLimit = displayCount === 0 ? 200 : Math.max(displayCount, 48);
+
     const { data: trend, loading: trendLoading } = useAccountTrend(account.id, 30, refreshKey);
-    const { data: top, loading: topLoading } = useAccountTopPosts(account.id, 200, refreshKey);
+    const { data: top, loading: topLoading } = useAccountTopPosts(account.id, fetchLimit, refreshKey);
     const { data: strategy, loading: strategyLoading } = useAccountStrategyReport(account.id, refreshKey);
 
-    /* Every open: scrape the public feed + sync Studio/Ayrshare posts, then
-     * reload the chart and latest-posts grid from fresh data. */
     useEffect(() => {
-        let cancelled = false;
-        setSyncing(true);
-        analyticsFetch(
-            `/api/analytics/tracked-accounts/${account.id}/refresh`,
-            { method: 'POST', skipProjectScope: true },
-        )
-            .catch(() => { /* show cached data if refresh fails */ })
-            .finally(() => {
-                if (cancelled) return;
-                setSyncing(false);
-                setRefreshKey((n) => n + 1);
-                onRefreshed?.();
-            });
-        return () => { cancelled = true; };
+        setLastScrapedAt(account.last_scraped_at ?? null);
+    }, [account.id, account.last_scraped_at]);
+
+    const markJustUpdated = useCallback(() => {
+        setJustUpdated(true);
+        if (justUpdatedTimer.current) window.clearTimeout(justUpdatedTimer.current);
+        justUpdatedTimer.current = window.setTimeout(() => setJustUpdated(false), 5000);
+    }, []);
+
+    const startBackgroundRefresh = useCallback(async () => {
+        if (refreshInFlight.current) return;
+        refreshInFlight.current = true;
+        setIsRefreshing(true);
+        try {
+            const res = await analyticsFetch<TrackedAccountWithJob>(
+                `/api/analytics/tracked-accounts/${account.id}/refresh`,
+                { method: 'POST', skipProjectScope: true },
+            );
+            if (res.account?.last_scraped_at) {
+                setLastScrapedAt(res.account.last_scraped_at);
+            }
+            if (res.job_id) {
+                const polled = await pollScrapeJob(res.job_id);
+                if (polled.status === 'completed') {
+                    setRefreshKey((n) => n + 1);
+                    markJustUpdated();
+                    setLastScrapedAt(new Date().toISOString());
+                    onRefreshed?.();
+                } else if (polled.status === 'failed') {
+                    console.warn('[AccountDetailModal] refresh failed:', polled.error_message);
+                }
+            }
+        } catch (err) {
+            console.warn('[AccountDetailModal] refresh error:', err);
+        } finally {
+            setIsRefreshing(false);
+            refreshInFlight.current = false;
+        }
+    }, [account.id, markJustUpdated, onRefreshed]);
+
+    /* Kick off a background refresh on open — cached posts render immediately. */
+    useEffect(() => {
+        startBackgroundRefresh();
+        return () => {
+            if (justUpdatedTimer.current) window.clearTimeout(justUpdatedTimer.current);
+        };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh once per account open
     }, [account.id]);
 
@@ -132,8 +194,18 @@ export default function AccountDetailModal({ account, onClose, onOpenPost, onRef
     const delta = top?.studio_vs_external_pct;
     const allPosts = top?.posts ?? [];
     const visiblePosts = displayCount > 0 ? allPosts.slice(0, displayCount) : allPosts;
+    const thumbMap = useAnalyticsPostThumbnails(visiblePosts);
 
     const resolvedAvatar = avatarUrl || account.avatar_url || undefined;
+
+    const refreshStatusLabel = (() => {
+        if (isRefreshing) return t('analytics.accounts.refreshingPostsStatus');
+        if (justUpdated) return t('analytics.accounts.updatedJustNow');
+        if (lastScrapedAt) {
+            return `${t('analytics.accounts.lastUpdated')} ${timeAgo(lastScrapedAt)}`;
+        }
+        return t('analytics.accounts.neverScraped');
+    })();
 
     return (
         <Modal
@@ -141,13 +213,23 @@ export default function AccountDetailModal({ account, onClose, onOpenPost, onRef
             onClose={onClose}
             maxWidth={920}
         >
+            <style>{`
+                @keyframes accountRefreshSpin {
+                    to { transform: rotate(360deg); }
+                }
+                @keyframes accountRefreshPulse {
+                    0%, 100% { box-shadow: 0 0 0 3px rgba(51,122,255,0.15); }
+                    50% { box-shadow: 0 0 0 5px rgba(51,122,255,0.35); }
+                }
+            `}</style>
+
             {/* Avatar header — visible profile identity for both Studio &
                 External accounts. Sits above the summary metric row so the
                 user doesn't have to read the modal title bar to know which
                 handle they're inspecting. */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                <AvatarPuck url={resolvedAvatar} platform={account.platform} />
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                <AvatarPuck url={resolvedAvatar} platform={account.platform} pulsing={isRefreshing} />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0, flex: 1 }}>
                     <span style={{
                         fontSize: 16, fontWeight: 800, color: 'var(--text-1)',
                         whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
@@ -172,6 +254,37 @@ export default function AccountDetailModal({ account, onClose, onOpenPost, onRef
                             </span>
                         )}
                     </span>
+                    <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        flexWrap: 'wrap',
+                        marginTop: 2,
+                    }}>
+                        {isRefreshing && <RefreshSpinner />}
+                        <span style={{ fontSize: 12, color: 'var(--text-3)', fontWeight: 500 }}>
+                            {refreshStatusLabel}
+                        </span>
+                        <button
+                            type="button"
+                            onClick={() => startBackgroundRefresh()}
+                            disabled={isRefreshing}
+                            style={{
+                                marginLeft: 'auto',
+                                padding: '4px 10px',
+                                borderRadius: 8,
+                                border: '1px solid var(--border)',
+                                background: isRefreshing ? 'var(--surface)' : 'white',
+                                color: 'var(--text-2)',
+                                fontSize: 11,
+                                fontWeight: 600,
+                                cursor: isRefreshing ? 'default' : 'pointer',
+                                opacity: isRefreshing ? 0.6 : 1,
+                            }}
+                        >
+                            {isRefreshing ? t('analytics.accounts.analyzing') : t('analytics.tracked.refresh')}
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -218,7 +331,7 @@ export default function AccountDetailModal({ account, onClose, onOpenPost, onRef
                 }
             </Section>
 
-            {/* Latest posts — all scraped posts loaded; dropdown controls grid density */}
+            {/* Latest posts — cached data shown while background refresh runs */}
             <Section
                 title={t('analytics.accounts.topPosts.title')}
                 action={
@@ -247,10 +360,8 @@ export default function AccountDetailModal({ account, onClose, onOpenPost, onRef
                     ) : null
                 }
             >
-                {(syncing || topLoading) && allPosts.length === 0
-                    ? <div style={{ fontSize: '12px', color: 'var(--text-3)' }}>
-                        {syncing ? t('analytics.accounts.refreshingPosts') : t('common.loading')}
-                    </div>
+                {topLoading && allPosts.length === 0
+                    ? <div style={{ fontSize: '12px', color: 'var(--text-3)' }}>{t('common.loading')}</div>
                     : allPosts.length > 0
                         ? (
                             <>
@@ -258,6 +369,7 @@ export default function AccountDetailModal({ account, onClose, onOpenPost, onRef
                                     {t('analytics.accounts.topPosts.loadedCount')
                                         .replace('{shown}', String(visiblePosts.length))
                                         .replace('{total}', String(allPosts.length))}
+                                    {isRefreshing ? ` · ${t('analytics.accounts.refreshingPostsStatus')}` : ''}
                                 </p>
                                 <div
                                     style={{
@@ -267,12 +379,21 @@ export default function AccountDetailModal({ account, onClose, onOpenPost, onRef
                                     }}
                                 >
                                     {visiblePosts.map((p) => (
-                                        <PostCard key={p.id} post={p} onOpen={onOpenPost} />
+                                        <PostCard
+                                            key={p.id}
+                                            post={p}
+                                            thumbnailUrl={thumbMap[p.id]}
+                                            onOpen={onOpenPost}
+                                        />
                                     ))}
                                 </div>
                             </>
                         )
-                        : <div style={{ fontSize: '12px', color: 'var(--text-3)' }}>{t('analytics.accounts.topPosts.empty')}</div>
+                        : <div style={{ fontSize: '12px', color: 'var(--text-3)' }}>
+                            {isRefreshing
+                                ? t('analytics.accounts.refreshingPosts')
+                                : t('analytics.accounts.topPosts.empty')}
+                        </div>
                 }
             </Section>
 
@@ -314,7 +435,7 @@ export default function AccountDetailModal({ account, onClose, onOpenPost, onRef
                                 lineHeight: 1.5,
                             }}
                         >
-                            {(strategyLoading || syncing)
+                            {strategyLoading
                                 ? t('analytics.accounts.strategy.loading')
                                 : t('analytics.accounts.strategy.pending')}
                         </div>

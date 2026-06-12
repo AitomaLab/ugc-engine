@@ -224,6 +224,8 @@ function groupByUploadedVideo(posts: AnalyticsPost[]): VideoGroup[] {
 
         const preview = pickBestPostPreview(list.map((i) => i.post));
 
+        const platformRows = collapsePostsByPlatform(list);
+
         groups.push({
             key,
             title,
@@ -232,12 +234,7 @@ function groupByUploadedVideo(posts: AnalyticsPost[]): VideoGroup[] {
             videoUrl: preview.videoUrl,
             postedAt: earliestPosted,
             totals,
-            platforms: list.map((i) => ({
-                platform: (i.post.platform || '').toLowerCase(),
-                post: i.post,
-                views: i.views,
-                engagement: i.engagement,
-            })),
+            platforms: platformRows,
             hasBreakdown: list.some((i) => i.post.breakdown_status === 'completed'),
         });
     }
@@ -245,6 +242,34 @@ function groupByUploadedVideo(posts: AnalyticsPost[]): VideoGroup[] {
     // Order videos by total engagement desc — winners first.
     groups.sort((a, b) => b.totals.engagement - a.totals.engagement);
     return groups;
+}
+
+/** Collapse duplicate platform rows for the same upload (e.g. two Instagram
+ *  analytics_posts for one video_job) into a single chip with summed metrics. */
+function collapsePostsByPlatform(
+    list: PlatformPost[],
+): VideoGroup['platforms'] {
+    const byPlatform = new Map<string, PlatformPost[]>();
+
+    for (const item of list) {
+        const platform = (item.post.platform || 'unknown').toLowerCase();
+        const bucket = byPlatform.get(platform) || [];
+        bucket.push(item);
+        byPlatform.set(platform, bucket);
+    }
+
+    return Array.from(byPlatform.entries())
+        .map(([platform, items]) => {
+            items.sort((a, b) => b.engagement - a.engagement);
+            return {
+                platform,
+                // Open the best-performing copy when the chip is clicked.
+                post: items[0].post,
+                views: items.reduce((sum, i) => sum + i.views, 0),
+                engagement: items.reduce((sum, i) => sum + i.engagement, 0),
+            };
+        })
+        .sort((a, b) => b.engagement - a.engagement);
 }
 
 /* ── Row layout ───────────────────────────────────────────────────────── */
@@ -369,7 +394,7 @@ function VideoRow({
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                     {group.platforms.map((p) => (
                         <PlatformChip
-                            key={p.post.id}
+                            key={`${p.platform}-${p.post.id}`}
                             platform={p.platform}
                             views={p.views}
                             engagement={p.engagement}

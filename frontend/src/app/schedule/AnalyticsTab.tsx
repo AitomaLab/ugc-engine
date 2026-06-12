@@ -92,10 +92,11 @@ export default function AnalyticsTab() {
         async (accountId: string) => {
             // Optimistic close if the trash was clicked from inside the modal.
             if (activeAccountId === accountId) setActiveAccountId(null);
+            if (overviewAccountId === accountId) setOverviewAccountId(null);
             const ok = await deleteTrackedAccount(accountId);
             if (ok) reloadAllMetrics();
         },
-        [activeAccountId, reloadAllMetrics],
+        [activeAccountId, overviewAccountId, reloadAllMetrics],
     );
 
     // ── Initial sync — mirror Studio connections into analytics_posts so
@@ -103,44 +104,31 @@ export default function AnalyticsTab() {
     // happily against cached aggregates if this fails. ──────────────────
     useEffect(() => {
         let cancelled = false;
-        const timers: number[] = [];
-        (async () => {
-            try {
-                await syncStudioConnections();
-            } catch {
-                /* Best-effort */
-            }
+        let followUpTimer: number | null = null;
+        reloadAllMetrics();
+        syncStudioConnections().catch(() => { /* Best-effort */ }).finally(() => {
             if (cancelled) return;
             reloadAllMetrics();
-            // Ayrshare metrics can take a few seconds — re-poll a few times
-            // so the user sees the dashboard fill in without a manual refresh.
-            for (const delay of [8_000, 20_000, 45_000]) {
-                timers.push(window.setTimeout(() => {
-                    if (cancelled) return;
-                    reloadAllMetrics();
-                }, delay));
-            }
-        })();
+            followUpTimer = window.setTimeout(() => {
+                if (!cancelled) reloadAllMetrics();
+            }, 15_000);
+        });
         return () => {
             cancelled = true;
-            timers.forEach((id) => window.clearTimeout(id));
+            if (followUpTimer) window.clearTimeout(followUpTimer);
         };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only bootstrap
     }, [reloadAllMetrics]);
 
     // Refresh when sync completes elsewhere (connections, schedule, login)
-    // OR when the page-level "Refresh data" button fires. Re-poll a couple of
-    // times so late-arriving Ayrshare metrics fill in without a manual retry.
+    // OR when the page-level "Refresh data" button fires.
     useEffect(() => {
-        const timers: number[] = [];
         const onSynced = () => {
             reloadAllMetrics();
-            timers.push(window.setTimeout(() => reloadAllMetrics(), 8_000));
-            timers.push(window.setTimeout(() => reloadAllMetrics(), 20_000));
         };
         window.addEventListener(ANALYTICS_STUDIO_SYNCED_EVENT, onSynced);
         return () => {
             window.removeEventListener(ANALYTICS_STUDIO_SYNCED_EVENT, onSynced);
-            timers.forEach((id) => window.clearTimeout(id));
         };
     }, [reloadAllMetrics]);
 
