@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import io
 import uuid
-from typing import Optional
+from urllib.parse import urlparse
 
 import httpx
 from PIL import Image, ImageOps
@@ -19,10 +19,58 @@ from ugc_db.db_manager import get_supabase
 
 # Instagram via Ayrshare — https://www.ayrshare.com/docs/media-guidelines
 AYRSHARE_MAX_IMAGE_BYTES = 8 * 1024 * 1024
+AYRSHARE_TARGET_IMAGE_BYTES = int(7.5 * 1024 * 1024)
 _SCHEDULE_BUCKET = "product-images"
 
+_LOSSLESS_EXTENSIONS = (".png", ".webp", ".gif", ".bmp", ".tiff", ".tif")
+_LOSSLESS_CONTENT_TYPES = (
+    "image/png",
+    "image/webp",
+    "image/gif",
+    "image/bmp",
+    "image/tiff",
+)
+_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff", ".tif")
 
-def _compress_image_bytes(raw: bytes, *, max_bytes: int = AYRSHARE_MAX_IMAGE_BYTES) -> bytes:
+IMAGE_CAMPAIGN_ASSET_TYPES = frozenset({"product_shot", "generated_image"})
+
+
+def is_image_asset_url(url: str) -> bool:
+    """True when ``url`` looks like a static image (not video)."""
+    path = urlparse((url or "").split("?")[0]).path.lower()
+    return any(path.endswith(ext) for ext in _IMAGE_EXTENSIONS)
+
+
+def _is_lossless_image(*, raw: bytes, content_type: str = "", media_url: str = "") -> bool:
+    ct = (content_type or "").split(";")[0].strip().lower()
+    if ct in _LOSSLESS_CONTENT_TYPES:
+        return True
+    path = urlparse(media_url).path.lower()
+    if any(path.endswith(ext) for ext in _LOSSLESS_EXTENSIONS):
+        return True
+    try:
+        with Image.open(io.BytesIO(raw)) as im:
+            fmt = (im.format or "").upper()
+            if fmt in ("PNG", "WEBP", "GIF", "BMP", "TIFF"):
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _needs_schedule_reencode(
+    raw: bytes,
+    *,
+    content_type: str = "",
+    media_url: str = "",
+    target_bytes: int = AYRSHARE_TARGET_IMAGE_BYTES,
+) -> bool:
+    if len(raw) > target_bytes:
+        return True
+    return _is_lossless_image(raw=raw, content_type=content_type, media_url=media_url)
+
+
+def _compress_image_bytes(raw: bytes, *, max_bytes: int = AYRSHARE_TARGET_IMAGE_BYTES) -> bytes:
     """Return JPEG bytes under ``max_bytes`` (best effort)."""
     im = Image.open(io.BytesIO(raw))
     im = ImageOps.exif_transpose(im)
@@ -74,33 +122,33 @@ async def prepare_image_url_for_ayrshare(
     *,
     user_id: str,
     max_bytes: int = AYRSHARE_MAX_IMAGE_BYTES,
+    target_bytes: int = AYRSHARE_TARGET_IMAGE_BYTES,
 ) -> str:
-    """Download ``media_url``; if over ``max_bytes``, compress + re-host publicly."""
+    """Download ``media_url``; re-encode/compress when needed; re-host publicly."""
     if not media_url:
         raise ValueError("Missing image URL for scheduling.")
 
-    async with httpx.AsyncClient(timeout=90, follow_redirects=True) as client:
-        head = await client.head(media_url)
-        length: Optional[int] = None
-        if head.status_code < 400:
-            try:
-                length = int(head.headers.get("content-length") or 0) or None
-            except ValueError:
-                length = None
-        if length is not None and length <= max_bytes:
-            return media_url
+    effective_target = min(target_bytes, max_bytes)
 
+    async with httpx.AsyncClient(timeout=90, follow_redirects=True) as client:
         resp = await client.get(media_url)
         resp.raise_for_status()
         raw = resp.content
+        content_type = resp.headers.get("content-type", "")
 
-    if len(raw) <= max_bytes:
+    if not _needs_schedule_reencode(
+        raw,
+        content_type=content_type,
+        media_url=media_url,
+        target_bytes=effective_target,
+    ):
         return media_url
 
-    jpeg = _compress_image_bytes(raw, max_bytes=max_bytes)
+    jpeg = _compress_image_bytes(raw, max_bytes=effective_target)
     public_url = _upload_public_jpeg(user_id, jpeg)
     print(
-        f"[schedule_media] Compressed {len(raw) / (1024 * 1024):.2f} MB → "
-        f"{len(jpeg) / (1024 * 1024):.2f} MB for Ayrshare"
+        f"[schedule_media] Prepared image for Ayrshare: "
+        f"{len(raw) / (1024 * 1024):.2f} MB ({content_type or 'unknown'}) → "
+        f"{len(jpeg) / (1024 * 1024):.2f} MB JPEG"
     )
     return public_url
