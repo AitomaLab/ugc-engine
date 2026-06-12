@@ -4,6 +4,7 @@ UGC Engine SaaS — Authentication Middleware
 Provides a FastAPI dependency that validates Supabase JWTs.
 """
 import os
+import httpx
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from supabase import create_client, ClientOptions
@@ -27,7 +28,14 @@ def _get_auth_client():
             raise RuntimeError(
                 "SUPABASE_URL and SUPABASE_ANON_KEY must be set in .env.saas"
             )
-        _auth_client = create_client(url, anon_key, options=ClientOptions(postgrest_client_timeout=10))
+        # trust_env=False so the auth client ignores ambient HTTP(S)_PROXY env
+        # vars that can otherwise hijack Supabase auth calls in some hosts.
+        hp = httpx.Client(trust_env=False, timeout=10)
+        _auth_client = create_client(
+            url,
+            anon_key,
+            options=ClientOptions(postgrest_client_timeout=10, httpx_client=hp),
+        )
     return _auth_client
 
 

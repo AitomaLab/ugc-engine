@@ -32,6 +32,14 @@ interface Props {
     isOpen: boolean;
     onClose: () => void;
     preSelectedIds?: Set<string>;
+    /** When opened from a preview modal we already know the asset's project —
+     *  jump straight to the asset step with this project pre-selected. */
+    preSelectedProjectId?: string;
+    /** Connected platforms the caller already fetched — lets the modal skip a
+     *  redundant /api/connections round trip on open. */
+    initialConnectedPlatforms?: string[];
+    /** Publish > Calendar refreshes listings after a successful bulk schedule */
+    onScheduled?: () => void | Promise<void>;
 }
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
@@ -76,14 +84,17 @@ interface ScheduleAsset {
     created_at?: string;
 }
 
-export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: Props) {
+export default function SchedulePostModal({ isOpen, onClose, preSelectedIds, preSelectedProjectId, initialConnectedPlatforms, onScheduled }: Props) {
     const { t } = useTranslation();
-    const [step, setStep] = useState(1);
+    // When a project is pre-selected (opened from a preview modal) start on the
+    // asset step so the project picker is skipped and step 2 renders instantly.
+    const [step, setStep] = useState(preSelectedProjectId ? 2 : 1);
 
     // ── Step 1: Project selection ────────────────────────────────────
     const [projects, setProjects] = useState<ProjectInfo[]>([]);
     const [loadingProjects, setLoadingProjects] = useState(true);
-    const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+    const [projectsLoadError, setProjectsLoadError] = useState<string | null>(null);
+    const [selectedProjectId, setSelectedProjectId] = useState<string | null>(preSelectedProjectId ?? null);
 
     // ── Step 2: Asset selection ──────────────────────────────────────
     const [assets, setAssets] = useState<ScheduleAsset[]>([]);
@@ -105,29 +116,69 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
     const [loadingData, setLoadingData] = useState(true);
     const [thumbMap, setThumbMap] = useState<Record<string, string>>({});
 
-    // ── Step 1: Fetch projects ─────────────────────────────────────────
+    // ── Project list fetch (extracted so it can run lazily) ────────────
+    const fetchProjects = useCallback(async () => {
+        setLoadingProjects(true);
+        setProjectsLoadError(null);
+        try {
+            const data = await creativeFetch<ProjectInfo[]>('/creative-os/projects/');
+            setProjects(data || []);
+        } catch (err) {
+            console.warn('[ScheduleModal] Creative OS project list failed, falling back to core API:', err);
+            try {
+                const raw = await apiFetch<
+                    { id: string; name: string; is_default?: boolean; created_at?: string }[]
+                >('/api/projects', { skipProjectScope: true });
+                setProjects((raw || []).map((p) => ({
+                    ...p,
+                    recent_previews: [],
+                    asset_counts: {},
+                })));
+                if ((raw || []).length === 0) {
+                    setProjectsLoadError(null);
+                } else {
+                    setProjectsLoadError(
+                        'Showing projects from the core API. Start Creative OS (port 8011) to load asset previews.',
+                    );
+                }
+            } catch (fallbackErr) {
+                console.error('[ScheduleModal] Failed to fetch projects:', fallbackErr);
+                setProjects([]);
+                setProjectsLoadError(
+                    fallbackErr instanceof Error
+                        ? fallbackErr.message
+                        : 'Could not load projects. Is the backend running on port 8010?',
+                );
+            }
+        }
+        setLoadingProjects(false);
+    }, []);
+
+    // ── Step 1: Fetch supporting data on open ──────────────────────────
     useEffect(() => {
         if (!isOpen) return;
-        setLoadingProjects(true);
-        (async () => {
-            try {
-                const data = await creativeFetch<ProjectInfo[]>('/creative-os/projects/');
-                setProjects(data || []);
-            } catch (err) {
-                console.error('[ScheduleModal] Failed to fetch projects:', err);
-                setProjects([]);
-            }
+        // When opened from a preview modal we already know the project and jump
+        // straight to asset selection — skip the (often slow) project-list fetch
+        // entirely. It's lazily loaded only if the user navigates back to step 1.
+        if (preSelectedProjectId) {
             setLoadingProjects(false);
-        })();
-        // Fetch connections separately (non-blocking)
-        (async () => {
-            try {
-                const connData = await apiFetch<{ socials: SocialConnection[] }>('/api/connections');
-                setConnectedPlatforms((connData?.socials || []).map(s => s.platform?.toLowerCase()).filter(Boolean) as string[]);
-            } catch {
-                setConnectedPlatforms([]);
-            }
-        })();
+        } else {
+            fetchProjects();
+        }
+        // Connections: reuse what the caller already fetched to avoid a redundant
+        // round trip; otherwise fetch them ourselves (non-blocking).
+        if (initialConnectedPlatforms && initialConnectedPlatforms.length > 0) {
+            setConnectedPlatforms(initialConnectedPlatforms);
+        } else {
+            (async () => {
+                try {
+                    const connData = await apiFetch<{ socials: SocialConnection[] }>('/api/connections');
+                    setConnectedPlatforms((connData?.socials || []).map(s => s.platform?.toLowerCase()).filter(Boolean) as string[]);
+                } catch {
+                    setConnectedPlatforms([]);
+                }
+            })();
+        }
         // Fetch influencers for labels
         (async () => {
             try {
@@ -135,7 +186,17 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                 setInfluencers(infData || []);
             } catch { /* non-critical */ }
         })();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isOpen]);
+
+    // Lazy-load the project list if the user navigates back to step 1 after
+    // having opened the modal pre-scoped to a single project.
+    useEffect(() => {
+        if (isOpen && step === 1 && projects.length === 0 && !loadingProjects) {
+            fetchProjects();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOpen, step]);
 
     // ── Step 2: Fetch assets when project is selected ─────────────────
     useEffect(() => {
@@ -214,6 +275,18 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
         })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [assets]);
+
+    // ── pre-select project when opened from a preview modal ────────────
+    // We already know which project the asset belongs to, so skip the
+    // project picker (step 1) and land directly on asset selection (step 2)
+    // with that project loaded. Callers that don't pass this prop keep the
+    // existing step-1-first behavior untouched.
+    useEffect(() => {
+        if (isOpen && preSelectedProjectId) {
+            setSelectedProjectId(preSelectedProjectId);
+            setStep(2);
+        }
+    }, [isOpen, preSelectedProjectId]);
 
     // ── pre-select from videos page ────────────────────────────────────
     useEffect(() => {
@@ -383,26 +456,61 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
         setSubmitting(true);
         const scheduleDate = `${globalDate}T${globalTime}`;
         try {
-            const posts = selectedIds.map(id => {
+            const posts = selectedIds.map((id) => {
                 const cfg = configs[id];
-                return {
-                    video_job_id: id,
+                const asset = assets.find((a) => a.id === id);
+                const row: {
+                    platforms: string[];
+                    caption: string;
+                    hashtags?: string[];
+                    scheduled_at: string;
+                    video_job_id?: string;
+                    product_shot_id?: string;
+                } = {
                     platforms: cfg.platforms,
                     caption: cfg.caption,
                     hashtags: cfg.hashtags.length > 0 ? cfg.hashtags : undefined,
                     scheduled_at: cfg.useCustomTime ? cfg.scheduledAt : new Date(scheduleDate).toISOString(),
                 };
+                if (asset?.type === 'image') {
+                    row.product_shot_id = id;
+                } else {
+                    row.video_job_id = id;
+                }
+                return row;
             });
-            await apiFetch('/api/schedule/bulk', {
+            const res = await apiFetch<{
+                scheduled?: number;
+                failed?: number;
+                results?: Array<{ status?: string; error?: string; platform?: string }>;
+            }>('/api/schedule/bulk', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ posts }),
             });
-            setToast(t('scheduleModal.successToast').replace('{count}', String(posts.length)));
-            setTimeout(() => { setToast(''); onClose(); }, 2000);
-        } catch {
-            setToast(t('scheduleModal.failToast'));
-            setTimeout(() => setToast(''), 3000);
+            const ok = res?.scheduled ?? 0;
+            const bad = res?.failed ?? 0;
+            const firstErr = (res?.results || []).find((r) => r.status === 'failed' && r.error)?.error;
+            const errHint = firstErr
+                ? (firstErr.length > 420 ? `${firstErr.slice(0, 420)}…` : firstErr)
+                : '';
+            if (ok === 0 && bad > 0) {
+                setToast(errHint ? `${t('scheduleModal.allFailedToast')} — ${errHint}` : t('scheduleModal.allFailedToast'));
+                setTimeout(() => setToast(''), errHint ? 6500 : 4000);
+            } else if (ok > 0 && bad > 0) {
+                setToast(t('scheduleModal.partialToast').replace('{ok}', String(ok)).replace('{fail}', String(bad)));
+                await onScheduled?.();
+                setTimeout(() => { setToast(''); onClose(); }, 2800);
+            } else {
+                setToast(t('scheduleModal.successToast').replace('{count}', String(ok)));
+                await onScheduled?.();
+                setTimeout(() => { setToast(''); onClose(); }, 2000);
+            }
+        } catch (err) {
+            const hint = err instanceof Error && err.message ? err.message : '';
+            const trimmed = hint.length > 420 ? `${hint.slice(0, 420)}…` : hint;
+            setToast(trimmed ? `${t('scheduleModal.failToast')} — ${trimmed}` : t('scheduleModal.failToast'));
+            setTimeout(() => setToast(''), trimmed ? 5500 : 3000);
         }
         setSubmitting(false);
     };
@@ -508,10 +616,25 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                 </div>
                             ) : projects.length === 0 ? (
                                 <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--text-3)' }}>
-                                    <div style={{ fontSize: '14px', marginBottom: '8px' }}>No projects found</div>
-                                    <div style={{ fontSize: '12px' }}>Create a project first to schedule assets</div>
+                                    <div style={{ fontSize: '14px', marginBottom: '8px' }}>
+                                        {projectsLoadError ? 'Could not load projects' : 'No projects found'}
+                                    </div>
+                                    <div style={{ fontSize: '12px', maxWidth: 360, margin: '0 auto', lineHeight: 1.5 }}>
+                                        {projectsLoadError
+                                            || 'Create a project first to schedule assets'}
+                                    </div>
                                 </div>
                             ) : (
+                                <>
+                                {projectsLoadError && (
+                                    <div style={{
+                                        marginBottom: '12px', padding: '10px 14px', borderRadius: '10px',
+                                        background: 'rgba(255,159,10,0.10)', border: '1px solid rgba(255,159,10,0.25)',
+                                        color: '#a35a00', fontSize: '12px', lineHeight: 1.5,
+                                    }}>
+                                        {projectsLoadError}
+                                    </div>
+                                )}
                                 <div style={{
                                     display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
                                     gap: '16px',
@@ -599,6 +722,7 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds }: P
                                         );
                                     })}
                                 </div>
+                                </>
                             )}
                         </div>
                     )}

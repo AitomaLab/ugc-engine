@@ -761,6 +761,20 @@ def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, 
 
             error_str = str(e).lower()
             is_retriable = any(p in error_str for p in RETRIABLE_PATTERNS)
+            # An auth/credentials failure on one provider (e.g. an expired or
+            # revoked WaveSpeed key returning 401) is fatal for THAT provider
+            # but says nothing about the other one. Fail OVER to the remaining
+            # provider instead of killing the whole job. Only genuinely fatal,
+            # provider-agnostic errors (content policy, malformed request) keep
+            # the original "don't waste the fallback" short-circuit.
+            is_auth_error = any(
+                p in error_str
+                for p in ("401", "unauthorized", "403", "forbidden", "invalid api key", "invalid key")
+            )
+            has_fallback_left = provider != providers_to_try[-1]
+            if is_auth_error and has_fallback_left:
+                print(f"      [Router] Auth error on {provider} (likely bad/expired key) — failing over to fallback provider")
+                continue
             if not is_retriable:
                 print(f"      [Router] Non-retriable error — not trying fallback")
                 raise
@@ -1717,7 +1731,7 @@ def animate_scenes_from_composite_parallel(
         return idx, out_path
 
     ordered: dict[int, Path] = {}
-    errors: list[tuple[int, str]] = {}
+    errors: list[tuple[int, str]] = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
             pool.submit(_animate_one, i, scene): i

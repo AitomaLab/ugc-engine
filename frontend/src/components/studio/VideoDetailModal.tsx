@@ -4,9 +4,11 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { creativeFetch } from '@/lib/creative-os-api';
+import { apiFetch } from '@/lib/utils';
 import { useTranslation } from '@/lib/i18n';
 import { MODAL_HEIGHT, MODAL_WIDTH } from '@/lib/modal-sizing';
 import { SharePopover } from './SharePopover';
+import SchedulePostModal from '@/components/modals/SchedulePostModal';
 
 /* ── Types ─────────────────────────────────────────────────────── */
 
@@ -91,6 +93,9 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
     const [copied, setCopied] = useState(false);
     const [mounted, setMounted] = useState(false);
     const [shareOpen, setShareOpen] = useState(false);
+    const [scheduleOpen, setScheduleOpen] = useState(false);
+    const [checkingSchedule, setCheckingSchedule] = useState(false);
+    const [connPlatforms, setConnPlatforms] = useState<string[]>([]);
     useEffect(() => { setMounted(true); }, []);
 
     // ── Editable title ──────────────────────────────────────────────
@@ -223,10 +228,29 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
         router.push(`/editor/${asset.id}`);
     }, [router, asset.id]);
 
-    const handleSchedule = useCallback(() => {
-        // TODO: Open schedule modal — for now alert
-        alert(t('creativeOs.videoModal.scheduleComingSoon'));
-    }, [t]);
+    const handleSchedule = useCallback(async () => {
+        if (checkingSchedule) return;
+        setCheckingSchedule(true);
+        try {
+            // Has the user connected at least one social account? If so open the
+            // scheduler with this video pre-selected; otherwise send them to the
+            // connections page to link an account first.
+            const data = await apiFetch<{ socials?: { platform?: string }[] }>('/api/connections');
+            const platforms = (data?.socials || []).map(s => (s.platform || '').toLowerCase()).filter(Boolean);
+            if (platforms.length > 0) {
+                setConnPlatforms(platforms);
+                setScheduleOpen(true);
+            } else {
+                router.push('/connections');
+            }
+        } catch {
+            // If the check fails (transient API error), don't block scheduling —
+            // open the modal and let it surface connection state.
+            setScheduleOpen(true);
+        } finally {
+            setCheckingSchedule(false);
+        }
+    }, [checkingSchedule, router]);
 
     const handleReGenerate = useCallback(async () => {
         if (!rePrompt.trim()) return;
@@ -272,7 +296,7 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                     inset: 0,
                     background: 'rgba(0,0,0,0.55)',
                     backdropFilter: 'blur(6px)',
-                    zIndex: 9999,
+                    zIndex: scheduleOpen ? 9990 : 9999,
                     animation: 'vdm-fadeIn 0.2s ease',
                 }}
             />
@@ -290,7 +314,7 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                 background: '#FFF',
                 borderRadius: '20px',
                 boxShadow: '0 32px 80px rgba(0,0,0,0.25)',
-                zIndex: 10000,
+                zIndex: scheduleOpen ? 9991 : 10000,
                 display: 'flex',
                 overflow: 'hidden',
                 animation: 'vdm-scaleIn 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
@@ -680,7 +704,7 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
                             </svg>
                         } />
-                        <ActionButton label={t('creativeOs.videoModal.actionSchedule')} onClick={handleSchedule} icon={
+                        <ActionButton label={checkingSchedule ? '…' : t('creativeOs.videoModal.actionSchedule')} onClick={handleSchedule} disabled={checkingSchedule} icon={
                             <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: '2' }}>
                                 <rect x="3" y="4" width="18" height="18" rx="2" />
                                 <line x1="16" y1="2" x2="16" y2="6" />
@@ -731,6 +755,16 @@ export function VideoDetailModal({ asset, projectId, onClose, onRefresh }: Video
                     to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
                 }
             `}</style>
+
+            {scheduleOpen && (
+                <SchedulePostModal
+                    isOpen={scheduleOpen}
+                    onClose={() => setScheduleOpen(false)}
+                    preSelectedProjectId={projectId}
+                    preSelectedIds={new Set([asset.id])}
+                    initialConnectedPlatforms={connPlatforms}
+                />
+            )}
         </>,
         document.body
     );

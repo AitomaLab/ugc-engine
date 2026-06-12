@@ -17,6 +17,7 @@ openai
 Pillow
 numpy
 httpx
+google-genai>=1.0
 supabase
 PyYAML
 modal

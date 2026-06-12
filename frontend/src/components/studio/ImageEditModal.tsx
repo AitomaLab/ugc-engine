@@ -2,10 +2,13 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { useRouter } from 'next/navigation';
 import { creativeFetch } from '@/lib/creative-os-api';
+import { apiFetch } from '@/lib/utils';
 import { useTranslation } from '@/lib/i18n';
 import { MODAL_HEIGHT, MODAL_WIDTH } from '@/lib/modal-sizing';
 import { SharePopover } from './SharePopover';
+import SchedulePostModal from '@/components/modals/SchedulePostModal';
 
 /* Renders the animation preview clip; falls back to a large emoji tile on load error.
    The container is a fixed 9:16 box to match Kling's output aspect ratio. */
@@ -140,6 +143,10 @@ const QUICK_ACTIONS = [
 
 export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnimated, onCreateVideo }: ImageEditModalProps) {
     const { t } = useTranslation();
+    const router = useRouter();
+    const [scheduleOpen, setScheduleOpen] = useState(false);
+    const [checkingSchedule, setCheckingSchedule] = useState(false);
+    const [connPlatforms, setConnPlatforms] = useState<string[]>([]);
     const [editPrompt, setEditPrompt] = useState(asset.prompt || '');
     const [isAnimating, setIsAnimating] = useState(false);
     const [selectedAnimStyle, setSelectedAnimStyle] = useState<string>('dolly_in');
@@ -151,6 +158,28 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
     const [shareOpen, setShareOpen] = useState(false);
     const [mounted, setMounted] = useState(false);
     useEffect(() => { setMounted(true); }, []);
+
+    const handlePublish = useCallback(async () => {
+        if (checkingSchedule) return;
+        setCheckingSchedule(true);
+        try {
+            // Open the scheduler with this image pre-selected only when the user
+            // has linked at least one social account; otherwise route them to
+            // the connections page to connect one first.
+            const data = await apiFetch<{ socials?: { platform?: string }[] }>('/api/connections');
+            const platforms = (data?.socials || []).map(s => (s.platform || '').toLowerCase()).filter(Boolean);
+            if (platforms.length > 0) {
+                setConnPlatforms(platforms);
+                setScheduleOpen(true);
+            } else {
+                router.push('/connections');
+            }
+        } catch {
+            setScheduleOpen(true);
+        } finally {
+            setCheckingSchedule(false);
+        }
+    }, [checkingSchedule, router]);
 
     // ── Editable title ──────────────────────────────────────────────
     const _rawName = asset.product_name || t('creativeOs.imageModal.imageFallback');
@@ -348,7 +377,7 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                     inset: 0,
                     background: 'rgba(0,0,0,0.5)',
                     backdropFilter: 'blur(6px)',
-                    zIndex: 9999,
+                    zIndex: scheduleOpen ? 9990 : 9999,
                     animation: 'fadeIn 0.2s ease',
                 }}
             />
@@ -366,7 +395,7 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                 background: '#FFF',
                 borderRadius: '20px',
                 boxShadow: '0 32px 80px rgba(0,0,0,0.25)',
-                zIndex: 10000,
+                zIndex: scheduleOpen ? 9991 : 10000,
                 display: 'flex',
                 overflow: 'hidden',
                 animation: 'scaleIn 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
@@ -734,12 +763,12 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                             {QUICK_ACTIONS.map(action => (
                                 <div key={action.id} style={{ position: 'relative', width: '100%' }}>
                                     <ActionButton
-                                        label={actionLoading === action.id ? '...' : t(action.labelKey)}
+                                        label={(actionLoading === action.id || ((action as any).isPublish && checkingSchedule)) ? '...' : t(action.labelKey)}
                                         onClick={() => {
                                             if ((action as any).isDownload) {
                                                 handleDownload();
                                             } else if ((action as any).isPublish) {
-                                                alert(t('creativeOs.imageModal.publishComingSoon'));
+                                                handlePublish();
                                             } else if ((action as any).isShare) {
                                                 setShareOpen(v => !v);
                                             } else {
@@ -968,6 +997,16 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                     to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
                 }
             `}</style>
+
+            {scheduleOpen && (
+                <SchedulePostModal
+                    isOpen={scheduleOpen}
+                    onClose={() => setScheduleOpen(false)}
+                    preSelectedProjectId={projectId}
+                    preSelectedIds={new Set([asset.id])}
+                    initialConnectedPlatforms={connPlatforms}
+                />
+            )}
         </>,
         document.body
     );

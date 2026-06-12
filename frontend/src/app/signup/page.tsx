@@ -1,33 +1,77 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import Link from 'next/link';
 
+// `useSearchParams()` requires a Suspense boundary in the App Router.
 export default function SignupPage() {
+  return (
+    <Suspense fallback={null}>
+      <SignupForm />
+    </Suspense>
+  );
+}
+
+function SignupForm() {
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [name, setName] = useState('');
-  const [error, setError] = useState('');
+  const [inviteCode, setInviteCode] = useState('');
+  // True when the code arrived via `?invite=` — we lock the field so the user
+  // can't tamper with a code that was issued to them.
+  const [inviteLocked, setInviteLocked] = useState(false);
+  const [error, setError] = useState<{ title?: string; text: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
 
+  // Pre-fill + lock the invite code from `?invite=` when present.
+  useEffect(() => {
+    const code = searchParams.get('invite');
+    if (code) {
+      setInviteCode(code.trim());
+      setInviteLocked(true);
+    }
+  }, [searchParams]);
+
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
+    setError(null);
     setLoading(true);
 
     const { error } = await supabase.auth.signUp({
       email,
       password,
       options: {
-        data: { name },
+        data: {
+          name,
+          invite_code: inviteCode.trim(),
+        },
       },
     });
 
     if (error) {
-      setError(error.message);
+      const raw = error.message || '';
+      // Raw exception thrown by the auth hook (e.g. before the SQL grants/fix are
+      // applied) — Supabase leaks "Error running hook URI: ...validate_invite_code".
+      // Don't show the Postgres internals; show a friendly fallback.
+      const isRawHookError = /running hook|validate_invite_code|pg-functions/i.test(raw);
+      // Clean, structured rejection from the hook — its message is already
+      // user-friendly (invalid / already used / email mismatch), so surface it.
+      const isInviteReject = /invite[_ ]?code/i.test(raw);
+      if (isRawHookError) {
+        setError({
+          title: 'We couldn’t verify your invite code',
+          text: 'Please sign up using your invitation link and the email address the code was assigned to. If this keeps happening, contact support.',
+        });
+      } else if (isInviteReject) {
+        setError({ title: 'Invite code problem', text: raw });
+      } else {
+        setError({ text: raw });
+      }
       setLoading(false);
     } else {
       // Sign out the auto-created session so the user can't access the app
@@ -75,7 +119,19 @@ export default function SignupPage() {
         </div>
 
         <form onSubmit={handleSignup} className="auth-form">
-          {error && <div className="auth-error">{error}</div>}
+          {error && (
+            <div className="auth-error" role="alert">
+              <svg className="auth-error-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+              <div className="auth-error-body">
+                {error.title && <strong>{error.title}</strong>}
+                <span>{error.text}</span>
+              </div>
+            </div>
+          )}
 
           <div className="auth-field">
             <label htmlFor="name">Full Name</label>
@@ -98,6 +154,23 @@ export default function SignupPage() {
               placeholder="you@example.com"
               required
             />
+          </div>
+
+          <div className="auth-field">
+            <label htmlFor="invite">Invite Code</label>
+            <input
+              id="invite"
+              type="text"
+              value={inviteCode}
+              onChange={e => setInviteCode(e.target.value)}
+              placeholder="Enter your invite code"
+              readOnly={inviteLocked}
+              required
+              className={inviteLocked ? 'invite-locked' : undefined}
+            />
+            {inviteLocked && (
+              <span className="invite-hint">Invite code applied from your link.</span>
+            )}
           </div>
 
           <div className="auth-field">
@@ -142,6 +215,8 @@ export default function SignupPage() {
         .auth-field label { display: block; font-size: 0.85rem; font-weight: 500; color: #374151; margin-bottom: 0.35rem; }
         .auth-field input { width: 100%; padding: 0.65rem 0.85rem; border: 1px solid #d1d5db; border-radius: 8px; font-size: 0.95rem; outline: none; transition: border-color 0.2s; box-sizing: border-box; }
         .auth-field input:focus { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1); }
+        .auth-field input.invite-locked { background: #f3f4f6; color: #6b7280; cursor: not-allowed; }
+        .invite-hint { display: block; margin-top: 0.35rem; font-size: 0.75rem; color: #059669; font-weight: 500; }
         .password-wrapper { position: relative; }
         .password-wrapper input { padding-right: 2.5rem; }
         .pw-toggle { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; padding: 4px; display: flex; align-items: center; justify-content: center; }
@@ -150,7 +225,10 @@ export default function SignupPage() {
         .auth-submit { padding: 0.7rem; background: #6366f1; color: white; border: none; border-radius: 8px; font-size: 0.95rem; font-weight: 600; cursor: pointer; transition: background 0.2s; margin-top: 0.5rem; }
         .auth-submit:hover:not(:disabled) { background: #4f46e5; }
         .auth-submit:disabled { opacity: 0.6; cursor: not-allowed; }
-        .auth-error { background: #fef2f2; color: #dc2626; padding: 0.65rem 0.85rem; border-radius: 8px; font-size: 0.85rem; border: 1px solid #fecaca; }
+        .auth-error { display: flex; gap: 0.6rem; align-items: flex-start; background: #fef2f2; color: #b91c1c; padding: 0.8rem 0.9rem; border-radius: 10px; font-size: 0.85rem; border: 1px solid #fecaca; }
+        .auth-error-icon { width: 18px; height: 18px; flex-shrink: 0; margin-top: 1px; stroke: #dc2626; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+        .auth-error-body { display: flex; flex-direction: column; gap: 0.2rem; line-height: 1.45; }
+        .auth-error-body strong { font-weight: 700; color: #991b1b; font-size: 0.9rem; }
         .auth-footer { text-align: center; margin-top: 1.5rem; color: #6b7280; font-size: 0.9rem; }
         .auth-footer a { color: #6366f1; font-weight: 600; text-decoration: none; }
       `}</style>

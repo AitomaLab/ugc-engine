@@ -13,7 +13,7 @@ export async function middleware(req: NextRequest) {
   const path = req.nextUrl.pathname;
 
   // Public routes that don't require auth
-  const publicRoutes = ['/login', '/signup', '/forgot-password', '/reset-password'];
+  const publicRoutes = ['/login', '/signup', '/forgot-password', '/reset-password', '/logout'];
   // Server-to-server callback routes (no auth cookies)
   const serverRoutes = ['/api/editor/render/'];
   // API routes that don't require auth (internal editor resources)

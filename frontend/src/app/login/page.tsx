@@ -1,20 +1,34 @@
 'use client';
 
-import { useState } from 'react';
-import { supabase } from '@/lib/supabaseClient';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { supabase, clearAllAuthState } from '@/lib/supabaseClient';
 import Link from 'next/link';
 
 export default function LoginPage() {
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // Always land on /login with a clean slate. Without this, a stale chunked
+  // sb-* cookie (or a missing refresh token) can carry a previous user's
+  // identity into the new sign-in, so the header / API renders as the wrong
+  // account.
+  useEffect(() => {
+    void clearAllAuthState();
+  }, []);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
+
+    // Wipe any half-dead session that might still be cached in memory before
+    // attempting a fresh sign-in.
+    await clearAllAuthState();
 
     const { error } = await supabase.auth.signInWithPassword({ email, password });
 
@@ -22,7 +36,9 @@ export default function LoginPage() {
       setError(error.message);
       setLoading(false);
     } else {
-      window.location.href = '/';
+      const redirectTo = searchParams.get('redirectTo') || '/';
+      // `location.replace` so the user can't Back-button into the login page.
+      window.location.replace(redirectTo);
     }
   };
 
