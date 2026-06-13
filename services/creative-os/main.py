@@ -23,10 +23,10 @@ for _stream in (sys.stdout, sys.stderr):
 _service_dir = Path(__file__).parent
 # Monorepo root (repo-root `prompts/`, `scene_builder.py`, etc.). On Railway
 # the full repo is cloned even when the service root is services/creative-os.
-_repo_root = _service_dir.parent.parent.parent
+_repo_root = _service_dir.parent.parent
 if (_repo_root / "prompts" / "product_refs.py").exists():
     sys.path.insert(0, str(_repo_root))
-# Service directory last so repo-root `prompts/` wins over the local stub package.
+# Service directory first so services/creative-os/prompts/ wins over repo-root copy.
 sys.path.insert(0, str(_service_dir))
 
 # Load env

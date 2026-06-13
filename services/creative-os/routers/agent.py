@@ -318,7 +318,17 @@ async def agent_stream(
             for _past in reversed(_prior_turns_all):
                 if _past.get("role") != "user":
                     continue
-                for _pr in (_past.get("refs") or []):
+                _turn_refs = _past.get("refs") or []
+                if not _turn_refs:
+                    # Ref-less user turn (e.g. "retry", "Confirmed — proceed
+                    # with the pending generation now."). These intermediate
+                    # messages must NOT terminate the walk — otherwise the
+                    # @-mentioned product/influencer from the original request
+                    # are dropped and NanoBanana hallucinates a random
+                    # person/product. Skip and keep walking back to the most
+                    # recent turn that actually carried refs.
+                    continue
+                for _pr in _turn_refs:
                     t = _pr.get("type")
                     if not t or t in seen_types:
                         continue
@@ -331,9 +341,9 @@ async def agent_stream(
                     if resurrected.video_url and not has_video_ref:
                         sticky_video_ref = resurrected
                         has_video_ref = True
-                # Most recent prior user turn wins; stop walking once we've
-                # processed it. Earlier turns rarely add anything that wasn't
-                # in the most recent one and risk pulling stale state.
+                # Most recent ref-bearing user turn wins; stop walking once
+                # we've processed it. Earlier turns rarely add anything that
+                # wasn't in the most recent one and risk pulling stale state.
                 break
         except Exception as _e:
             print(f"[agent_stream] prior-ref carry-forward failed: {_e}")

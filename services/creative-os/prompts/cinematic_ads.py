@@ -62,10 +62,13 @@ _CATEGORY_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
                   "starbucks", "soda", "cola", "juice", "smoothie", "kombucha",
                   "beer", "wine", "cocktail", "whiskey", "vodka", "water",
                   "drink", "beverage", "snack", "protein bar")),
-    ("beauty",   ("cream", "serum", "lipstick", "mascara", "foundation",
-                  "moisturizer", "skincare", "perfume", "cologne", "lotion",
-                  "shampoo", "conditioner", "makeup", "cosmetic", "scar stick",
-                  "cleanser", "balm")),
+    ("beauty",   ("cream", "serum", "lipstick", "lipgloss", "lip gloss",
+                  "gloss", "lip oil", "lip tint", "lip stain", "lip balm",
+                  "mascara", "foundation", "concealer", "blush", "bronzer",
+                  "highlighter", "eyeliner", "eyeshadow", "eyebrow", "brow",
+                  "moisturizer", "skincare", "perfume", "fragrance", "cologne",
+                  "lotion", "shampoo", "conditioner", "makeup", "cosmetic",
+                  "scar stick", "cleanser", "balm", "nail polish", "beauty")),
     ("audio",    ("headphone", "earbud", "earphone", "speaker", "soundbar",
                   "airpods", "airpod", "beats", "sonos")),
     ("footwear", ("sneaker", "shoe", "runner", "trainer", "boot", "sandal",
@@ -130,16 +133,26 @@ def _enrich_directions(dirs: list[dict]) -> list[dict]:
     return dirs
 
 
-def propose_directions(product_meta: dict) -> list[dict]:
+def propose_directions(product_meta: dict, *, brief: str = "", category: str = "") -> list[dict]:
     """Return 3 storyboard directions enriched with pro-cinematic fields.
 
     Each direction has:
         key, name, vibe, hero_moment, model_or_product_only, recommended,
-        camera_signature, lighting_signature, style_grade, negative_traits.
+        camera_signature, lighting_signature, style_grade, negative_traits,
+        requires_lip_application.
     Pro fields are injected from defaults if the static table doesn't define
     them, so downstream builders can rely on the full shape always being set.
     """
-    return _enrich_directions(_propose_directions_static(product_meta))
+    cat = category or _category_key(product_meta)
+    dirs = _enrich_directions(_propose_directions_static(product_meta))
+    return tag_direction_lip_intents(
+        dirs,
+        product_name=product_meta.get("name") or "",
+        category=cat,
+        brief=brief,
+        product_description=product_meta.get("description") or "",
+        product_form=product_meta.get("product_form") or "",
+    )
 
 
 def _propose_directions_static(product_meta: dict) -> list[dict]:
@@ -490,6 +503,57 @@ def get_cached_beats(session_id: Optional[str], direction_key: str) -> Optional[
     return _LAST_BEATS_CACHE.get(f"{session_id}|d={direction_key}")
 
 
+# Session influencer stash — survives across turns when the user generates/saves
+# a character but does not @-mention them on the next message.
+_SESSION_INFLUENCER_CACHE: dict[str, dict] = {}
+
+
+def cache_session_influencer(session_id: Optional[str], data: dict) -> None:
+    if not session_id or not data.get("image_url"):
+        return
+    _SESSION_INFLUENCER_CACHE[session_id] = dict(data)
+    if len(_SESSION_INFLUENCER_CACHE) > 128:
+        for k in list(_SESSION_INFLUENCER_CACHE.keys())[:-128]:
+            _SESSION_INFLUENCER_CACHE.pop(k, None)
+
+
+def get_session_influencer(session_id: Optional[str]) -> Optional[dict]:
+    if not session_id:
+        return None
+    return _SESSION_INFLUENCER_CACHE.get(session_id)
+
+
+# Cinematic flow params carried across propose → storyboard → animate so a
+# failed storyboard (e.g. missing influencer) still preserves direction/format.
+_CINEMATIC_FLOW_CACHE: dict[str, dict] = {}
+
+_FLOW_KEYS = (
+    "direction", "aspect_ratio", "duration_seconds", "product_id",
+    "image_url", "brief", "tagline", "domain", "lip_application_intents",
+)
+
+
+def merge_cinematic_flow(session_id: Optional[str], kwargs: dict) -> None:
+    if not session_id:
+        return
+    prev = dict(_CINEMATIC_FLOW_CACHE.get(session_id) or {})
+    for k in _FLOW_KEYS:
+        v = kwargs.get(k)
+        if v is not None and v != "":
+            prev[k] = v
+    if prev:
+        _CINEMATIC_FLOW_CACHE[session_id] = prev
+        if len(_CINEMATIC_FLOW_CACHE) > 128:
+            for k in list(_CINEMATIC_FLOW_CACHE.keys())[:-128]:
+                _CINEMATIC_FLOW_CACHE.pop(k, None)
+
+
+def get_cinematic_flow(session_id: Optional[str]) -> Optional[dict]:
+    if not session_id:
+        return None
+    return _CINEMATIC_FLOW_CACHE.get(session_id)
+
+
 async def generate_directions_from_brief(
     *,
     brief: str,
@@ -511,13 +575,13 @@ async def generate_directions_from_brief(
     if client is None:
         if not os.getenv("ANTHROPIC_API_KEY"):
             print("[cinematic_propose] LLM directions skipped: ANTHROPIC_API_KEY not set")
-            return propose_directions(product_meta)
+            return propose_directions(product_meta, brief=brief, category=category)
         try:
             from anthropic import AsyncAnthropic
             client = AsyncAnthropic()
         except Exception as e:
             print(f"[cinematic_propose] LLM directions skipped: anthropic client init failed: {e}")
-            return propose_directions(product_meta)
+            return propose_directions(product_meta, brief=brief, category=category)
 
     brand = product_meta.get("brand") or product_meta.get("name") or "Brand"
     product = product_meta.get("name") or "Product"
@@ -642,13 +706,20 @@ async def generate_directions_from_brief(
             for d in out[1:]:
                 d["recommended"] = False
         print(f"[cinematic_propose] LLM directions generated: {[d['name'] for d in out]}")
-        return out
+        return tag_direction_lip_intents(
+            out,
+            product_name=product_meta.get("name") or "",
+            category=category,
+            brief=brief,
+            product_description=product_meta.get("description") or "",
+            product_form=product_meta.get("product_form") or "",
+        )
     except Exception as e:
         print(
             f"[cinematic_propose] LLM directions failed ({type(e).__name__}: {e}) — "
             f"falling back to static propose_directions"
         )
-        return propose_directions(product_meta)
+        return propose_directions(product_meta, brief=brief, category=category)
 
 
 # Library of pro shot types — fed to Haiku so it picks from a known
@@ -676,6 +747,10 @@ async def generate_beats_from_brief(
     duration_s: int = 15,
     aspect_ratio: str = "16:9",
     user_lang: str = "en",
+    product_form: str = "",
+    product_name: str = "",
+    application_geometry_hint: str = "",
+    allow_lip_application: bool = False,
     anthropic_client: Optional[Any] = None,
 ) -> list[dict]:
     """Generate num_panels storyboard beats tailored to the user's brief +
@@ -716,6 +791,26 @@ async def generate_beats_from_brief(
         "Replace every adjective like 'slow / fast / gentle / subtle' with time/physics anchors. "
         "Each beat MUST be a HARD CUT — visually distinct shot, no smooth transitions. "
         "Beats together form a coherent narrative arc. "
+        "PRODUCT FORM LOCK (critical): NEVER invent or rename the product's applicator or dispensing "
+        "mechanism. Do NOT write 'twist cap off', 'wand', 'doe-foot', 'brush', 'bullet', 'pump', 'dropper', "
+        "'reveals interior', 'unscrew', or any form/mechanic that is NOT stated in PRODUCT FORM. If PRODUCT "
+        "FORM is given, every `action` must be consistent with that exact form. If PRODUCT FORM is empty, "
+        "refer to it generically as 'the product' and keep its physical form abstract — the reference image "
+        "defines the exact shape, cap, and applicator. The product is IDENTICAL in every beat; never morph it. "
+        "PHYSICS PLAUSIBILITY (critical): every `action` must be physically possible — objects are solid and "
+        "NEVER pass through skin, fingers, or flesh; hands keep correct anatomy (five fingers, natural proportions). "
+        "Jewelry is worn by ENCIRCLING the finger or wrist (the finger passes through the ring band) — never push a "
+        "ring through a finger or describe it intersecting the body. "
+        + (
+            "APPLICATION GEOMETRY (critical): on the application beat, lipstick/lip product is held upright; "
+            "ONLY the bullet tip contacts the lower lip in a single stroke; flat base points away from the face; "
+            "never apply to cheek, forearm, or hand; never press base-first. "
+            if allow_lip_application else
+            "APPLICATION GEOMETRY (critical): on any beat where the product touches skin, the product is held upright "
+            "and gripped by the body; ONLY the dispensing/applying end contacts skin in a single stroke; the flat "
+            "base/bottom/heel of the container NEVER touches skin and must point away from the body. Never depict "
+            "the product inverted or pressed base-first against skin. "
+        )
         + (
             "OUTPUT LANGUAGE: write `scene`, `action`, and `sound` in Spanish (es-ES). "
             "Keep `camera`, `lens`, `lighting`, and `motion` in English (cinematography terminology). "
@@ -726,15 +821,49 @@ async def generate_beats_from_brief(
         f"SHOT VOCAB (pick `camera` from these per beat):\n{_shot_vocab_lines}"
     )
     if is_beauty_category(category):
+        if allow_lip_application:
+            system += (
+                "\n\nLIP APPLICATION MODE (mandatory — direction requires on-lip use): "
+                "The application beat MUST depict the lip product applied to the LOWER LIP in one fluid stroke — "
+                "this is the hero moment. Professional beauty-ad ECU framing (mouth partial in frame). "
+                "State upright product grip: bullet tip on lower lip, flat base away from face. "
+                "NEVER apply to cheek, forearm, or back of hand. NEVER kiss, pout, tongue, or sexual framing. "
+                "PANEL FRAMING: beat 1 = medium establishing shot with face visible and product nearby. "
+                "Application beat = lip ECU with product stroke on lower lip. Final beat = product hero shot."
+            )
+        else:
+            system += (
+                "\n\nBEAUTY FAL SAFETY (mandatory when CATEGORY is beauty/skincare): "
+                "NEVER mention lip, lips, mouth, kiss, pout, or tongue in any `action`. "
+                "Product application MUST be on forearm, back of hand, or cheek — never on lips. "
+                "On application beats, state explicit upright grip: dispensing tip toward skin, flat base away. "
+                "No lip ECU, no mouth close-up, no product touching lips. "
+                "PANEL FRAMING: beat 1 = medium establishing shot with face visible and product "
+                "on a surface nearby (not at lips). Beats 2 through N-1 = hands/forearm/product "
+                "macro only — explicitly state 'no face in frame'. Final beat = product hero or "
+                "relaxed medium shot (face optional, never lip ECU)."
+            )
+    if is_jewelry_product(product_name, product_form, brief):
+        # Structural avoidance of GPT Image 2's worst anatomy cases: a frozen
+        # mid-insertion frame is visually identical to a ring clipping through
+        # the finger, and interlaced hands produce extra/fused digits. Negative
+        # instructions alone don't fix this — the beats must not REQUEST those
+        # shots in the first place.
         system += (
-            "\n\nBEAUTY FAL SAFETY (mandatory when CATEGORY is beauty/skincare): "
-            "NEVER mention lip, lips, mouth, kiss, pout, or tongue in any `action`. "
-            "Product application MUST be on forearm, back of hand, or cheek — never on lips. "
-            "No lip ECU, no mouth close-up, no product touching lips. "
-            "PANEL FRAMING: beat 1 = medium establishing shot with face visible and product "
-            "on a surface nearby (not at lips). Beats 2 through N-1 = hands/forearm/product "
-            "macro only — explicitly state 'no face in frame'. Final beat = product hero or "
-            "relaxed medium shot (face optional, never lip ECU)."
+            "\n\nJEWELRY SHOT SAFETY (mandatory — the product is jewelry): "
+            "NEVER write a beat depicting the jewelry mid-slide, partially on, or in the act of "
+            "being put onto a finger/wrist/neck — the put-on moment happens BETWEEN panels (hard "
+            "cut). In each beat the jewelry is either (a) clearly separated from the body — held "
+            "up between fingertips, resting in its box, or on a surface — or (b) already FULLY "
+            "seated and worn. "
+            "NEVER write interlaced, interlocked, entwined, intertwined, or clasped fingers/hands. "
+            "At most ONE beat may show two hands, and they must be side by side with fingers "
+            "relaxed and separated. "
+            "Choose ONE wearing position (default: the left ring finger), name it explicitly, and "
+            "reuse the IDENTICAL phrase in every beat where the jewelry is worn — it never moves "
+            "to a different finger or hand. "
+            "Prefer product-only macro beats for detail shots (jewelry on velvet, in its box, "
+            "360-degree macro, light sweep) — at most 3 beats may include hands or skin."
         )
     _aspect_hint = {
         "9:16": "VERTICAL (9:16) — frame for vertical screens, close-ups + single-subject framing, avoid wide horizon shots",
@@ -749,7 +878,14 @@ async def generate_beats_from_brief(
         f"DIRECTION LIGHTING SIG: {direction.get('lighting_signature','')}\n"
         f"DIRECTION STYLE GRADE: {direction.get('style_grade','')}\n"
         f"CATEGORY: {category}\n"
-        f"HUMANS ALLOWED: {has_humans}\n"
+        + (f"PRODUCT FORM (the product's exact physical form — actions MUST match this, never invent a different applicator): {product_form.strip()[:240]}\n" if (product_form or "").strip() else "PRODUCT FORM: (unspecified — refer to it as 'the product' and keep its form abstract; the reference image defines the exact form)\n")
+        + (f"APPLICATION GEOMETRY (mandatory on any beat where product touches skin): {application_geometry_hint.strip()[:240]}\n" if (application_geometry_hint or "").strip() else "")
+        + (
+            f"NARRATIVE ANCHOR: the application beat MUST realize this HERO MOMENT on the lips: "
+            f"{direction.get('hero_moment', '')[:200]}\n"
+            if allow_lip_application else ""
+        )
+        + f"HUMANS ALLOWED: {has_humans}\n"
         f"FORMAT: {aspect_ratio} ({_aspect_hint})\n"
         f"DURATION: {duration_s}s across {num_panels} beats (~{beat_s:.1f}s each)\n\n"
         f"Write the {num_panels} beats so the storyboard tells the story in the BRIEF using the "
@@ -826,6 +962,276 @@ def is_beauty_category(category: str) -> bool:
     return (category or "").lower() in _BEAUTY_CATS
 
 
+_LIP_APPLICABLE_KEYWORDS = (
+    "lipstick", "lipgloss", "lip gloss", "lip stain", "lip tint", "lip balm",
+    "lip oil", "lip color", "lip colour", "lip product", "rouge",
+)
+
+
+_LIP_USE_SIGNALS = (
+    "lip application", "across her lips", "across lips", "across the lips",
+    "on lips", "on her lips", "on the lip", "lip stroke", "lip moment",
+    "lip application moment", "lip swipe",
+)
+
+
+def _direction_lip_blob(direction: dict) -> str:
+    return (
+        f"{direction.get('name', '')} {direction.get('hero_moment', '')} "
+        f"{direction.get('vibe', '')}"
+    ).lower()
+
+
+def _blob_implies_lip_application(blob: str) -> bool:
+    """True when direction text explicitly describes on-lip application."""
+    if any(s in blob for s in _LIP_USE_SIGNALS):
+        return True
+    if _re.search(
+        r"\b(lip application|across (?:her )?lips|on (?:her )?lips|on the lip|lip moment|lip swipe)\b",
+        blob,
+    ):
+        return True
+    return bool(
+        _re.search(r"\blips?\b", blob) and _re.search(r"\b(apply|appli|glide|stroke|swipe)\b", blob)
+    )
+
+
+def is_lip_applicable_product(
+    product_name: str,
+    category: str,
+    brief: str = "",
+    *,
+    product_description: str = "",
+    product_form: str = "",
+) -> bool:
+    """True when the product is a lip color product (lipstick, gloss, tint, etc.)."""
+    text = (
+        f"{product_name} {brief} {product_description} {product_form} {category}"
+    ).lower()
+    keyword_hit = any(kw in text for kw in _LIP_APPLICABLE_KEYWORDS)
+    beauty_rouge = bool(_re.search(r"\brouge\b", text)) and is_beauty_category(category)
+    beauty_lip_token = bool(_re.search(r"\blip\b", text)) and is_beauty_category(category)
+    if not (keyword_hit or beauty_rouge or beauty_lip_token):
+        return False
+    if is_beauty_category(category) or category == "beauty":
+        return True
+    return infer_category_from_text(text) == "beauty"
+
+
+def direction_implies_lip_scene(
+    direction: dict,
+    category: str,
+    *,
+    has_humans: Optional[bool] = None,
+) -> bool:
+    """True when a model-led beauty direction's name/hero explicitly calls for lips.
+
+    Does NOT require the product display name to contain 'lipstick' — a direction
+    like 'Lip Swipe Moment' on Guerlain Rouge G still qualifies.
+    """
+    if has_humans is None:
+        has_humans = direction.get("model_or_product_only") == "model"
+    if not has_humans or not is_beauty_category(category):
+        return False
+    return _blob_implies_lip_application(_direction_lip_blob(direction))
+
+
+def direction_requires_lip_application(
+    direction: dict,
+    product_name: str,
+    category: str,
+    brief: str = "",
+    *,
+    product_description: str = "",
+    product_form: str = "",
+) -> bool:
+    """True when the chosen direction calls for on-lip application."""
+    has_humans = direction.get("model_or_product_only") == "model"
+    if direction_implies_lip_scene(direction, category, has_humans=has_humans):
+        return True
+    if not is_lip_applicable_product(
+        product_name,
+        category,
+        brief,
+        product_description=product_description,
+        product_form=product_form,
+    ):
+        return False
+    return _blob_implies_lip_application(_direction_lip_blob(direction))
+
+
+def tag_direction_lip_intents(
+    directions: list[dict],
+    *,
+    product_name: str,
+    category: str,
+    brief: str = "",
+    product_description: str = "",
+    product_form: str = "",
+) -> list[dict]:
+    """Embed requires_lip_application on each direction at propose time."""
+    for d in directions:
+        d["requires_lip_application"] = direction_requires_lip_application(
+            d,
+            product_name,
+            category,
+            brief,
+            product_description=product_description,
+            product_form=product_form,
+        )
+    return directions
+
+
+def resolve_lip_application_intent(
+    direction: dict,
+    product_meta: dict,
+    category: str,
+    brief: str = "",
+    *,
+    cached_intents: Optional[dict] = None,
+    direction_key: str = "",
+) -> bool:
+    """Resolve lip bypass intent: embedded direction flag > session cache > recompute."""
+    if direction.get("requires_lip_application"):
+        return True
+    dk = (direction_key or direction.get("key") or "").upper()
+    if cached_intents and dk in cached_intents:
+        return bool(cached_intents[dk])
+    return direction_requires_lip_application(
+        direction,
+        product_meta.get("name") or "",
+        category,
+        brief,
+        product_description=product_meta.get("description") or "",
+        product_form=product_meta.get("product_form") or "",
+    )
+
+
+_PRODUCT_FORM_PHYSICAL_KEYWORDS = (
+    "cap", "tube", "wand", "bullet", "applicator", "dispens", "packag",
+    "container", "bottle", "jar", "pump", "dropper", "cylind", "hexagon",
+    "glass", "plastic", "label", "matte", "texture", "shape", "material",
+)
+
+_APPLICATION_GEOMETRY_CLAUSE = (
+    "hold product upright; only the dispensing/applying end contacts skin in one stroke; "
+    "flat base/bottom never touches skin"
+)
+
+_LIP_APPLICATION_GEOMETRY_CLAUSE = (
+    "hold lipstick upright; bullet tip glides across lower lip in one stroke; "
+    "flat base away from face; professional cosmetic ad framing"
+)
+
+_JEWELRY_GEOMETRY_CLAUSE = (
+    "the band encircles the finger and slides fully onto it (the finger passes through "
+    "the ring hole); the ring never intersects, clips, or passes through flesh; preserve "
+    "natural hand anatomy with five fingers"
+)
+
+_JEWELRY_KEYWORDS = (
+    "ring", "engagement ring", "wedding band", "wedding ring", "bracelet",
+    "necklace", "earring", "pendant", "bangle", "anklet", "watch", "cufflink",
+    "brooch", "tiara",
+)
+
+_APPLICATION_ACTION_RE = _re.compile(
+    r"\b(apply|appli|glide|stroke|swipe|dispens)\b",
+    _re.I,
+)
+_GEOMETRY_KEYWORDS_RE = _re.compile(
+    r"\b(upright|dispens|tip|base|bottom|heel|invert|lower lip)\b",
+    _re.I,
+)
+
+_FORBIDDEN_SEXUAL_FRAMING_RE = _re.compile(r"\b(kiss|pout|tongue)\b", _re.I)
+
+
+def is_substantive_product_form(product_form: str, product_name: str = "") -> bool:
+    """True when product_form carries real physical structure, not just the product name."""
+    pf = (product_form or "").strip()
+    if not pf or pf.lower() == "the product":
+        return False
+    if product_name and pf.strip().lower() == product_name.strip().lower():
+        return False
+    if len(pf) < 30:
+        low = pf.lower()
+        if not any(kw in low for kw in _PRODUCT_FORM_PHYSICAL_KEYWORDS):
+            return False
+    return True
+
+
+def sanitize_product_form(
+    product_form: str,
+    *,
+    product_name: str = "",
+    description: str = "",
+) -> str:
+    """Drop name-only fallbacks so beats don't treat 'lipgloss' as physical form."""
+    pf = str(product_form or "").strip()
+    if is_substantive_product_form(pf, product_name):
+        return pf[:240]
+    desc = str(description or "").strip()
+    if is_substantive_product_form(desc, product_name):
+        return desc[:240]
+    return ""
+
+
+def resolve_sanitized_product_form(product: dict) -> str:
+    """Resolve visual_description/description into a substantive product_form string."""
+    name = product.get("name") or ""
+    raw = ""
+    try:
+        from prompts.product_refs import resolve_product_visual_description
+        raw = resolve_product_visual_description(product) or ""
+    except Exception as e:
+        print(f"[cinematic_ad] product form resolve failed: {e}")
+    return sanitize_product_form(raw, product_name=name, description=product.get("description") or "")
+
+
+def is_jewelry_product(product_name: str, product_form: str = "", brief: str = "") -> bool:
+    """True when the product is jewelry (ring, bracelet, etc.).
+
+    Used only for usage-geometry/anatomy guidance — does NOT add a direction-table
+    category, so propose/direction routing is unaffected.
+    """
+    text = f"{product_name} {product_form} {brief}".lower()
+    return any(_re.search(rf"\b{_re.escape(kw)}\b", text) for kw in _JEWELRY_KEYWORDS)
+
+
+def infer_application_geometry_hint(
+    product_form: str,
+    product_name: str,
+    category: str,
+    *,
+    has_humans: bool = True,
+    allow_lip_application: bool = False,
+    brief: str = "",
+) -> str:
+    """Short orientation hint for beats/storyboard application panels."""
+    if not has_humans:
+        return ""
+    if allow_lip_application:
+        if is_substantive_product_form(product_form, product_name):
+            return f"{product_form.strip()[:180]}. {_LIP_APPLICATION_GEOMETRY_CLAUSE}"
+        return _LIP_APPLICATION_GEOMETRY_CLAUSE
+    # Jewelry is worn (encircles finger/wrist) — the beauty "dispensing end"
+    # clause is nonsensical and causes through-finger deformation.
+    if is_jewelry_product(product_name, product_form, brief):
+        if is_substantive_product_form(product_form, product_name):
+            return f"{product_form.strip()[:180]}. {_JEWELRY_GEOMETRY_CLAUSE}"
+        return _JEWELRY_GEOMETRY_CLAUSE
+    if is_beauty_category(category):
+        if is_substantive_product_form(product_form, product_name):
+            return f"{product_form.strip()[:180]}. {_APPLICATION_GEOMETRY_CLAUSE}"
+        return _APPLICATION_GEOMETRY_CLAUSE
+    # Non-beauty, non-jewelry: don't emit the beauty dispensing clause. The
+    # ANATOMY & PHYSICS LOCK in the storyboard prompt covers solidity.
+    if is_substantive_product_form(product_form, product_name):
+        return product_form.strip()[:180]
+    return ""
+
+
 # Lip/mouth wording that triggers Fal GPT Image 2 content checkers on beauty ads.
 _LIP_MOUTH_RE = _re.compile(
     r"\b(lower lip|upper lip|lips?|mouth|kiss|pout|tongue|balm[\s-]glossed|lip[\s-]rests?)\b",
@@ -847,6 +1253,7 @@ def sanitize_beats_for_fal(
     has_humans: bool,
     aggressive: bool = False,
     hands_only: bool = False,
+    allow_lip_application: bool = False,
 ) -> list[dict]:
     """Rewrite beauty panel beats to pass Fal content moderation.
 
@@ -859,8 +1266,8 @@ def sanitize_beats_for_fal(
         return beats
 
     _safe_apply = (
-        "the formula glides smoothly across the forearm in one fluid horizontal stroke, "
-        "soft satin sheen catching warm light (no mouth contact)"
+        "hand holds product upright; dispensing tip glides across forearm in one stroke; "
+        "flat base points away from skin, never contacts skin (no mouth contact)"
     )
     _safe_hold = (
         "product held gently in hand near the cheek, warm window light, no lip or mouth contact"
@@ -889,7 +1296,11 @@ def sanitize_beats_for_fal(
                 camera = camera or "50mm close-up, hands and product in frame"
                 changed = True
 
-        if aggressive or risky:
+        if allow_lip_application:
+            if _FORBIDDEN_SEXUAL_FRAMING_RE.search(action):
+                action = _FORBIDDEN_SEXUAL_FRAMING_RE.sub("", action).strip()
+                changed = True
+        elif aggressive or risky:
             if aggressive and (_LIP_MOUTH_RE.search(action) or "lip" in action.lower() or "mouth" in action.lower()):
                 action = _safe_apply if "glide" in action.lower() or "apply" in action.lower() or "stroke" in action.lower() else _safe_hold
             else:
@@ -900,6 +1311,12 @@ def sanitize_beats_for_fal(
             if _ECU_LIP_CAMERA_RE.search(camera):
                 camera = "50mm close-up, product in hand"
             changed = True
+
+        geometry_clause = _LIP_APPLICATION_GEOMETRY_CLAUSE if allow_lip_application else _APPLICATION_GEOMETRY_CLAUSE
+        if _APPLICATION_ACTION_RE.search(action) and not _GEOMETRY_KEYWORDS_RE.search(action):
+            action = f"{action.rstrip('.')}; {geometry_clause}"
+            changed = True
+
         beat["action"] = action[:240]
         beat["camera"] = camera[:120]
         out.append(beat)
@@ -908,6 +1325,74 @@ def sanitize_beats_for_fal(
             f"[cinematic_storyboard] beats sanitized for Fal "
             f"(aggressive={aggressive}, hands_only={hands_only})"
         )
+    return out
+
+
+# Jewelry beat hazards: a frozen mid-insertion frame renders as the ring
+# clipping through the finger, and interlaced hands produce extra/fused digits.
+_JEWELRY_MID_INSERTION_RE = _re.compile(
+    r"\b(slid(?:e|es|ing)\s+(?:fully\s+)?onto|begins?\s+to\s+slide|"
+    r"lowers?\s+.{0,30}?\btoward|push(?:es|ed)?\s+onto|glid(?:e|es|ing)\s+onto|"
+    r"slips?\s+(?:the\s+\w+\s+)?onto|placing\s+.{0,20}?\bonto\s+.{0,20}?\bfinger|"
+    r"halfway\s+(?:on|onto)|partially\s+(?:on|onto|worn))\b",
+    _re.I,
+)
+_JEWELRY_INTERLOCK_RE = _re.compile(
+    r"\b(interlaced?|interlock(?:ed|ing)?|entwin(?:e|es|ed|ing)|"
+    r"intertwin(?:e|es|ed|ing)|clasp(?:ed|ing)?)\b",
+    _re.I,
+)
+_JEWELRY_FINGER_REF_RE = _re.compile(
+    r"\b(?:receiving|her|his|the)\s+(?:ring\s+)?finger\b",
+    _re.I,
+)
+
+_JEWELRY_SEATED_ACTION = (
+    "ring fully seated on the left ring finger, hand at rest, diamonds catching light"
+)
+_JEWELRY_HANDS_SAFE_ACTION = (
+    "two hands rest side by side, fingers relaxed and separated, "
+    "ring visible on the left ring finger"
+)
+
+
+def sanitize_beats_for_jewelry(
+    beats: list[dict],
+    *,
+    product_name: str = "",
+    product_form: str = "",
+    brief: str = "",
+) -> list[dict]:
+    """Deterministic post-pass for jewelry beats — the LLM beat generator can
+    still emit mid-insertion or interlocked-hands shots despite the JEWELRY
+    SHOT SAFETY system rules. Rewrites those actions into safe equivalents and
+    normalizes the wearing finger so the ring never jumps fingers across panels.
+
+    No-op when the product isn't jewelry.
+    """
+    if not is_jewelry_product(product_name, product_form, brief):
+        return beats
+
+    out: list[dict] = []
+    changed = False
+    for b in beats:
+        beat = dict(b)
+        action = str(beat.get("action") or "")
+        orig = action
+
+        if _JEWELRY_MID_INSERTION_RE.search(action):
+            action = _JEWELRY_SEATED_ACTION
+        if _JEWELRY_INTERLOCK_RE.search(action):
+            action = _JEWELRY_HANDS_SAFE_ACTION
+        action = _JEWELRY_FINGER_REF_RE.sub("left ring finger", action)
+
+        if action != orig:
+            changed = True
+        beat["action"] = action[:240]
+        out.append(beat)
+
+    if changed:
+        print("[cinematic_storyboard] beats sanitized for jewelry (mid-insertion/interlock/finger-lock)")
     return out
 
 
@@ -947,9 +1432,37 @@ def build_storyboard_prompt(
     beats: Optional[list[dict]] = None,
     has_influencer_ref: bool = False,
     moderation_profile: str = "sharp",
+    product_form: str = "",
+    application_geometry_hint: str = "",
+    allow_lip_application: bool = False,
+    brief: str = "",
 ) -> str:
     has_humans = direction.get("model_or_product_only") == "model"
+    is_jewelry = is_jewelry_product(product, product_form, brief)
     beat_s = duration_s / num_panels
+
+    # Anatomy + physics guardrail — only meaningful when a person/hands appear.
+    # GPT Image 2 otherwise renders rings through fingers and warps hands on the
+    # tight usage/macro panels. No negative-prompt support, so it lives in-prompt.
+    anatomy_lock = (
+        "ANATOMY & PHYSICS LOCK: render all hands, fingers, and bodies with correct human "
+        "anatomy — exactly five fingers per hand, natural joints and proportions, no fused, "
+        "extra, missing, or warped digits. Objects are solid and obey physics: the product "
+        "NEVER passes through skin, fingers, or flesh. A ring/band encircles the finger with "
+        "the finger through the hole; a bracelet encircles the wrist — jewelry never clips "
+        "through or merges with the body. On macro and close-up usage panels keep all limbs "
+        "and contact points anatomically correct and physically plausible."
+        + (
+            " FINGER LOCK: the ring is worn on the LEFT RING FINGER in every panel where it "
+            "is worn — never a different finger or hand across panels. NEVER depict the ring "
+            "mid-slide or partially on a finger: in each panel it is either clearly separated "
+            "from the hand or fully seated at the finger base. NEVER render interlaced or "
+            "interlocked fingers; when two hands appear they are side by side with all "
+            "fingers separated and visible."
+            if is_jewelry else ""
+        )
+        + "\n\n"
+    ) if has_humans else ""
     if beats is None:
         beats = panel_beats_for(direction["key"], category=category)
     cols, rows = _grid_for(num_panels, aspect_ratio)
@@ -957,16 +1470,23 @@ def build_storyboard_prompt(
     grid_text = f"{cols} columns by {rows} rows"
     sheet_orient = "vertical" if aspect_ratio == "9:16" else ("standard" if aspect_ratio == "4:3" else "landscape")
 
-    _fal_safety = (
-        "FAL SAFETY — product application on forearm, back of hand, or "
-        "cheek only. NEVER lip/mouth ECU, NEVER product touching lips.\n\n"
-    )
+    if allow_lip_application:
+        _fal_safety = (
+            "LIP APPLICATION MODE — on the application panel, product contacts LIPS ONLY "
+            "(lower lip stroke, professional beauty ECU). Professional cosmetic ad framing. "
+            "NEVER kiss, pout, tongue, or sexual framing. NEVER apply to cheek or forearm.\n\n"
+        )
+    else:
+        _fal_safety = (
+            "FAL SAFETY — product application on forearm, back of hand, or "
+            "cheek only. NEVER lip/mouth ECU, NEVER product touching lips.\n\n"
+        )
 
-    # Beauty uses progressive moderation profiles (sharp → hands_only →
+    # Beauty uses progressive moderation profiles (lips_allowed → sharp → hands_only →
     # product_ref_only → blur_fallback). Non-beauty always sharp @Image2.
     if has_humans and is_beauty_category(category):
         profile = moderation_profile if moderation_profile in (
-            "sharp", "hands_only", "product_ref_only", "blur_fallback",
+            "sharp", "hands_only", "product_ref_only", "blur_fallback", "lips_allowed",
         ) else "sharp"
         use_image2 = has_influencer_ref and profile != "product_ref_only"
 
@@ -1015,7 +1535,7 @@ def build_storyboard_prompt(
                 "every panel where she appears.\n\n"
                 + _fal_safety
             )
-        else:  # sharp (default)
+        elif profile == "lips_allowed" or profile == "sharp":
             if use_image2:
                 character_lock = (
                     "CRITICAL — CHARACTER LOCK (for panels with a person): locked to "
@@ -1093,6 +1613,40 @@ def build_storyboard_prompt(
         f"PRODUCT LOCK: subject is locked to @Image1 — preserve exact shape, color, materials, "
         f"and surface texture across every panel. The product never deforms, never changes color, "
         f"never appears in degraded form. THIS REFERENCE IS THE IDENTITY ANCHOR. "
+        f"@Image1 is the SOLE authority on the product's physical form, applicator, cap, and packaging. "
+        f"If any ACTION caption below implies a different applicator or mechanic (wand, doe-foot, brush, "
+        f"bullet, pump, dropper, 'twist cap off', 'reveals interior'), IGNORE the caption's form and render "
+        f"the product EXACTLY as @Image1. Caption text NEVER overrides the reference image's form. "
+        + (f"CONFIRMED PRODUCT FORM (matches @Image1): {product_form.strip()[:240]}. " if (product_form or "").strip() else "")
+        + f"EVERY panel MUST show the IDENTICAL product from @Image1 — same silhouette, cap, "
+        f"applicator, color, and label in all {num_panels} panels. NEVER substitute a different "
+        f"item: no lipstick bullet, no doe-foot wand, no sponge, no brush, no alternate bottle or "
+        f"tube. The product's form, cap, and applicator are identical in all panels; never morph it, "
+        f"never open it into a different object, never swap applicator type. On any application or "
+        f"usage beat, the SAME @Image1 product is the ONLY applicator shown — do not invent a second product. "
+        f"On macro, ECU, slow-motion, or in-use panels the product is a 1:1 faithful copy of @Image1 — "
+        f"identical proportions, label/text placement, color, and materials. Do NOT simplify, restyle, or "
+        f"re-proportion it because it is in motion, partially framed, or close to camera; product fidelity is "
+        f"HIGHEST on the usage/action panel. "
+        + (
+            "APPLICATION GEOMETRY: on the application panel, product contacts LIPS ONLY (lower lip stroke); "
+            "bullet tip on lower lip, flat base away from face; never cheek, forearm, or base-first. "
+            if allow_lip_application else
+            "USAGE GEOMETRY: the product is worn by encircling the finger/wrist; the finger passes through "
+            "the band; never render the ring intersecting, clipping, or passing through flesh; preserve "
+            "natural hand anatomy. "
+            if is_jewelry else
+            "APPLICATION GEOMETRY: when a panel shows the product touching skin, only the dispensing/applying end "
+            "may contact skin; product held upright, gripped by the body; flat base/bottom/heel NEVER pressed "
+            "against skin; never invert the product or apply base-first. "
+            if is_beauty_category(category) else
+            ""
+        )
+        + (f"{application_geometry_hint.strip()[:240]}. " if (application_geometry_hint or "").strip() else "")
+        + f"CAP STATE LOCK: @Image1 cap open/closed state is canonical. Non-application panels match @Image1 "
+        f"exactly — if @Image1 shows the cap on, every reveal/spin/hero panel keeps the cap on. Never remove "
+        f"the cap in reveal or spin panels unless @Image1 is already open. Application panels may show the "
+        f"product in use only at the dispensing end without morphing the tube body. "
         f"Render ALL text that exists on the product itself (brand name, product name, labels, "
         f"packaging copy, nutritional info, ingredient lists) crisply, sharply, and FULLY READABLE "
         f"at 100% — match the typography, color, and placement from @Image1 exactly. Product-native "
@@ -1103,6 +1657,7 @@ def build_storyboard_prompt(
         f"with NO end-card text overlay, NO logo lockup graphic, NO promotional copy — just the "
         f"product (with its own native packaging text intact) in the scene. The header above the "
         f"grid and the caption blocks below each panel are the ONLY non-product text in this image.\n\n"
+        f"{anatomy_lock}"
         f"{character_lock}"
         f"{aesthetic_block}"
         f"{aspect_note}\n\n"
@@ -1137,11 +1692,15 @@ def build_seedance_prompt(
     aspect_ratio: str = "16:9",
     has_influencer_ref: bool = False,
 ) -> str:
-    """Short 40-70 word "animate this storyboard" prompt — matches the prior
-    working 16:9 shape. All cinematic complexity lives in the storyboard image
-    (Image1); Seedance just animates the panels in sequence and holds the
-    product lock. Long pillar-structured prompts over-constrained Seedance and
-    caused stuttery motion / hallucinations in the 9:16 regression.
+    """"Animate this storyboard" prompt. The storyboard image (Image1) anchors
+    composition / product / character per panel; when beats are available a
+    compact time-blocked "shot direction" block (action + camera + motion, one
+    line per panel) gives Seedance explicit cinematography so the motion isn't
+    generic. Beats omit lens/lighting/sound — those are baked into the panels,
+    and the full pillar-structured prompts over-constrained Seedance and
+    caused stuttery motion / hallucinations in the 9:16 regression. When beats
+    are missing (cache miss after restart) we fall back to the prior short
+    40-70 word prompt so animation is never blocked.
     """
     if has_storyboard:
         panel_count = len(beats) if beats else 6
@@ -1156,18 +1715,116 @@ def build_seedance_prompt(
             )
         else:
             human_line = ""
-        return (
+        base = (
             f"Animate the {panel_count}-panel storyboard in @Image1 in order as a continuous "
-            f"{duration_s}s {aspect_ratio} cinematic ad with hard cuts between panels. "
+            f"{duration_s}s {aspect_ratio} cinematic ad with hard cuts between panels"
+            f"{' — panel N drives shot N' if beats else ''}. "
             f"@Image2 is the {brand} {product} — preserve its exact shape, color, materials, "
             f"and surface texture in every shot; it never deforms.{human_line} "
             f"Mood: {direction.get('vibe', 'cinematic')}. "
             f"Music and ambient sound design, no dialogue."
         )
+        if not beats:
+            return base
+        # Time-blocked shot direction — one compact line per panel, boundaries
+        # split proportionally across the spot (same convention as the
+        # direct-Seedance prompt, which empirically produces stronger motion).
+        beat_s = duration_s / panel_count
+        shot_lines: list[str] = []
+        for i, b in enumerate(beats):
+            start = round(i * beat_s, 1)
+            end = float(duration_s) if i == panel_count - 1 else round((i + 1) * beat_s, 1)
+            start_s = int(start) if float(start).is_integer() else start
+            end_s = int(end) if float(end).is_integer() else end
+            action = (b.get("action") or b.get("scene") or "").strip().rstrip(".")
+            if not action:
+                continue
+            extras = ", ".join(
+                p for p in ((b.get("camera") or "").strip(), (b.get("motion") or "").strip()) if p
+            )
+            line = f"[{start_s}-{end_s}s] {action}"
+            if extras:
+                line += f" — {extras}"
+            shot_lines.append(line)
+        if not shot_lines:
+            return base
+        return base + "\n\nShot direction (match each panel):\n" + "\n".join(shot_lines)
     return (
         f"A {duration_s}s {aspect_ratio} cinematic product ad. "
         f"@Image1 is the {brand} {product} — preserve exact shape, color, materials. "
         f"Mood: {direction.get('vibe', 'cinematic')}. Music + ambient sound, no dialogue."
+    )
+
+
+def build_seedance_direct_prompt(
+    *,
+    brand: str,
+    product: str,
+    direction: dict,
+    beats: Optional[list[dict]] = None,
+    duration_s: int = 15,
+    has_humans: bool = True,
+    has_influencer_ref: bool = False,
+    aspect_ratio: str = "16:9",
+    application_geometry_hint: str = "",
+    allow_lip_application: bool = False,
+) -> str:
+    """Storyboard-FREE Seedance 2.0 prompt for Fal-bypassed (lip / sensitive)
+    directions.
+
+    Instead of animating a Fal storyboard sheet, the shot sequence is written
+    out scene-by-scene as time-blocked direction (the seedance_director.txt
+    convention) so Kie Seedance renders the whole spot from the product shot
+    (@Image1) + character (@Image2) alone — GPT Image 2 never sees it.
+    """
+    direction = direction or {}
+    beats = beats or []
+    panel_count = len(beats) or 1
+    vibe = direction.get("vibe", "cinematic")
+
+    # Reference bindings: product is always @Image1; the character (when the
+    # direction is model-led and an influencer ref exists) is @Image2.
+    refs = [
+        f"@Image1 is the {brand} {product} — preserve its exact shape, color, "
+        f"materials, surface texture, and any printed label; it never deforms."
+    ]
+    if has_humans and has_influencer_ref:
+        refs.append(
+            "@Image2 is the character — preserve exact face, hair, and skin tone "
+            "in every shot where a person appears; same person throughout."
+        )
+    elif has_humans:
+        refs.append("Keep the character consistent across all shots — same person, same face.")
+    refs_block = " ".join(refs)
+
+    # Time-blocked scene direction — one block per beat, proportionally split
+    # across the spot duration (hard cuts between blocks).
+    beat_s = max(1.0, duration_s / panel_count)
+    lines: list[str] = []
+    for i, b in enumerate(beats):
+        start = round(i * beat_s)
+        end = duration_s if i == panel_count - 1 else round((i + 1) * beat_s)
+        action = (b.get("action") or b.get("scene") or "product beat").strip()
+        lines.append(f"[{start}-{end}s] {action}")
+    if not lines:
+        lines.append(f"[0-{duration_s}s] cinematic hero shot of the {brand} {product}")
+    scene_block = "\n".join(lines)
+
+    geometry_line = ""
+    if has_humans and application_geometry_hint:
+        geometry_line = f"Application geometry: {application_geometry_hint.strip()}. "
+    elif has_humans and allow_lip_application:
+        geometry_line = f"Application geometry: {_LIP_APPLICATION_GEOMETRY_CLAUSE}. "
+
+    return (
+        f"References: {refs_block}\n\n"
+        f"Style: {duration_s}s {aspect_ratio} cinematic product ad. Mood: {vibe}. "
+        f"{_aspect_composition_rule(aspect_ratio)}. Hard cuts between shots, "
+        f"product stays identical in every shot. {geometry_line}"
+        f"No on-screen text, titles, or captions — only text physically printed "
+        f"on the product packaging, 100% faithful to the original.\n\n"
+        f"{scene_block}\n\n"
+        f"Ambient sound design and light music, no dialogue."
     )
 
 

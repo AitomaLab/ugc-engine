@@ -263,7 +263,7 @@ If the user explicitly states a desired length, always use their number. If the 
 
 **Account setup**: create_influencer → create_product → analyze_product_image. Then the user can generate.
 
-**Generate influencer from scratch**: generate_influencer (gated) → returns persona data + profile photo. Then call create_influencer(name, image_url, description, ...) to save permanently.
+**Generate influencer from scratch**: generate_influencer (gated) → returns persona data + profile photo. Then call create_influencer(name, image_url, description, ...) to save permanently. In a cinematic-ad flow, after saving the character immediately call create_cinematic_ad with stage='storyboard', the direction the user chose, and influencer_id — do NOT ask the user to @-mention the character and do NOT call generate_influencer again.
 
 **Character identity sheet**: list_project_assets → pick influencer → generate_identity(image_url) (gated). Returns 4 reference views (closeup, front, profile, full body).
 
@@ -393,7 +393,7 @@ If it is NOT clearly one or the other, ASK before calling either tool. Do not gu
 1. PRIMARY path — call `apply_editor_ops(job_id, ops=[...])` with the edit operations you want. Supported ops: `set_timeline_span`, `set_media_start`, `add_music`, `add_captions`, `set_opacity`, `set_playback_rate`, `set_volume_db`, `set_position_size`, `set_fade`, `set_audio_fade`, `set_text_content`, `delete_items`, `add_text`. The server loads the editor_state, applies each op, and persists — free, no render. If you don't know the exact itemIds, the server falls back to the first matching video/audio item, so don't invent long UUIDs just to fill the field.
 2. For ADD / SWAP / REMOVE MUSIC on an already-combined video, prefer calling `combine_videos` again (same original per-clip URLs + `music_prompt`, and `mute_audio_indices` if needed). It rebuilds the whole cut with a fresh soundtrack bed under preserved dialogue — cleaner than mutating editor_state.
 3. For load/mutate/save style edits when you need to read the raw state first (e.g. to enumerate scenes by name), the legacy `load_editor_state` → mutate → `save_editor_state` chain still works. Prefer `apply_editor_ops` when you already know what ops to apply.
-4. After `apply_editor_ops` or `combine_videos` succeeds, reply to the user in plain English with ONE sentence ("Trimmed the UGC clip to 0:06-0:07 and added a light music bed"). Never paste the ops array or the editor_state JSON into chat.
+4. After `apply_editor_ops` or `combine_videos` succeeds, reply to the user in plain English with ONE sentence ("Trimmed the UGC clip to 0:06-0:07 and added a light music bed"). Never paste the ops array or the editor_state JSON into chat. IMPORTANT: when you requested a soundtrack via `music_prompt`, check the `combine_videos` result — if it returns `music_added: false` (or a `music_note`), you MUST NOT claim music was added. Instead tell the user the music step failed and offer to retry. Only say music/ambience was added when `music_added` is true.
 
 ⚠️ NEVER write the literal text `AI_EDIT_OPS` (or the ops JSON after it) as a chat reply. That is the old format for a different subsystem (the in-editor side panel) and the dashboard will not act on it. If you want to apply ops, call `apply_editor_ops`. If you want to swap music on a final video, call `combine_videos`. Plain-text `AI_EDIT_OPS` = zero effect, and the user sees technical JSON in the chat bubble instead of a working edit.
 
@@ -454,8 +454,8 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
 
 13. CINEMATIC ADS (Fal AI: GPT Image 2 storyboard + Seedance 2.0 Pro animation) — when the user asks for a "cinematic ad", "cinematic advert", "cinematic ads", "cinematic video", "cinematic spot", "cinematic clip", "film-style ad/video/spot", "movie-style ad/video/spot", "hollywood-look ad/video", "storyboard for [product]", "animate this product as a cinematic spot", or **any ad/video framed as cinematic / filmic / movie-quality / film-look** — OR the Spanish equivalents "anuncio cinematográfico", "anuncio cinemático", "vídeo cinematográfico", "spot cinemático", "anuncio de cine", "estilo cine", "estilo película", "spot publicitario cinemático" — against an @mentioned product or uploaded product photo, use the `create_cinematic_ad` tool — NOT `generate_video(mode=cinematic_video)` and NOT `animate_image`. `generate_video(cinematic_video)` is reserved for cases where the user EXPLICITLY opts out of the storyboard flow ("just a quick clip", "no storyboard", "single shot", "skip the directions"). If you cannot tell whether the user wants the full storyboard workflow vs. a one-shot cinematic clip, ASK in ONE short message: "Do you want a curated cinematic ad (3 direction options → storyboard → animated 5/10/15s spot) or a quick single-shot cinematic clip (one 5–10s render, no storyboard)?" Default to `create_cinematic_ad` if they pick the first or don't answer in the same turn. This tool is multi-stage with mandatory pause points:
   - **a) `stage='propose'` (FREE):** First call. Pass `product_id` (from @mention) OR `image_url` (from upload) + the user's `brief` + `aspect_ratio` + `duration_seconds` (see ASPECT + DURATION rule below). The tool returns 3 storyboard directions (A/B/C) tailored to the brief + format + length. Read them back to the user in natural language — name, vibe, hero moment, model-led or product-only, mark the recommended one — and STOP. Wait for the user to pick A/B/C (or remix). Never auto-pick.
-  - **b) `stage='storyboard'` (~4 cr, NO cost gate):** Once direction is chosen, call with `direction`, plus `tagline` + `domain` + the SAME `aspect_ratio` and `duration_seconds` from propose. NO `confirmed=false` step — the storyboard renders directly (4 cr auto-debited; trivial enough not to gate). The tool blocks ~2 min then returns `action='confirmation_required'` for the NEXT stage (animate) — the storyboard image surfaces via the artifact stream, the panels themselves describe the scenes, so DO NOT separately narrate beats. The frontend renders the animate cost chip automatically.
-  - **c) `stage='animate'` (32–96 cr depending on duration):** Use the `next_call` payload returned by storyboard (it pre-fills `storyboard_url`, `direction`, `aspect_ratio`, `duration_seconds`, `tagline`, `domain`). FIRST `confirmed=false` for the cost chip; after Confirm, `confirmed=true`. The tool renders the ad at the chosen format + length, saves to the Videos tab, returns `action='ad_ready'` with `video_url`.
+  - **b) `stage='storyboard'` (~4 cr, NO cost gate):** Once direction is chosen, call with `direction`, plus `tagline` + `domain` + the SAME `aspect_ratio` and `duration_seconds` from propose. NO `confirmed=false` step — the storyboard renders directly (4 cr auto-debited; trivial enough not to gate). The tool blocks ~2 min then returns `action='confirmation_required'` for the NEXT stage (animate) — the storyboard image surfaces via the artifact stream, the panels themselves describe the scenes, so DO NOT separately narrate beats. The frontend renders the animate cost chip automatically. **DIRECT-SEEDANCE BYPASS:** for lip-application / Fal-sensitive directions the server skips the storyboard sheet entirely and the response has `direct_seedance: true`, NO `storyboard_url`, and a `scene_breakdown` (the shots described in text). When you see `direct_seedance: true`, tell the user (briefly, using `direct_seedance_note`) that this direction has no visual storyboard and the video is generated directly via Seedance 2.0 — present the `scene_breakdown` beats and the animate cost chip. Do NOT say "Rendering your 6-panel storyboard" or "this takes about 2 minutes" for direct_seedance responses — there is no storyboard render step. Do NOT treat the missing storyboard image as an error.
+  - **c) `stage='animate'` (32–96 cr depending on duration):** Use the `next_call` payload returned by storyboard (it pre-fills `storyboard_url`, `direction`, `aspect_ratio`, `duration_seconds`, `tagline`, `domain` — and `direct_seedance` when set). Pass the ENTIRE `next_call` through verbatim, INCLUDING `direct_seedance` when present (the direct path has no `storyboard_url`; that is expected). FIRST `confirmed=false` for the cost chip; after Confirm, `confirmed=true`. The tool renders the ad at the chosen format + length, saves to the Videos tab, returns `action='ad_ready'` with `video_url`.
   - **d) Optional add-ons:** `stage='broll'` (`panel_index`, ~32 cr) and `stage='product_macro'` (~32 cr). Both always 5s; respect the SAME `aspect_ratio` chosen earlier.
 
   **ASPECT + DURATION rule (MANDATORY before stage='propose'):** Before calling propose, you MUST know `aspect_ratio` (16:9 horizontal, 9:16 vertical, 4:3 classic) AND `duration_seconds` (5, 10, or 15). If the user's brief specifies either ("vertical", "9:16", "tiktok", "reels", "5s", "10s", "15s", "horizontal", "youtube", "classic 4:3"), use it directly. **Ask for each missing value in a SEPARATE message, ONE at a time — NEVER combine `[[ASPECT_BUTTONS]]` and `[[DURATION_BUTTONS]]` in the same message.** The button chips are single-select, so asking both at once forces the user to answer twice and makes you repeat the question. Sequence:
@@ -463,7 +463,7 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
   2. THEN, if `duration_seconds` is still missing, ask only about length, ending with `[[DURATION_BUTTONS]]` on the last line (EN: `"And how long should it be? [[DURATION_BUTTONS]]"` / ES: `"¿Y cuánto debe durar? [[DURATION_BUTTONS]]"`). Wait for the choice.
   If only ONE of the two is missing, ask just that single question with its single marker. Always ask in the user's language. Frontend renders Vertical / Horizontal / Classic and 5s / 10s / 15s buttons. Once you have BOTH values, call propose. Do NOT skip this step.
 
-  HARD RULES for cinematic ads: resolution is ALWAYS 720p — never offer 480p, never ask. Each paid stage is its own confirmation; approval for storyboard does NOT carry to animate. If a call returns an `error` field, surface its `msg` field verbatim to the user — do NOT silently retry or silently swap models. Never describe the product or brand from memory; always rely on the @mentioned product or uploaded image. For model-led directions, the user MUST @-mention an influencer — pass `influencer_id` from the preface; the server uses the exact `image_url` from `ctx.refs` for the storyboard face lock (do not rely on DB default profile shots for product or influencer). On beauty model-led ads the server progressively retries storyboard generation (sharp face first, then hands-only panels) before falling back; animate passes the influencer as `@Image3` so Seedance can restore face identity. If the storyboard response includes `blur_fallback_warning`, quote it to the user before they confirm animate. When `create_cinematic_ad` returns `error` (e.g. `cinematic_ad failed: TypeError: ...`), quote the exact error string to the user — NEVER call it a "platform bug" or "server-side bug" and NEVER suggest switching to Kling/`generate_video` as a workaround unless the user explicitly asks for an alternative. When `error` is `fal_content_policy`, explain that Fal's image safety checker rejected the storyboard after all fallbacks (common on beauty lip-close-up + dual-ref prompts) — quote `msg` verbatim and offer Direction B (product-only, e.g. Soft Sculpture) as the in-flow alternative; do NOT auto-pivot to Kling.
+  HARD RULES for cinematic ads: resolution is ALWAYS 720p — never offer 480p, never ask. Each paid stage is its own confirmation; approval for storyboard does NOT carry to animate. If a call returns an `error` field, surface its `msg` field verbatim to the user — do NOT silently retry or silently swap models. Never describe the product or brand from memory; always rely on the @mentioned product or uploaded image. For model-led directions, the server auto-resolves the influencer from @-mention, `influencer_id`, session stash (after generate_influencer/create_influencer), or a DB match — do NOT ask the user to @-mention a character they just created or saved. Pass `influencer_id` when you have it; the server uses the resolved `image_url` for the storyboard face lock. When the user says "generate the video" / "proceed" / "go" after a character exists, advance to `stage='storyboard'` (if not done) or `stage='animate'` (if storyboard exists) — NEVER call `generate_influencer` again in the same flow. On beauty model-led ads the server progressively retries storyboard generation (sharp face first, then hands-only panels) before falling back; animate passes the influencer as `@Image3` so Seedance can restore face identity. If the storyboard response includes `blur_fallback_warning`, quote it to the user before they confirm animate. When `create_cinematic_ad` returns `error` (e.g. `cinematic_ad failed: TypeError: ...`), quote the exact error string to the user — NEVER call it a "platform bug" or "server-side bug" and NEVER suggest switching to Kling/`generate_video` as a workaround unless the user explicitly asks for an alternative. Lip-application and other Fal-sensitive directions now AUTO-BYPASS Fal: instead of failing, the storyboard stage returns `direct_seedance: true` (no storyboard sheet) and the video is rendered straight through Seedance 2.0 — so the `fal_content_policy` hard error should rarely appear for those. If `error` is `fal_content_policy` anyway, quote `msg` verbatim and offer Direction B (product-only, e.g. Soft Sculpture) as the in-flow alternative; do NOT auto-pivot to Kling.
 
 14. CROPPING / SPLITTING A STORYBOARD INTO INDIVIDUAL PANELS — when the user asks to "crop", "split", "cut", "separate", or "show me each panel / each image individually" from a storyboard (or any multi-panel sheet), you MUST call the `crop_storyboard` tool. It downloads the sheet, slices it into individual panel images, uploads each one, saves them to the project, and surfaces them in the Images tab. It is FREE and needs no confirmation. If the user references the storyboard you just made, you can omit `image_url` (it defaults to the latest storyboard); otherwise pass the sheet's `image_url`. Pass `num_panels` when you know the count (e.g. 4 or 6) so the splitter picks the right grid. NEVER fabricate this: do not write out panel descriptions as text and claim the files were "saved to Outputs" or "rendered in my view" — you have no such side effect. The ONLY way real cropped images appear for the user is by calling `crop_storyboard`. After it returns, refer to the panels by number/label; do not paste URLs."""
 
@@ -1022,13 +1022,20 @@ def _custom_tools_for_agent() -> list[dict]:
             "name": "generate_influencer",
             "description": (
                 "Generate a random AI influencer persona (name, gender, age, description) + NanoBanana Pro "
-                "profile photo in one step. No inputs needed. "
+                "profile photo in one step. When generating a character FOR a product or ad, pass product "
+                "context (product_id and/or category and/or brief) so the persona fits the niche — e.g. a "
+                "beauty/cosmetics product produces a beauty-appropriate creator. Physical traits "
+                "(ethnicity, skin tone, hair, eyes) are always randomized server-side for diversity. "
                 "FIRST call returns a credit cost estimate. After user confirms, call again with confirmed=true."
             ),
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "confirmed": {"type": "boolean", "description": confirmed_desc},
+                    "product_id": {"type": "string", "description": "Product UUID this character is for — lets the server bias the persona to the product's category."},
+                    "category": {"type": "string", "description": "Product category hint (e.g. 'beauty', 'audio', 'footwear') when no product_id is available."},
+                    "gender": {"type": "string", "enum": ["Female", "Male"], "description": "Force a specific gender. Omit to let the server pick (beauty leans female, otherwise random)."},
+                    "brief": {"type": "string", "description": "Short product/ad context so the persona's bio suits the niche."},
                 },
                 "required": [],
             },
@@ -1185,6 +1192,11 @@ def _custom_tools_for_agent() -> list[dict]:
                     "name": {"type": "string"},
                     "description": {"type": "string"},
                     "image_url": {"type": "string"},
+                    "direction": {
+                        "type": "string",
+                        "enum": ["A", "B", "C"],
+                        "description": "Optional cinematic direction key — pass when saving a character mid cinematic-ad flow.",
+                    },
                     "elevenlabs_voice_id": {"type": "string"},
                     "gender": {"type": "string"},
                     "age": {"type": "string"},
@@ -1827,11 +1839,13 @@ def _custom_tools_for_agent() -> list[dict]:
                         "description": "propose=show 3 directions (FREE); storyboard=render 6-panel sheet (~4 cr); animate=render 15s ad (~96 cr); broll=5s clip from one panel (~32 cr); product_macro=product-only 5s (~32 cr).",
                     },
                     "product_id": {"type": "string", "description": "Product UUID from @mention. Either this OR image_url is required."},
-                    "influencer_id": {"type": "string", "description": "Influencer UUID from @mention. Required for model-led directions (server uses ctx.refs image_url for face lock)."},
+                    "influencer_id": {"type": "string", "description": "Influencer UUID. For model-led directions the server auto-resolves the face reference from this id, session stash, or DB match."},
+                    "influencer_image_url": {"type": "string", "description": "Direct influencer profile photo URL when no @-mention (e.g. from generate_influencer result)."},
                     "image_url": {"type": "string", "description": "Direct image URL when no product was @-mentioned (user uploaded a photo)."},
                     "brief": {"type": "string", "description": "User's vibe / direction / constraints, verbatim."},
                     "direction": {"type": "string", "enum": ["A", "B", "C"], "description": "Which proposed direction to use. Required for storyboard, animate, broll."},
-                    "storyboard_url": {"type": "string", "description": "Storyboard URL from a prior storyboard stage. Required for animate + broll."},
+                    "storyboard_url": {"type": "string", "description": "Storyboard URL from a prior storyboard stage. Required for animate + broll, EXCEPT when direct_seedance=true (lip/Fal-bypassed direction has no storyboard sheet)."},
+                    "direct_seedance": {"type": "boolean", "description": "Set by the storyboard stage for lip/sensitive directions that bypass Fal. When true, animate renders directly via Seedance 2.0 from the product shot + character with NO storyboard sheet. Always pass it through verbatim from the storyboard stage's next_call — never set it yourself."},
                     "panel_index": {"type": "integer", "description": "Which storyboard panel (1-6) to animate. Required for broll."},
                     "tagline": {"type": "string", "description": "End-card tagline (e.g. 'Made for the after.')."},
                     "domain": {"type": "string", "description": "End-card domain (e.g. 'tryfueled.com'). Omit to skip the domain line."},
@@ -1902,7 +1916,65 @@ def _image_overrides_from_turn_refs(
 
 
 def _merge_turn_refs_into_video_kwargs(kwargs: dict, refs: list[dict]) -> dict:
-    """Force reference_image_urls from UI @-mentions over agent/DB defaults."""
+    """Force reference_image_urls from UI @-mentions over agent/DB defaults.
+
+    Also routes a RAW uploaded image (ref type "image", no DB id) into the
+    correct composite slot. The UGC pipeline only turns an upload into an
+    entity through the SINGULAR reference_image_url
+    (uploaded_product_for_composite / uploaded_influencer_for_composite), so a
+    type="image" upload — which _image_overrides_from_turn_refs does not
+    recognize — must be written there or it is silently dropped, leaving the
+    composite with the influencer duplicated and no product.
+    """
+    inf_url, prod_url = _image_overrides_from_turn_refs(refs, kwargs)
+
+    out = dict(kwargs)
+
+    # Smart role inference for a raw uploaded image (synthetic @upload_xxx,
+    # type="image", no id): it becomes the PRODUCT when an influencer is
+    # present, or the CHARACTER when a product is present. Only fill the
+    # singular slot when it is currently empty so an explicit URL still wins.
+    upload_url: str | None = None
+    for r in refs or []:
+        if (r.get("type") or "").lower() == "image" and r.get("image_url") and not r.get("id"):
+            upload_url = r["image_url"]
+            break
+    if upload_url and not out.get("reference_image_url"):
+        has_influencer = bool(inf_url or out.get("influencer_id"))
+        has_product = bool(prod_url or out.get("product_id"))
+        if has_influencer and not has_product:
+            out["reference_image_url"] = upload_url  # upload IS the product
+            print("[generate_video] routed uploaded image -> reference_image_url (product slot)")
+        elif has_product and not has_influencer:
+            out["reference_image_url"] = upload_url  # upload IS the character
+            print("[generate_video] routed uploaded image -> reference_image_url (character slot)")
+
+    if not inf_url and not prod_url:
+        return out
+
+    merged: list[str] = []
+    if inf_url:
+        merged.append(inf_url)
+    if prod_url and prod_url not in merged:
+        merged.append(prod_url)
+    out["reference_image_urls"] = merged
+    print(
+        f"[generate_video] turn_refs override reference_image_urls "
+        f"(influencer={'yes' if inf_url else 'no'}, product={'yes' if prod_url else 'no'})"
+    )
+    return out
+
+
+def _merge_turn_refs_into_image_kwargs(kwargs: dict, refs: list[dict]) -> dict:
+    """Force reference_image_urls + product/influencer IDs from UI @-mentions
+    for UGC composite image generation.
+
+    Mirrors `_merge_turn_refs_into_video_kwargs` for the image path. Closes the
+    gap where a typed "retry" (with the @-mentions resurrected as turn refs, but
+    dropped by the LLM in the tool call) reached generate_image without the
+    reference images — causing NanoBanana to invent a random person/product.
+    No-ops when there are no influencer/product refs with image URLs.
+    """
     inf_url, prod_url = _image_overrides_from_turn_refs(refs, kwargs)
     if not inf_url and not prod_url:
         return kwargs
@@ -1913,9 +1985,26 @@ def _merge_turn_refs_into_video_kwargs(kwargs: dict, refs: list[dict]) -> dict:
         merged.append(inf_url)
     if prod_url and prod_url not in merged:
         merged.append(prod_url)
+    # Preserve any explicit URLs the agent already passed that aren't dupes.
+    for u in (kwargs.get("reference_image_urls") or []):
+        if u and u not in merged:
+            merged.append(u)
     out["reference_image_urls"] = merged
+
+    # Backfill IDs so the prompt builder resolves the correct product/influencer
+    # (name, visual description) and DB hero shots when the LLM omitted them.
+    for r in refs:
+        t = (r.get("type") or "").lower()
+        rid = r.get("id")
+        if not rid:
+            continue
+        if t == "product" and not out.get("product_id"):
+            out["product_id"] = rid
+        elif t == "influencer" and not out.get("influencer_id"):
+            out["influencer_id"] = rid
+
     print(
-        f"[generate_video] turn_refs override reference_image_urls "
+        f"[generate_image] turn_refs override reference_image_urls "
         f"(influencer={'yes' if inf_url else 'no'}, product={'yes' if prod_url else 'no'})"
     )
     return out
@@ -1947,7 +2036,7 @@ def _element_refs_from_turn_refs(refs: list[dict], kwargs: dict) -> list[dict]:
 
 
 def _resolve_cinematic_refs(ctx: ToolContext, kwargs: dict) -> dict:
-    """Extract @-mention image URLs and influencer_id for cinematic ads."""
+    """Extract @-mention image URLs and influencer_id for cinematic ads (sync portion)."""
     inf_url, prod_url = _image_overrides_from_turn_refs(ctx.refs, kwargs)
     influencer_id = kwargs.get("influencer_id")
     if not influencer_id:
@@ -1959,6 +2048,99 @@ def _resolve_cinematic_refs(ctx: ToolContext, kwargs: dict) -> dict:
         "influencer_url": inf_url,
         "product_url": prod_url,
         "influencer_id": influencer_id,
+    }
+
+
+async def _pick_influencer_for_product(ctx: ToolContext, product_meta: dict) -> Optional[dict]:
+    """Pick the best matching influencer from the user's account for a product."""
+    from prompts.cinematic_ads import is_beauty_category, _category_key
+
+    try:
+        rows = await ctx.core().list_influencers()
+    except Exception as e:
+        print(f"[cinematic_ad] list_influencers for auto-pick failed: {e}")
+        return None
+
+    candidates = [r for r in (rows or []) if r.get("image_url")]
+    if not candidates:
+        return None
+
+    category = _category_key(product_meta)
+    beauty = is_beauty_category(category)
+
+    def _score(row: dict) -> int:
+        s = 0
+        gender = (row.get("gender") or "").lower()
+        style = (row.get("style") or row.get("category") or "").lower()
+        if beauty:
+            if gender == "female":
+                s += 10
+            for kw in ("beauty", "fashion", "shop", "cosmetic", "makeup", "skincare"):
+                if kw in style:
+                    s += 5
+        if row.get("description"):
+            s += 1
+        return s
+
+    best = max(candidates, key=_score)
+    return {
+        "id": best.get("id"),
+        "name": best.get("name"),
+        "image_url": best.get("image_url"),
+        "source": "db_pick",
+    }
+
+
+async def _resolve_cinematic_refs_full(
+    ctx: ToolContext,
+    kwargs: dict,
+    *,
+    product_meta: Optional[dict] = None,
+) -> dict:
+    """Resolve influencer/product refs for cinematic ads with DB + session fallbacks."""
+    from prompts.cinematic_ads import get_session_influencer
+
+    refs = _resolve_cinematic_refs(ctx, kwargs)
+    influencer_url = refs["influencer_url"]
+    influencer_id = refs["influencer_id"]
+    auto_source: Optional[str] = None
+
+    if not influencer_url and kwargs.get("influencer_image_url"):
+        influencer_url = kwargs["influencer_image_url"]
+        auto_source = "kwargs_image_url"
+
+    if not influencer_url and influencer_id:
+        try:
+            inf = await ctx.core().get_influencer(influencer_id)
+            if inf and inf.get("image_url"):
+                influencer_url = inf["image_url"]
+                auto_source = "influencer_id"
+        except Exception as e:
+            print(f"[cinematic_ad] get_influencer({influencer_id}) failed: {e}")
+
+    if not influencer_url:
+        session_inf = get_session_influencer(ctx.session_id)
+        if session_inf and session_inf.get("image_url"):
+            influencer_url = session_inf["image_url"]
+            influencer_id = influencer_id or session_inf.get("id")
+            auto_source = session_inf.get("source") or "session"
+
+    if not influencer_url and product_meta:
+        picked = await _pick_influencer_for_product(ctx, product_meta)
+        if picked:
+            influencer_url = picked["image_url"]
+            influencer_id = influencer_id or picked.get("id")
+            auto_source = picked.get("source") or "db_pick"
+            print(
+                f"[cinematic_ad] auto-picked influencer {picked.get('name')!r} "
+                f"for product {product_meta.get('name')!r}"
+            )
+
+    return {
+        "influencer_url": influencer_url,
+        "product_url": refs["product_url"],
+        "influencer_id": influencer_id,
+        "auto_source": auto_source,
     }
 
 
@@ -2779,6 +2961,14 @@ async def _tool_generate_image(ctx: ToolContext, **kwargs: Any) -> str:
             summary=summary,
             echo={k: v for k, v in kwargs.items() if k != "confirmed"},
         )
+
+    # Server-side reference enforcement for UGC composites: if the UI @-mentions
+    # (carried into ctx.refs, including resurrected refs on a typed "retry")
+    # include the product/influencer, force their image URLs + IDs so the LLM
+    # can't silently drop them and make NanoBanana hallucinate a random
+    # person/product. Mirrors the override the video tools already apply.
+    if (kwargs.get("mode") or "").lower() == "ugc" and ctx.refs:
+        kwargs = _merge_turn_refs_into_image_kwargs(kwargs, ctx.refs)
 
     base_exec_kwargs: dict = dict(
         prompt=kwargs["prompt"],
@@ -3955,12 +4145,64 @@ async def _tool_create_project(ctx: ToolContext, **kwargs: Any) -> str:
 async def _tool_create_influencer(ctx: ToolContext, **kwargs: Any) -> str:
     if not kwargs.get("name"):
         return json.dumps({"error": "name is required"})
-    payload = {k: v for k, v in kwargs.items() if v is not None}
+    payload = {k: v for k, v in kwargs.items() if v is not None and k != "direction"}
     try:
         result = await ctx.core().create_influencer(payload)
     except Exception as e:
         return json.dumps({"error": f"create_influencer failed: {e}"})
-    return json.dumps({"influencer": result})
+
+    from prompts.cinematic_ads import (
+        cache_session_influencer,
+        get_cached_directions,
+        get_cinematic_flow,
+        merge_cinematic_flow,
+    )
+
+    if kwargs.get("direction") in ("A", "B", "C"):
+        merge_cinematic_flow(ctx.session_id, {"direction": kwargs["direction"]})
+
+    influencer = result if isinstance(result, dict) else {}
+    image_url = influencer.get("image_url") or payload.get("image_url")
+    if image_url:
+        cache_session_influencer(ctx.session_id, {
+            "id": influencer.get("id"),
+            "name": influencer.get("name") or kwargs.get("name"),
+            "image_url": image_url,
+            "source": "saved",
+        })
+
+    out: dict[str, Any] = {"influencer": result}
+    cached_dirs = get_cached_directions(ctx.session_id)
+    if cached_dirs and ctx.session_id:
+        flow = get_cinematic_flow(ctx.session_id) or {}
+        direction = flow.get("direction")
+        if direction not in ("A", "B", "C"):
+            direction = kwargs.get("direction")
+        if direction not in ("A", "B", "C"):
+            for d in cached_dirs:
+                if d.get("recommended"):
+                    direction = d["key"]
+                    break
+            if direction not in ("A", "B", "C"):
+                direction = cached_dirs[0]["key"]
+        direction_obj = next((d for d in cached_dirs if d["key"] == direction), None)
+        if direction_obj and direction_obj.get("model_or_product_only") == "model":
+            next_call: dict[str, Any] = {
+                "stage": "storyboard",
+                "direction": direction,
+                "influencer_id": influencer.get("id"),
+                "influencer_image_url": image_url,
+            }
+            for k in (
+                "product_id", "image_url", "brief", "aspect_ratio",
+                "duration_seconds", "tagline", "domain",
+            ):
+                if flow.get(k) is not None:
+                    next_call[k] = flow[k]
+            out["action"] = "cinematic_continue"
+            out["next_call"] = next_call
+
+    return json.dumps(out)
 
 
 async def _tool_create_product(ctx: ToolContext, **kwargs: Any) -> str:
@@ -4495,18 +4737,25 @@ def _log_cinematic_ads_module_once() -> None:
         return
     _cinematic_ads_module_checked = True
     import inspect as _inspect
+    import prompts.cinematic_ads as _cine_mod
     from prompts.cinematic_ads import build_storyboard_prompt as _bsp
     _sig = _inspect.signature(_bsp).parameters
+    _beats_sig = _inspect.signature(_cine_mod.generate_beats_from_brief).parameters
     _has_ref = "has_influencer_ref" in _sig
     _has_profile = "moderation_profile" in _sig
+    _has_lip_prompt = "allow_lip_application" in _sig
+    _has_lip_beats = "allow_lip_application" in _beats_sig
+    _has_lip_helper = hasattr(_cine_mod, "direction_requires_lip_application")
+    _mod_file = getattr(_cine_mod, "__file__", "unknown")
     print(
-        f"[cinematic_ad] module={_bsp.__module__} "
-        f"has_influencer_ref={_has_ref} moderation_profile={_has_profile}"
+        f"[cinematic_ad] module={_bsp.__module__} file={_mod_file} "
+        f"has_influencer_ref={_has_ref} moderation_profile={_has_profile} "
+        f"allow_lip_api={_has_lip_prompt and _has_lip_beats and _has_lip_helper}"
     )
-    if not _has_ref or not _has_profile:
+    if not _has_ref or not _has_profile or not _has_lip_prompt or not _has_lip_beats or not _has_lip_helper:
         print(
             "[cinematic_ad] FATAL: stale prompts.cinematic_ads — "
-            "restart Creative OS to reload repo-root prompts/"
+            "restart Creative OS; expected services/creative-os/prompts/cinematic_ads.py"
         )
 
 
@@ -4539,6 +4788,7 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
     )
     from prompts.cinematic_ads import (
         build_seedance_broll_prompt,
+        build_seedance_direct_prompt,
         build_seedance_product_macro_prompt,
         build_seedance_prompt,
         build_storyboard_prompt,
@@ -4548,12 +4798,20 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
         generate_directions_from_brief,
         get_cached_beats,
         get_cached_directions,
+        get_cinematic_flow,
+        get_session_influencer,
+        resolve_lip_application_intent,
+        direction_implies_lip_scene,
+        infer_application_geometry_hint,
         infer_category_from_text,
         is_beauty_category,
+        merge_cinematic_flow,
+        resolve_sanitized_product_form,
         panel_beats_for,
         panels_for_duration,
         propose_directions,
         sanitize_beats_for_fal,
+        sanitize_beats_for_jewelry,
         _category_key,
     )
 
@@ -4561,11 +4819,12 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
     if stage not in ("propose", "storyboard", "animate", "broll", "product_macro"):
         return json.dumps({"error": "stage must be one of: propose, storyboard, animate, broll, product_macro"})
 
+    merge_cinematic_flow(ctx.session_id, kwargs)
+
     # Detect user language from the brief once per call. Used to localize the
     # Haiku output (direction names + beat captions) and the hardcoded chip /
     # narration strings below.
     ctx.user_lang = _detect_user_lang(kwargs.get("brief") or "")
-    cine_refs = _resolve_cinematic_refs(ctx, kwargs)
 
     # ── Resolve product source (either product_id from @mention or image_url upload)
     async def _resolve_product() -> dict:
@@ -4586,12 +4845,14 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
                 cat = infer_category_from_text(
                     (p.get("name") or "") + " " + (p.get("brand") or "") + " " + (kwargs.get("brief") or "")
                 )
+            product_form = resolve_sanitized_product_form(p)
             return {
                 "id": p.get("id"),
                 "name": p.get("name") or "Product",
                 "brand": p.get("brand") or p.get("name") or "Brand",
                 "image_url": p.get("image_url"),
                 "category": cat,
+                "product_form": product_form,
             }
         if image_url:
             brief_txt = kwargs.get("brief") or ""
@@ -4601,6 +4862,7 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
                 "brand": "Brand",
                 "image_url": image_url,
                 "category": infer_category_from_text(brief_txt),
+                "product_form": "",
             }
         raise RuntimeError("Either product_id (from @mention) or image_url (uploaded photo) is required")
 
@@ -4608,6 +4870,27 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
         product_meta = await _resolve_product()
     except RuntimeError as e:
         return json.dumps({"error": str(e)})
+
+    # Safety net: when a stored product has an empty/generic category it falls
+    # through to "gadget", which skips the beauty FAL-safety beats + hands-only
+    # storyboard ladder. Re-infer from name/brand/brief and upgrade to the real
+    # bucket (e.g. lip gloss -> beauty) so the right pipeline engages.
+    if _category_key(product_meta) == "gadget":
+        _reinferred = infer_category_from_text(
+            f"{product_meta.get('name','')} {product_meta.get('brand','')} {kwargs.get('brief','')}"
+        )
+        if _reinferred and _category_key({"category": _reinferred}) != "gadget":
+            print(
+                f"[cinematic_ad] category upgrade: gadget -> {_reinferred} "
+                f"(product={product_meta.get('name')!r})"
+            )
+            product_meta["category"] = _reinferred
+
+    merge_cinematic_flow(ctx.session_id, {
+        **kwargs,
+        "product_id": product_meta.get("id") or kwargs.get("product_id"),
+    })
+    cine_refs = await _resolve_cinematic_refs_full(ctx, kwargs, product_meta=product_meta)
     if cine_refs["product_url"]:
         product_meta["image_url"] = cine_refs["product_url"]
         print(
@@ -4653,6 +4936,11 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
         # stable across the whole flow; brief text isn't (agent sometimes
         # drops it on follow-up calls).
         cache_directions(ctx.session_id, directions)
+        lip_application_intents = {
+            d["key"]: bool(d.get("requires_lip_application"))
+            for d in directions
+        }
+        merge_cinematic_flow(ctx.session_id, {"lip_application_intents": lip_application_intents})
         print(f"[cinematic_propose] cached {len(directions)} LLM directions for session={ctx.session_id}")
         return json.dumps({
             "action": "directions",
@@ -4674,7 +4962,7 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
         })
 
     # ── For storyboard/animate/broll we need a selected direction
-    direction_key = kwargs.get("direction")
+    direction_key = (kwargs.get("direction") or "").upper().strip() or None
     if stage in ("storyboard", "animate", "broll") and direction_key not in ("A", "B", "C"):
         return json.dumps({"error": "direction (A/B/C) is required for storyboard/animate/broll stages — call stage='propose' first if you don't have it"})
 
@@ -4734,21 +5022,190 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
     if stage == "storyboard":
         num_panels = panels_for_duration(duration_seconds)
         has_humans = direction_obj.get("model_or_product_only") == "model"
-        has_influencer_ref = bool(cine_refs["influencer_url"])
+        has_influencer_ref = bool(cine_refs.get("influencer_url"))
         if has_humans and not has_influencer_ref:
+            session_inf = get_session_influencer(ctx.session_id)
+            product_only_dirs = [
+                d for d in (get_cached_directions(ctx.session_id) or [])
+                if d.get("model_or_product_only") == "product_only"
+            ]
+            alt_hint = ""
+            if product_only_dirs:
+                alt_names = ", ".join(f"Direction {d['key']} ({d['name']})" for d in product_only_dirs[:2])
+                alt_hint = f" Or switch to a product-only direction: {alt_names}."
+            if session_inf and session_inf.get("source") == "generated":
+                return json.dumps({
+                    "error": "influencer_not_saved",
+                    "msg": (
+                        "A character was generated but not saved yet. Call create_influencer with the "
+                        "generated name and image_url, then retry storyboard — or generate a character "
+                        f"(5 credits) if you haven't yet.{alt_hint}"
+                    ),
+                })
             return json.dumps({
-                "error": "influencer_ref_required",
+                "error": "influencer_required",
                 "msg": (
-                    "This direction is model-led but no @influencer was attached. "
-                    "@-mention the character and retry."
+                    "This direction is model-led but no character is available. Ask the user to generate "
+                    f"a character (5 credits) or pick a product-only direction.{alt_hint}"
                 ),
             })
+        if cine_refs.get("auto_source"):
+            print(
+                f"[cinematic_storyboard] influencer auto-resolved via {cine_refs['auto_source']} "
+                f"(id={cine_refs.get('influencer_id')})"
+            )
         print(
             f"[cinematic_storyboard] direction={direction_key} product={product_meta['name']!r} "
             f"ar={aspect_ratio} dur={duration_seconds}s panels={num_panels} "
             f"influencer_ref={'yes' if has_influencer_ref else 'no'}"
         )
-        # Upload product photo to Fal storage so GPT Image 2 can read it (@Image1).
+        # JIT product-form analysis (no Fal moderation) so geometry + beats are
+        # accurate BEFORE we decide storyboard vs. direct-Seedance bypass.
+        if product_meta.get("id") and not product_meta.get("product_form"):
+            try:
+                print(f"[cinematic_storyboard] JIT analyze_product_image for {product_meta['id']}")
+                await ctx.core().analyze_product_image(product_meta["id"])
+                refreshed = await ctx.core().get_product(product_meta["id"])
+                if refreshed:
+                    product_meta["product_form"] = resolve_sanitized_product_form(refreshed)
+                    if product_meta["product_form"]:
+                        print("[cinematic_storyboard] product_form populated via JIT analyze")
+            except Exception as e:
+                print(f"[cinematic_storyboard] JIT analyze skipped: {e}")
+
+        _flow = get_cinematic_flow(ctx.session_id) or {}
+        _effective_brief = (kwargs.get("brief") or _flow.get("brief") or "").strip()
+        _cached_lip_intents = _flow.get("lip_application_intents") or {}
+        allow_lip_application = resolve_lip_application_intent(
+            direction_obj or {},
+            product_meta,
+            category,
+            _effective_brief,
+            cached_intents=_cached_lip_intents,
+            direction_key=direction_key or "",
+        )
+        lip_application_intent = allow_lip_application
+        if allow_lip_application:
+            print(
+                f"[cinematic_storyboard] lip_application_intent=true direction={direction_key} "
+                f"embedded={bool((direction_obj or {}).get('requires_lip_application'))} "
+                f"cached={_cached_lip_intents.get(direction_key) if direction_key else None} "
+                f"brief_len={len(_effective_brief)}"
+            )
+        else:
+            _lip_scene = direction_implies_lip_scene(
+                direction_obj or {}, category,
+                has_humans=direction_obj.get("model_or_product_only") == "model" if direction_obj else False,
+            )
+            print(
+                f"[cinematic_storyboard] allow_lip=false direction={direction_key} "
+                f"embedded={bool((direction_obj or {}).get('requires_lip_application'))} "
+                f"cached={_cached_lip_intents.get(direction_key) if direction_key else None} "
+                f"direction_lip_scene={_lip_scene} brief_len={len(_effective_brief)} "
+                f"product={product_meta.get('name')!r}"
+            )
+
+        application_geometry_hint = infer_application_geometry_hint(
+            product_meta.get("product_form", ""),
+            product_meta.get("name", ""),
+            category,
+            has_humans=has_humans,
+            allow_lip_application=allow_lip_application,
+            brief=_effective_brief,
+        )
+
+        # Generate brief-aware panel beats via Haiku (falls back to hand-
+        # authored panel_beats_for on any failure — never blocks render).
+        beats_raw = await generate_beats_from_brief(
+            brief=_effective_brief,
+            direction=direction_obj,
+            category=category,
+            num_panels=num_panels,
+            duration_s=duration_seconds,
+            aspect_ratio=aspect_ratio,
+            user_lang=ctx.user_lang,
+            product_form=product_meta.get("product_form", ""),
+            product_name=product_meta.get("name", ""),
+            application_geometry_hint=application_geometry_hint,
+            allow_lip_application=allow_lip_application,
+        )
+        # Jewelry post-pass: rewrite mid-insertion / interlocked-hands beats
+        # before they reach either the Fal storyboard or direct Seedance.
+        beats_raw = sanitize_beats_for_jewelry(
+            beats_raw,
+            product_name=product_meta.get("name", ""),
+            product_form=product_meta.get("product_form", ""),
+            brief=_effective_brief,
+        )
+
+        def _direct_seedance_confirmation(reason_note: str = "") -> str:
+            """Confirmation payload for the Fal-bypass (direct Seedance) path.
+
+            No storyboard sheet is rendered: the shot list is described
+            scene-by-scene inside the video prompt at animate time, so Kie
+            Seedance 2.0 generates the whole spot from the product shot
+            (@Image1) + character (@Image2) alone — GPT Image 2 never sees it.
+            Collapses storyboard + animate into a single paid Seedance step.
+            """
+            cache_beats(ctx.session_id, direction_key, beats_raw)
+            scene_lines: list[str] = []
+            for _b in beats_raw:
+                _n = _b.get("n") or (len(scene_lines) + 1)
+                _action = (_b.get("action") or _b.get("scene") or "").strip()
+                if _action:
+                    scene_lines.append(f"{_n}. {_action}")
+            direct_echo = {
+                "stage": "animate",
+                "direct_seedance": True,
+                "direction": direction_key,
+                "product_id": kwargs.get("product_id"),
+                "influencer_id": cine_refs.get("influencer_id") or kwargs.get("influencer_id"),
+                "image_url": kwargs.get("image_url"),
+                "product_image_url": product_meta["image_url"],
+                "tagline": tagline,
+                "domain": domain,
+                "aspect_ratio": aspect_ratio,
+                "duration_seconds": duration_seconds,
+                "brief": kwargs.get("brief") or "",
+                "lip_application_intent": lip_application_intent,
+                "lip_mode_active": allow_lip_application,
+            }
+            summary = (
+                f"Animar anuncio cinemático ({direction_obj['name']}) — directo a Seedance, {duration_seconds}s @ 720p {aspect_ratio}"
+                if ctx.user_lang == "es"
+                else f"Animate cinematic ad ({direction_obj['name']}) — direct to Seedance, {duration_seconds}s @ 720p {aspect_ratio}"
+            )
+            default_note = (
+                "This direction shows lip application, which Fal/GPT Image 2 blocks at "
+                "storyboard time. The video is generated directly via Seedance 2.0 from the "
+                "product shot + character, with the shots described scene-by-scene — there is "
+                "no visual storyboard sheet for this direction."
+            )
+            return _confirmation_payload(
+                operation="cinematic_animate",
+                credits=_credits_for_op("cinematic_animate", {"duration_seconds": duration_seconds}),
+                summary=summary,
+                echo=direct_echo,
+                direct_seedance=True,
+                storyboard_url=None,
+                beats=beats_raw,
+                scene_breakdown=scene_lines,
+                lip_application_intent=lip_application_intent,
+                lip_mode_active=allow_lip_application,
+                direct_seedance_note=(reason_note or default_note),
+            )
+
+        # ── Proactive Fal bypass: lip/sensitive directions skip the GPT Image 2
+        # storyboard entirely and render straight through Seedance 2.0.
+        if allow_lip_application:
+            print(
+                f"[cinematic_storyboard] lip direction → bypassing Fal storyboard, "
+                f"direct Seedance (direction={direction_key})"
+            )
+            return _direct_seedance_confirmation()
+
+        # ── Normal flow: upload refs to Fal storage so GPT Image 2 can read the
+        # product (@Image1) and character. Only reached for non-bypassed directions.
         try:
             product_fal_url = await upload_url_to_fal_storage(
                 product_meta["image_url"], content_type="image/png", file_name="product.png",
@@ -4767,18 +5224,6 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
             except FalError as e:
                 return json.dumps({"error": f"influencer upload to Fal failed: {e}"})
 
-        # Generate brief-aware panel beats via Haiku (falls back to hand-
-        # authored panel_beats_for on any failure — never blocks render).
-        beats_raw = await generate_beats_from_brief(
-            brief=kwargs.get("brief") or "",
-            direction=direction_obj,
-            category=category,
-            num_panels=num_panels,
-            duration_s=duration_seconds,
-            aspect_ratio=aspect_ratio,
-            user_lang=ctx.user_lang,
-        )
-
         def _fal_content_policy_reject(err: FalError) -> bool:
             msg = str(err).lower()
             return any(
@@ -4794,29 +5239,73 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
 
         def _storyboard_attempt_ladder() -> list[dict]:
             if has_humans and is_beauty_category(category):
-                return [
-                    {"profile": "sharp", "aggressive": False, "hands_only": False, "dual_ref": True},
-                    {"profile": "sharp", "aggressive": True, "hands_only": False, "dual_ref": True},
-                    {"profile": "hands_only", "aggressive": False, "hands_only": True, "dual_ref": True},
-                    {"profile": "product_ref_only", "aggressive": False, "hands_only": True, "dual_ref": False},
-                    {"profile": "blur_fallback", "aggressive": False, "hands_only": True, "dual_ref": False},
-                ]
+                ladder: list[dict] = []
+                if allow_lip_application:
+                    ladder.append({
+                        "profile": "lips_allowed",
+                        "aggressive": False,
+                        "hands_only": False,
+                        "dual_ref": True,
+                        "allow_lip_application": True,
+                    })
+                ladder.extend([
+                    {"profile": "sharp", "aggressive": False, "hands_only": False, "dual_ref": True, "allow_lip_application": False},
+                    {"profile": "sharp", "aggressive": True, "hands_only": False, "dual_ref": True, "allow_lip_application": False},
+                    {"profile": "hands_only", "aggressive": False, "hands_only": True, "dual_ref": True, "allow_lip_application": False},
+                    {"profile": "product_ref_only", "aggressive": False, "hands_only": True, "dual_ref": False, "allow_lip_application": False},
+                    {"profile": "blur_fallback", "aggressive": False, "hands_only": True, "dual_ref": False, "allow_lip_application": False},
+                ])
+                return ladder
             return [
-                {"profile": "sharp", "aggressive": False, "hands_only": False, "dual_ref": has_influencer_ref},
+                {"profile": "sharp", "aggressive": False, "hands_only": False, "dual_ref": has_influencer_ref, "allow_lip_application": False},
             ]
 
         result = None
         beats: list[dict] = beats_raw
         storyboard_moderation_profile = "sharp"
+        lip_mode_active = False
         last_policy_err: Optional[FalError] = None
 
         for attempt in _storyboard_attempt_ladder():
+            attempt_lip = attempt.get("allow_lip_application", False)
+            attempt_geometry = infer_application_geometry_hint(
+                product_meta.get("product_form", ""),
+                product_meta.get("name", ""),
+                category,
+                has_humans=has_humans,
+                allow_lip_application=attempt_lip,
+                brief=_effective_brief,
+            )
+            if allow_lip_application and not attempt_lip:
+                attempt_beats_raw = await generate_beats_from_brief(
+                    brief=kwargs.get("brief") or "",
+                    direction=direction_obj,
+                    category=category,
+                    num_panels=num_panels,
+                    duration_s=duration_seconds,
+                    aspect_ratio=aspect_ratio,
+                    user_lang=ctx.user_lang,
+                    product_form=product_meta.get("product_form", ""),
+                    product_name=product_meta.get("name", ""),
+                    application_geometry_hint=attempt_geometry,
+                    allow_lip_application=False,
+                )
+                attempt_beats_raw = sanitize_beats_for_jewelry(
+                    attempt_beats_raw,
+                    product_name=product_meta.get("name", ""),
+                    product_form=product_meta.get("product_form", ""),
+                    brief=_effective_brief,
+                )
+                print("[cinematic_storyboard] regenerated beats for cheek/forearm fallback")
+            else:
+                attempt_beats_raw = beats_raw
             beats = sanitize_beats_for_fal(
-                beats_raw,
+                attempt_beats_raw,
                 category=category,
                 has_humans=has_humans,
                 aggressive=attempt["aggressive"],
                 hands_only=attempt["hands_only"],
+                allow_lip_application=attempt_lip,
             )
             cache_beats(ctx.session_id, direction_key, beats)
 
@@ -4826,6 +5315,11 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
 
             prompt_has_influencer = bool(attempt["dual_ref"] and has_influencer_ref)
             profile = attempt["profile"]
+            panel3_action = ""
+            for b in beats:
+                if int(b.get("n") or 0) == 3:
+                    panel3_action = str(b.get("action") or "")[:80]
+                    break
             prompt = build_storyboard_prompt(
                 brand=product_meta["brand"], product=product_meta["name"],
                 direction=direction_obj, tagline=tagline, domain=domain, category=category,
@@ -4833,18 +5327,24 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
                 aspect_ratio=aspect_ratio, beats=beats,
                 has_influencer_ref=prompt_has_influencer,
                 moderation_profile=profile,
+                product_form=product_meta.get("product_form", ""),
+                application_geometry_hint=attempt_geometry,
+                allow_lip_application=attempt_lip,
+                brief=_effective_brief,
             )
             print(
-                f"[cinematic_storyboard] attempt profile={profile} refs={len(attempt_urls)} "
-                f"aggressive={attempt['aggressive']} hands_only={attempt['hands_only']}"
+                f"[cinematic_storyboard] attempt profile={profile} allow_lip={attempt_lip} "
+                f"refs={len(attempt_urls)} aggressive={attempt['aggressive']} "
+                f"hands_only={attempt['hands_only']} panel3_action={panel3_action!r}"
             )
             try:
                 result = await generate_storyboard(
                     prompt=prompt, image_urls=attempt_urls, aspect_ratio=aspect_ratio,
                 )
                 storyboard_moderation_profile = profile
+                lip_mode_active = attempt_lip
                 print(
-                    f"[cinematic_storyboard] success profile={profile} "
+                    f"[cinematic_storyboard] success profile={profile} lip_mode_active={lip_mode_active} "
                     f"refs={len(attempt_urls)}"
                 )
                 break
@@ -4856,17 +5356,21 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
                 continue
 
         if result is None:
-            return json.dumps({
-                "error": "fal_content_policy",
-                "msg": (
-                    "Fal's image safety checker rejected this beauty storyboard after "
-                    "all moderation fallbacks (sharp face, hands-only panels, product-only ref). "
-                    "Try Direction B (product-only, e.g. Soft Sculpture) or ask to "
-                    "regenerate with hand/forearm application instead of lip shots."
-                ),
-                "retry_hint": "direction_b_product_only",
-                "raw": last_policy_err.raw if last_policy_err else {},
-            })
+            # Every Fal storyboard attempt was content-policy rejected. Rather
+            # than hard-fail, bypass Fal and render the spot directly via
+            # Seedance 2.0 (storyboard described scene-by-scene in the prompt).
+            print(
+                f"[cinematic_storyboard] Fal storyboard exhausted all moderation "
+                f"profiles → direct Seedance fallback (direction={direction_key})"
+            )
+            return _direct_seedance_confirmation(
+                reason_note=(
+                    "Fal/GPT Image 2 rejected this storyboard after every moderation "
+                    "fallback, so the video is generated directly via Seedance 2.0 from the "
+                    "product shot + character, with the shots described scene-by-scene — there "
+                    "is no visual storyboard sheet for this direction."
+                )
+            )
 
         fal_png_url = result["url"]
         # Persist to Supabase so the URL is stable + ours.
@@ -4894,6 +5398,8 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
                 "source": "cinematic_ads", "stage": "storyboard",
                 "direction": direction_key, "label": f"Storyboard — {direction_obj['name']}",
                 "storyboard_moderation_profile": storyboard_moderation_profile,
+                "lip_application_intent": lip_application_intent,
+                "lip_mode_active": lip_mode_active,
             },
         )
         _record_artifact(ctx, {"type": "image", "url": storyboard_url, "label": "Storyboard"})
@@ -4925,6 +5431,8 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
             "duration_seconds": duration_seconds,
             "brief": kwargs.get("brief") or "",
             "storyboard_moderation_profile": storyboard_moderation_profile,
+            "lip_application_intent": lip_application_intent,
+            "lip_mode_active": lip_mode_active,
         }
         if blur_fallback_warning:
             animate_echo["blur_fallback_warning"] = blur_fallback_warning
@@ -4939,12 +5447,15 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
             storyboard_url=storyboard_url,
             beats=beats,
             storyboard_moderation_profile=storyboard_moderation_profile,
+            lip_application_intent=lip_application_intent,
+            lip_mode_active=lip_mode_active,
             blur_fallback_warning=blur_fallback_warning,
         )
 
     # ── stage=animate — paid, scales with duration (32 / 64 / 96 cr for 5 / 10 / 15s)
     if stage == "animate":
-        if not kwargs.get("storyboard_url"):
+        direct_seedance = bool(kwargs.get("direct_seedance"))
+        if not direct_seedance and not kwargs.get("storyboard_url"):
             return json.dumps({"error": "storyboard_url is required (get it from the storyboard stage)"})
         if not kwargs.get("confirmed"):
             credits = _credits_for_op("cinematic_animate", {"duration_seconds": duration_seconds})
@@ -4955,42 +5466,97 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
                 echo={k: v for k, v in kwargs.items() if k != "confirmed"},
             )
 
-        print(f"[cinematic_animate] direction={direction_key} product={product_meta['name']!r} ar={aspect_ratio} dur={duration_seconds}s")
-        # Upload storyboard + product; add influencer as @Image3 when model-led.
-        try:
-            storyboard_fal_url = await upload_url_to_fal_storage(
-                kwargs["storyboard_url"], content_type="image/png", file_name="storyboard.png",
-            )
-            product_fal_url = await upload_url_to_fal_storage(
-                product_meta["image_url"], content_type="image/png", file_name="product.png",
-            )
-        except FalError as e:
-            return json.dumps({"error": f"upload to Fal failed: {e}"})
-
         has_humans = direction_obj.get("model_or_product_only") == "model"
         has_influencer_ref = bool(cine_refs.get("influencer_url"))
-        animate_image_urls = [storyboard_fal_url, product_fal_url]
-        if has_humans and has_influencer_ref:
+        # Pull cached beats from the storyboard stage so the Seedance prompt
+        # references the same shot sequence (the storyboard image, or — in the
+        # direct path — the scene-by-scene text breakdown).
+        _cached_beats = get_cached_beats(ctx.session_id, direction_key)
+
+        if direct_seedance:
+            # ── Fal-bypassed (lip/sensitive) direction: NO storyboard sheet.
+            # Pass the product (@Image1) + character (@Image2) and describe the
+            # shots scene-by-scene in the prompt — GPT Image 2 is never touched.
+            print(
+                f"[cinematic_animate] DIRECT Seedance (no storyboard) direction={direction_key} "
+                f"product={product_meta['name']!r} ar={aspect_ratio} dur={duration_seconds}s"
+            )
             try:
-                influencer_fal_url = await upload_url_to_fal_storage(
-                    cine_refs["influencer_url"],
-                    content_type="image/png",
-                    file_name="influencer.png",
+                product_fal_url = await upload_url_to_fal_storage(
+                    product_meta["image_url"], content_type="image/png", file_name="product.png",
                 )
             except FalError as e:
-                return json.dumps({"error": f"influencer upload to Fal failed: {e}"})
-            animate_image_urls.append(influencer_fal_url)
-            print(f"[cinematic_animate] tri-ref: storyboard + product + influencer ({len(animate_image_urls)} images)")
+                return json.dumps({"error": f"product upload to Fal failed: {e}"})
+            animate_image_urls = [product_fal_url]
+            if has_humans and has_influencer_ref:
+                try:
+                    influencer_fal_url = await upload_url_to_fal_storage(
+                        cine_refs["influencer_url"],
+                        content_type="image/png",
+                        file_name="influencer.png",
+                    )
+                except FalError as e:
+                    return json.dumps({"error": f"influencer upload to Fal failed: {e}"})
+                animate_image_urls.append(influencer_fal_url)
+                print(f"[cinematic_animate] direct: product + influencer ({len(animate_image_urls)} images)")
 
-        # Pull cached beats from the storyboard stage so the Seedance prompt
-        # references the same shot sequence the storyboard image illustrates.
-        _cached_beats = get_cached_beats(ctx.session_id, direction_key)
-        prompt = build_seedance_prompt(
-            brand=product_meta["brand"], product=product_meta["name"],
-            direction=direction_obj, duration_s=duration_seconds, has_humans=has_humans,
-            has_storyboard=True, beats=_cached_beats, aspect_ratio=aspect_ratio,
-            has_influencer_ref=has_humans and has_influencer_ref,
-        )
+            _flow_anim = get_cinematic_flow(ctx.session_id) or {}
+            _anim_brief = (kwargs.get("brief") or _flow_anim.get("brief") or "").strip()
+            _allow_lip = resolve_lip_application_intent(
+                direction_obj or {},
+                product_meta,
+                category,
+                _anim_brief,
+                cached_intents=_flow_anim.get("lip_application_intents") or {},
+                direction_key=direction_key or "",
+            ) or bool(kwargs.get("lip_mode_active"))
+            _direct_geom = infer_application_geometry_hint(
+                product_meta.get("product_form", ""),
+                product_meta.get("name", ""),
+                category,
+                has_humans=has_humans,
+                allow_lip_application=_allow_lip,
+                brief=_anim_brief,
+            )
+            prompt = build_seedance_direct_prompt(
+                brand=product_meta["brand"], product=product_meta["name"],
+                direction=direction_obj, beats=_cached_beats, duration_s=duration_seconds,
+                has_humans=has_humans, has_influencer_ref=has_humans and has_influencer_ref,
+                aspect_ratio=aspect_ratio, application_geometry_hint=_direct_geom,
+                allow_lip_application=_allow_lip,
+            )
+        else:
+            print(f"[cinematic_animate] direction={direction_key} product={product_meta['name']!r} ar={aspect_ratio} dur={duration_seconds}s")
+            # Upload storyboard + product; add influencer as @Image3 when model-led.
+            try:
+                storyboard_fal_url = await upload_url_to_fal_storage(
+                    kwargs["storyboard_url"], content_type="image/png", file_name="storyboard.png",
+                )
+                product_fal_url = await upload_url_to_fal_storage(
+                    product_meta["image_url"], content_type="image/png", file_name="product.png",
+                )
+            except FalError as e:
+                return json.dumps({"error": f"upload to Fal failed: {e}"})
+
+            animate_image_urls = [storyboard_fal_url, product_fal_url]
+            if has_humans and has_influencer_ref:
+                try:
+                    influencer_fal_url = await upload_url_to_fal_storage(
+                        cine_refs["influencer_url"],
+                        content_type="image/png",
+                        file_name="influencer.png",
+                    )
+                except FalError as e:
+                    return json.dumps({"error": f"influencer upload to Fal failed: {e}"})
+                animate_image_urls.append(influencer_fal_url)
+                print(f"[cinematic_animate] tri-ref: storyboard + product + influencer ({len(animate_image_urls)} images)")
+
+            prompt = build_seedance_prompt(
+                brand=product_meta["brand"], product=product_meta["name"],
+                direction=direction_obj, duration_s=duration_seconds, has_humans=has_humans,
+                has_storyboard=True, beats=_cached_beats, aspect_ratio=aspect_ratio,
+                has_influencer_ref=has_humans and has_influencer_ref,
+            )
         # Keep negative prompt ≤10 words — long negatives hurt Seedance motion
         # quality. Style negatives belong in the storyboard prompt, not here.
         if aspect_ratio == "9:16":
@@ -6713,15 +7279,33 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
     # work — music generation typically takes 30s-2min and masking it behind
     # the ffmpeg passes avoids paying it serially.
     music_task: Optional[asyncio.Task] = None
+    music_requested = bool(music_prompt)
     if music_prompt:
         try:
-            # generate_scenes.generate_music lives at the repo root and is
-            # imported by adding the repo to sys.path (same pattern as
-            # routers/generate_video.py).
+            # generate_scenes.generate_music lives at the repo root. A bare
+            # `import generate_scenes` can resolve to the Creative OS *shim*
+            # (services/creative-os/generate_scenes.py), which historically did
+            # NOT expose generate_music — so the call AttributeError'd and music
+            # was silently dropped. The shim now mirrors generate_music, but we
+            # still guard: if the resolved module lacks it, load the repo-root
+            # file by absolute path under a distinct sys.modules key (mirrors
+            # routers/generate_video.py::_load_creative_os_generate_scenes).
             repo_root = str(_Path(__file__).resolve().parents[3])
             if repo_root not in _sys.path:
                 _sys.path.insert(0, repo_root)
             import generate_scenes as _gs  # type: ignore
+            if not hasattr(_gs, "generate_music"):
+                import importlib.util as _ilu
+                _gs_path = _Path(repo_root) / "generate_scenes.py"
+                _spec = _ilu.spec_from_file_location("repo_root_generate_scenes", str(_gs_path))
+                if _spec and _spec.loader:
+                    _root_gs = _ilu.module_from_spec(_spec)
+                    _sys.modules["repo_root_generate_scenes"] = _root_gs
+                    _spec.loader.exec_module(_root_gs)
+                    if hasattr(_root_gs, "generate_music"):
+                        _gs = _root_gs
+            if not hasattr(_gs, "generate_music"):
+                raise AttributeError("generate_music not found in any generate_scenes module")
             print(f"[combine_videos] Starting Suno generation (ambience={is_ambience_bed}, prompt={music_prompt[:80]}...)")
             music_task = asyncio.create_task(
                 asyncio.to_thread(_gs.generate_music, prompt=music_prompt, instrumental=True)
@@ -6950,6 +7534,7 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
         # finish (started in parallel at the top), download the track, and
         # mix it UNDER the concat output at a dialogue-safe level. Loops the
         # music if it's shorter than the combined video.
+        music_added = False
         if music_task is not None:
             try:
                 music_url = await music_task
@@ -6989,6 +7574,7 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
                     )
                     if mix_result.returncode == 0:
                         output_path = mixed_path
+                        music_added = True
                         print("[combine_videos] Music bed mixed under final cut")
                     else:
                         print(f"[combine_videos] Music mix failed, shipping without music: {mix_result.stderr[-400:]}")
@@ -7043,7 +7629,7 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
 
         _record_artifact(ctx, {"type": "video", "url": final_url, **({"job_id": job_id} if job_id else {})})
 
-        return json.dumps({
+        result_payload = {
             "status": "success",
             "job_id": job_id,
             "video_url": final_url,
@@ -7051,7 +7637,18 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
             "total_duration_seconds": round(total_duration, 1),
             "transition": transition,
             "credits_spent": _credits_for_op("animate_image", {"duration": 5}),
-        })
+        }
+        # Tell the truth about the soundtrack: when a music bed was requested
+        # but could not be generated/mixed, the agent MUST NOT claim music was
+        # added. Surface the real status so the reply matches the delivered file.
+        if music_requested:
+            result_payload["music_added"] = music_added
+            if not music_added:
+                result_payload["music_note"] = (
+                    "music generation failed — the video shipped without a soundtrack; "
+                    "do not tell the user music was added, offer to retry instead"
+                )
+        return json.dumps(result_payload)
     except Exception as e:
         return json.dumps({"error": f"combine_videos failed: {e}"})
     finally:
@@ -7281,7 +7878,7 @@ async def _tool_add_voiceover(ctx: ToolContext, **kwargs: Any) -> str:
 
 # ── Phase 6: Image generation & identity ──────────────────────────────
 async def _tool_generate_influencer(ctx: ToolContext, **kwargs: Any) -> str:
-    from routers.generate_image import generate_influencer
+    from routers.generate_image import GenerateInfluencerRequest, generate_influencer
 
     if not kwargs.get("confirmed"):
         credits = _credits_for_op("generate_influencer", {})
@@ -7292,15 +7889,59 @@ async def _tool_generate_influencer(ctx: ToolContext, **kwargs: Any) -> str:
             echo={k: v for k, v in kwargs.items() if k != "confirmed"},
         )
 
+    # Resolve product context so the persona fits the product/ad. Prefer the
+    # LLM-passed args, then auto-derive from an active cinematic-ad flow.
+    from prompts.cinematic_ads import get_cinematic_flow, infer_category_from_text
+
+    category = kwargs.get("category")
+    brief = kwargs.get("brief")
+    gender = kwargs.get("gender")
+    product_id = kwargs.get("product_id")
+
+    flow = get_cinematic_flow(ctx.session_id) or {}
+    if not product_id:
+        product_id = flow.get("product_id")
+    if not brief:
+        brief = flow.get("brief")
+
+    if not category and product_id:
+        try:
+            p = await ctx.core().get_product(product_id)
+            if p:
+                category = (
+                    p.get("category") or p.get("product_category") or ""
+                ) or infer_category_from_text(
+                    f"{p.get('name','')} {p.get('brand','')} {brief or ''}"
+                )
+        except Exception as e:
+            print(f"[tool_generate_influencer] product category lookup failed: {e}")
+    if not category and brief:
+        category = infer_category_from_text(brief) or None
+
     user = {"token": ctx.user_token, "id": "agent"}
     try:
-        result = await generate_influencer(user=user)
+        result = await generate_influencer(
+            data=GenerateInfluencerRequest(
+                category=category,
+                gender=gender,
+                brief=brief,
+                product_id=product_id,
+            ),
+            user=user,
+        )
     except Exception as e:
         return json.dumps({"error": f"generate_influencer failed: {e}"})
+
+    from prompts.cinematic_ads import cache_session_influencer
 
     image_url = result.get("image_url")
     if image_url:
         _record_artifact(ctx, {"type": "image", "url": image_url})
+        cache_session_influencer(ctx.session_id, {
+            "name": result.get("name"),
+            "image_url": image_url,
+            "source": "generated",
+        })
     return json.dumps({
         "name": result.get("name"),
         "gender": result.get("gender"),
@@ -9141,6 +9782,28 @@ class ManagedAgentClient:
                         if fn is None:
                             return tool_use_id, json.dumps({"error": f"unknown tool: {name}"}), True
 
+                        # Block duplicate generate_influencer during an active cinematic flow
+                        # when a character is already stashed for this session.
+                        if (
+                            name == "generate_influencer"
+                            and session_id
+                            and tool_input.get("confirmed") is True
+                        ):
+                            from prompts.cinematic_ads import (
+                                get_cached_directions,
+                                get_session_influencer,
+                            )
+                            if get_cached_directions(session_id) and get_session_influencer(session_id):
+                                return tool_use_id, json.dumps({
+                                    "action": "duplicate_suppressed",
+                                    "message": (
+                                        "Character already ready for this cinematic ad flow — call "
+                                        "create_cinematic_ad with stage='storyboard' (pass influencer_id "
+                                        "from the saved character). Do NOT generate another influencer."
+                                    ),
+                                    "tool_name": name,
+                                }), False
+
                         # ── Idempotency guard for LLM-fired gated tools ──
                         # When the LLM (not auto-fire) calls a gated tool with
                         # confirmed=True and the SAME tool+stage was fired in the
@@ -9264,22 +9927,66 @@ class ManagedAgentClient:
                                 except Exception as inner_e:
                                     print(f"[ManagedAgent] Quick mode auto-confirm parse error: {inner_e}")
 
+                            # Auto-chain create_influencer → storyboard (→ animate cost chip)
+                            # when an active cinematic-ad flow is in progress.
+                            _meta_tool_name = name
+                            _meta_tool_input = tool_input
+                            if name == "create_influencer":
+                                try:
+                                    _inf_parsed = json.loads(result_text)
+                                    if (
+                                        isinstance(_inf_parsed, dict)
+                                        and _inf_parsed.get("action") == "cinematic_continue"
+                                    ):
+                                        _cine_fn = TOOL_DISPATCH.get("create_cinematic_ad")
+                                        _next = _inf_parsed.get("next_call")
+                                        if _cine_fn and isinstance(_next, dict):
+                                            print("[ManagedAgent] auto-chain: create_influencer → storyboard")
+                                            _cine_text = await _cine_fn(ctx, **_next)
+                                            _cine_p = json.loads(_cine_text)
+                                            _merged = dict(_inf_parsed)
+                                            _merged.pop("action", None)
+                                            _merged.pop("next_call", None)
+                                            if isinstance(_cine_p, dict):
+                                                _merged.update(_cine_p)
+                                            result_text = json.dumps(_merged)
+                                            _meta_tool_name = "create_cinematic_ad"
+                                            _meta_tool_input = _next
+                                            if (
+                                                isinstance(_cine_p, dict)
+                                                and _cine_p.get("action") == "storyboard_ready"
+                                                and isinstance(_cine_p.get("next_call"), dict)
+                                                and _cine_p["next_call"].get("stage") == "animate"
+                                                and _cine_p["next_call"].get("confirmed") is False
+                                            ):
+                                                print("[ManagedAgent] auto-chain: storyboard → animate(confirmed=False)")
+                                                _anim_input = dict(_cine_p["next_call"])
+                                                if "brief" not in _anim_input and _next.get("brief"):
+                                                    _anim_input["brief"] = _next["brief"]
+                                                _anim_text = await _cine_fn(ctx, **_anim_input)
+                                                _anim_p = json.loads(_anim_text)
+                                                if isinstance(_anim_p, dict):
+                                                    _merged.update(_anim_p)
+                                                    result_text = json.dumps(_merged)
+                                except Exception as _chain_e:
+                                    print(f"[ManagedAgent] cinematic auto-chain failed: {type(_chain_e).__name__}: {_chain_e}")
+
                             # Stash storyboard meta (url + brief_hash + direction)
                             # so the IDEMPOTENCY guard only rehydrates when the
                             # current call matches both. Prevents serving a
                             # stale URL after the user pivots to a new brief.
-                            if name == "create_cinematic_ad" and session_id:
+                            if _meta_tool_name == "create_cinematic_ad" and session_id:
                                 try:
                                     import hashlib as _hashlib_sb
                                     _parsed = json.loads(result_text)
                                     _sb_url = _parsed.get("storyboard_url") if isinstance(_parsed, dict) else None
                                     if _sb_url:
-                                        _brief_txt_sb = (tool_input.get("brief") or "").strip()
+                                        _brief_txt_sb = (_meta_tool_input.get("brief") or "").strip()
                                         _brief_h_sb = _hashlib_sb.sha1(_brief_txt_sb.encode("utf-8")).hexdigest()[:8] if _brief_txt_sb else ""
                                         self._last_storyboard_meta[session_id] = {
                                             "url": _sb_url,
                                             "brief_hash": _brief_h_sb,
-                                            "direction": tool_input.get("direction"),
+                                            "direction": _meta_tool_input.get("direction"),
                                         }
                                 except Exception:
                                     pass

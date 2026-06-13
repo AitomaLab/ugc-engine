@@ -12,6 +12,20 @@ VOICE_CONSISTENCY_LINE = (
     "same person same voice, MUST keep the exact same English accent in every scene"
 )
 
+# Deterministic guardrail: when a scene depicts consuming a packaged product
+# (a capped bottle, sealed can, wrapped snack), the cap/lid/wrapper MUST be
+# visibly removed first. Prevents "drinking from a sealed bottle with the cap
+# still on" hallucinations. Kept as a shared constant so worker + Creative OS
+# copies stay in sync.
+CONSUMPTION_CONSTRAINT_LINE = (
+    "consumption_constraint: if the character drinks from or eats a packaged product, "
+    "FIRST visibly open or remove the cap / lid / wrapper, THEN bring it to the mouth and consume; "
+    "never drink from a sealed or capped bottle, never bite through packaging"
+)
+CONSUMPTION_NEGATIVE = (
+    "no drinking from a closed bottle, no sealed cap while drinking, no drinking through packaging"
+)
+
 
 def _resolve_accent_str(ctx, hint_text=""):
     video_language = ctx.get("video_language", "en")
@@ -70,8 +84,9 @@ def build_scene_1_veo_prompt(ctx, script_part, product_desc="product", is_last_s
         f"voice_type: {voice_type}\n"
         f"{VOICE_CONSISTENCY_LINE}\n"
         f"style: raw UGC, candid, not polished\n"
+        f"{CONSUMPTION_CONSTRAINT_LINE}\n"
         f"speech_constraint: {build_speech_constraint(word_count, is_final_scene=is_last_scene)}\n"
-        f"negative: no auditory hallucinations, no filler words, no repeated words, no stuttering, no repeated syllables, no extra limbs, no smooth skin, no poreless skin, no beauty filter, no airbrushed skin, no extra fingers, no mutated hands"
+        f"negative: no auditory hallucinations, no filler words, no repeated words, no stuttering, no repeated syllables, no extra limbs, no smooth skin, no poreless skin, no beauty filter, no airbrushed skin, no extra fingers, no mutated hands, {CONSUMPTION_NEGATIVE}"
     )
 
 
@@ -97,8 +112,9 @@ def build_scene_2_veo_prompt(ctx, script_part, product_desc="product", is_last_s
         f"voice_type: {voice_type}\n"
         f"{VOICE_CONSISTENCY_LINE}\n"
         f"style: raw UGC, candid, not polished\n"
+        f"{CONSUMPTION_CONSTRAINT_LINE}\n"
         f"speech_constraint: {build_speech_constraint(word_count, is_final_scene=is_last_scene)}\n"
-        f"negative: no auditory hallucinations, no filler words, no repeated words, no stuttering, no repeated syllables, no extra limbs, no product disappearing, no change in product position, no dropping the product, no smooth skin, no poreless skin, no beauty filter, no airbrushed skin, no extra fingers, no mutated hands"
+        f"negative: no auditory hallucinations, no filler words, no repeated words, no stuttering, no repeated syllables, no extra limbs, no product disappearing, no change in product position, no dropping the product, no smooth skin, no poreless skin, no beauty filter, no airbrushed skin, no extra fingers, no mutated hands, {CONSUMPTION_NEGATIVE}"
     )
 
 
@@ -124,8 +140,9 @@ def build_scene_3_veo_prompt(ctx, script_part, product_desc="product", is_last_s
         f"voice_type: {voice_type}\n"
         f"{VOICE_CONSISTENCY_LINE}\n"
         f"style: raw UGC, candid, not polished\n"
+        f"{CONSUMPTION_CONSTRAINT_LINE}\n"
         f"speech_constraint: {build_speech_constraint(word_count, is_final_scene=is_last_scene)}\n"
-        f"negative: no auditory hallucinations, no filler words, no repeated words, no stuttering, no repeated syllables, no extra limbs, no product disappearing, no change in product position, no dropping the product, no smooth skin, no poreless skin, no beauty filter, no airbrushed skin, no extra fingers, no mutated hands"
+        f"negative: no auditory hallucinations, no filler words, no repeated words, no stuttering, no repeated syllables, no extra limbs, no product disappearing, no change in product position, no dropping the product, no smooth skin, no poreless skin, no beauty filter, no airbrushed skin, no extra fingers, no mutated hands, {CONSUMPTION_NEGATIVE}"
     )
 
 
@@ -151,8 +168,9 @@ def build_scene_4_veo_prompt(ctx, script_part, product_desc="product", is_last_s
         f"voice_type: {voice_type}\n"
         f"{VOICE_CONSISTENCY_LINE}\n"
         f"style: raw UGC, candid, not polished\n"
+        f"{CONSUMPTION_CONSTRAINT_LINE}\n"
         f"speech_constraint: {build_speech_constraint(word_count, is_final_scene=is_last_scene)}\n"
-        f"negative: no auditory hallucinations, no filler words, no repeated words, no stuttering, no repeated syllables, no extra limbs, no product disappearing, no change in product position, no dropping the product, no smooth skin, no poreless skin, no beauty filter, no airbrushed skin, no extra fingers, no mutated hands"
+        f"negative: no auditory hallucinations, no filler words, no repeated words, no stuttering, no repeated syllables, no extra limbs, no product disappearing, no change in product position, no dropping the product, no smooth skin, no poreless skin, no beauty filter, no airbrushed skin, no extra fingers, no mutated hands, {CONSUMPTION_NEGATIVE}"
     )
 
 

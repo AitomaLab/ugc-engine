@@ -147,6 +147,9 @@ interface RunOverride {
 // surfaced error so the user can intervene.
 const QUEUE_MAX_RETRIES = 2;
 
+/** Temporary UX simplification — set true to restore composer controls. */
+const SHOW_AGENT_COMPOSER_CONTROLS = false;
+
 function slugify(s: string): string {
     return (s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 }
@@ -180,29 +183,20 @@ function scrubAgentText(text: string): string {
 // indicator varies instead of flashing "Thinking…" for every call.
 function toolActivityLabel(
     name: string,
-    mode: string | null | undefined,
+    _mode: string | null | undefined,
     summary: string | null | undefined,
     t: (k: string) => string,
 ): string {
-    const lmode = (mode || '').toLowerCase();
     const lsum = (summary || '').toLowerCase();
 
-    if (name === 'animate_image') return t('creativeOs.agent.activityAnimatingKling');
-    if (name === 'generate_video') {
-        const isSeedance = lmode.startsWith('seedance_2') || lsum.includes('seedance_2');
-        const isCinematic = lmode === 'cinematic_video' || lsum.includes('"mode":"cinematic');
-        return isSeedance
-            ? t('creativeOs.agent.activityGeneratingSeedanceFull')
-            : isCinematic
-                ? t('creativeOs.agent.activityGeneratingCinematicFull')
-                : t('creativeOs.agent.activityGeneratingUgcFull');
-    }
+    if (name === 'animate_image') return t('creativeOs.agent.activityAnimating');
+    if (name === 'generate_video') return t('creativeOs.agent.activityGeneratingClip');
     if (name === 'create_ugc_video' || name === 'create_clone_video') {
-        return t('creativeOs.agent.activityProducingFull').replace('{name}', name);
+        return t('creativeOs.agent.activityProducingVideo');
     }
     if (name === 'create_bulk_campaign') return t('creativeOs.agent.activityBulkCampaign');
-    if (name === 'render_edited_video') return t('creativeOs.agent.activityRenderingEditFull');
-    if (name === 'edit_video') return t('creativeOs.agent.activityEditingVideoFull');
+    if (name === 'render_edited_video') return t('creativeOs.agent.activityRenderingEdit');
+    if (name === 'edit_video') return t('creativeOs.agent.activityEditingVideo');
 
     if (name === 'generate_image' || name === 'generate_influencer'
         || name === 'generate_identity' || name === 'generate_product_shots') {
@@ -2396,7 +2390,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                             }}
                         />
                         {/* ── Pro Strip ── */}
-                        {proStripOpen && (() => {
+                        {SHOW_AGENT_COMPOSER_CONTROLS && proStripOpen && (() => {
                             const ddTrigger = (isOpen: boolean, primary?: boolean): React.CSSProperties => ({ padding: '5px 10px', borderRadius: '8px', border: `1px solid ${primary ? 'rgba(51,122,255,0.18)' : 'rgba(51,122,255,0.12)'}`, background: primary ? 'rgba(51,122,255,0.08)' : 'rgba(51,122,255,0.04)', color: primary ? '#337AFF' : '#4A5578', fontSize: '12px', fontWeight: primary ? 600 : 500, cursor: 'pointer', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '4px', transition: 'all 0.15s' });
                             const ddMenu: React.CSSProperties = { position: 'absolute', bottom: 'calc(100% + 4px)', left: 0, minWidth: 'max-content', borderRadius: '10px', background: 'white', border: '1px solid rgba(51,122,255,0.10)', boxShadow: '0 8px 24px rgba(0,0,0,0.12)', overflow: 'hidden', zIndex: 1001 };
                             const ddItem = (active: boolean): React.CSSProperties => ({ display: 'block', width: '100%', padding: '8px 14px', border: 'none', background: active ? 'rgba(51,122,255,0.06)' : 'transparent', cursor: 'pointer', textAlign: 'left', fontSize: '12px', color: active ? '#337AFF' : '#4A5578', fontWeight: active ? 600 : 400, whiteSpace: 'nowrap', transition: 'background 0.1s' });
@@ -2543,6 +2537,8 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                     <line x1="5" y1="12" x2="19" y2="12" />
                                 </svg>
                             </button>
+                            {SHOW_AGENT_COMPOSER_CONTROLS && (
+                            <>
                             {/* ⚡ Quick Mode Toggle */}
                             <button
                                 onClick={toggleQuickMode}
@@ -2638,6 +2634,8 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                 </div>
                                 <span style={{ fontSize: '11px', fontWeight: 600, color: useSeedance ? '#337AFF' : '#8A93B0', whiteSpace: 'nowrap', letterSpacing: '0.1px' }}>Seedance 2.0</span>
                             </button>
+                            </>
+                            )}
                             {!running && (
                                 <button
                                     onClick={recording ? stopRecording : startRecording}

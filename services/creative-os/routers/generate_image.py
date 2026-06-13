@@ -12,7 +12,9 @@ Supports:
 - Direct upload → NanoBanana with uploaded image as reference
 - Prompt only → NanoBanana with no reference images
 """
-from fastapi import APIRouter, Depends, HTTPException
+import random
+
+from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 from auth import get_current_user
@@ -1031,8 +1033,8 @@ Your job is to invent a NEW, unique, fictional influencer persona and produce a 
 
 **PERSONA REQUIREMENTS:**
 - Age range: 21–35 years old
-- Ensure DIVERSITY across: ethnicity, gender, facial structure, hair texture, skin tone
-- Give them a realistic, culturally appropriate first name (no surnames)
+- The user message contains a `REQUIRED TRAITS` block. Those traits (gender, heritage/ethnicity, skin tone, hair color/length/texture, eye color, face shape) are AUTHORITATIVE — build the persona and the image prompt around them EXACTLY. Do NOT default to any traits shown in the example below.
+- Give them a realistic first name that fits their heritage (no surnames)
 - Do NOT reproduce any real or copyrighted person
 - Include a 1-2 sentence personality/description suitable for a content creator bio
 
@@ -1053,26 +1055,125 @@ Structure the prompt as a single paragraph in this order:
 11. Style keywords: candid UGC realism, no filters, realism, high detail, skin texture, portrait photography
 12. Negative constraints: no tilted camera angle, no overhead angle, no selfie angle, no arm reaching toward camera, no hand holding phone, no visible phone or camera in frame, no looking up at camera from below, no chin-up pose, no studio lighting, no airbrushed skin, no professional camera, no text overlays, no watermarks, no geometric distortion, no extra fingers
 
-**OUTPUT FORMAT — return ONLY valid JSON with these exact keys:**
+**OUTPUT FORMAT — return ONLY valid JSON with these exact keys (this is a SHAPE example only — DO NOT copy its traits; use the REQUIRED TRAITS from the user message instead):**
 {
-  "name": "Sofia",
-  "gender": "Female",
-  "age": "26-year-old",
-  "description": "Warm and relatable beauty creator who shares honest product reviews with her followers.",
-  "nano_banana_prompt": "9:16. Straight-on eye-level portrait. A 26-year-old woman with warm olive skin, dark brown eyes, and long wavy chestnut hair, face centered in frame, looking directly into the camera lens at eye level..."
+  "name": "<first name fitting the REQUIRED TRAITS heritage>",
+  "gender": "<from REQUIRED TRAITS>",
+  "age": "<an age in 21–35, e.g. 28-year-old>",
+  "description": "<1-2 sentence content-creator bio>",
+  "nano_banana_prompt": "9:16. Straight-on eye-level portrait. A <age> <gender> with <skin tone>, <eye color> eyes, and <hair length> <hair texture> <hair color> hair, face centered in frame, looking directly into the camera lens at eye level..."
 }
 
 RULES:
 - Return ONLY the JSON object, no explanation or markdown
 - The nano_banana_prompt must be one continuous paragraph (no line breaks inside)
 - Be extremely specific with physical traits — vague prompts produce unrealistic results
+- Use the REQUIRED TRAITS from the user message VERBATIM for ethnicity, skin tone, hair, and eyes — do NOT substitute the example's traits or your own defaults
 - CRITICAL: The camera MUST be at eye level, pointing straight at the face. No overhead selfie angles. No arm visible holding a phone.
 - The prompt must NOT use the word "selfie" — use "portrait" or "portrait photo" instead
 - Every prompt must pass: face centered, both eyes visible, eye-level camera, natural expression, visible skin texture, real-world environment"""
 
 
+# Explicit trait pools — sampled per call to force genuine variety instead of
+# letting gpt-4o + NanoBanana collapse to a single default look. One value is
+# drawn from each pool and injected into the user message as REQUIRED TRAITS.
+INFLUENCER_GENDERS = ["Female", "Male"]
+INFLUENCER_ETHNICITIES = [
+    "West African", "East African", "North African", "Afro-Caribbean",
+    "Black American", "Scandinavian", "Eastern European", "Western European",
+    "Mediterranean", "Irish/Celtic", "Middle Eastern", "Persian",
+    "South Asian", "East Asian", "Southeast Asian", "Central Asian",
+    "Pacific Islander", "Indigenous Latin American", "Mexican", "Brazilian",
+    "Mixed-race (Black/White)", "Mixed-race (Asian/White)", "Mixed-race (Latino/White)",
+]
+INFLUENCER_SKIN_TONES = [
+    "very fair porcelain skin", "fair skin with warm undertones",
+    "light olive skin", "medium beige skin", "warm tan skin",
+    "golden brown skin", "deep brown skin", "rich dark brown skin",
+    "ebony skin",
+]
+INFLUENCER_HAIR_COLORS = [
+    "jet black", "dark brown", "chestnut brown", "auburn", "copper red",
+    "honey blonde", "platinum blonde", "ash brown", "dyed pastel pink",
+    "salt-and-pepper grey",
+]
+INFLUENCER_HAIR_LENGTHS = [
+    "buzz-cut short", "short cropped", "chin-length bob", "shoulder-length",
+    "long past the shoulders", "very long waist-length",
+]
+INFLUENCER_HAIR_TEXTURES = [
+    "straight sleek", "loose wavy", "bouncy curly", "tight coily/4C",
+    "afro-textured", "braided", "locs",
+]
+INFLUENCER_EYE_COLORS = [
+    "dark brown", "amber", "hazel", "green", "blue", "grey", "light brown",
+]
+INFLUENCER_FACE_SHAPES = [
+    "oval", "round", "square-jawed", "heart-shaped", "diamond", "long/oblong",
+]
+
+
+def _build_required_traits(
+    *,
+    category: Optional[str] = None,
+    gender: Optional[str] = None,
+) -> tuple[str, dict]:
+    """Sample one value per trait pool and return (block_text, chosen_dict).
+
+    `gender` is honored when provided. Otherwise, beauty/cosmetics products
+    weight toward female (~75/25) while still allowing variety; all non-gender
+    traits are always fully randomized so faces stay diverse across calls.
+    """
+    chosen_gender = (gender or "").strip().capitalize()
+    if chosen_gender not in ("Female", "Male"):
+        is_beauty = (category or "").lower() in (
+            "beauty", "skincare", "cosmetics", "makeup", "personal_care",
+        )
+        if is_beauty:
+            chosen_gender = random.choices(["Female", "Male"], weights=[75, 25])[0]
+        else:
+            chosen_gender = random.choice(INFLUENCER_GENDERS)
+
+    traits = {
+        "gender": chosen_gender,
+        "ethnicity": random.choice(INFLUENCER_ETHNICITIES),
+        "skin_tone": random.choice(INFLUENCER_SKIN_TONES),
+        "hair_color": random.choice(INFLUENCER_HAIR_COLORS),
+        "hair_length": random.choice(INFLUENCER_HAIR_LENGTHS),
+        "hair_texture": random.choice(INFLUENCER_HAIR_TEXTURES),
+        "eye_color": random.choice(INFLUENCER_EYE_COLORS),
+        "face_shape": random.choice(INFLUENCER_FACE_SHAPES),
+    }
+    block = (
+        "REQUIRED TRAITS for this persona (use these EXACTLY; do not default to any example traits):\n"
+        f"- gender: {traits['gender']}\n"
+        f"- heritage / ethnicity: {traits['ethnicity']}\n"
+        f"- skin tone: {traits['skin_tone']}\n"
+        f"- hair: {traits['hair_length']}, {traits['hair_texture']}, {traits['hair_color']}\n"
+        f"- eye color: {traits['eye_color']}\n"
+        f"- face shape: {traits['face_shape']}"
+    )
+    return block, traits
+
+
+class GenerateInfluencerRequest(BaseModel):
+    """Optional product context for product-aware persona generation.
+
+    All fields optional — the modal POSTs no body and stays fully diverse.
+    The agent passes context when generating a character for a product/ad so
+    the persona fits the niche (e.g. beauty product -> beauty-appropriate creator).
+    """
+    category: Optional[str] = None       # e.g. "beauty", "audio", "footwear"
+    gender: Optional[str] = None         # "Female" | "Male" — honored when set
+    brief: Optional[str] = None          # user's ad brief / product context
+    product_id: Optional[str] = None     # informational only
+
+
 @router.post("/generate-influencer")
-async def generate_influencer(user: dict = Depends(get_current_user)):
+async def generate_influencer(
+    data: Optional[GenerateInfluencerRequest] = Body(None),
+    user: dict = Depends(get_current_user),
+):
     """Generate a random AI influencer persona + NanoBanana Pro profile photo.
 
     Flow:
@@ -1089,8 +1190,31 @@ async def generate_influencer(user: dict = Depends(get_current_user)):
     from env_loader import load_env
     load_env(Path(__file__))
 
+    _category = data.category if data else None
+    _gender = data.gender if data else None
+    _brief = (data.brief if data else None) or ""
+
+    # Sample explicit, randomized REQUIRED TRAITS so faces stay diverse across
+    # calls; honor an explicit gender, otherwise weight beauty products female.
+    traits_block, chosen_traits = _build_required_traits(
+        category=_category, gender=_gender,
+    )
+
+    user_msg = "Generate a new, unique AI influencer now.\n\n" + traits_block
+    if _category or _brief.strip():
+        user_msg += (
+            "\n\nPRODUCT CONTEXT (shape the persona's niche/bio to suit this, "
+            "but keep the REQUIRED TRAITS above exactly):\n"
+            f"- product category: {_category or 'n/a'}\n"
+            f"- brief: {_brief.strip()[:400] or 'n/a'}"
+        )
+
     # ── Step 1: Generate persona + image prompt via GPT ──
-    print("[Generate Influencer] Step 1/2: Generating persona via GPT-4o...")
+    print(
+        f"[Generate Influencer] Step 1/2: Generating persona via GPT-4o... "
+        f"(gender={chosen_traits['gender']}, ethnicity={chosen_traits['ethnicity']}, "
+        f"category={_category or 'none'})"
+    )
     try:
         client = openai.OpenAI()
         resp = client.chat.completions.create(
@@ -1099,7 +1223,7 @@ async def generate_influencer(user: dict = Depends(get_current_user)):
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": GENERATE_INFLUENCER_SYSTEM_PROMPT},
-                {"role": "user", "content": "Generate a new, unique AI influencer now. Make them diverse and interesting."},
+                {"role": "user", "content": user_msg},
             ],
             max_tokens=600,
         )
@@ -1107,7 +1231,7 @@ async def generate_influencer(user: dict = Depends(get_current_user)):
         persona = json.loads(raw)
 
         name = persona.get("name", "Creator")
-        gender = persona.get("gender", "Female")
+        gender = persona.get("gender") or chosen_traits["gender"]
         age = persona.get("age", "25-year-old")
         description = persona.get("description", "")
         nano_prompt = persona.get("nano_banana_prompt", "")

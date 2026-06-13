@@ -761,9 +761,21 @@ def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, 
 
             error_str = str(e).lower()
             is_retriable = any(p in error_str for p in RETRIABLE_PATTERNS)
-            if not is_retriable:
+            # Auth/availability failures (e.g. WaveSpeed 401 Unauthorized) are
+            # not retriable against the SAME provider, but we MUST still fall
+            # through to the OTHER provider instead of failing the whole job.
+            # Previously a WaveSpeed 401 raised here and never tried Kie, which
+            # killed every create_ugc_video scene during a WaveSpeed key outage.
+            is_provider_unavailable = any(
+                p in error_str
+                for p in ("401", "unauthorized", "403", "invalid api key", "unavailable")
+            )
+            has_fallback_left = provider != providers_to_try[-1]
+            if not is_retriable and not (is_provider_unavailable and has_fallback_left):
                 print(f"      [Router] Non-retriable error — not trying fallback")
                 raise
+            if is_provider_unavailable and has_fallback_left:
+                print(f"      [Router] Provider unavailable ({provider}) — falling through to fallback provider")
 
     # Both providers failed
     if last_error:
@@ -1717,7 +1729,7 @@ def animate_scenes_from_composite_parallel(
         return idx, out_path
 
     ordered: dict[int, Path] = {}
-    errors: list[tuple[int, str]] = {}
+    errors: list[tuple[int, str]] = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
             pool.submit(_animate_one, i, scene): i

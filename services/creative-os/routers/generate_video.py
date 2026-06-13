@@ -2426,8 +2426,6 @@ async def _run_ugc_clip_pipeline(
             print(f"[UGC Clip] Extracted action: {action_direction[:100]}...")
 
         # ── Step 4: Generate composite image or use reference ──
-        influencer, product = _resolve_ugc_composite_urls(data, influencer, product)
-
         has_reference_image = bool(data.reference_image_url)
 
         # KEY LOGIC: When the user uploaded an image (reference_image_url)
@@ -2436,6 +2434,13 @@ async def _run_ugc_clip_pipeline(
         #
         # Case A: upload + influencer (no product) → upload = product image
         # Case B: upload + product (no influencer) → upload = influencer/character image
+        #
+        # This synthesis MUST run BEFORE _resolve_ugc_composite_urls: the
+        # resolver's _assign_explicit_urls_to_entities can only bind a URL to an
+        # entity that already exists. Without a synthesized product here, an
+        # uploaded product image has no product slot to land in and gets
+        # mis-routed into the influencer slot (character duplicated, product
+        # missing).
         uploaded_product_for_composite = (
             has_reference_image
             and influencer
@@ -2476,6 +2481,11 @@ async def _run_ugc_clip_pipeline(
             }
             user_selected_influencer = True
             has_reference_image = False
+
+        # Resolve explicit @-mention / upload URLs to entities AFTER the
+        # upload-backed product/character has been synthesized above, so the
+        # uploaded image binds to the correct slot.
+        influencer, product = _resolve_ugc_composite_urls(data, influencer, product)
 
         if has_reference_image:
             # User selected a pre-generated image with NO influencer → use directly
@@ -2691,6 +2701,8 @@ async def _run_ugc_clip_pipeline(
                 f"no instant or teleporting actions, no objects appearing or disappearing, "
                 f"if the character holds a product they keep holding it steadily throughout, "
                 f"no phantom biting or eating motions unless the product is visibly at the mouth, "
+                f"if the character drinks from or eats a packaged product, FIRST visibly open or remove the cap / lid / wrapper, THEN bring it to the mouth and consume; "
+                f"never drink from a sealed or capped bottle, never bite through packaging, "
                 f"hands and arms move at natural human speed with realistic inertia\n"
                 f"speech_constraint: speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, "
                 f"absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, "
@@ -2700,6 +2712,7 @@ async def _run_ugc_clip_pipeline(
                 f"no artificial smoothing, no plastic CGI appearance, no extra limbs, no extra fingers, no mutated hands, "
                 f"no teleporting objects, no instant actions, no phantom eating, no objects appearing from nowhere, "
                 f"no oversized products, no physically impossible movements, "
+                f"no drinking from a closed bottle, no sealed cap while drinking, no drinking through packaging, "
                 f"no wide-eyed stare, no bulging eyes, no unblinking gaze, no frozen surprised expression, "
                 f"no over-exaggerated facial expression, no startled look, no permanently raised eyebrows"
             )
@@ -2727,7 +2740,10 @@ async def _run_ugc_clip_pipeline(
                     f"voice_type: clear confident pronunciation, casual, conversational {accent_line}, consistent medium-fast pacing\n"
                     f"speech_constraint: speak ONLY the exact dialogue words provided, crystal-clear pronunciation, "
                     f"no stuttering, no auditory hallucinations, MUST finish speaking 1 second before video ends\n"
+                    f"motion_constraint: if the person drinks from or eats a packaged product, FIRST visibly open or remove the cap / lid / wrapper, THEN bring it to the mouth and consume; "
+                    f"never drink from a sealed or capped bottle, never bite through packaging\n"
                     f"negative: no auditory hallucinations, no filler words, no stuttering, no extra limbs, "
+                    f"no drinking from a closed bottle, no sealed cap while drinking, no drinking through packaging, "
                     f"no wide-eyed stare, no bulging eyes, no unblinking gaze, no frozen surprised expression, "
                     f"no over-exaggerated facial expression, no startled look, no permanently raised eyebrows, "
                     f"do NOT use a different person than the reference image"
@@ -2741,7 +2757,10 @@ async def _run_ugc_clip_pipeline(
                     f"voice_type: clear confident pronunciation, casual, conversational {accent_line}, consistent medium-fast pacing\n"
                     f"speech_constraint: speak ONLY the exact dialogue words provided, crystal-clear pronunciation, "
                     f"no stuttering, no auditory hallucinations\n"
+                    f"motion_constraint: if the person drinks from or eats a packaged product, FIRST visibly open or remove the cap / lid / wrapper, THEN bring it to the mouth and consume; "
+                    f"never drink from a sealed or capped bottle, never bite through packaging\n"
                     f"negative: no auditory hallucinations, no filler words, no stuttering, no extra limbs, "
+                    f"no drinking from a closed bottle, no sealed cap while drinking, no drinking through packaging, "
                     f"no wide-eyed stare, no bulging eyes, no unblinking gaze, no frozen surprised expression, "
                     f"no over-exaggerated facial expression, no startled look, no permanently raised eyebrows"
                 )

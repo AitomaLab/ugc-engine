@@ -56,6 +56,84 @@ def _to_kie_model_name(model_api: str) -> str:
     return KIE_MODEL_NAMES.get(model_api, model_api)
 
 
+def generate_music(prompt="upbeat, trendy, short-form social media background music, "
+                          "energetic and positive vibe, modern pop instrumental",
+                   instrumental=True):
+    """
+    Generate background music using Suno V4 via Kie.ai.
+    Returns URL to the generated audio file, or None if failed.
+
+    Self-contained mirror of the repo-root generate_scenes.generate_music so
+    that combine_videos can mix a soundtrack from inside the Creative OS
+    process (where `import generate_scenes` resolves to this shim, which the
+    repo-root version is NOT guaranteed to win). Uses the shim's local
+    KIE_HEADERS / KIE_API_URL — identical KIE Suno call shape.
+    """
+    print("🎵 Generating background music...")
+    print(f"   Prompt: {prompt[:80]}...")
+
+    payload = {
+        "prompt": prompt[:500],
+        "customMode": False,
+        "instrumental": instrumental,
+        "model": "V4",
+        "callBackUrl": "https://example.com/callback",
+    }
+
+    resp = requests.post(
+        f"{KIE_API_URL}/api/v1/generate",
+        headers=KIE_HEADERS,
+        json=payload,
+    )
+    result = resp.json()
+
+    if result.get("code") != 200:
+        print(f"   ⚠️ Music generation failed: {result}")
+        return None
+
+    task_id = result["data"]["taskId"]
+    print(f"   Task: {task_id[:20]}...")
+
+    for i in range(48):  # 8 minutes max
+        time.sleep(10)
+        resp = requests.get(
+            f"{KIE_API_URL}/api/v1/generate/record-info",
+            headers=KIE_HEADERS,
+            params={"taskId": task_id},
+        )
+        result = resp.json()
+
+        if result.get("code") != 200:
+            print(f"   Waiting... ({i * 10}s)")
+            continue
+
+        status = result["data"]["status"]
+
+        if status in ["SUCCESS", "FIRST_SUCCESS"]:
+            try:
+                response_data = result["data"].get("response", {})
+                suno_data = response_data.get("sunoData") if response_data else None
+                if suno_data and len(suno_data) > 0:
+                    audio_url = suno_data[0].get("audioUrl")
+                    if audio_url:
+                        print(f"   ✅ Music ready!")
+                        return audio_url
+                    else:
+                        print(f"   ⚠️ sunoData present but audioUrl is empty, continuing poll...")
+                else:
+                    print(f"   ⚠️ Status={status} but sunoData is empty, continuing poll...")
+            except (KeyError, IndexError, TypeError) as parse_err:
+                print(f"   ⚠️ Error parsing music response: {parse_err}")
+        elif status in ["CREATE_TASK_FAILED", "GENERATE_AUDIO_FAILED"]:
+            print("   ⚠️ Music generation failed")
+            return None
+
+        print(f"   ⏳ Generating... ({i * 10}s)")
+
+    print("   ⚠️ Music generation timed out")
+    return None
+
+
 MODEL_ENDPOINTS = {
     "seedance": {
         "generate": f"{KIE_API_URL}/api/v1/jobs/createTask",
