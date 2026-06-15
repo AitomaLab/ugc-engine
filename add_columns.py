@@ -20,7 +20,7 @@ headers = {
 sql = """
 ALTER TABLE video_jobs 
 ADD COLUMN IF NOT EXISTS hook text,
-ADD COLUMN IF NOT EXISTS model_api text DEFAULT 'seedance-1.5-pro',
+ADD COLUMN IF NOT EXISTS model_api text DEFAULT 'veo-3.1-fast',
 ADD COLUMN IF NOT EXISTS assistant_type text DEFAULT 'Travel',
 ADD COLUMN IF NOT EXISTS length integer DEFAULT 15,
 ADD COLUMN IF NOT EXISTS user_id uuid;

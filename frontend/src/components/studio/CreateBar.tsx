@@ -161,12 +161,13 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
 
     const loadInfluencers = useCallback(async () => {
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/influencers`, {
-                headers: { 'Authorization': `Bearer ${(await (await import('@/lib/supabaseClient')).supabase.auth.getSession()).data.session?.access_token}` },
-            });
+            const token = (await (await import('@/lib/supabaseClient')).supabase.auth.getSession()).data.session?.access_token;
+            const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+            if (projectId) headers['X-Project-Id'] = projectId;
+            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/influencers`, { headers });
             if (res.ok) setInfluencers(await res.json());
         } catch {}
-    }, []);
+    }, [projectId]);
 
     const loadProjectImages = useCallback(async () => {
         try {

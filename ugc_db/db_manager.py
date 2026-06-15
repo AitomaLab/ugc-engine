@@ -870,7 +870,24 @@ def list_influencers_scoped(user_id: str, project_id: str):
                 f"  [influencers] Seed left project {project_id[:8]}... empty "
                 f"for user {user_id[:8]}..."
             )
-    return data
+
+    # Custom (user-created) influencers belong to the USER, not a single
+    # project: merge them in so they appear in every project + the @mention
+    # picker, regardless of which project they were created in. Dedupe by id
+    # so a custom created in THIS project isn't listed twice.
+    custom = (
+        sb.table("influencers")
+        .select("*")
+        .eq("user_id", user_id)
+        .eq("is_custom", True)
+        .execute()
+        .data
+        or []
+    )
+    merged = {row["id"]: row for row in (data or [])}
+    for row in custom:
+        merged[row["id"]] = row
+    return list(merged.values())
 
 def list_scripts_scoped(user_id: str, project_id: str, **filters):
     sb = get_supabase()

@@ -232,7 +232,13 @@ def run_generation_pipeline(
     scenes = scene_builder.build_scenes(fields, influencer, app_clip, product=product, product_type=product_type)
 
     # --- Seedance 2.0: Stamp cost-optimised durations onto scenes ---
-    model_api = fields.get("model_api", "infinitalk-audio")
+    model_api = fields.get("model_api") or "veo-3.1-fast"
+    # seedance-1.5 is never used — any stray legacy value (from an old job row,
+    # NULL column default, or env) is forced to Veo 3.1 so it never reaches
+    # bytedance/seedance-1.5-pro on kie.ai. seedance-2.0 (cinematic) is untouched.
+    if "seedance-1.5" in model_api.lower() or model_api.lower() == "bytedance/seedance-1.5-pro":
+        print(f"      [MODEL GUARD] Overriding legacy '{model_api}' -> 'veo-3.1-fast' (seedance-1.5 is never used)")
+        model_api = "veo-3.1-fast"
     if "seedance" in model_api.lower():
         length = fields.get("Length", "15s")
         if length not in config.VALID_LENGTHS:

@@ -22,6 +22,9 @@ import { thumbUrl, videoPosterCandidate } from "@/lib/media";
 import { useVideoThumbnails } from "@/hooks/useVideoThumbnails";
 import { HoverPlayVideo } from "@/components/ui/HoverPlayVideo";
 
+/** Set true to show the Seedance 2.0 toggle on the dashboard composer. */
+const SHOW_DASHBOARD_SEEDANCE_TOGGLE = false;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -94,10 +97,10 @@ function groupByCampaign(jobs: Job[]): CampaignGroup[] {
 
 const SUGGESTION_CHIP_KEYS = [
   "creativeOs.dashboard.chipUgc",
-  "creativeOs.dashboard.chipProductShots",
+  "creativeOs.dashboard.chipCinematic",
   "creativeOs.dashboard.chipCampaign",
-  "creativeOs.dashboard.chipSpanish",
-  "creativeOs.dashboard.chipClone",
+  "creativeOs.dashboard.chipProductShots",
+  "creativeOs.dashboard.chipCaptions",
 ];
 
 // ---------------------------------------------------------------------------
@@ -235,6 +238,10 @@ export default function StudioPage() {
       const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       const token = (await supabase.auth.getSession()).data.session?.access_token;
       const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      // Scope to the active project (same source apiFetch uses) so templates
+      // match instead of silently falling back to the default project.
+      const activeProjectId = typeof window !== 'undefined' ? localStorage.getItem('activeProjectId') : null;
+      if (activeProjectId) headers['X-Project-Id'] = activeProjectId;
       const [prodRes, infRes, cloneRes] = await Promise.all([
          fetch(`${apiBase}/api/products`, { headers }).then(r => r.ok ? r.json() : []),
          fetch(`${apiBase}/influencers`, { headers }).then(r => r.ok ? r.json() : []),
@@ -1347,6 +1354,7 @@ export default function StudioPage() {
                 </div>
 
                 {/* Seedance 2.0 Toggle */}
+                {SHOW_DASHBOARD_SEEDANCE_TOGGLE && (
                 <div
                   onClick={() => setSeedanceOn((v) => !v)}
                   style={{
@@ -1381,6 +1389,7 @@ export default function StudioPage() {
                     Seedance 2.0
                   </span>
                 </div>
+                )}
 
                 {/* Spacer */}
                 <div style={{ flex: 1 }} />
@@ -1568,20 +1577,6 @@ export default function StudioPage() {
             );
           })}
 
-          <div style={{ flex: 1 }} />
-          <Link
-            href={activeBottomTab === 'projects' ? '/projects-library' : '/library'}
-            style={{
-              fontSize: '13px', fontWeight: 600, color: '#337AFF',
-              textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px', padding: '16px 0',
-            }}
-          >
-            {t('creativeOs.dashboard.browseAll')}
-            <svg viewBox="0 0 24 24" style={{ width: '14px', height: '14px', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
-              <line x1="5" y1="12" x2="19" y2="12" />
-              <polyline points="12 5 19 12 12 19" />
-            </svg>
-          </Link>
         </div>
 
         {/* Panel Content */}

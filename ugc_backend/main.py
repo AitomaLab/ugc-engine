@@ -685,7 +685,7 @@ class JobCreate(BaseModel):
     product_id: Optional[str] = None            # NEW for Physical Products
     product_type: str = "digital"               # 'digital' or 'physical'
     hook: Optional[str] = None
-    model_api: str = "seedance-1.5-pro"
+    model_api: str = "veo-3.1-fast"              # all UGC renders on Veo 3.1 (WaveSpeed) by default
     assistant_type: str = "Travel"
     length: int = 15
     user_id: Optional[str] = None
@@ -708,8 +708,9 @@ class JobCreate(BaseModel):
 class BulkJobCreate(BaseModel):
     influencer_id: str
     count: int = 1
+    scripts: Optional[List[str]] = None      # N verbatim approved scripts, one per video (overrides count)
     duration: int = 15
-    model_api: str = "seedance-1.5-pro"
+    model_api: str = "veo-3.1-fast"          # all UGC renders on Veo 3.1 (WaveSpeed) by default
     assistant_type: str = "Travel"
     product_type: str = "digital"               # NEW for Physical Products
     product_id: Optional[str] = None            # NEW for Physical Products
@@ -718,15 +719,18 @@ class BulkJobCreate(BaseModel):
     campaign_name: Optional[str] = None         # Campaign grouping name
     cinematic_shot_ids: Optional[List[str]] = None  # Cinematic Product Shots
     auto_transition_type: Optional[str] = None      # 'match_cut', 'whip_pan', 'focus_pull'
-    # Subtitle configuration
-    subtitles_enabled: Optional[bool] = True
+    # Subtitle configuration — default OFF (bare video); agent/Create page opt in explicitly
+    subtitles_enabled: Optional[bool] = False
     subtitle_style: Optional[str] = "hormozi"
     subtitle_placement: Optional[str] = "middle"
     # Language
     video_language: str = "en"                   # 'en' or 'es' — defaults to English
     language_accent: Optional[str] = None        # 'spain' | 'latam' — only consulted when video_language == 'es'
-    # Music
-    music_enabled: Optional[bool] = True
+    # Music — default OFF (bare video); agent/Create page opt in explicitly
+    music_enabled: Optional[bool] = False
+    # @-mention shot overrides from agent UI (stored per-job in metadata)
+    reference_image_url: Optional[str] = None
+    product_image_url: Optional[str] = None
 
 class SignedUrlRequest(BaseModel):
     bucket: str = "product-images"
@@ -1631,6 +1635,9 @@ def api_create_influencer(data: InfluencerCreate, request: Request, user: dict =
                     detail="No active project scope. Select a project before creating an influencer.",
                 )
             payload["project_id"] = pid
+            # Mark as user-created so it surfaces across ALL of the user's
+            # projects + the @mention/MODELS picker (not just this project).
+            payload["is_custom"] = True
             print(f"  [DEBUG] CREATE INFLUENCER: user={user['id']}, project_id={pid}, payload_keys={list(payload.keys())}")
         else:
             print(f"  [DEBUG] CREATE INFLUENCER: NO USER (unauthenticated)")
@@ -2051,6 +2058,7 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
         # Build script & clip pools — product-scoped for digital campaigns
         # ---------------------------------------------------------------
         is_digital_product = (data.product_type == "digital" and data.product_id)
+        is_physical_product = (data.product_type == "physical" and data.product_id)
 
         if is_digital_product:
             # Product-scoped clips: only clips belonging to this product
@@ -2062,8 +2070,18 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
             # Product-scoped scripts: only scripts linked to this product
             product_scripts = list_scripts(product_id=data.product_id)
             scripts = product_scripts if product_scripts else list_scripts()  # fallback
+        elif is_physical_product:
+            # Physical products are composited from the influencer + the product
+            # image — they must NOT pull global app-clips (those are digital-app
+            # b-roll and inject unrelated products/people) and must NOT use a
+            # random global script (which talks about a different product).
+            # Each video gets a fresh, product-relevant script generated below
+            # (or the agent-provided hook). Mirrors the single-job /jobs path.
+            clip_pool = []
+            scripts = []  # generated per-video in the loop
         else:
-            # Legacy path: global pools + category matching (unchanged)
+            # Legacy path: global pools + category matching (unchanged) —
+            # only used for product-less / uncategorized campaigns.
             scripts = list_scripts()
             clips = list_app_clips()
             inf_style = (inf.get("style") or "").lower().strip()
@@ -2077,7 +2095,7 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
             ] if clips else []
             clip_pool = matching_clips if matching_clips else clips
 
-        if not scripts:
+        if not scripts and not (is_physical_product or is_digital_product):
             raise HTTPException(status_code=400, detail="No scripts available. Add scripts first.")
 
         # Detect actual DB columns dynamically (same approach as single job)
@@ -2101,8 +2119,14 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
             }
 
         created_jobs = []
-        for i in range(data.count):
-            # ----- Clip selection: round-robin for digital, random for physical -----
+        # When the agent passes N verbatim approved scripts, render exactly N
+        # videos (one per script). Otherwise fall back to count with per-video
+        # auto-generation. scripts[] always wins over count.
+        effective_count = len(data.scripts) if data.scripts else data.count
+        for i in range(effective_count):
+            # ----- Clip selection: round-robin for digital, none for physical -----
+            # Physical products composite the influencer with the product image
+            # (no app-clip b-roll), so clip_pool is empty and selected_clip stays None.
             if is_digital_product and clip_pool:
                 selected_clip = clip_pool[i % len(clip_pool)]
             elif clip_pool:
@@ -2110,11 +2134,13 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
             else:
                 selected_clip = None
 
-            selected_script = random.choice(scripts)
+            selected_script = random.choice(scripts) if scripts else None
 
-            # ----- 70/30 Influencer Setting Variation (digital only) -----
+            # ----- 70/30 Influencer Setting Variation (digital + physical) -----
+            # Varies only the environment/setting so the N videos differ; the
+            # influencer's face is locked via the reference_image_url override.
             variation_prompt = None
-            if is_digital_product and random.random() < 0.70:
+            if (is_digital_product or is_physical_product) and random.random() < 0.70:
                 try:
                     from prompts.digital_prompts import generate_variation_prompt
                     default_setting = (inf.get("setting") or "").strip()
@@ -2126,8 +2152,15 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
                     print(f"   !! Variation prompt failed for job {i}: {e}")
                     variation_prompt = None  # safe fallback
 
-            # ----- Script: generate unique per-video script for digital -----
-            if is_digital_product and not data.hook:
+            # ----- Script: generate a unique, product-relevant per-video script -----
+            if data.scripts:
+                # Highest precedence: the user approved N distinct scripts in
+                # chat — each video uses its OWN verbatim script.
+                script_text = data.scripts[i]
+                print(f"   [Bulk] Job {i+1}: Using approved per-video script ({len(script_text)} chars)")
+            elif data.hook:
+                script_text = data.hook
+            elif is_digital_product:
                 # Generate a fresh, unique script for each video
                 try:
                     from ugc_backend.ai_script_client import AIScriptClient
@@ -2140,23 +2173,50 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
                         duration=data.duration,
                         video_language=data.video_language,
                     )
-                    print(f"   [Bulk] Job {i+1}: Generated unique script ({len(script_text)} chars)")
+                    print(f"   [Bulk] Job {i+1}: Generated unique digital script ({len(script_text)} chars)")
                 except Exception as e:
                     print(f"   !! Per-video script generation failed for job {i}: {e}")
-                    script_text = selected_script.get("text", "")
+                    script_text = selected_script.get("text", "") if selected_script else ""
+            elif is_physical_product:
+                # Persona-driven, product-relevant script per video (varies naturally).
+                try:
+                    from ugc_backend.ai_script_client import AIScriptClient
+                    product = get_product(data.product_id)
+                    visuals = product.get("visual_description") or {} if product else {}
+                    client = AIScriptClient()
+                    script_text = client.generate_physical_product_script(
+                        product_analysis=visuals,
+                        duration=data.duration,
+                        product_name=product.get("name", "") if product else "",
+                        influencer_data=inf,
+                        model_api=data.model_api,
+                        video_language=data.video_language,
+                        language_accent=data.language_accent,
+                    )
+                    print(f"   [Bulk] Job {i+1}: Generated unique physical script ({len(script_text)} chars)")
+                except Exception as e:
+                    print(f"   !! Per-video physical script generation failed for job {i}: {e}")
+                    script_text = ""
             else:
-                script_text = data.hook if data.hook else selected_script.get("text", "")
+                script_text = selected_script.get("text", "") if selected_script else ""
+            _music_enabled = (
+                data.music_enabled if data.music_enabled is not None else False
+            )
             costs = cost_service.estimate_total_cost(
                 script_text=script_text,
                 duration=data.duration,
                 model=data.model_api,
                 product_type=data.product_type,
-                music_enabled=data.music_enabled if hasattr(data, 'music_enabled') and data.music_enabled is not None else True,
+                music_enabled=_music_enabled,
+            )
+
+            _subtitles_enabled = (
+                data.subtitles_enabled if data.subtitles_enabled is not None else False
             )
 
             job_data = {
                 "influencer_id": data.influencer_id,
-                "script_id": selected_script["id"] if not data.hook else None,
+                "script_id": selected_script["id"] if (selected_script and not data.hook and not data.scripts) else None,
                 "app_clip_id": selected_clip["id"] if selected_clip else None,
                 "product_type": data.product_type,
                 "product_id": data.product_id,
@@ -2170,6 +2230,17 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
                 **costs,
             }
 
+            if "subtitles_enabled" in db_columns:
+                job_data["subtitles_enabled"] = _subtitles_enabled
+            if "music_enabled" in db_columns:
+                job_data["music_enabled"] = _music_enabled
+            if "subtitle_style" in db_columns and data.subtitle_style:
+                job_data["subtitle_style"] = data.subtitle_style
+            if "subtitle_placement" in db_columns and data.subtitle_placement:
+                job_data["subtitle_placement"] = data.subtitle_placement
+            if "language_accent" in db_columns and data.language_accent:
+                job_data["language_accent"] = data.language_accent
+
             # Inject user_id and project_id if authenticated
             if user:
                 job_data["user_id"] = user["id"]
@@ -2177,10 +2248,14 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
                 if pid and "project_id" in db_columns:
                     job_data["project_id"] = pid
 
-            if data.hook:
+            if data.scripts:
+                # Per-video approved script -> stored in hook, no static script ref.
+                job_data["hook"] = script_text
+                job_data["script_id"] = None
+            elif data.hook:
                 job_data["hook"] = data.hook
-            elif is_digital_product and script_text:
-                # Store the uniquely generated script in the hook field
+            elif (is_digital_product or is_physical_product) and script_text:
+                # Store the uniquely generated per-video script in the hook field
                 job_data["hook"] = script_text
                 job_data["script_id"] = None  # no static script reference
             if data.cinematic_shot_ids:
@@ -2197,8 +2272,16 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
                     metadata["auto_transition_type"] = data.auto_transition_type
                 if job_data.get("cinematic_shot_ids"):
                     metadata["cinematic_shot_ids"] = job_data["cinematic_shot_ids"]
-                if data.hook:
+                if data.scripts:
+                    metadata["hook"] = script_text
+                elif data.hook:
                     metadata["hook"] = data.hook
+                # @-mention overrides: force the user-selected influencer face +
+                # product image into every campaign video (worker honors these).
+                if data.reference_image_url:
+                    metadata["reference_image_url"] = data.reference_image_url
+                if data.product_image_url:
+                    metadata["product_image_url"] = data.product_image_url
                 if metadata:
                     job_data["metadata"] = metadata
 

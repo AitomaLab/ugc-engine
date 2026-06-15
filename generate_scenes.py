@@ -61,8 +61,10 @@ def generate_video(prompt, reference_image_url=None, model_api=None, first_frame
     print(f"      Arg model_api (raw): '{model_api}'")
 
     if model_api is None:
-        model_api = config.VIDEO_MODEL_API
-        model_display = config.VIDEO_MODEL
+        # seedance-1.5 is never used — a missing model_api ALWAYS routes to
+        # Veo 3.1 (WaveSpeed), independent of config.VIDEO_MODEL env overrides.
+        model_display = "veo-3.1-fast"
+        model_api = config.MODEL_REGISTRY["veo-3.1-fast"]
     else:
         # Map friendly name (e.g. seedance-1.5-pro) to API ID (bytedance/seedance-1.5-pro)
         model_display = model_api  # Keep the original name for error messages

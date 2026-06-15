@@ -25,6 +25,13 @@ import { InfluencerModal } from '@/app/library/InfluencerModal';
 import { FEATURE_AGENTPANEL_EDITOR_ROUTING } from '@/editor/flags';
 import { classifyEditorAgentRoute } from '@/editor-agent/route-intent';
 import { parseAiEditOps, stripAiEditBlockForDisplay } from '@/editor/action-row/apply-ai-operations';
+import { MentionAssetGrid } from '@/components/studio/MentionAssetGrid';
+import {
+    buildMentionRef,
+    mentionItemNeedsShotPicker,
+    type MentionItem,
+    type MentionGroups,
+} from '@/components/studio/mention-utils';
 
 export interface AgentPanelHandle {
     useSeedance: boolean;
@@ -78,21 +85,6 @@ interface AgentPanelProps {
      * Unset = current behavior (all prompts go to managed agent).
      */
     jobId?: string | null;
-}
-
-interface MentionItem {
-    type: AgentRef['type'];
-    tag: string;          // unique @-token
-    name: string;         // display label
-    image_url?: string;   // thumbnail
-    views?: string[];     // additional shots/views (product_views / character_views) — profile first, then extras
-    ref: AgentRef;        // payload sent to backend
-    product_type?: 'physical' | 'digital';
-    // For digital products: maps a first_frame_url (shown in the picker grid)
-    // to its underlying app clip so finalizeMention can attach app_clip_id.
-    clipsByFrame?: Record<string, { clip_id: string; video_url?: string }>;
-    // For AI clones: maps look image_url to look_id for create_clone_video.
-    looksByImage?: Record<string, { look_id: string; label?: string }>;
 }
 
 interface AttachedFile {
@@ -575,6 +567,9 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
             const token = (await supabase.auth.getSession()).data.session?.access_token;
             const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+            // Scope to the chat's project so templates/products match the active
+            // project instead of silently falling back to the default project.
+            if (projectId) headers['X-Project-Id'] = projectId;
             const [prodRes, infRes, cloneRes, imgs, vids] = await Promise.all([
                 fetch(`${apiBase}/api/products`, { headers }).then(r => r.ok ? r.json() : []),
                 fetch(`${apiBase}/influencers`, { headers }).then(r => r.ok ? r.json() : []),
@@ -1587,6 +1582,32 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
     const handleRunRef = useRef(handleRun);
     useEffect(() => { handleRunRef.current = handleRun; }, [handleRun]);
 
+    const snapshotPro = useCallback((): ProSnapshot => ({
+        useSeedance, quickMode, proStripOpen, proType, proMode, proAspectRatio,
+        proQuality, proLanguage, proClipLength, proMultiShot, proMultiShotLength,
+        proVideoLength,
+    }), [useSeedance, quickMode, proStripOpen, proType, proMode, proAspectRatio, proQuality, proLanguage, proClipLength, proMultiShot, proMultiShotLength, proVideoLength]);
+
+    const handleAssetPickFromChat = useCallback((item: MentionItem, chosenImageUrl?: string) => {
+        const ref = buildMentionRef(item, chosenImageUrl);
+        handleRun({
+            text: `${item.name} — @${item.tag}`,
+            refs: [ref],
+            proSnapshot: snapshotPro(),
+        });
+    }, [handleRun, snapshotPro]);
+
+    // Eager-load mention inventory when the agent shows inline asset selectors.
+    useEffect(() => {
+        const last = turns[turns.length - 1];
+        if (!last || last.role !== 'agent') return;
+        const text = last.text || '';
+        if (text.includes('[[PRODUCT_SELECTOR]]') || text.includes('[[CREATOR_SELECTOR]]')
+            || /which product|what product|which (influencer|creator|model)/i.test(text)) {
+            if (!mentionsLoaded) loadMentionData();
+        }
+    }, [turns, mentionsLoaded, loadMentionData]);
+
     // Pull the head of the queue and fire it as a forced override. The
     // setTimeout delay is the safety margin for the backend's per-project
     // lock to release: the SSE stream emits `done` BEFORE the FastAPI
@@ -1667,21 +1688,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         const tagText = `@${item.tag}`;
         const newBrief = before + tagText + ' ' + after;
         setBrief(newBrief);
-        let finalRef: AgentRef = chosenImageUrl
-            ? { ...item.ref, image_url: chosenImageUrl }
-            : item.ref;
-        if (chosenImageUrl && item.clipsByFrame && item.clipsByFrame[chosenImageUrl]) {
-            finalRef = { ...finalRef, app_clip_id: item.clipsByFrame[chosenImageUrl].clip_id };
-        } else if (chosenImageUrl && item.looksByImage && item.looksByImage[chosenImageUrl]) {
-            finalRef = { ...finalRef, look_id: item.looksByImage[chosenImageUrl].look_id };
-        } else if (!chosenImageUrl && item.clipsByFrame) {
-            // Digital product with a single app clip — auto-attach it.
-            const entries = Object.entries(item.clipsByFrame);
-            if (entries.length === 1) {
-                const [frameUrl, { clip_id }] = entries[0];
-                finalRef = { ...finalRef, image_url: frameUrl, app_clip_id: clip_id };
-            }
-        }
+        const finalRef = buildMentionRef(item, chosenImageUrl);
         setActiveRefs((prev) => {
             const next = new Map(prev);
             next.set(item.tag, finalRef);
@@ -1698,10 +1705,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
     }, [brief, mentionCursorStart]);
 
     const insertMention = useCallback((item: MentionItem) => {
-        // Products and models with multiple shots open a sub-picker so the
-        // user can choose which image to reference. Everything else inserts
-        // immediately with its primary image.
-        if ((item.type === 'product' || item.type === 'influencer' || item.type === 'clone') && item.views && item.views.length > 1) {
+        if (mentionItemNeedsShotPicker(item)) {
             setShotPickerItem(item);
             return;
         }
@@ -2093,7 +2097,49 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                     }
                                 }
                             }
+                            const userPickedProduct = turns.some(
+                                (t) => t.role === 'user' && (t.refs || []).some((r) => r.type === 'product'),
+                            );
+                            const userPickedCreator = turns.some(
+                                (t) => t.role === 'user' && (t.refs || []).some((r) => r.type === 'influencer' || r.type === 'clone'),
+                            );
+                            const sessionIntent = detectSessionIntent(turns);
+                            const needsCreatorPick = sessionIntent === 'ugc_ad' || sessionIntent === 'cinematic_ad' || sessionIntent === 'campaign';
+                            const awaitingProductPick = !userPickedProduct;
+                            const awaitingCreatorPick = needsCreatorPick && userPickedProduct && !userPickedCreator;
+                            let lastProductUserIdx = -1;
+                            for (let i = turns.length - 1; i >= 0; i--) {
+                                const t = turns[i];
+                                if (t.role === 'user' && (t.refs || []).some((r) => r.type === 'product')) {
+                                    lastProductUserIdx = i;
+                                    break;
+                                }
+                            }
+                            let lastProductSelectorIdx = -1;
+                            let lastCreatorSelectorIdx = -1;
+                            for (let i = turns.length - 1; i >= 0; i--) {
+                                const t = turns[i];
+                                if (t.role === 'user') break;
+                                if (lastProductSelectorIdx < 0 && turnWantsProductSelector(t)) lastProductSelectorIdx = i;
+                            }
+                            for (let i = turns.length - 1; i > lastProductUserIdx; i--) {
+                                const t = turns[i];
+                                if (t.role !== 'agent') continue;
+                                if (lastCreatorSelectorIdx >= 0) continue;
+                                if (turnWantsCreatorSelector(t)) {
+                                    lastCreatorSelectorIdx = i;
+                                } else if (
+                                    awaitingCreatorPick
+                                    && i === turns.length - 1
+                                    && !turnWantsProductSelector(t)
+                                    && !(t.text || '').trim()
+                                ) {
+                                    // Context-only selector on an empty last bubble.
+                                    lastCreatorSelectorIdx = i;
+                                }
+                            }
                             return turns.map((turn, idx) => {
+                                const lastUserText = [...turns.slice(0, idx)].reverse().find((t) => t.role === 'user')?.text || '';
                                 // If this agent turn asked for aspect ratio ([[ASPECT_BUTTONS]]
                                 // marker) and the next turn is the user's reply, detect which
                                 // ratio they picked so the bubble can render it as "selected".
@@ -2109,16 +2155,31 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                         : /\b10\s*s(econds?)?\b/i.test(nextUserText) ? 10
                                             : /\b15\s*s(econds?)?\b/i.test(nextUserText) ? 15
                                                 : null;
+                                const nextRefs = next?.role === 'user' ? (next.refs || []) : [];
+                                const selectedProductRef = nextRefs.find((r) => r.type === 'product') ?? null;
+                                const selectedCreatorRef = nextRefs.find((r) => r.type === 'influencer' || r.type === 'clone') ?? null;
                                 return (
                                     <TurnBubble
                                         key={idx}
                                         turn={turn}
                                         refMap={refMap}
+                                        turnIndex={idx}
+                                        lastProductSelectorTurnIdx={lastProductSelectorIdx}
+                                        lastCreatorSelectorTurnIdx={lastCreatorSelectorIdx}
                                         isLast={idx === turns.length - 1}
                                         running={running}
                                         onQuickReply={(text) => { handleRun(text); }}
                                         selectedAspect={selectedAspect}
                                         selectedDuration={selectedDuration}
+                                        mentionGroups={groupedMentions}
+                                        mentionsLoading={!mentionsLoaded}
+                                        onAssetPick={handleAssetPickFromChat}
+                                        onEnsureMentionsLoaded={loadMentionData}
+                                        selectedProductRef={selectedProductRef}
+                                        selectedCreatorRef={selectedCreatorRef}
+                                        awaitingCreatorPick={awaitingCreatorPick}
+                                        awaitingProductPick={awaitingProductPick}
+                                        lastUserText={lastUserText}
                                     />
                                 );
                             });
@@ -3434,8 +3495,89 @@ function ThinkingIndicator() {
     );
 }
 
-function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspect, selectedDuration }: { turn: AgentTurn; refMap: Map<string, AgentRef>; isLast?: boolean; running?: boolean; onQuickReply?: (text: string) => void; selectedAspect?: 'vertical' | 'horizontal' | 'classic' | null; selectedDuration?: 5 | 10 | 15 | null }) {
+function detectSessionIntent(turns: AgentTurn[]): 'product_shots' | 'ugc_ad' | 'cinematic_ad' | 'campaign' | 'captions' | 'generic' {
+    const firstUser = turns.find((t) => t.role === 'user');
+    const text = (firstUser?.text || '').toLowerCase();
+    if (/generate(?:\s+\d+)?\s+product\s+shots|product\s+shots|generar(?:\s+\d+)?\s+tomas?\s+de\s+producto|tomas?\s+de\s+producto/.test(text)) {
+        return 'product_shots';
+    }
+    if (/create\s+(?:a\s+)?(?:ugc\s+)?ad|ugc\s+ad|anuncio\s+ugc|make\s+(?:a\s+)?ugc\s+video/.test(text)) {
+        return 'ugc_ad';
+    }
+    if (/cinematic\s+ad|anuncio\s+cinematogr|create\s+a\s+cinematic/.test(text)) {
+        return 'cinematic_ad';
+    }
+    if (/\d+[\s-]*video\s+campaign|bulk\s+campaign|build\s+(?:a\s+)?\d+[\s-]*video|campaña/.test(text)) {
+        return 'campaign';
+    }
+    if (/caption|subtitl/.test(text)) {
+        return 'captions';
+    }
+    return 'generic';
+}
+
+function turnWantsProductSelector(turn: AgentTurn): boolean {
+    if (turn.role !== 'agent') return false;
+    const raw = turn.text || '';
+    return raw.includes('[[PRODUCT_SELECTOR]]')
+        || /which product|what product|qué producto|cuál producto|\b1\.\s*\**which product/i.test(raw);
+}
+
+const CREATOR_SELECTOR_HEURISTIC_RE = /which (influencer|creator|model|persona)|who should (present|deliver|host|star|be in|feature)|who do you want|qué (influencer|creador|modelo)|cuál (influencer|creador|modelo)|pick (?:a |an |your )?(?:influencer|creator|model|persona)|choose (?:a |an |your )?(?:influencer|creator|model|persona)|\b2\.\s*\**which influencer|or tell me to pick the best|\([A-Za-z][^)]{12,},\s*[A-Za-z]/i;
+
+function turnWantsCreatorSelector(turn: AgentTurn): boolean {
+    if (turn.role !== 'agent') return false;
+    const raw = turn.text || '';
+    return raw.includes('[[CREATOR_SELECTOR]]') || CREATOR_SELECTOR_HEURISTIC_RE.test(raw);
+}
+
+function TurnBubble({
+    turn,
+    refMap,
+    turnIndex,
+    lastProductSelectorTurnIdx,
+    lastCreatorSelectorTurnIdx,
+    isLast,
+    running,
+    onQuickReply,
+    selectedAspect,
+    selectedDuration,
+    mentionGroups,
+    mentionsLoading,
+    onAssetPick,
+    onEnsureMentionsLoaded,
+    selectedProductRef,
+    selectedCreatorRef,
+    awaitingCreatorPick,
+    awaitingProductPick,
+    lastUserText,
+}: {
+    turn: AgentTurn;
+    refMap: Map<string, AgentRef>;
+    turnIndex?: number;
+    lastProductSelectorTurnIdx?: number;
+    lastCreatorSelectorTurnIdx?: number;
+    isLast?: boolean;
+    running?: boolean;
+    onQuickReply?: (text: string) => void;
+    selectedAspect?: 'vertical' | 'horizontal' | 'classic' | null;
+    selectedDuration?: 5 | 10 | 15 | null;
+    mentionGroups?: MentionGroups;
+    mentionsLoading?: boolean;
+    onAssetPick?: (item: MentionItem, chosenImageUrl?: string) => void;
+    onEnsureMentionsLoaded?: () => void;
+    selectedProductRef?: AgentRef | null;
+    selectedCreatorRef?: AgentRef | null;
+    awaitingCreatorPick?: boolean;
+    awaitingProductPick?: boolean;
+    lastUserText?: string;
+}) {
     const { t } = useTranslation();
+    const [chatShotPickerItem, setChatShotPickerItem] = useState<MentionItem | null>(null);
+    const [showSaveModal, setShowSaveModal] = useState(false);
+    const [saveChoice, setSaveChoice] = useState<'save' | 'generate' | null>(null);
+    const [selectedAccent, setSelectedAccent] = useState<'spain' | 'latam' | null>(null);
+
     const isUser = turn.role === 'user';
     const hasRefPreviews = isUser && !!turn.refs?.some((r) => r.image_url || r.video_url);
     // Detect the `[[ASPECT_BUTTONS]]` marker emitted by the agent when asking
@@ -3447,6 +3589,26 @@ function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspec
     const hasAspectMarker = !isUser && rawText.includes('[[ASPECT_BUTTONS]]');
     const hasAccentMarker = !isUser && rawText.includes('[[SPANISH_ACCENT_BUTTONS]]');
     const hasDurationMarker = !isUser && rawText.includes('[[DURATION_BUTTONS]]');
+    const hasProductMarker = !isUser && rawText.includes('[[PRODUCT_SELECTOR]]');
+    const hasCreatorMarker = !isUser && rawText.includes('[[CREATOR_SELECTOR]]');
+    const asksProductHeuristic = !isUser && !hasProductMarker && /which product|what product|qué producto|cuál producto|\b1\.\s*\**which product/i.test(rawText);
+    const asksCreatorHeuristic = !isUser && !hasCreatorMarker && !asksProductHeuristic && CREATOR_SELECTOR_HEURISTIC_RE.test(rawText);
+    const showCreatorByContext = !isUser && !!awaitingCreatorPick && !!isLast && !running && !selectedCreatorRef && !hasProductMarker && !asksProductHeuristic;
+    const showProductSelectorRaw = hasProductMarker || asksProductHeuristic;
+    const showCreatorSelectorRaw = hasCreatorMarker || asksCreatorHeuristic || showCreatorByContext;
+    const showProductSelector = showProductSelectorRaw && !!awaitingProductPick;
+    const showCreatorSelector = showCreatorSelectorRaw && !!awaitingCreatorPick;
+
+    useEffect(() => {
+        if ((showProductSelector || showCreatorSelector) && onEnsureMentionsLoaded) {
+            onEnsureMentionsLoaded();
+        }
+    }, [showProductSelector, showCreatorSelector, onEnsureMentionsLoaded]);
+
+    // Same agent turn can produce two identical selector bubbles (paragraph
+    // split + normalization). Keep only the last one in each burst.
+    const suppressDuplicateProduct = !isUser && showProductSelector && lastProductSelectorTurnIdx !== undefined && lastProductSelectorTurnIdx >= 0 && turnIndex !== lastProductSelectorTurnIdx;
+    const suppressDuplicateCreator = !isUser && showCreatorSelector && lastCreatorSelectorTurnIdx !== undefined && lastCreatorSelectorTurnIdx >= 0 && turnIndex !== lastCreatorSelectorTurnIdx;
 
     // Detect [[SAVE_OR_GENERATE:image_url=...&type=product|influencer]] marker
     const saveOrGenMatch = !isUser ? rawText.match(/\[\[SAVE_OR_GENERATE:image_url=([^&]+)&type=(product|influencer)\]\]/) : null;
@@ -3459,26 +3621,47 @@ function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspec
     if (hasAspectMarker) displayText = displayText.replace(/\s*\[\[ASPECT_BUTTONS\]\]\s*/g, '').trim();
     if (hasAccentMarker) displayText = displayText.replace(/\s*\[\[SPANISH_ACCENT_BUTTONS\]\]\s*/g, '').trim();
     if (hasDurationMarker) displayText = displayText.replace(/\s*\[\[DURATION_BUTTONS\]\]\s*/g, '').trim();
+    if (hasProductMarker) displayText = displayText.replace(/\s*\[\[PRODUCT_SELECTOR\]\]\s*/g, '').trim();
+    if (hasCreatorMarker) displayText = displayText.replace(/\s*\[\[CREATOR_SELECTOR\]\]\s*/g, '').trim();
     if (hasSaveOrGenMarker) displayText = displayText.replace(/\s*\[\[SAVE_OR_GENERATE:[^\]]+\]\]\s*/g, '').trim();
+    if (asksProductHeuristic && !hasProductMarker) {
+        displayText = /qué|cuál|producto/i.test(rawText)
+            ? '¿Qué producto quieres usar?'
+            : 'Which product should we use?';
+    } else if ((asksCreatorHeuristic || showCreatorByContext) && !hasCreatorMarker && awaitingCreatorPick) {
+        displayText = /qué|cuál|creador|modelo/i.test(rawText)
+            ? '¿Quién debería presentarlo?'
+            : 'Who should present it?';
+    }
+    if (showProductSelector && !displayText.trim()) {
+        displayText = /product\s+shots|tomas?\s+de\s+producto/i.test(lastUserText || '')
+            ? 'Which product should I generate the shots for?'
+            : 'Which product should we use?';
+    } else if (showProductSelector && /product\s+shots|tomas?\s+de\s+producto/i.test(lastUserText || '')) {
+        displayText = 'Which product should I generate the shots for?';
+    }
+    if (showCreatorSelector && !displayText.trim()) {
+        displayText = /qué|cuál|creador|modelo/i.test(lastUserText || '')
+            ? '¿Quién debería presentarlo?'
+            : 'Who should present it?';
+    }
 
-    // Save-or-generate modal state
-    const [showSaveModal, setShowSaveModal] = useState(false);
-    const [saveChoice, setSaveChoice] = useState<'save' | 'generate' | null>(null);
-    // Spanish-accent quick-reply choice (per-turn — once user picks, buttons
-    // freeze visually so the active turn shows their selection).
-    const [selectedAccent, setSelectedAccent] = useState<'spain' | 'latam' | null>(null);
-
+    // Save-or-generate modal state — selectedAccent used below for accent buttons.
     const aspectButtonsActive = hasAspectMarker && !!isLast && !!onQuickReply && !selectedAspect;
     const durationButtonsActive = hasDurationMarker && !!isLast && !!onQuickReply && !selectedDuration;
     const accentButtonsActive = hasAccentMarker && !!isLast && !!onQuickReply && !selectedAccent;
     const saveOrGenActive = hasSaveOrGenMarker && !!isLast && !!onQuickReply && !saveChoice;
     const confirmChipActive = !!turn.pendingConfirmation && !!isLast && !!onQuickReply;
-    const hasContent = !!displayText || !!turn.artifacts?.length || turn.interrupted || turn.generation_failed || hasRefPreviews || hasAspectMarker || hasAccentMarker || hasDurationMarker || hasSaveOrGenMarker || !!turn.pendingConfirmation;
+    const productSelectorActive = showProductSelector && !!isLast && !running && !!onAssetPick && !selectedProductRef;
+    const creatorSelectorActive = showCreatorSelector && !!isLast && !running && !!onAssetPick && !selectedCreatorRef;
+    const hasContent = !!displayText || !!turn.artifacts?.length || turn.interrupted || turn.generation_failed || hasRefPreviews || hasAspectMarker || hasAccentMarker || hasDurationMarker || showProductSelector || showCreatorSelector || hasSaveOrGenMarker || !!turn.pendingConfirmation;
+    const hasSelector = showProductSelector || showCreatorSelector;
     // While a run is active, show a placeholder "…" bubble (three breathing
     // dots) in place of the empty agent turn so the UI never looks frozen
     // while waiting for the first `agent_message`. Historical empty turns
     // (e.g. mid-run refresh from Supabase) still render nothing.
     const showThinkingDots = !isUser && !hasContent && !!isLast && !!running;
+    if (suppressDuplicateProduct || suppressDuplicateCreator) return null;
     if (!isUser && !hasContent && !showThinkingDots) return null;
     return (
         <div
@@ -3489,7 +3672,7 @@ function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspec
         >
             <div
                 style={{
-                    maxWidth: '85%',
+                    maxWidth: hasSelector ? 'min(520px, 95%)' : '85%',
                     minWidth: 0,
                     wordBreak: 'break-word',
                     overflowWrap: 'anywhere',
@@ -3677,6 +3860,62 @@ function TurnBubble({ turn, refMap, isLast, running, onQuickReply, selectedAspec
                             );
                         })}
                     </div>
+                )}
+
+                {showProductSelector && mentionGroups && (
+                    <MentionAssetGrid
+                        groups={mentionGroups}
+                        allowedTypes={['product']}
+                        variant="inline"
+                        active={productSelectorActive}
+                        loading={mentionsLoading}
+                        emptyLabel={t('creativeOs.agent.selectorNoProducts')}
+                        selectedTag={selectedProductRef?.tag ?? null}
+                        shotPickerItem={chatShotPickerItem}
+                        onPick={(item) => {
+                            if (!productSelectorActive || !onAssetPick) return;
+                            if (mentionItemNeedsShotPicker(item)) {
+                                setChatShotPickerItem(item);
+                                return;
+                            }
+                            onAssetPick(item);
+                        }}
+                        onPickShot={(imageUrl) => {
+                            if (chatShotPickerItem && onAssetPick) {
+                                onAssetPick(chatShotPickerItem, imageUrl);
+                                setChatShotPickerItem(null);
+                            }
+                        }}
+                        onBackFromShotPicker={() => setChatShotPickerItem(null)}
+                    />
+                )}
+
+                {showCreatorSelector && mentionGroups && (
+                    <MentionAssetGrid
+                        groups={mentionGroups}
+                        allowedTypes={['influencer', 'clone']}
+                        variant="inline"
+                        active={creatorSelectorActive}
+                        loading={mentionsLoading}
+                        emptyLabel={t('creativeOs.agent.selectorNoCreators')}
+                        selectedTag={selectedCreatorRef?.tag ?? null}
+                        shotPickerItem={chatShotPickerItem}
+                        onPick={(item) => {
+                            if (!creatorSelectorActive || !onAssetPick) return;
+                            if (mentionItemNeedsShotPicker(item)) {
+                                setChatShotPickerItem(item);
+                                return;
+                            }
+                            onAssetPick(item);
+                        }}
+                        onPickShot={(imageUrl) => {
+                            if (chatShotPickerItem && onAssetPick) {
+                                onAssetPick(chatShotPickerItem, imageUrl);
+                                setChatShotPickerItem(null);
+                            }
+                        }}
+                        onBackFromShotPicker={() => setChatShotPickerItem(null)}
+                    />
                 )}
 
                 {turn.pendingConfirmation && (
@@ -4008,7 +4247,7 @@ function AttachmentChip({ att, onRemove }: { att: AttachedFile; onRemove: () => 
 }
 
 interface MentionDropdownProps {
-    groups: Record<'product' | 'influencer' | 'clone' | 'image' | 'video', MentionItem[]>;
+    groups: MentionGroups;
     ordered: MentionItem[];
     activeIndex: number;
     onPick: (item: MentionItem) => void;
@@ -4019,245 +4258,18 @@ interface MentionDropdownProps {
 }
 
 function MentionDropdown({ groups, ordered, activeIndex, onPick, onHover, shotPickerItem, onPickShot, onBackFromShotPicker }: MentionDropdownProps) {
-    const { t } = useTranslation();
-    const GROUP_LABELS_T: Record<MentionItem['type'], string> = {
-        product: t('creativeOs.mention.products'),
-        influencer: t('creativeOs.mention.models'),
-        clone: t('creativeOs.mention.clones'),
-        image: t('creativeOs.mention.images'),
-        video: t('creativeOs.mention.videos'),
-    };
-    const groupOrder: MentionItem['type'][] = ['influencer', 'clone', 'product', 'image', 'video'];
-    const availableGroups = groupOrder.filter((g) => (groups[g]?.length || 0) > 0);
-    const [activeTab, setActiveTab] = useState<MentionItem['type']>(availableGroups[0] || 'influencer');
-
-    // If the active tab has no items (e.g. filter changed), auto-switch to first available
-    const effectiveTab = availableGroups.includes(activeTab) ? activeTab : (availableGroups[0] || 'influencer');
-    const tabItems = groups[effectiveTab] || [];
-
-    const containerStyle: React.CSSProperties = {
-        position: 'absolute',
-        left: '14px',
-        right: '14px',
-        bottom: 'calc(100% - 6px)',
-        background: 'white',
-        border: '1px solid rgba(13,27,62,0.12)',
-        borderRadius: '12px',
-        boxShadow: '0 12px 32px rgba(13,27,62,0.16)',
-        maxHeight: '320px',
-        overflow: 'hidden',
-        display: 'flex',
-        flexDirection: 'column',
-        zIndex: 10,
-    };
-    if (shotPickerItem && shotPickerItem.views && onPickShot) {
-        return (
-            <div style={containerStyle}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 12px 8px' }}>
-                    <button
-                        type="button"
-                        onMouseDown={(e) => { e.preventDefault(); onBackFromShotPicker?.(); }}
-                        style={{
-                            border: '1px solid rgba(13,27,62,0.15)',
-                            background: 'white',
-                            borderRadius: '6px',
-                            padding: '2px 8px',
-                            cursor: 'pointer',
-                            fontSize: '11px',
-                            color: '#0D1B3E',
-                        }}
-                    >
-                        {t('creativeOs.mention.back')}
-                    </button>
-                    <span style={{ fontSize: '11px', fontWeight: 600, color: '#0D1B3E' }}>
-                        {t('creativeOs.mention.pickShotFor').replace('{name}', shotPickerItem.name)}
-                    </span>
-                </div>
-                <div style={{ overflowY: 'auto', padding: '0 8px 8px' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
-                        {shotPickerItem.views.map((url, i) => (
-                            <button
-                                key={`${url}-${i}`}
-                                type="button"
-                                onMouseDown={(e) => { e.preventDefault(); onPickShot(url); }}
-                                title={i === 0 ? t('creativeOs.mention.profileImage') : t('creativeOs.mention.shot').replace('{n}', String(i + 1))}
-                                style={{
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    alignItems: 'center',
-                                    gap: '4px',
-                                    padding: '6px 4px',
-                                    border: '1px solid transparent',
-                                    background: 'transparent',
-                                    borderRadius: '8px',
-                                    cursor: 'pointer',
-                                    minWidth: 0,
-                                }}
-                                onMouseEnter={(e) => {
-                                    (e.currentTarget as HTMLButtonElement).style.background = 'rgba(51,122,255,0.08)';
-                                    (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(51,122,255,0.5)';
-                                }}
-                                onMouseLeave={(e) => {
-                                    (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
-                                    (e.currentTarget as HTMLButtonElement).style.borderColor = 'transparent';
-                                }}
-                            >
-                                <div style={{ width: '100%', aspectRatio: '1 / 1', borderRadius: '6px', background: '#F4F6FA', overflow: 'hidden' }}>
-                                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                                    <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                </div>
-                                <span style={{ fontSize: '10px', color: '#0D1B3E', fontWeight: 500, textAlign: 'center' }}>
-                                    {i === 0 ? t('creativeOs.mention.profile') : t('creativeOs.mention.shot').replace('{n}', String(i + 1))}
-                                </span>
-                            </button>
-                        ))}
-                    </div>
-                </div>
-            </div>
-        );
-    }
     return (
-        <div style={containerStyle}>
-            {/* ── Tabs ── */}
-            {availableGroups.length > 1 && (
-                <div
-                    style={{
-                        display: 'flex',
-                        gap: '0',
-                        borderBottom: '1px solid rgba(13,27,62,0.08)',
-                        padding: '0 8px',
-                        flexShrink: 0,
-                    }}
-                >
-                    {availableGroups.map((g) => {
-                        const isActive = g === effectiveTab;
-                        return (
-                            <button
-                                key={g}
-                                type="button"
-                                onMouseDown={(e) => { e.preventDefault(); setActiveTab(g); }}
-                                style={{
-                                    flex: 1,
-                                    padding: '9px 0 7px',
-                                    border: 'none',
-                                    borderBottom: isActive ? '2px solid #337AFF' : '2px solid transparent',
-                                    background: 'transparent',
-                                    cursor: 'pointer',
-                                    fontSize: '11px',
-                                    fontWeight: isActive ? 700 : 500,
-                                    color: isActive ? '#337AFF' : '#8A93B0',
-                                    textTransform: 'uppercase',
-                                    letterSpacing: '0.4px',
-                                    transition: 'color 0.15s, border-color 0.15s',
-                                }}
-                            >
-                                {GROUP_LABELS_T[g]}
-                                <span
-                                    style={{
-                                        marginLeft: '4px',
-                                        fontSize: '10px',
-                                        fontWeight: 600,
-                                        color: isActive ? '#337AFF' : '#B0B8CC',
-                                    }}
-                                >
-                                    {groups[g]?.length || 0}
-                                </span>
-                            </button>
-                        );
-                    })}
-                </div>
-            )}
-            {/* ── Tab content ── */}
-            <div style={{ overflowY: 'auto', padding: '8px' }}>
-                <div
-                    style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(4, 1fr)',
-                        gap: '6px',
-                    }}
-                >
-                    {tabItems.map((item, itemIdx) => {
-                        const idx = ordered.indexOf(item);
-                        const active = idx === activeIndex;
-                        return (
-                            <button
-                                key={`${item.type}-${item.ref?.id || item.tag}-${itemIdx}`}
-                                type="button"
-                                onMouseDown={(e) => {
-                                    e.preventDefault();
-                                    onPick(item);
-                                }}
-                                onMouseEnter={() => onHover(idx)}
-                                title={item.name}
-                                style={{
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    alignItems: 'center',
-                                    gap: '4px',
-                                    padding: '6px 4px',
-                                    border: active
-                                        ? '1px solid rgba(51,122,255,0.5)'
-                                        : '1px solid transparent',
-                                    background: active
-                                        ? 'rgba(51,122,255,0.08)'
-                                        : 'transparent',
-                                    borderRadius: '8px',
-                                    cursor: 'pointer',
-                                    minWidth: 0,
-                                }}
-                            >
-                                <div
-                                    style={{
-                                        width: '100%',
-                                        aspectRatio: '1 / 1',
-                                        borderRadius: '6px',
-                                        background: '#F4F6FA',
-                                        overflow: 'hidden',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                    }}
-                                >
-                                    {item.image_url ? (
-                                        // eslint-disable-next-line @next/next/no-img-element
-                                        <img
-                                            src={item.image_url}
-                                            alt={item.name}
-                                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                                        />
-                                    ) : item.type === 'video' && item.ref.video_url ? (
-                                        <video
-                                            src={item.ref.video_url}
-                                            muted
-                                            playsInline
-                                            preload="metadata"
-                                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                                        />
-                                    ) : (
-                                        <span style={{ fontSize: '14px', color: '#8A93B0' }}>
-                                            {item.type === 'video' ? '▶' : '·'}
-                                        </span>
-                                    )}
-                                </div>
-                                <span
-                                    style={{
-                                        fontSize: '10px',
-                                        color: '#0D1B3E',
-                                        fontWeight: 500,
-                                        textOverflow: 'ellipsis',
-                                        overflow: 'hidden',
-                                        whiteSpace: 'nowrap',
-                                        width: '100%',
-                                        textAlign: 'center',
-                                    }}
-                                >
-                                    {item.name}
-                                </span>
-                            </button>
-                        );
-                    })}
-                </div>
-            </div>
-        </div>
+        <MentionAssetGrid
+            groups={groups}
+            ordered={ordered}
+            variant="popover"
+            active
+            activeIndex={activeIndex}
+            onPick={onPick}
+            onHover={onHover}
+            shotPickerItem={shotPickerItem}
+            onPickShot={onPickShot}
+            onBackFromShotPicker={onBackFromShotPicker}
+        />
     );
 }

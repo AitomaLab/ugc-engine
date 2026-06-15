@@ -293,7 +293,7 @@ def generate_ugc_video(self, job_id: str):
             "Hook": job.get("hook") or job_metadata.get("hook") or script_text,
             "Theme": job.get("assistant_type") or script_cat,
             "Length": f"{job.get('length', 15)}s",
-            "model_api": job.get("model_api", "seedance-1.5-pro"),
+            "model_api": job.get("model_api") or "veo-3.1-fast",
             "cinematic_shot_ids": job.get("cinematic_shot_ids") or job_metadata.get("cinematic_shot_ids") or [],
             "auto_transition_type": auto_trans_type,
             # Subtitle configuration — read from job, fall back to safe defaults

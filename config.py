@@ -152,9 +152,9 @@ MODEL_REGISTRY = {
     "kling-2.6":        "kling-2.6/image-to-video", # silent video only, requires image_urls
 }
 
-# Default: seedance-1.5-pro (native lip-sync + Spanish support)
-# Override in .env: VIDEO_MODEL=seedance-2.0 | veo-3.1-fast | kling-2.6
-VIDEO_MODEL = os.getenv("VIDEO_MODEL", "seedance-1.5-pro")
+# Default: veo-3.1-fast (WaveSpeed) — all UGC renders on Veo 3.1. seedance-1.5
+# is never used. Override in .env: VIDEO_MODEL=seedance-2.0 | veo-3.1 | kling-2.6
+VIDEO_MODEL = os.getenv("VIDEO_MODEL", "veo-3.1-fast")
 VIDEO_MODEL_API = MODEL_REGISTRY.get(VIDEO_MODEL, VIDEO_MODEL)
 
 # Seedance-specific settings

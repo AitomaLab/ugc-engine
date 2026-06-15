@@ -201,14 +201,21 @@ Mixing the two produces TWO competing "present this cost, wait" instructions and
 
 After ANY cost-preview tool result (confirmation_required OR estimate_credits), you MUST emit a user-facing text message in the SAME turn quoting the credit number and asking for confirmation. Never end a turn that contained a confirmation_required tool result without writing that user-facing text — the user will see nothing and assume the agent froze.
 
-The gated tools are exactly: generate_image, generate_influencer, generate_identity, generate_product_shots, animate_image, generate_video, extend_video, edit_video, create_ugc_video, create_clone_video, create_bulk_campaign. Everything else (including combine_videos, render_edited_video) is free of the confirmation gate and can be called immediately.
+The gated tools are exactly: generate_image, generate_influencer, generate_identity, generate_product_shots, animate_image, generate_video, extend_video, edit_video, create_ugc_video, create_clone_video, create_bulk_campaign, create_bulk_clone. Everything else (including combine_videos, render_edited_video) is free of the confirmation gate and can be called immediately.
+
+## Multiple videos at once — ALWAYS use a bulk tool, NEVER N single calls
+When the user wants MORE THAN ONE video in a single request (e.g. "5-video campaign", "make 3 clone videos", "render all 3 cinematic directions"), you MUST dispatch them via ONE bulk tool call — never fire N separate single-video tool calls. The engine de-dupes near-identical single calls within a session, so firing N of them launches only ONE; the bulk tools fan out all N jobs from a single Confirm.
+- **UGC videos (multiple):** ONE `create_bulk_campaign` — pass `scripts` (one verbatim script per video when you've drafted N distinct scripts) or `count` (auto-generate N distinct scripts). Works for individual clips and 15s/30s videos.
+- **AI Clone videos (multiple):** ONE `create_bulk_clone` — same shape: `scripts[]` (one per video) or `count`. NEVER fire N `create_clone_video` calls.
+- **Cinematic ads (multiple):** if the user has NOT specified the format/length, FIRST confirm aspect ratio (and duration if missing) via `[[ASPECT_BUTTONS]]` / `[[DURATION_BUTTONS]]` — one marker per message, same as a single cinematic ad — then call `create_cinematic_ad` with `stage='propose'`, then ONE `create_cinematic_ad` with `stage='bulk'` + `directions=[...]` to render several directions (A/B/C) of the SAME product concurrently. NEVER fire N separate `stage='animate'` calls.
+Each bulk tool returns ONE batched cost chip; after the user confirms, all N jobs launch simultaneously.
 
 ## Model routing
 
 Every user brief carries an explicit engine marker in the preface — either `[ENGINE=default ...]` or `[ENGINE=seedance ...]`. You MUST read the marker on the CURRENT turn's brief and route accordingly. IGNORE engine choices from earlier turns — a Seedance run yesterday does NOT mean the next turn should also use Seedance. Each turn's marker is authoritative for that turn only.
 
 **When the current brief carries `[ENGINE=default]`:**
-- **UGC videos** (all lengths): powered by **Veo 3.1**. Use `generate_video(mode="ugc")` for short clips (5-10s) or `create_ugc_video` for full 15/30s produced videos (script + scenes + captions + music).
+- **UGC videos** (all lengths): powered by **Veo 3.1**. Use `generate_video(mode="ugc")` for short clips (5-10s) or `create_ugc_video` for full 15/30s produced videos (script + scenes; captions and music are optional follow-ups, not defaults).
 - **Cinematic videos**: powered by **Kling 3.0**. Use `generate_video(mode="cinematic_video")` for cinematic clips (5-10s).
 - **AI Clone** (lip-synced talking head): use `create_clone_video` when the user @-mentions `type=clone` from Mis Clones IA. Pass `clone_id` + `look_id` from the `[Referenced assets]` preface. NEVER use `generate_video` for clone lip-sync.
 Do NOT use `seedance_2_ugc` / `seedance_2_cinematic` / `seedance_2_product` on a default-marker turn, even if an earlier turn used them.
@@ -267,7 +274,7 @@ If the user explicitly states a desired length, always use their number. If the 
 
 **Character identity sheet**: list_project_assets → pick influencer → generate_identity(image_url) (gated). Returns 4 reference views (closeup, front, profile, full body).
 
-**Product shot sheet**: list_project_assets → pick product → generate_product_shots(image_url) (gated). Returns 4 professional product views.
+**Product shot sheet**: list_project_assets → if product not @-mentioned, ask with `[[PRODUCT_SELECTOR]]` only (rule 9c) → pick product → generate_product_shots(image_url) (gated). No creator step. Returns 4 professional product views.
 
 **Single UGC clip (5-10s)**: list_project_assets → generate_video(mode="ugc", clip_length=8) (gated). Confirm completion in plain text — the panel renders the video thumbnail automatically.
 
@@ -322,7 +329,7 @@ BEFORE following ANY generation workflow below, check whether the user attached 
 You MUST do this check BEFORE starting any generation. Do NOT skip it.
 
 
-**Full UGC video (15-30s)**: list_project_assets → check if the user supplied their own script/dialogue text.
+**Full UGC video (15-30s)**: list_project_assets → if product/creator not @-mentioned, ask with `[[PRODUCT_SELECTOR]]` then `[[CREATOR_SELECTOR]]` (rule 9c — visual pickers, never list names in prose) → check if the user supplied their own script/dialogue text.
   - **User provided script**: When the user wrote actual dialogue lines (hook, body, CTA, or any spoken text), pass ALL of it verbatim as the `hook` argument to generate_video or create_ugc_video. The `hook` field carries the user's EXACT spoken words — NEVER paraphrase, rewrite, or embellish the user's dialogue. Put your visual/action direction in the `prompt` field instead. The pipeline will use `hook` as-is for the character's speech and enhance only the visual direction from `prompt`.
   - **Script length auto-validation — DO NOT pre-judge from memory.** The create_ugc_video / create_clone_video / generate_video tools validate script/hook word count against the target duration server-side BEFORE charging credits. **You MUST NOT** make any assertion about whether a script "fits" a duration before calling the tool — the math depends on `product_type` (digital videos end in a silent app-clip B-roll, so the dialogue budget is much smaller than for physical) and `app_clip_duration`, neither of which you can compute reliably. Always call the tool with `confirmed=false` first; trust its `script_validation` response over your own estimate.
     Word count guidelines (the tool enforces the exact numbers; these are for your reasoning only):
@@ -359,6 +366,13 @@ You MUST do this check BEFORE starting any generation. Do NOT skip it.
   - Spanish: pass `video_language='es'` and `language_accent` (spain | latam) like UGC.
 
 **Bulk campaign**: list_project_assets → create_bulk_campaign (gated). Returns immediately with job_ids; tell the user to watch the gallery or check back.
+  - **Music + captions are post-delivery options, NOT defaults** (same as single `create_ugc_video`): `create_bulk_campaign` produces bare assembled videos (no music, no captions) so each video finishes faster. Do NOT pass `subtitles_enabled=true` or `music_enabled=true` unless the user explicitly asked for baked-in captions/music upfront.
+  - After dispatch: tell the user the batch is running and to watch the gallery. Do NOT claim all videos are "Done" until every job in the batch has `status=success` with a `final_video_url` (use `list_jobs` / `get_job_status(job_id)` when the user checks back).
+  - When **all** jobs in the batch are complete, offer once in the user's language: "Want to add captions or background music to any of these?" If the user accepts, apply per video:
+    • Captions only → `caption_video(job_id=<id>)`. If they didn't pick a style, call `list_caption_styles()` first.
+    • Music only → `combine_videos(video_urls=[<final_video_url>], music_prompt="<short style description>")`.
+    • Both → `caption_video` FIRST, then `combine_videos` on the captioned URL.
+  Skip the follow-up offer when the user opted out upfront, or when they explicitly requested baked-in captions/music on the bulk call.
 
 **Durable multi-asset campaign** (the user asks for a multi-day plan like "30-day content plan with 30 mixed assets, scheduled on TikTok/IG, captions from branding"): use the campaign orchestrator — a single flow that plans, dispatches, and auto-schedules without the user re-prompting.
   1. `plan_campaign(brief, days, target_asset_count, ...)` with `confirmed=false` (default). GPT-4o designs N distinct assets across the window (mix of UGC videos / cinematic shots / images per the user's ask), writes the plan to the DB, and returns the full plan plus the total credit estimate.
@@ -442,6 +456,13 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
    RETRY RULE: if a generation fails, NEVER drop or reduce `reference_image_urls` on retry. The images are NOT the cause of failure — they are critical for visual identity. Always retry with the EXACT SAME `reference_image_urls`, `product_id`, `influencer_id`, and prompt. Do not "simplify" by removing product or influencer images.
 9. UGC mode does NOT require a registered product. If the user provides uploaded images (upload_* refs), generation can proceed with just the raw image URLs. However, you MUST FIRST follow the **MANDATORY PRE-FLIGHT** check above: offer the user the option to save the uploaded image as a product/model (via `[[SAVE_OR_GENERATE:...]]` marker) before starting any generation. If the user clicks "Generate Now" or says to proceed without saving, call `generate_image(mode="ugc", reference_image_urls=[...])` directly using the raw URLs.
 9b. MULTI-IMAGE GENERATION — when the user asks for multiple images in one breath ("3 images in different angles", "5 variations", "10 lifestyle photos", "haz 10 imágenes"), call `generate_image` ONCE with `count=N` and a prompt that bakes the variation into the description ("different angle", "varied pose", "alternate composition"). The server fans out N concurrent NanoBanana calls and returns all `image_urls` together in one tool result — you summarize all of them in a single reply. Do NOT emit N parallel `tool_use` blocks for `generate_image` and do NOT write narrative prose like "Firing all 10 in parallel now" without a matching tool_use — that pattern triggers the server-side IDEMPOTENCY guard which silently blocks all but the first call, leaving the user with 1 image when they asked for N. The cost confirmation is bundled: the first (unconfirmed) call previews `per_image × count` credits, then the confirmed call dispatches all N in parallel. Range: count ≤ 10. **If the user asks for MORE than 10**: call `generate_image` ONCE with `count=10` and explicitly tell them in your reply "I can generate up to 10 per batch — confirm and I'll queue another batch for the remaining X right after this one completes." NEVER split into multiple parallel tool_use blocks to work around the cap.
+9c. ASSET SELECTION — MANDATORY when a product or creator is needed but not yet chosen. Before UGC ads, product showcases, or any generation that requires a specific product and/or influencer/clone, call `list_project_assets()` once if you haven't this session. If the user has NOT @-mentioned the needed asset:
+  - Missing product: ask ONE short question only (e.g. "Which product should we feature?"), then append the literal marker `[[PRODUCT_SELECTOR]]` on the last line. The frontend renders a visual product picker with preview images — do NOT enumerate product names in prose.
+  - Missing creator (model or AI clone): ask ONE short question only (e.g. "Who should present it?"), then append `[[CREATOR_SELECTOR]]` on the last line. The frontend renders Models + AI Clones tabs with preview images — do NOT list creator names in prose. **For UGC ads, cinematic model-led videos, and bulk/multi-video campaigns (`create_bulk_campaign`)** — NEVER for `generate_product_shots`, captions-only tasks, or other product-only workflows.
+  **ONE selector per message** — ask product first, wait for the user's pick, then ask creator in a separate message if still needed (same discipline as `[[ASPECT_BUTTONS]]` vs `[[DURATION_BUTTONS]]`). Never combine `[[PRODUCT_SELECTOR]]` and `[[CREATOR_SELECTOR]]` in the same message.
+  **Product shots exception:** when the user asks for product shots (`generate_product_shots`), use `[[PRODUCT_SELECTOR]]` only if product is unknown. After the user picks a product, call `generate_product_shots` directly — do NOT ask for a creator or use `[[CREATOR_SELECTOR]]`.
+  Skip the selector when: the user already @-mentioned the asset; only one product (or one creator) exists in the project — use it directly; or the brief doesn't need that asset type.
+  When the user picks from a selector, their reply includes structured refs with real `id=` values — treat exactly like an @mention (use those ids in tool calls, never call `create_product` / `create_influencer` to duplicate).
 10. ASPECT RATIO — MANDATORY before gated generation. Before calling `generate_image` or `generate_video` with `confirmed=true`, you MUST know the aspect ratio. If the user's brief already specifies it ("vertical", "9:16", "horizontal", "16:9", "square", "1:1", "for TikTok", "for YouTube", "for Instagram feed", "landscape", "portrait"), use it directly. For images, '1:1' is available for Instagram feed posts. Otherwise you MUST ask the user BEFORE presenting the cost confirmation: ask the question in one short sentence, then append the literal marker `[[ASPECT_BUTTONS]]` on the last line of your message. The frontend detects this marker and renders clickable Vertical / Horizontal buttons for the user. When the user replies with their choice, THEN show the cost confirmation, THEN call the tool with `confirmed=true` and `aspect_ratio="9:16"` or `"16:9"` (or `"1:1"` for images). Never skip this step for gated generation. Do NOT include the marker when the aspect is already known.
 10a. RE-ADAPT / REFRAME AN EXISTING IMAGE — when the user asks to change the aspect ratio, reframe, "make it 9:16/16:9/1:1", "don't cut the bottle/product", "fit the whole thing", "uncrop", "extend the canvas", or otherwise ADAPT an image they referenced (a cropped storyboard panel, a previous generation, an @-mentioned asset, or an upload) — you are NOT generating a new picture. You MUST call `generate_image` and pass the EXACT image's URL via `reference_image_urls: ["<that image url>"]`, plus a prompt that says to KEEP the same scene, subject, product, lighting and composition and only re-fit it to the requested aspect ratio (e.g. "Reframe this exact photo to 9:16, keep the same Phebus Torrontés bottle, glasses, table and lighting unchanged, extend the scene naturally to fill the frame so nothing is cropped; do not invent or replace any product"). NEVER call `generate_image` with a prompt-only description and no `reference_image_urls` for a reframe — that makes the model invent a brand-new, different product (a hallucination). If you don't have the source image URL, ask the user to point to it (or use the panel's shot from the Images tab) BEFORE generating. The referenced image's identity must be preserved — same product, same scene — every time.
 10b. LANGUAGE — for video clips (`generate_video`), pass `language="es"` when the user requests Spanish / Latin dialogue. Default is English. Seedance 2.0 modes have full bilingual EN/ES support.
@@ -454,11 +475,11 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
 
 13. CINEMATIC ADS (Fal AI: GPT Image 2 storyboard + Seedance 2.0 Pro animation) — when the user asks for a "cinematic ad", "cinematic advert", "cinematic ads", "cinematic video", "cinematic spot", "cinematic clip", "film-style ad/video/spot", "movie-style ad/video/spot", "hollywood-look ad/video", "storyboard for [product]", "animate this product as a cinematic spot", or **any ad/video framed as cinematic / filmic / movie-quality / film-look** — OR the Spanish equivalents "anuncio cinematográfico", "anuncio cinemático", "vídeo cinematográfico", "spot cinemático", "anuncio de cine", "estilo cine", "estilo película", "spot publicitario cinemático" — against an @mentioned product or uploaded product photo, use the `create_cinematic_ad` tool — NOT `generate_video(mode=cinematic_video)` and NOT `animate_image`. `generate_video(cinematic_video)` is reserved for cases where the user EXPLICITLY opts out of the storyboard flow ("just a quick clip", "no storyboard", "single shot", "skip the directions"). If you cannot tell whether the user wants the full storyboard workflow vs. a one-shot cinematic clip, ASK in ONE short message: "Do you want a curated cinematic ad (3 direction options → storyboard → animated 5/10/15s spot) or a quick single-shot cinematic clip (one 5–10s render, no storyboard)?" Default to `create_cinematic_ad` if they pick the first or don't answer in the same turn. This tool is multi-stage with mandatory pause points:
   - **a) `stage='propose'` (FREE):** First call. Pass `product_id` (from @mention) OR `image_url` (from upload) + the user's `brief` + `aspect_ratio` + `duration_seconds` (see ASPECT + DURATION rule below). The tool returns 3 storyboard directions (A/B/C) tailored to the brief + format + length. Read them back to the user in natural language — name, vibe, hero moment, model-led or product-only, mark the recommended one — and STOP. Wait for the user to pick A/B/C (or remix). Never auto-pick.
-  - **b) `stage='storyboard'` (~4 cr, NO cost gate):** Once direction is chosen, call with `direction`, plus `tagline` + `domain` + the SAME `aspect_ratio` and `duration_seconds` from propose. NO `confirmed=false` step — the storyboard renders directly (4 cr auto-debited; trivial enough not to gate). The tool blocks ~2 min then returns `action='confirmation_required'` for the NEXT stage (animate) — the storyboard image surfaces via the artifact stream, the panels themselves describe the scenes, so DO NOT separately narrate beats. The frontend renders the animate cost chip automatically. **DIRECT-SEEDANCE BYPASS:** for lip-application / Fal-sensitive directions the server skips the storyboard sheet entirely and the response has `direct_seedance: true`, NO `storyboard_url`, and a `scene_breakdown` (the shots described in text). When you see `direct_seedance: true`, tell the user (briefly, using `direct_seedance_note`) that this direction has no visual storyboard and the video is generated directly via Seedance 2.0 — present the `scene_breakdown` beats and the animate cost chip. Do NOT say "Rendering your 6-panel storyboard" or "this takes about 2 minutes" for direct_seedance responses — there is no storyboard render step. Do NOT treat the missing storyboard image as an error.
+  - **b) `stage='storyboard'` (~4 cr, NO cost gate):** Once direction is chosen, call with `direction`, plus `tagline` + `domain` + the SAME `aspect_ratio` and `duration_seconds` from propose. NO `confirmed=false` step — the storyboard renders directly (4 cr auto-debited; trivial enough not to gate). The tool blocks while it renders (usually a couple of minutes, sometimes longer) then returns `action='confirmation_required'` for the NEXT stage (animate) — the storyboard image surfaces via the artifact stream, the panels themselves describe the scenes, so DO NOT separately narrate beats. The frontend renders the animate cost chip automatically. **STORYBOARD NARRATION (when you tell the user it is rendering):** (1) The panel count VARIES with `duration_seconds` — 3 panels for 5s, 4 for 10s, 6 for 15s. NEVER hardcode "6-panel" — state the count that matches the chosen duration, or just say "storyboard" with no number. (2) Do NOT give any render-time estimate or ETA — no "2 minutes", no "a couple of minutes", no "this takes about…". Just say the storyboard is rendering now and stop. **DIRECT-SEEDANCE BYPASS:** for lip-application / Fal-sensitive directions the server skips the storyboard sheet entirely and the response has `direct_seedance: true`, NO `storyboard_url`, and a `scene_breakdown` (the shots described in text). When you see `direct_seedance: true`, tell the user (briefly, using `direct_seedance_note`) that this direction has no visual storyboard and the video is generated directly via Seedance 2.0 — present the `scene_breakdown` beats and the animate cost chip. For direct_seedance responses do NOT narrate a storyboard render, a panel count, or a render time — there is no storyboard render step. Do NOT treat the missing storyboard image as an error.
   - **c) `stage='animate'` (32–96 cr depending on duration):** Use the `next_call` payload returned by storyboard (it pre-fills `storyboard_url`, `direction`, `aspect_ratio`, `duration_seconds`, `tagline`, `domain` — and `direct_seedance` when set). Pass the ENTIRE `next_call` through verbatim, INCLUDING `direct_seedance` when present (the direct path has no `storyboard_url`; that is expected). FIRST `confirmed=false` for the cost chip; after Confirm, `confirmed=true`. The tool renders the ad at the chosen format + length, saves to the Videos tab, returns `action='ad_ready'` with `video_url`.
   - **d) Optional add-ons:** `stage='broll'` (`panel_index`, ~32 cr) and `stage='product_macro'` (~32 cr). Both always 5s; respect the SAME `aspect_ratio` chosen earlier.
 
-  **ASPECT + DURATION rule (MANDATORY before stage='propose'):** Before calling propose, you MUST know `aspect_ratio` (16:9 horizontal, 9:16 vertical, 4:3 classic) AND `duration_seconds` (5, 10, or 15). If the user's brief specifies either ("vertical", "9:16", "tiktok", "reels", "5s", "10s", "15s", "horizontal", "youtube", "classic 4:3"), use it directly. **Ask for each missing value in a SEPARATE message, ONE at a time — NEVER combine `[[ASPECT_BUTTONS]]` and `[[DURATION_BUTTONS]]` in the same message.** The button chips are single-select, so asking both at once forces the user to answer twice and makes you repeat the question. Sequence:
+  **ASPECT + DURATION rule (MANDATORY before stage='propose', for SINGLE *and* BULK cinematic ads):** This applies to EVERY cinematic ad flow — one ad or all directions at once (`stage='bulk'`). Before calling propose, you MUST know `aspect_ratio` (16:9 horizontal, 9:16 vertical, 4:3 classic) AND `duration_seconds` (5, 10, or 15). If the user's brief specifies either ("vertical", "9:16", "tiktok", "reels", "5s", "10s", "15s", "horizontal", "youtube", "classic 4:3"), use it directly. Do NOT silently default the aspect ratio to 16:9 just because the request is for multiple directions — ask first when it is missing, the SAME way you would for a single ad. **Ask for each missing value in a SEPARATE message, ONE at a time — NEVER combine `[[ASPECT_BUTTONS]]` and `[[DURATION_BUTTONS]]` in the same message.** The button chips are single-select, so asking both at once forces the user to answer twice and makes you repeat the question. Sequence:
   1. If `aspect_ratio` is missing, FIRST ask only about format, ending with `[[ASPECT_BUTTONS]]` on the last line (EN: `"What format should the ad be? [[ASPECT_BUTTONS]]"` / ES: `"¿Qué formato quieres para el anuncio? [[ASPECT_BUTTONS]]"`). Wait for the choice.
   2. THEN, if `duration_seconds` is still missing, ask only about length, ending with `[[DURATION_BUTTONS]]` on the last line (EN: `"And how long should it be? [[DURATION_BUTTONS]]"` / ES: `"¿Y cuánto debe durar? [[DURATION_BUTTONS]]"`). Wait for the choice.
   If only ONE of the two is missing, ask just that single question with its single marker. Always ask in the user's language. Frontend renders Vertical / Horizontal / Classic and 5s / 10s / 15s buttons. Once you have BOTH values, call propose. Do NOT skip this step.
@@ -1383,17 +1404,26 @@ def _custom_tools_for_agent() -> list[dict]:
             "type": "custom",
             "name": "create_bulk_campaign",
             "description": (
-                "Dispatch a bulk campaign of N UGC videos (script variations auto-generated). "
+                "Dispatch a bulk campaign of N UGC videos. Pass `scripts` (one verbatim script per video) "
+                "when the user approved N DISTINCT scripts — each video uses its own; otherwise pass `count` "
+                "and per-video script variations are auto-generated. ALWAYS use this for multiple UGC videos; "
+                "NEVER fire N separate create_ugc_video calls. "
                 "Returns immediately after dispatch — campaigns can take hours; track via list_jobs / get_job_status. "
-                "FIRST call returns a credit cost estimate (count × per-video). After user confirms, "
+                "FIRST call returns a credit cost estimate (N × per-video). After user confirms, "
                 "call again with confirmed=true."
             ),
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "influencer_id": {"type": "string"},
-                    "count": {"type": "integer", "description": "Number of videos to generate (1-50)."},
+                    "scripts": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "One verbatim script per video when the user approved N DISTINCT scripts. count = len(scripts); each video uses its own script.",
+                    },
+                    "count": {"type": "integer", "description": "Number of videos to generate (1-50) when no scripts[] given — per-video scripts are auto-generated."},
                     "duration": {"type": "integer", "enum": [15, 30]},
+                    "model_api": {"type": "string", "description": "Engine to use. 'veo-3.1-fast' (default) or 'seedance-2.0' when user has Seedance toggle on."},
                     "product_type": {"type": "string", "enum": ["physical", "digital"]},
                     "product_id": {"type": "string"},
                     "campaign_name": {"type": "string"},
@@ -1407,11 +1437,50 @@ def _custom_tools_for_agent() -> list[dict]:
                             "Ask the user via [[SPANISH_ACCENT_BUTTONS]] if not specified."
                         ),
                     },
-                    "subtitles_enabled": {"type": "boolean"},
-                    "music_enabled": {"type": "boolean"},
+                    "subtitles_enabled": {"type": "boolean", "description": "Burn word-timed subtitles into each video during initial generation. Default: false — bare videos deliver faster; offer captions as a follow-up via caption_video after the batch completes. Set to true ONLY when the user explicitly asks for captions baked into the first delivery."},
+                    "music_enabled": {"type": "boolean", "description": "Mix a generated background music bed under dialogue during initial generation. Default: false — bare videos deliver faster; offer music as a follow-up via combine_videos(music_prompt=...) after the batch completes. Set to true ONLY when the user explicitly asks for music baked into the first delivery."},
                     "confirmed": {"type": "boolean", "description": confirmed_desc},
                 },
-                "required": ["influencer_id", "count", "duration"],
+                "required": ["influencer_id", "duration"],
+            },
+        },
+        {
+            "type": "custom",
+            "name": "create_bulk_clone",
+            "description": (
+                "Dispatch N AI Clone (lip-synced) videos at once — the clone equivalent of create_bulk_campaign. "
+                "Use this whenever the user wants MULTIPLE clone videos in one go; NEVER fire N separate "
+                "create_clone_video calls (the engine de-dupes the rest, only 1 would launch). "
+                "Pass `scripts` (one verbatim script per video) when the user approved N distinct scripts; "
+                "otherwise pass `count` and each video auto-generates its own script. "
+                "Returns immediately after dispatch — each clip renders in the background (5-12 min). "
+                "FIRST call returns the bundled credit cost; after the user confirms, call again with confirmed=true."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "clone_id": {"type": "string", "description": "Clone UUID. Auto-filled from @clone ref when omitted."},
+                    "look_id": {"type": "string", "description": "Appearance look UUID from the @clone ref."},
+                    "scripts": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "One verbatim script per video when the user approved N DISTINCT scripts. count = len(scripts).",
+                    },
+                    "count": {"type": "integer", "description": "Number of videos when no scripts[] given (1-50) — each auto-generates a distinct script."},
+                    "duration": {"type": "integer", "enum": [15, 30]},
+                    "product_id": {"type": "string"},
+                    "product_type": {"type": "string", "enum": ["physical", "digital"]},
+                    "app_clip_id": {"type": "string", "description": "Digital product app clip from @product ref."},
+                    "video_language": {"type": "string"},
+                    "language_accent": {
+                        "type": "string",
+                        "enum": ["spain", "latam"],
+                        "description": "Spanish accent subtype — REQUIRED when video_language='es'. 'spain' = Castilian. 'latam' = neutral Latin American.",
+                    },
+                    "subtitles_enabled": {"type": "boolean"},
+                    "confirmed": {"type": "boolean", "description": confirmed_desc},
+                },
+                "required": ["clone_id"],
             },
         },
 
@@ -1820,23 +1889,29 @@ def _custom_tools_for_agent() -> list[dict]:
         {
             "type": "custom",
             "name": "create_cinematic_ad",
+            # Anthropic tool descriptions must stay <= 1024 chars (tools.55 cap).
             "description": (
-                "Generate a cinematic product ad via Fal AI (GPT Image 2 storyboard + Seedance 2.0 Pro animation). "
-                "Multi-stage flow with three pause points: 1) stage='propose' (FREE) shows 3 storyboard directions — "
-                "wait for the user to pick A/B/C; 2) stage='storyboard' (~4 credits) renders a 6-panel sheet — gated; "
-                "3) stage='animate' (~96 credits) renders a 15s 720p ad with native music + SFX — gated and saved to "
-                "the Videos tab. After the main ad, optionally offer stage='broll' (5s clip from a panel, ~32 cr) or "
-                "stage='product_macro' (product-only 5s shot, ~32 cr). Use when user says 'cinematic ad', 'storyboard', "
-                "'cinematic ads', 'animate this product', etc. Resolution is always 720p (do not surface a choice). "
-                "Each paid stage requires its own confirmation — approval does NOT carry across stages."
+                "Cinematic product ad via Fal AI (GPT Image 2 storyboard + Seedance 2.0 Pro). "
+                "Multi-stage: stage='propose' (FREE, 3 directions A/B/C — wait for pick); "
+                "stage='storyboard' (~4 cr, 3/4/6 panels for 5/10/15s); "
+                "stage='animate' (~96 cr, 720p + music/SFX, gated, saved to Videos). "
+                "Optional: stage='broll' or 'product_macro' (~32 cr, 5s). Always 720p. "
+                "Each paid stage needs its own confirmation. "
+                "Multiple ads: confirm aspect_ratio + duration_seconds if missing, then stage='propose', "
+                "then ONE stage='bulk' + directions=[...] — never N separate animate calls."
             ),
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "stage": {
                         "type": "string",
-                        "enum": ["propose", "storyboard", "animate", "broll", "product_macro"],
-                        "description": "propose=show 3 directions (FREE); storyboard=render 6-panel sheet (~4 cr); animate=render 15s ad (~96 cr); broll=5s clip from one panel (~32 cr); product_macro=product-only 5s (~32 cr).",
+                        "enum": ["propose", "storyboard", "animate", "broll", "product_macro", "bulk"],
+                        "description": "propose=show 3 directions (FREE); storyboard=render multi-panel sheet, 3/4/6 panels for 5/10/15s (~4 cr); animate=render the ad (~96 cr); broll=5s clip from one panel (~32 cr); product_macro=product-only 5s (~32 cr); bulk=render MULTIPLE directions of the SAME ad at once (pass `directions`).",
+                    },
+                    "directions": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": ["A", "B", "C"]},
+                        "description": "ONLY for stage='bulk'. Which proposed directions to render concurrently as separate videos (e.g. ['A','B','C']). Omit to render all proposed. Each renders through the real storyboard+animate pipeline with its own backend storyboard, NO per-ad review. One batched cost chip = len(directions) x animate.",
                     },
                     "product_id": {"type": "string", "description": "Product UUID from @mention. Either this OR image_url is required."},
                     "influencer_id": {"type": "string", "description": "Influencer UUID. For model-led directions the server auto-resolves the face reference from this id, session stash, or DB match."},
@@ -2387,10 +2462,25 @@ def _compute_tool_fingerprint(tool_name: str, tool_input: dict) -> str:
     """
     import hashlib as _hashlib
     parts = [tool_name]
-    for _k in ("stage", "mode", "operation", "direction", "panel_index", "aspect_ratio", "duration_seconds"):
+    # Distinguishing scalars. duration/influencer_id/product_id/clone_id/script_id
+    # are included so N parallel DISTINCT single calls (create_ugc_video /
+    # create_clone_video with different assets or scripts) never collapse onto
+    # one fingerprint and get suppressed as "duplicates" — only TRUE duplicates
+    # (identical params) dedupe.
+    for _k in (
+        "stage", "mode", "operation", "direction", "panel_index",
+        "aspect_ratio", "duration_seconds", "duration",
+        "influencer_id", "product_id", "clone_id", "look_id", "script_id",
+        "app_clip_id",
+    ):
         _v = tool_input.get(_k)
         if _v is not None:
             parts.append(f"{_k}={_v}")
+    # directions[] (cinematic bulk) — a re-run with a different subset must not
+    # be suppressed by the 1800s window.
+    _directions = tool_input.get("directions")
+    if isinstance(_directions, (list, tuple)) and _directions:
+        parts.append("directions=" + ",".join(str(d) for d in _directions))
     _brief = (tool_input.get("brief") or "").strip()
     if _brief:
         parts.append(f"brief={_hashlib.sha1(_brief.encode('utf-8')).hexdigest()[:8]}")
@@ -2401,6 +2491,18 @@ def _compute_tool_fingerprint(tool_name: str, tool_input: dict) -> str:
     _prompt = (tool_input.get("prompt") or "").strip()
     if _prompt:
         parts.append(f"prompt={_hashlib.sha1(_prompt.encode('utf-8')).hexdigest()[:8]}")
+    # hook / script_text hash — distinguishes per-video script variations so a
+    # legitimate batch of distinct-script single calls doesn't dedupe.
+    for _txt_k in ("hook", "script_text"):
+        _txt = (tool_input.get(_txt_k) or "").strip()
+        if _txt:
+            parts.append(f"{_txt_k}={_hashlib.sha1(_txt.encode('utf-8')).hexdigest()[:8]}")
+    # scripts[] (bulk tools) — hash the joined set so a different script batch
+    # produces a different fingerprint.
+    _scripts = tool_input.get("scripts")
+    if isinstance(_scripts, (list, tuple)) and _scripts:
+        _joined = "\u0001".join(str(s) for s in _scripts)
+        parts.append(f"scripts={_hashlib.sha1(_joined.encode('utf-8')).hexdigest()[:8]}")
     return "|".join(parts)
 
 
@@ -4759,6 +4861,65 @@ def _log_cinematic_ads_module_once() -> None:
         )
 
 
+async def _render_one_cinematic_direction(
+    ctx: ToolContext,
+    *,
+    base_kwargs: dict,
+    direction_key: str,
+) -> dict:
+    """Render ONE cinematic direction end-to-end (storyboard -> animate) with no
+    cost gate or human review, reusing the real single-flow pipeline.
+
+    Used by the bulk path (stage='bulk') to fan out A/B/C concurrently. Returns
+    {"direction", "job_id", "video_url"} on success or {"direction", "error"} on
+    failure — never raises, so a single bad direction can't kill the rest of the
+    asyncio.gather batch.
+    """
+    # 1) Storyboard stage — renders the sheet (or resolves the direct-Seedance
+    # bypass) and returns the animate cost chip as a confirmation_required whose
+    # next_call carries every field the animate stage needs.
+    sb_kwargs = {
+        k: v for k, v in base_kwargs.items()
+        if k not in ("stage", "directions", "confirmed")
+    }
+    sb_kwargs["stage"] = "storyboard"
+    sb_kwargs["direction"] = direction_key
+    try:
+        sb_resp = json.loads(await _tool_create_cinematic_ad_impl(ctx, **sb_kwargs))
+    except Exception as e:
+        return {"direction": direction_key, "error": f"storyboard failed: {type(e).__name__}: {e}"}
+    if not isinstance(sb_resp, dict):
+        return {"direction": direction_key, "error": "storyboard returned non-object"}
+    if sb_resp.get("error"):
+        return {"direction": direction_key, "error": sb_resp.get("error"), "msg": sb_resp.get("msg")}
+
+    next_call = sb_resp.get("next_call")
+    if not isinstance(next_call, dict):
+        return {"direction": direction_key, "error": "storyboard did not return an animate next_call", "raw": sb_resp}
+
+    # 2) Animate stage — fire directly with confirmed=true (bulk replaces the N
+    # per-ad Confirm chips with ONE batched chip up front), which inserts its own
+    # video_jobs row and renders the spot.
+    anim_kwargs = dict(next_call)
+    anim_kwargs["stage"] = "animate"
+    anim_kwargs["confirmed"] = True
+    try:
+        anim_resp = json.loads(await _tool_create_cinematic_ad_impl(ctx, **anim_kwargs))
+    except Exception as e:
+        return {"direction": direction_key, "error": f"animate failed: {type(e).__name__}: {e}"}
+    if isinstance(anim_resp, dict) and anim_resp.get("action") == "ad_ready":
+        return {
+            "direction": direction_key,
+            "job_id": anim_resp.get("job_id"),
+            "video_url": anim_resp.get("video_url"),
+        }
+    return {
+        "direction": direction_key,
+        "error": (anim_resp.get("error") if isinstance(anim_resp, dict) else None) or "animate did not return ad_ready",
+        "raw": anim_resp,
+    }
+
+
 async def _tool_create_cinematic_ad(ctx: ToolContext, **kwargs: Any) -> str:
     import traceback as _traceback
     _log_cinematic_ads_module_once()
@@ -4812,12 +4973,13 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
         propose_directions,
         sanitize_beats_for_fal,
         sanitize_beats_for_jewelry,
+        storyboard_sheet_size,
         _category_key,
     )
 
     stage = kwargs.get("stage")
-    if stage not in ("propose", "storyboard", "animate", "broll", "product_macro"):
-        return json.dumps({"error": "stage must be one of: propose, storyboard, animate, broll, product_macro"})
+    if stage not in ("propose", "storyboard", "animate", "broll", "product_macro", "bulk"):
+        return json.dumps({"error": "stage must be one of: propose, storyboard, animate, broll, product_macro, bulk"})
 
     merge_cinematic_flow(ctx.session_id, kwargs)
 
@@ -4853,6 +5015,7 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
                 "image_url": p.get("image_url"),
                 "category": cat,
                 "product_form": product_form,
+                "description": (p.get("description") or ""),
             }
         if image_url:
             brief_txt = kwargs.get("brief") or ""
@@ -4863,6 +5026,7 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
                 "image_url": image_url,
                 "category": infer_category_from_text(brief_txt),
                 "product_form": "",
+                "description": "",
             }
         raise RuntimeError("Either product_id (from @mention) or image_url (uploaded photo) is required")
 
@@ -4918,6 +5082,95 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
     if duration_seconds not in (5, 10, 15):
         duration_seconds = 15
 
+    # ── stage=bulk — render MULTIPLE directions (A/B/C) of the SAME product
+    # concurrently through the real storyboard+animate pipeline, skipping the
+    # per-ad human review. ONE batched cost chip up front; on confirm, fan out
+    # with asyncio.gather so all directions render at ~1x wall-clock, each
+    # writing its own video_jobs row.
+    if stage == "bulk":
+        raw_dirs = kwargs.get("directions") or []
+        if not isinstance(raw_dirs, list):
+            raw_dirs = [raw_dirs]
+        seen: set[str] = set()
+        direction_keys: list[str] = []
+        for d in raw_dirs:
+            key = str(d).upper().strip()
+            if key in ("A", "B", "C") and key not in seen:
+                seen.add(key)
+                direction_keys.append(key)
+        # Default to every proposed direction when none specified.
+        if not direction_keys:
+            _cached = get_cached_directions(ctx.session_id) or []
+            direction_keys = [d["key"] for d in _cached] or ["A", "B", "C"]
+
+        n = len(direction_keys)
+
+        if not kwargs.get("confirmed"):
+            per_ad = _credits_for_op("cinematic_animate", {"duration_seconds": duration_seconds})
+            credits = per_ad * n
+            summary = (
+                f"Animar {n} anuncios cinemáticos (direcciones {', '.join(direction_keys)}) — {duration_seconds}s @ 720p {aspect_ratio}"
+                if ctx.user_lang == "es"
+                else f"Animate {n} cinematic ads (directions {', '.join(direction_keys)}) — {duration_seconds}s @ 720p {aspect_ratio}"
+            )
+            return _confirmation_payload(
+                operation="cinematic_bulk",
+                credits=credits,
+                summary=summary,
+                echo={k: v for k, v in kwargs.items() if k != "confirmed"},
+            )
+
+        # confirmed=true — pre-resolve each direction_obj from the cached
+        # proposal BEFORE fanning out, so the concurrent renders never depend on
+        # mutable session-keyed flow state mid-render.
+        _cached_dirs = get_cached_directions(ctx.session_id) or []
+        _resolved_keys: list[str] = []
+        for key in direction_keys:
+            obj = next((d for d in _cached_dirs if d.get("key") == key), None)
+            if obj is None:
+                obj = next((d for d in propose_directions(product_meta) if d.get("key") == key), None)
+            if obj is not None:
+                _resolved_keys.append(key)
+        if not _resolved_keys:
+            return json.dumps({
+                "error": "no_directions_to_render",
+                "msg": "No valid directions found. Call stage='propose' first, then retry stage='bulk'.",
+            })
+
+        results = await asyncio.gather(
+            *[
+                _render_one_cinematic_direction(ctx, base_kwargs=kwargs, direction_key=key)
+                for key in _resolved_keys
+            ],
+            return_exceptions=True,
+        )
+
+        rendered: list[dict] = []
+        errors: list[dict] = []
+        for key, r in zip(_resolved_keys, results):
+            if isinstance(r, Exception):
+                errors.append({"direction": key, "error": str(r)})
+            elif isinstance(r, dict) and r.get("job_id") and not r.get("error"):
+                rendered.append({"direction": key, "job_id": r.get("job_id"), "video_url": r.get("video_url")})
+            else:
+                errors.append({"direction": key, "error": (r or {}).get("error") if isinstance(r, dict) else "unknown error"})
+
+        per_ad = _credits_for_op("cinematic_animate", {"duration_seconds": duration_seconds})
+        return json.dumps({
+            "action": "bulk_ads_ready",
+            "count": len(rendered),
+            "rendered": rendered,
+            "errors": errors or None,
+            "job_ids": [r["job_id"] for r in rendered],
+            "video_urls": [r["video_url"] for r in rendered if r.get("video_url")],
+            "credits_spent": per_ad * len(rendered),
+            "message": (
+                f"{len(rendered)} cinematic ad(s) rendered concurrently and saved to the Videos tab "
+                f"(directions {', '.join(r['direction'] for r in rendered)}). Show the videos to the user."
+                + (f" {len(errors)} direction(s) failed." if errors else "")
+            ),
+        })
+
     # ── stage=propose — returns 3 directions tailored to the brief via Haiku.
     # Falls back to static propose_directions on any LLM failure.
     if stage == "propose":
@@ -4957,7 +5210,8 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
                 "and whether it's model-led or product-only. Mark the recommended one. Wait for them to "
                 "pick A / B / C (or remix). Then call create_cinematic_ad with stage='storyboard', the chosen "
                 "direction's key, plus tagline + domain + the SAME aspect_ratio + duration_seconds. NO confirmed=false "
-                "step for storyboard — it renders directly. After ~2 min the tool will return the animate cost chip."
+                "step for storyboard — it renders directly. When it finishes the tool returns the animate cost chip. "
+                "Tell the user the storyboard is rendering now — do NOT promise a specific time (it can take a few minutes)."
             ),
         })
 
@@ -5126,6 +5380,7 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
             user_lang=ctx.user_lang,
             product_form=product_meta.get("product_form", ""),
             product_name=product_meta.get("name", ""),
+            product_description=product_meta.get("description", ""),
             application_geometry_hint=application_geometry_hint,
             allow_lip_application=allow_lip_application,
         )
@@ -5287,6 +5542,7 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
                     user_lang=ctx.user_lang,
                     product_form=product_meta.get("product_form", ""),
                     product_name=product_meta.get("name", ""),
+                    product_description=product_meta.get("description", ""),
                     application_geometry_hint=attempt_geometry,
                     allow_lip_application=False,
                 )
@@ -5328,6 +5584,7 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
                 has_influencer_ref=prompt_has_influencer,
                 moderation_profile=profile,
                 product_form=product_meta.get("product_form", ""),
+                product_description=product_meta.get("description", ""),
                 application_geometry_hint=attempt_geometry,
                 allow_lip_application=attempt_lip,
                 brief=_effective_brief,
@@ -5338,8 +5595,10 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
                 f"hands_only={attempt['hands_only']} panel3_action={panel3_action!r}"
             )
             try:
+                _sb_w, _sb_h = storyboard_sheet_size(num_panels, aspect_ratio)
                 result = await generate_storyboard(
                     prompt=prompt, image_urls=attempt_urls, aspect_ratio=aspect_ratio,
+                    width=_sb_w, height=_sb_h,
                 )
                 storyboard_moderation_profile = profile
                 lip_mode_active = attempt_lip
@@ -6063,6 +6322,108 @@ async def _tool_create_clone_video(ctx: ToolContext, **kwargs: Any) -> str:
     })
 
 
+async def _tool_create_bulk_clone(ctx: ToolContext, **kwargs: Any) -> str:
+    """Bulk AI Clone campaign — N lip-synced clone videos dispatched at once.
+
+    Single gated tool that fans out to N `create_clone_job` calls (each its own
+    background worker), so the whole batch launches from ONE Confirm — neither the
+    auto-fire-single-tool path nor the idempotency guard can cap it at 1.
+
+    `scripts`: one verbatim script per video (count = len(scripts)). When omitted,
+    `count` videos are dispatched and each auto-generates its own distinct script.
+    """
+    kwargs = _merge_clone_refs_into_kwargs(kwargs, ctx.refs)
+    if not kwargs.get("clone_id"):
+        return json.dumps({"error": "clone_id is required — @-mention your AI Clone or pass clone_id"})
+
+    scripts = kwargs.get("scripts")
+    if scripts is not None and not isinstance(scripts, list):
+        return json.dumps({"error": "scripts must be a list of strings (one per video)"})
+    scripts = [str(s).strip() for s in scripts if str(s).strip()] if scripts else []
+
+    if scripts:
+        n = len(scripts)
+    else:
+        n = int(kwargs.get("count", 1))
+    if n < 1 or n > 50:
+        return json.dumps({"error": "count must be between 1 and 50"})
+
+    duration = int(kwargs.get("duration", 15))
+    if duration not in (15, 30):
+        return json.dumps({"error": "duration must be 15 or 30"})
+    product_type = kwargs.get("product_type", "physical")
+
+    if not kwargs.get("confirmed"):
+        per_video = _credits_for_op("create_clone_video", {"duration": duration})
+        credits = per_video * n
+        return _confirmation_payload(
+            operation="create_bulk_clone",
+            credits=credits,
+            summary=f"Generate {n} × {duration}s AI Clone (lip-synced) videos ({per_video} credits each)",
+            echo={k: v for k, v in kwargs.items() if k != "confirmed"},
+        )
+
+    # Build one payload per video. With scripts → one verbatim script each;
+    # without → empty script_text so each job auto-generates a distinct one.
+    base = {
+        "clone_id": kwargs["clone_id"],
+        "look_id": kwargs.get("look_id"),
+        "duration": duration,
+        "product_id": kwargs.get("product_id"),
+        "product_type": product_type,
+        "video_language": kwargs.get("video_language", "en"),
+        "language_accent": kwargs.get("language_accent"),
+        "subtitles_enabled": kwargs.get("subtitles_enabled", True),
+        "project_id": ctx.project_id,
+    }
+    payloads: list[dict] = []
+    for i in range(n):
+        p = dict(base)
+        script_text = scripts[i] if scripts else (kwargs.get("script_text") or "").strip()
+        if not script_text:
+            generated = await _auto_generate_clone_script(ctx, kwargs, duration, product_type)
+            script_text = generated or ""
+        if script_text:
+            p["script_text"] = script_text
+        payloads.append({k: v for k, v in p.items() if v is not None})
+
+    # Dispatch all clone jobs concurrently — each create_clone_job calls
+    # _dispatch_clone_worker, so all N launch at once.
+    results = await asyncio.gather(
+        *[ctx.core().create_clone_job(p) for p in payloads],
+        return_exceptions=True,
+    )
+    job_ids: list[str] = []
+    errors: list[str] = []
+    for r in results:
+        if isinstance(r, Exception):
+            errors.append(str(r))
+            continue
+        jid = _job_id_from_create_response(r)
+        if jid:
+            job_ids.append(jid)
+        else:
+            errors.append("clone job created but no id returned")
+
+    per_video = _credits_for_op("create_clone_video", {"duration": duration})
+    return json.dumps({
+        "action": "clone_started",
+        "status": "dispatched",
+        "count": len(job_ids),
+        "job_ids": job_ids,
+        "errors": errors or None,
+        "duration": duration,
+        "credits_spent": per_video * len(job_ids),
+        "eta_seconds": _clone_eta_seconds(duration),
+        "message": (
+            f"{len(job_ids)} AI Clone videos dispatched. They generate in the background "
+            f"(~{_clone_eta_minutes_approx(duration)} min each) — tell the user to watch the Videos tab; "
+            "the clips appear as each finishes. Do NOT say Done until they complete in the gallery."
+            + (f" ({len(errors)} failed to start.)" if errors else "")
+        ),
+    })
+
+
 async def _tool_create_bulk_campaign(ctx: ToolContext, **kwargs: Any) -> str:
     """Bulk campaign — N UGC videos with auto-generated script variations.
 
@@ -6072,24 +6433,51 @@ async def _tool_create_bulk_campaign(ctx: ToolContext, **kwargs: Any) -> str:
     """
     if not kwargs.get("influencer_id"):
         return json.dumps({"error": "influencer_id is required"})
-    count = int(kwargs.get("count", 1))
-    if count < 1 or count > 50:
+    # scripts[] (one verbatim approved script per video) takes precedence over
+    # count: the user approved N specific scripts, so each video must use its
+    # OWN script rather than a single shared hook or backend auto-generation.
+    scripts = kwargs.get("scripts")
+    if scripts is not None and not isinstance(scripts, list):
+        return json.dumps({"error": "scripts must be a list of strings (one per video)"})
+    scripts = [str(s).strip() for s in scripts if str(s).strip()] if scripts else []
+    if scripts:
+        n = len(scripts)
+        kwargs["scripts"] = scripts
+    else:
+        n = int(kwargs.get("count", 1))
+    if n < 1 or n > 50:
         return json.dumps({"error": "count must be between 1 and 50"})
     duration = int(kwargs.get("duration", 15))
     if duration not in (15, 30):
         return json.dumps({"error": "duration must be 15 or 30"})
     product_type = kwargs.get("product_type", "physical")
+    # All UGC videos render on Veo 3.1 (WaveSpeed) by default — same as the
+    # single create_ugc_video path. Only the Seedance toggle ([ENGINE=seedance])
+    # passes model_api="seedance-2.0". Set it BEFORE the gate so it rides in the
+    # echo and the Confirm re-fire keeps it. Without this the backend falls back
+    # to its stale seedance-1.5-pro default and renders on kie.ai.
+    kwargs["model_api"] = kwargs.get("model_api") or "veo-3.1-fast"
+
+    # Honor the EXACT influencer/product images the user picked in the chat
+    # @-mention selector (same plumbing generate_video / create_ugc_video use).
+    # Resolve BEFORE the confirmation gate so the URLs ride in the echo and the
+    # confirm re-fire keeps them even if refs aren't re-sent on the next turn.
+    inf_override, prod_override = _image_overrides_from_turn_refs(ctx.refs, kwargs)
+    if inf_override:
+        kwargs["reference_image_url"] = inf_override
+    if prod_override:
+        kwargs["product_image_url"] = prod_override
 
     if not kwargs.get("confirmed"):
         credits = _credits_for_op("create_bulk_campaign", {
-            "product_type": product_type, "duration": duration, "count": count,
+            "product_type": product_type, "duration": duration, "count": n,
         })
-        per_video = credits // count
+        per_video = credits // n if n else credits
         return _confirmation_payload(
             operation="create_bulk_campaign",
             credits=credits,
             summary=(
-                f"Generate {count} × {duration}s UGC videos "
+                f"Generate {n} × {duration}s UGC videos "
                 f"({product_type}, {per_video} credits each)"
             ),
             echo={k: v for k, v in kwargs.items() if k != "confirmed"},
@@ -6097,15 +6485,21 @@ async def _tool_create_bulk_campaign(ctx: ToolContext, **kwargs: Any) -> str:
 
     payload = {
         "influencer_id": kwargs["influencer_id"],
-        "count": count,
+        "count": n,
+        "scripts": scripts or None,
         "duration": duration,
         "product_type": product_type,
+        "model_api": kwargs.get("model_api") or "veo-3.1-fast",
         "product_id": kwargs.get("product_id"),
         "campaign_name": kwargs.get("campaign_name"),
         "video_language": kwargs.get("video_language", "en"),
         "language_accent": kwargs.get("language_accent"),
-        "subtitles_enabled": kwargs.get("subtitles_enabled", True),
-        "music_enabled": kwargs.get("music_enabled", True),
+        # Default OFF — bare assembled video per job (same as create_ugc_video).
+        # Captions/music are offered as a follow-up after the batch completes.
+        "subtitles_enabled": kwargs.get("subtitles_enabled", False),
+        "music_enabled": kwargs.get("music_enabled", False),
+        "reference_image_url": kwargs.get("reference_image_url"),
+        "product_image_url": kwargs.get("product_image_url"),
     }
     payload = {k: v for k, v in payload.items() if v is not None}
 
@@ -6122,7 +6516,7 @@ async def _tool_create_bulk_campaign(ctx: ToolContext, **kwargs: Any) -> str:
         "count": len(job_ids),
         "job_ids": job_ids,
         "credits_spent": _credits_for_op("create_bulk_campaign", {
-            "product_type": product_type, "duration": duration, "count": count,
+            "product_type": product_type, "duration": duration, "count": n,
         }),
         "message": (
             f"{len(job_ids)} jobs dispatched. Bulk campaigns take a while — use list_jobs "
@@ -8562,6 +8956,7 @@ TOOL_DISPATCH: dict[str, Callable[..., Awaitable[str]]] = {
     "create_ugc_video": _tool_create_ugc_video,
     "create_cinematic_ad": _tool_create_cinematic_ad,
     "create_clone_video": _tool_create_clone_video,
+    "create_bulk_clone": _tool_create_bulk_clone,
     "create_bulk_campaign": _tool_create_bulk_campaign,
     # scheduling & social (free)
     "schedule_posts": _tool_schedule_posts,
@@ -8639,6 +9034,48 @@ _GEN_IMAGE_DEDUP: dict[str, dict] = {}
 _GEN_IMAGE_DEDUP_TTL = 120  # seconds
 
 
+# ── Multi-video intent detection (shared) ─────────────────────────────
+# Single source of truth for "the user wants MORE THAN ONE video". Used by
+# routers/agent.py to inject the bulk_reminder AND by _run_stream_impl to
+# hard-redirect single create_ugc_video/create_clone_video calls to the
+# bulk tools. Keep both consumers on this one definition so they can't drift.
+MULTI_VIDEO_INTENT_RE = _re_module.compile(
+    r"\b(?:"
+    r"\d+\s*(?:videos?|clips?|ads?|anuncios?|clones?|variations?|variaciones?|scripts?|guiones?|angles?|versions?)|"
+    r"\d+[\s-]*video\s+campaign|bulk\s+campaign|"
+    r"multiple\s+(?:videos?|clips?|ads?|clones?)|"
+    r"(?:all|both)\s+(?:\d+\s+)?(?:directions?|videos?|ads?)|"
+    r"varios?\s+(?:videos?|clips?|anuncios?|clones?)"
+    r")\b",
+    _re_module.IGNORECASE,
+)
+CAMPAIGN_INTENT_RE = _re_module.compile(
+    r"\b(?:"
+    r"\d+[\s-]*video\s+campaign|bulk\s+campaign|build\s+(?:a\s+)?\d+[\s-]*video|"
+    r"campaña(?:\s+de\s+\d+\s+videos?)?"
+    r")\b",
+    _re_module.IGNORECASE,
+)
+
+
+def session_has_multi_video_intent(
+    brief: str,
+    prior_turns: Optional[list[dict]] = None,
+) -> bool:
+    """True when the current brief OR any prior user turn signals a request
+    for MORE THAN ONE video (bulk campaign, N videos/clips/ads, all directions).
+    Sticky across the session so the intent survives follow-up turns like
+    'yes go' that carry no count of their own."""
+    if MULTI_VIDEO_INTENT_RE.search(brief or "") or CAMPAIGN_INTENT_RE.search(brief or ""):
+        return True
+    for _past in (prior_turns or []):
+        if _past.get("role") == "user":
+            _t = _past.get("text") or ""
+            if MULTI_VIDEO_INTENT_RE.search(_t) or CAMPAIGN_INTENT_RE.search(_t):
+                return True
+    return False
+
+
 # Pattern for "agent claims to dispatch tools but emits no tool_use".
 # Two failure shapes seen in production:
 #   1. "Firing all 3 in parallel now.", "Generating now…", "Launching
@@ -8671,6 +9108,84 @@ def _strip_ai_edit_ops_leak(text: str) -> str:
     text = _JSON_OPS_LEAK_RE.sub("", text)
     text = _TOOL_CALL_LEAK_RE.sub("", text)
     return text.rstrip()
+
+
+# When the agent asks the user to pick a product/creator it often ignores the
+# [[PRODUCT_SELECTOR]] / [[CREATOR_SELECTOR]] markers and dumps comma-separated
+# name lists from list_project_assets instead. The frontend only renders the
+# visual picker when those markers are present — so we normalize here.
+_ASSET_PICK_QUESTION_RE = _re_module.compile(
+    r"(?:"
+    r"which\s+product|what\s+product|pick\s+(?:a|your)\s+product|choose\s+(?:a|your)\s+product|"
+    r"qué\s+producto|cuál\s+producto|"
+    r"which\s+(?:influencer|creator|model)|who\s+should\s+(?:present|deliver|host)|"
+    r"pick\s+(?:a|the|your)\s+(?:influencer|creator|model)|"
+    r"qué\s+(?:influencer|creador|modelo)|cuál\s+(?:influencer|creador|modelo)|"
+    r"or\s+tell\s+me\s+to\s+pick\s+the\s+best\s+match"
+    r")",
+    _re_module.IGNORECASE,
+)
+_PRODUCT_PICK_RE = _re_module.compile(
+    r"which\s+product|what\s+product|qué\s+producto|cuál\s+producto|"
+    r"\b1\.\s*\**which\s+product",
+    _re_module.IGNORECASE,
+)
+_CREATOR_PICK_RE = _re_module.compile(
+    r"which\s+(?:influencer|creator|model|persona)|who\s+should\s+(?:present|deliver|host|star|be\s+in|feature)|"
+    r"who\s+do\s+you\s+want|qué\s+(?:influencer|creador|modelo)|cuál\s+(?:influencer|creador|modelo)|"
+    r"pick\s+(?:a|an|the|your)\s+(?:influencer|creator|model|persona)|"
+    r"choose\s+(?:a|an|the|your)\s+(?:influencer|creator|model|persona)|"
+    r"\b2\.\s*\**which\s+influencer|or\s+tell\s+me\s+to\s+pick\s+the\s+best|"
+    r"\([A-Za-z][^)]{12,},\s*[A-Za-z]",
+    _re_module.IGNORECASE,
+)
+
+
+def _normalize_asset_selection_message(text: str) -> str:
+    """Rewrite product/creator interrogation into marker-driven picker prompts."""
+    if not text:
+        return text
+    stripped = text.strip()
+    if stripped == "[[PRODUCT_SELECTOR]]":
+        return "Which product should we use? [[PRODUCT_SELECTOR]]"
+    if stripped == "[[CREATOR_SELECTOR]]":
+        return "Who should present it? [[CREATOR_SELECTOR]]"
+    if "[[PRODUCT_SELECTOR]]" in text or "[[CREATOR_SELECTOR]]" in text:
+        if stripped == "[[PRODUCT_SELECTOR]]":
+            return "Which product should we use? [[PRODUCT_SELECTOR]]"
+        if stripped == "[[CREATOR_SELECTOR]]":
+            return "Who should present it? [[CREATOR_SELECTOR]]"
+        body = text.replace("[[PRODUCT_SELECTOR]]", "").replace("[[CREATOR_SELECTOR]]", "").strip()
+        if "[[PRODUCT_SELECTOR]]" in text and not body:
+            return "Which product should we use? [[PRODUCT_SELECTOR]]"
+        if "[[CREATOR_SELECTOR]]" in text and not body:
+            return "Who should present it? [[CREATOR_SELECTOR]]"
+        return text
+    if not _ASSET_PICK_QUESTION_RE.search(text):
+        return text
+
+    asks_product = bool(_PRODUCT_PICK_RE.search(text))
+    asks_creator = bool(_CREATOR_PICK_RE.search(text))
+    is_spanish = bool(
+        _re_module.search(
+            r"\b(qué|cuál|producto|creador|modelo|guión|segundos|tienes)\b",
+            text,
+            _re_module.IGNORECASE,
+        )
+    )
+
+    # ONE selector per message — product before creator.
+    if asks_product:
+        if is_spanish:
+            return "¿Qué producto quieres usar? [[PRODUCT_SELECTOR]]"
+        return "Which product should we use? [[PRODUCT_SELECTOR]]"
+
+    if asks_creator:
+        if is_spanish:
+            return "¿Quién debería presentarlo? [[CREATOR_SELECTOR]]"
+        return "Who should present it? [[CREATOR_SELECTOR]]"
+
+    return text
 
 
 def _summarize_result(result_text: str, max_len: int = 120) -> str:
@@ -9647,6 +10162,14 @@ class ManagedAgentClient:
             )
             _MAX_RETRIES = 3
             _retry_count = 0
+            # One product/creator picker bubble per user turn — survives multiple
+            # agent.message events and tool-chain stream passes.
+            _emitted_product_selector_this_turn = False
+            _emitted_creator_selector_this_turn = False
+            # Bounded recovery for narration-without-tool-call passes (see the
+            # hallucinated-action block below). Cap at 1 re-prompt per turn so a
+            # stubborn model can't spin the loop forever.
+            _hallucination_recoveries = 0
 
             def _is_transient_error(msg: str) -> bool:
                 msg_lower = msg.lower()
@@ -9703,8 +10226,20 @@ class ManagedAgentClient:
                                 # Scrub leaked AI_EDIT_OPS chat text — old
                                 # in-editor format that the dashboard ignores.
                                 p = _strip_ai_edit_ops_leak(p)
+                                p = _normalize_asset_selection_message(p)
                                 if not p:
                                     continue
+                                # Agent often asks "which product?" in two
+                                # paragraphs of the same message; both normalize
+                                # to identical [[PRODUCT_SELECTOR]] bubbles.
+                                if "[[PRODUCT_SELECTOR]]" in p:
+                                    if _emitted_product_selector_this_turn:
+                                        continue
+                                    _emitted_product_selector_this_turn = True
+                                if "[[CREATOR_SELECTOR]]" in p:
+                                    if _emitted_creator_selector_this_turn:
+                                        continue
+                                    _emitted_creator_selector_this_turn = True
                                 emitted_text_this_pass = True
                                 messages_this_pass.append(p)
                                 yield {"type": "agent_message", "text": p}
@@ -9762,14 +10297,50 @@ class ManagedAgentClient:
                 # failure is visible in Railway logs even when the user
                 # only sees the chat bubble.
                 if not pending_tool_calls and messages_this_pass:
+                    _hallucinated_text = None
                     for _msg in messages_this_pass:
                         if _HALLUCINATED_ACTION_RE.search(_msg):
-                            print(
-                                f"[ManagedAgent] HALLUCINATED ACTION (session={session_id}): "
-                                f"agent emitted action prose with zero tool_use this pass. "
-                                f"text={_msg!r}"
-                            )
+                            _hallucinated_text = _msg
                             break
+                    if _hallucinated_text is not None:
+                        print(
+                            f"[ManagedAgent] HALLUCINATED ACTION (session={session_id}): "
+                            f"agent emitted action prose with zero tool_use this pass. "
+                            f"text={_hallucinated_text!r}"
+                        )
+                        # Bounded recovery: the agent narrated an action ("Firing
+                        # all 3 proposals…", "Queuing all 5…") but emitted no
+                        # tool_use, so the turn would otherwise dead-end here.
+                        # Re-prompt ONCE to force the actual tool call. Capped by
+                        # _hallucination_recoveries so a stubborn model can't loop.
+                        if session_id and _hallucination_recoveries < 1:
+                            _hallucination_recoveries += 1
+                            _correction = (
+                                "[SYSTEM CORRECTION: You described an action but emitted NO tool call. "
+                                "Do NOT narrate actions or claim something is running — emit the tool_use NOW. "
+                                "Multiple cinematic directions -> create_cinematic_ad stage='propose' "
+                                "(ONE call returns all 3 directions A/B/C), then ONE stage='bulk'. "
+                                "Multiple UGC videos -> create_bulk_campaign exactly once. "
+                                "Multiple clones -> create_bulk_clone exactly once.]"
+                            )
+                            try:
+                                await self._client.beta.sessions.events.send(
+                                    session_id,
+                                    events=[{
+                                        "type": "user.message",
+                                        "content": [{"type": "text", "text": _correction}],
+                                    }],
+                                )
+                                print(
+                                    f"[ManagedAgent] hallucination recovery: re-prompting agent "
+                                    f"(attempt {_hallucination_recoveries}/1)"
+                                )
+                                continue  # re-open the stream for the corrected response
+                            except Exception as _recov_e:
+                                print(
+                                    f"[ManagedAgent] hallucination recovery send failed: "
+                                    f"{type(_recov_e).__name__}: {_recov_e}"
+                                )
 
                 # After the stream pass, execute all collected tool calls concurrently.
                 if pending_tool_calls:
@@ -9803,6 +10374,38 @@ class ManagedAgentClient:
                                     ),
                                     "tool_name": name,
                                 }), False
+
+                        # ── Hard single→bulk redirect for multi-video requests ──
+                        # The model intermittently ignores the bulk_reminder and fires
+                        # a SINGLE create_ugc_video / create_clone_video even when the
+                        # user asked for N videos. Those single calls then collapse to
+                        # ONE launch via the idempotency guard, so the user gets 1 of N.
+                        # Intercept at the cost-preview step (confirmed != True, no
+                        # credits spent yet) and force the agent to re-issue as the bulk
+                        # tool. Mirrors the duplicate-influencer short-circuit above.
+                        if (
+                            name in ("create_ugc_video", "create_clone_video")
+                            and tool_input.get("confirmed") is not True
+                            and session_has_multi_video_intent(brief, prior_turns)
+                        ):
+                            _bulk_tool = (
+                                "create_bulk_campaign" if name == "create_ugc_video"
+                                else "create_bulk_clone"
+                            )
+                            print(
+                                f"[ManagedAgent] route_to_bulk: {name} fired during a multi-video "
+                                f"request (session={session_id}) — redirecting to {_bulk_tool}"
+                            )
+                            return tool_use_id, json.dumps({
+                                "action": "route_to_bulk",
+                                "tool_name": name,
+                                "message": (
+                                    f"MULTI-VIDEO REQUEST: do NOT use {name} — it would launch only ONE "
+                                    f"video. Call {_bulk_tool} EXACTLY ONCE instead, passing "
+                                    f"scripts=[every approved script, verbatim, one per video] (or count=N "
+                                    f"if no scripts were drafted). Re-issue now as {_bulk_tool}."
+                                ),
+                            }), False
 
                         # ── Idempotency guard for LLM-fired gated tools ──
                         # When the LLM (not auto-fire) calls a gated tool with

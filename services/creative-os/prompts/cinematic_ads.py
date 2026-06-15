@@ -585,6 +585,7 @@ async def generate_directions_from_brief(
 
     brand = product_meta.get("brand") or product_meta.get("name") or "Brand"
     product = product_meta.get("name") or "Product"
+    product_description = (product_meta.get("description") or "").strip()
 
     system = (
         "You generate 3 cinematic-ad creative directions for a product. "
@@ -614,6 +615,14 @@ async def generate_directions_from_brief(
         "like 'calm coverage', 'soft fades', 'slow contemplative pacing'. Do NOT propose 'minimal architectural' or "
         "'quiet sculpture' directions when the brief asks for 'dynamic aggressive cuts'. "
         "If the brief is product-only and contains NO action sequence, all three may be product_only. "
+        "USAGE PLAUSIBILITY (critical): every direction's `hero_moment` MUST depict the product used the way it "
+        "ACTUALLY works in the real world — reason from the PRODUCT USAGE FACTS / description. NEVER invent a "
+        "physically impossible interaction or an end-state the product cannot directly produce. For example, a bag "
+        "of coffee BEANS or GROUNDS is opened and the grounds/beans are loaded into a grinder or coffee machine to "
+        "BREW a cup — you canNOT pour ready-made liquid coffee out of the bag; the brewed cup comes from the machine, "
+        "not the bag. Apply the same real-usage logic to any product (e.g. a capsule goes into its machine, a powder "
+        "is scooped and mixed, a supplement is taken). If unsure how the product is used, keep the hero_moment to "
+        "handling/presenting the product rather than guessing an impossible use. "
         + (
             "OUTPUT LANGUAGE: write the `name`, `vibe`, and `hero_moment` fields in Spanish (es-ES). "
             "Keep `camera_signature` / `lighting_signature` / `style_grade` in English (cinematography vocabulary). "
@@ -638,11 +647,14 @@ async def generate_directions_from_brief(
         f"BRAND: {brand}\n"
         f"PRODUCT: {product}\n"
         f"CATEGORY: {category or 'general'}\n"
-        f"FORMAT: {aspect_ratio} ({_aspect_hint})\n"
+        + (f"PRODUCT USAGE FACTS (how this product is really used — directions MUST respect this; do NOT invent impossible usage): {product_description[:240]}\n" if product_description else "")
+        + f"FORMAT: {aspect_ratio} ({_aspect_hint})\n"
         f"DURATION: {duration_seconds}s\n\n"
         "Write 3 creative directions tailored to the BRIEF and the FORMAT. The recommended one MUST be the one "
-        "whose hero_moment best matches the narrative the user described. If the user described "
-        "actions (e.g. grinding, steaming, pouring), prefer model-led / action-led directions. "
+        "whose hero_moment best matches the narrative the user described. If the BRIEF or USAGE FACTS describe a "
+        "real action (e.g. grinding, steaming, loading a machine, brewing), prefer model-led / action-led "
+        "directions that show the product used CORRECTLY — do not default to 'pouring' unless the product is "
+        "genuinely poured. "
         "Tailor each hero_moment to fit the specified DURATION (a 5s ad has time for one beat, a 15s ad has 6)."
     )
 
@@ -749,6 +761,7 @@ async def generate_beats_from_brief(
     user_lang: str = "en",
     product_form: str = "",
     product_name: str = "",
+    product_description: str = "",
     application_geometry_hint: str = "",
     allow_lip_application: bool = False,
     anthropic_client: Optional[Any] = None,
@@ -801,6 +814,12 @@ async def generate_beats_from_brief(
         "NEVER pass through skin, fingers, or flesh; hands keep correct anatomy (five fingers, natural proportions). "
         "Jewelry is worn by ENCIRCLING the finger or wrist (the finger passes through the ring band) — never push a "
         "ring through a finger or describe it intersecting the body. "
+        "USAGE PLAUSIBILITY (critical): every `action` must match how the product is REALLY used (see PRODUCT USAGE "
+        "FACTS). NEVER depict an end-state the product cannot directly produce. Example: a bag of coffee beans/grounds "
+        "is opened and the grounds/beans are loaded into a grinder or coffee machine to BREW — you canNOT pour "
+        "ready-made liquid coffee out of the bag; a finished cup is poured by the MACHINE, not the bag. Reason the "
+        "same way for any product (capsule into its machine, powder scooped and mixed, etc.). If usage is unknown, "
+        "show the product being handled/presented rather than inventing an impossible action. "
         + (
             "APPLICATION GEOMETRY (critical): on the application beat, lipstick/lip product is held upright; "
             "ONLY the bullet tip contacts the lower lip in a single stroke; flat base points away from the face; "
@@ -878,6 +897,7 @@ async def generate_beats_from_brief(
         f"DIRECTION LIGHTING SIG: {direction.get('lighting_signature','')}\n"
         f"DIRECTION STYLE GRADE: {direction.get('style_grade','')}\n"
         f"CATEGORY: {category}\n"
+        + (f"PRODUCT USAGE FACTS (how this product is really used — every action MUST respect this; do NOT depict an impossible use or end-state): {product_description.strip()[:240]}\n" if (product_description or "").strip() else "")
         + (f"PRODUCT FORM (the product's exact physical form — actions MUST match this, never invent a different applicator): {product_form.strip()[:240]}\n" if (product_form or "").strip() else "PRODUCT FORM: (unspecified — refer to it as 'the product' and keep its form abstract; the reference image defines the exact form)\n")
         + (f"APPLICATION GEOMETRY (mandatory on any beat where product touches skin): {application_geometry_hint.strip()[:240]}\n" if (application_geometry_hint or "").strip() else "")
         + (
@@ -1399,15 +1419,17 @@ def sanitize_beats_for_jewelry(
 def _grid_for(num_panels: int, aspect_ratio: str) -> tuple[int, int]:
     """Return (cols, rows) for a storyboard sheet given panel count + aspect.
 
-    Vertical sheets use taller grids (more rows) so panels stay readable on a
-    9:16 PNG. Horizontal sheets use wider grids.
+    The grid is chosen so each panel CELL matches the target video aspect, not
+    the whole sheet. A vertical (9:16) video needs TALL/vertical cells, so we lay
+    panels out WIDE (more columns). A horizontal (16:9 / 4:3) video needs WIDE
+    cells, so we lay panels out TALL (more rows).
     """
     vertical = aspect_ratio == "9:16"
     if num_panels == 3:
-        return (1, 3) if vertical else (3, 1)
+        return (3, 1) if vertical else (1, 3)
     if num_panels == 4:
         return (2, 2)
-    return (2, 3) if vertical else (3, 2)
+    return (3, 2) if vertical else (2, 3)
 
 
 def _panel_orientation_label(aspect_ratio: str) -> str:
@@ -1416,6 +1438,48 @@ def _panel_orientation_label(aspect_ratio: str) -> str:
     if aspect_ratio == "4:3":
         return "4:3 standard orientation"
     return "16:9 landscape orientation"
+
+
+# Per-panel base cell sized to the TARGET video aspect ratio. The storyboard
+# sheet is built from these cells so every panel keeps the video's orientation.
+_STORYBOARD_PANEL_CELL = {
+    "9:16": (720, 1280),
+    "4:3": (1024, 768),
+    "16:9": (1280, 720),
+}
+_STORYBOARD_HEADER_PX = 140      # mono header band above the grid
+_STORYBOARD_CAPTION_PX = 280     # 4-line caption block beneath each panel row
+_STORYBOARD_MAX_SIDE = 2560      # GPT Image 2 longest-side cap
+_STORYBOARD_MIN_SIDE = 512
+
+
+def _round16(v: float) -> int:
+    return max(_STORYBOARD_MIN_SIDE, int(round(v / 16.0)) * 16)
+
+
+def storyboard_sheet_size(num_panels: int, aspect_ratio: str) -> tuple[int, int]:
+    """Compute (width, height) for a storyboard sheet whose per-panel CELLS match
+    the target video aspect ratio.
+
+    The grid (from `_grid_for`) lays vertical (9:16) ads out wide and horizontal
+    ads out tall, so each cell carries the video orientation. Sheet width is the
+    columns times the panel cell width; height adds a header band plus a caption
+    band per row. The longest side is clamped to 2560 (scaling both dims), and
+    both dims are rounded to multiples of 16 (floor 512).
+    """
+    cols, rows = _grid_for(num_panels, aspect_ratio)
+    panel_w, panel_h = _STORYBOARD_PANEL_CELL.get(aspect_ratio, _STORYBOARD_PANEL_CELL["16:9"])
+
+    width = cols * panel_w
+    height = _STORYBOARD_HEADER_PX + rows * (panel_h + _STORYBOARD_CAPTION_PX)
+
+    longest = max(width, height)
+    if longest > _STORYBOARD_MAX_SIDE:
+        scale = _STORYBOARD_MAX_SIDE / float(longest)
+        width *= scale
+        height *= scale
+
+    return (_round16(width), _round16(height))
 
 
 def build_storyboard_prompt(
@@ -1433,6 +1497,7 @@ def build_storyboard_prompt(
     has_influencer_ref: bool = False,
     moderation_profile: str = "sharp",
     product_form: str = "",
+    product_description: str = "",
     application_geometry_hint: str = "",
     allow_lip_application: bool = False,
     brief: str = "",
@@ -1468,7 +1533,16 @@ def build_storyboard_prompt(
     cols, rows = _grid_for(num_panels, aspect_ratio)
     panel_orient = _panel_orientation_label(aspect_ratio)
     grid_text = f"{cols} columns by {rows} rows"
-    sheet_orient = "vertical" if aspect_ratio == "9:16" else ("standard" if aspect_ratio == "4:3" else "landscape")
+    # Describe the OVERALL sheet shape from the computed dimensions, not the video
+    # aspect — a 9:16 ad now lays panels out wide, so the sheet itself is landscape
+    # even though each panel cell is vertical.
+    _sheet_w, _sheet_h = storyboard_sheet_size(num_panels, aspect_ratio)
+    if _sheet_w > _sheet_h * 1.05:
+        sheet_orient = "in landscape (wider than tall)"
+    elif _sheet_h > _sheet_w * 1.05:
+        sheet_orient = "in portrait (taller than wide)"
+    else:
+        sheet_orient = "roughly square"
 
     if allow_lip_application:
         _fal_safety = (
@@ -1600,7 +1674,12 @@ def build_storyboard_prompt(
         f"A single image: a {num_panels}-panel cinematic ad storyboard sheet, "
         f"{grid_text}, on an off-white paper background with a thin black "
         f"border. Each panel is a cinematic film still in {panel_orient}. "
-        f"Above the grid, a bold mono header reads:\n\n"
+        + (
+            "EVERY panel image is a TALL VERTICAL 9:16 still — taller than it is wide. Do NOT render wide, "
+            "landscape, or 16:9-cropped panels; compose each shot for a vertical phone screen. "
+            if aspect_ratio == "9:16" else ""
+        )
+        + f"Above the grid, a bold mono header reads:\n\n"
         f"STORYBOARD: {direction['name'].upper()} — {duration_s}s SPOT — "
         f"BRAND: {brand}     PRODUCT: {product}\n\n"
         f"Each panel has a small \"01\"–\"{num_panels:02d}\" number top-left AND a "
@@ -1628,6 +1707,12 @@ def build_storyboard_prompt(
         f"identical proportions, label/text placement, color, and materials. Do NOT simplify, restyle, or "
         f"re-proportion it because it is in motion, partially framed, or close to camera; product fidelity is "
         f"HIGHEST on the usage/action panel. "
+        + (
+            f"USAGE TRUTH (how this product is really used — every panel MUST respect this; NEVER depict an "
+            f"impossible use or an end-state the product cannot directly produce, e.g. coffee beans/grounds are "
+            f"loaded into a grinder/machine to brew, NOT poured as liquid from the bag): {product_description.strip()[:240]}. "
+            if (product_description or "").strip() else ""
+        )
         + (
             "APPLICATION GEOMETRY: on the application panel, product contacts LIPS ONLY (lower lip stroke); "
             "bullet tip on lower lip, flat base away from face; never cheek, forearm, or base-first. "

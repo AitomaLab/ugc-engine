@@ -24,7 +24,12 @@ from pydantic import BaseModel
 
 from auth import get_current_user
 from services.agent_threads import get_thread, reset_thread, upsert_thread
-from services.managed_agent_client import get_managed_agent_client, _detect_input_language
+from services.managed_agent_client import (
+    get_managed_agent_client,
+    _detect_input_language,
+    session_has_multi_video_intent,
+    CAMPAIGN_INTENT_RE,
+)
 
 router = APIRouter(prefix="/agent", tags=["managed-agent"])
 
@@ -308,13 +313,37 @@ async def agent_stream(
     sticky_video_ref: Optional[AgentRef] = None
     has_video_ref = any(r.video_url for r in refs)
     carried_refs: list[AgentRef] = []
+    _prior_turns_all: list[dict] = []
+    try:
+        _prior_thread = await get_thread(user_token, user_id, project_id)
+        _prior_turns_all = list((_prior_thread or {}).get("turns") or [])
+    except Exception as _e:
+        print(f"[agent_stream] prior thread load failed: {_e}")
+
     if not refs:
         try:
-            _prior_thread = await get_thread(user_token, user_id, project_id)
-            _prior_turns_all: list[dict] = list((_prior_thread or {}).get("turns") or [])
             # Filter to AgentRef's known fields so unknown keys don't break validation.
             _allowed = set(AgentRef.model_fields.keys())
             seen_types: set[str] = set()
+
+            def _has_core(types: set[str]) -> bool:
+                # The cinematic / UGC / campaign flows pick the product and the
+                # creator in SEPARATE turns (one selector per message). The core
+                # set we need carried forward is a product PLUS a creator.
+                return "product" in types and ("influencer" in types or "clone" in types)
+
+            # Walk back across MULTIPLE ref-bearing turns — not just the most
+            # recent one. When the user selects product then influencer in two
+            # separate turns, the gated tool (e.g. create_cinematic_ad) fires on
+            # a later ref-less button-click turn (direction pick / Confirm), so
+            # only carrying the single most-recent ref turn drops the product
+            # (its selected shot URL) and the backend falls back to the default
+            # DB profile image. We keep collecting unseen ref types until the
+            # core product+creator pair is gathered, a turn adds nothing new, or
+            # a small cap of ref-bearing turns is inspected (bounds staleness on
+            # long threads / prior unrelated tasks).
+            _MAX_REF_TURNS = 3
+            _ref_turns_seen = 0
             for _past in reversed(_prior_turns_all):
                 if _past.get("role") != "user":
                     continue
@@ -328,6 +357,7 @@ async def agent_stream(
                     # person/product. Skip and keep walking back to the most
                     # recent turn that actually carried refs.
                     continue
+                _added_new = False
                 for _pr in _turn_refs:
                     t = _pr.get("type")
                     if not t or t in seen_types:
@@ -338,23 +368,98 @@ async def agent_stream(
                         continue
                     carried_refs.append(resurrected)
                     seen_types.add(t)
+                    _added_new = True
                     if resurrected.video_url and not has_video_ref:
                         sticky_video_ref = resurrected
                         has_video_ref = True
-                # Most recent ref-bearing user turn wins; stop walking once
-                # we've processed it. Earlier turns rarely add anything that
-                # wasn't in the most recent one and risk pulling stale state.
-                break
+                _ref_turns_seen += 1
+                # Stop once we have the core product+creator pair, or this
+                # ref-bearing turn added nothing new (we've crossed into
+                # redundant / older state), or we've inspected the cap.
+                if (
+                    _has_core(seen_types)
+                    or not _added_new
+                    or _ref_turns_seen >= _MAX_REF_TURNS
+                ):
+                    break
         except Exception as _e:
             print(f"[agent_stream] prior-ref carry-forward failed: {_e}")
     if carried_refs:
         refs = list(refs) + carried_refs
         print(f"[agent_stream] prior-ref carry-forward: re-attached {len(carried_refs)} ref(s) ({sorted(set(r.type for r in carried_refs if r.type))}) from prior user turn (current turn had no refs)")
 
+    _ugc_intent_re = _re.compile(
+        r"\b(?:"
+        r"ugc|create\s+(?:a\s+)?(?:ugc\s+)?ad|product\s+showcase|anuncio\s+ugc|"
+        r"video\s+for\s+(?:my\s+)?product|make\s+(?:a\s+)?(?:ugc\s+)?video|"
+        r"crear\s+(?:un\s+)?(?:anuncio|video)\s+ugc"
+        r")\b",
+        _re.IGNORECASE,
+    )
+    _product_shots_intent_re = _re.compile(
+        r"\b(?:"
+        r"generate(?:\s+\d+)?\s+product\s+shots|product\s+shots|"
+        r"generar(?:\s+\d+)?\s+tomas?\s+de\s+producto|tomas?\s+de\s+producto"
+        r")\b",
+        _re.IGNORECASE,
+    )
+    _has_product_ref = any(r.type == "product" for r in refs)
+    _has_creator_ref = any(r.type in ("influencer", "clone") for r in refs)
+
+    bulk_reminder: Optional[str] = None
+    if session_has_multi_video_intent(brief, _prior_turns_all):
+        bulk_reminder = (
+            "[MULTI-VIDEO REQUEST — the user wants MORE THAN ONE video. Dispatch via ONE bulk tool, "
+            "NEVER N separate single-video calls (the engine de-dupes near-identical single calls, so "
+            "only ONE would launch). UGC -> create_bulk_campaign (scripts[] one per video, or count). "
+            "AI Clone -> create_bulk_clone (scripts[] or count). Cinematic -> if the user has NOT specified the "
+            "format/length in the brief, FIRST confirm aspect ratio (end the message with [[ASPECT_BUTTONS]]) and, "
+            "if still missing, duration (end with [[DURATION_BUTTONS]]) — one marker per message, exactly as for a "
+            "single cinematic ad — BEFORE create_cinematic_ad stage='propose'; then ONE create_cinematic_ad "
+            "stage='bulk' with directions=[...]. ONE batched cost chip; on "
+            "Confirm all N jobs launch at once.]"
+        )
+
+    def _session_is_product_shots() -> bool:
+        if _product_shots_intent_re.search(brief):
+            return True
+        for _past in _prior_turns_all:
+            if _past.get("role") == "user" and _product_shots_intent_re.search(_past.get("text") or ""):
+                return True
+        return False
+
+    _is_product_shots_session = _session_is_product_shots()
+    asset_selection_reminder: Optional[str] = None
+    if not _has_product_ref and (_ugc_intent_re.search(brief) or _product_shots_intent_re.search(brief) or CAMPAIGN_INTENT_RE.search(brief)):
+        asset_selection_reminder = (
+            "[ASSET PICKER — user has not chosen a product yet. Reply with ONE short question "
+            "ending with the literal marker [[PRODUCT_SELECTOR]] on the last line. The frontend "
+            "renders a visual product grid — do NOT list product names in prose. Do NOT ask about "
+            "influencer, script, or duration in the same message.]"
+        )
+    elif _has_product_ref and not _has_creator_ref and _is_product_shots_session:
+        asset_selection_reminder = (
+            "[PRODUCT SHOTS — product is chosen (see Referenced assets). Call generate_product_shots "
+            "with the product image_url from the preface. Do NOT ask for an influencer. "
+            "Do NOT use [[CREATOR_SELECTOR]]. Proceed to the cost confirmation gate.]"
+        )
+    elif _has_product_ref and not _has_creator_ref and not _is_product_shots_session:
+        asset_selection_reminder = (
+            "[ASSET PICKER — product is chosen (see Referenced assets). User still needs a creator. "
+            "Your ENTIRE reply must be ONE short question ending with the literal marker "
+            "[[CREATOR_SELECTOR]] on the last line — nothing else. The frontend renders Models + "
+            "AI Clones tabs with preview images. Do NOT list creator names. Do NOT ask about script "
+            "or duration yet — creator selection comes first.]"
+        )
+
     if not refs:
         prefix_lines = [engine_marker, quick_mode_marker]
         if is_edit_intent:
             prefix_lines.append(edit_reminder)
+        if asset_selection_reminder:
+            prefix_lines.append(asset_selection_reminder)
+        if bulk_reminder:
+            prefix_lines.append(bulk_reminder)
         if post_confirm_marker:
             prefix_lines.append(post_confirm_marker)
         augmented_brief = "\n\n".join(prefix_lines + [augmented_brief])
@@ -362,6 +467,10 @@ async def agent_stream(
         lines = [engine_marker, quick_mode_marker]
         if is_edit_intent:
             lines.append(edit_reminder)
+        if asset_selection_reminder:
+            lines.append(asset_selection_reminder)
+        if bulk_reminder:
+            lines.append(bulk_reminder)
         if post_confirm_marker:
             lines.append(post_confirm_marker)
         lines.append("")
