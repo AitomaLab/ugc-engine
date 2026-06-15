@@ -103,7 +103,10 @@ function InfluencersTab() {
             setInfluencers([]);
             return;
         }
-        if (!activeProject?.id) return;
+        if (!activeProject?.id) {
+            setLoading(false);
+            return;
+        }
         loadData();
     }, [authLoading, session, activeProject?.id, loadData]);
 

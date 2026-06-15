@@ -632,7 +632,12 @@ export default function InfluencersPage() {
       setInfluencers([]);
       return;
     }
-    if (!activeProject?.id) return;
+    if (!activeProject?.id) {
+      // Avoid infinite "Loading..." when profile/projects are still resolving
+      // or the account has no default project yet.
+      setLoading(false);
+      return;
+    }
     fetchInfluencers();
   }, [authLoading, session, activeProject?.id, fetchInfluencers]);
 

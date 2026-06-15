@@ -33,9 +33,13 @@ async function authFetch<T>(url: string, token: string | null): Promise<T | null
     const res = await fetch(`${API_URL}${url}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.warn(`[AppProvider] ${url} returned ${res.status}`);
+      return null;
+    }
     return res.json();
-  } catch {
+  } catch (err) {
+    console.warn(`[AppProvider] ${url} failed:`, err);
     return null;
   }
 }
@@ -59,9 +63,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
     getSession();
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session);
-      if (!session) {
+      // Only wipe scoped state on explicit sign-out — not on transient null
+      // sessions during token refresh or INITIAL_SESSION races.
+      if (event === 'SIGNED_OUT') {
         setProfile(null);
         setProjects([]);
         setActiveProjectState(null);
@@ -129,7 +135,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
 
     if (resolvedProfile) setProfile(resolvedProfile);
-    if (resolvedProjects) {
+    if (resolvedProjects && resolvedProjects.length > 0) {
       setProjects(resolvedProjects);
       // Restore active project from localStorage
       const storedId = typeof window !== 'undefined' ? localStorage.getItem('activeProjectId') : null;
@@ -141,6 +147,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (restored && typeof window !== 'undefined') {
         localStorage.setItem('activeProjectId', restored.id);
       }
+    } else if (resolvedProjects) {
+      setProjects([]);
+      setActiveProjectState(null);
     }
     if (subData) setSubscription(subData);
     if (resolvedWallet) setWallet(resolvedWallet);
