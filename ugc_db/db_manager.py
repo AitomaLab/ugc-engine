@@ -703,6 +703,49 @@ def add_credits(user_id: str, amount: int, tx_type: str, description: str, metad
 # Scoped Asset Queries — user_id + project_id filtered
 # ---------------------------------------------------------------------------
 
+def _find_template_admin_project_id(sb) -> str | None:
+    """Locate the project that holds the global influencer template roster.
+
+    Primary anchor: an influencer named 'Lila'. Falls back to the admin user's
+    first project, then the project with the most influencer rows.
+    """
+    admin_inf = sb.table("influencers").select("project_id").eq("name", "Lila").limit(1).execute().data
+    if admin_inf and admin_inf[0].get("project_id"):
+        return admin_inf[0]["project_id"]
+
+    admin_email = os.getenv("ADMIN_EMAIL", "")
+    if admin_email:
+        prof = sb.table("profiles").select("id").eq("email", admin_email).limit(1).execute().data
+        if prof:
+            admin_uid = prof[0]["id"]
+            projects = (
+                sb.table("projects")
+                .select("id")
+                .eq("user_id", admin_uid)
+                .order("created_at")
+                .limit(1)
+                .execute()
+                .data
+            )
+            if projects:
+                print(f"  [seed] Lila anchor missing — using admin project for {admin_email}")
+                return projects[0]["id"]
+
+    all_rows = sb.table("influencers").select("project_id").execute().data or []
+    counts: dict[str, int] = {}
+    for row in all_rows:
+        pid = row.get("project_id")
+        if pid:
+            counts[pid] = counts.get(pid, 0) + 1
+    if counts:
+        best_pid = max(counts, key=counts.get)
+        print(f"  [seed] Lila anchor missing — using project with {counts[best_pid]} template influencers")
+        return best_pid
+
+    print("  [seed] ERROR: No template admin project found — cannot seed default influencers")
+    return None
+
+
 def seed_default_influencers(user_id: str, project_id: str):
     """
     Auto-populates a new/empty project with the base template influencers.
@@ -715,12 +758,9 @@ def seed_default_influencers(user_id: str, project_id: str):
     """
     sb = get_supabase()
 
-    # Locate the admin project by finding where the 'Lila' template lives.
-    admin_inf = sb.table("influencers").select("project_id").eq("name", "Lila").limit(1).execute().data
-    if not admin_inf or not admin_inf[0].get("project_id"):
+    admin_pid = _find_template_admin_project_id(sb)
+    if not admin_pid:
         return
-
-    admin_pid = admin_inf[0]["project_id"]
 
     # Don't seed if this IS the admin project querying itself
     if project_id == admin_pid:
@@ -754,6 +794,9 @@ def seed_default_influencers(user_id: str, project_id: str):
 
     if clones:
         sb.table("influencers").insert(clones).execute()
+        print(f"  [seed] Cloned {len(clones)} template influencers into project {project_id[:8]}...")
+    else:
+        print(f"  [seed] WARN: Admin project {admin_pid[:8]}... had no cloneable influencers")
 
 def list_influencers_scoped(user_id: str, project_id: str):
     sb = get_supabase()
@@ -769,6 +812,11 @@ def list_influencers_scoped(user_id: str, project_id: str):
         seed_default_influencers(user_id, project_id)
         # Fetch again after seeding
         data = sb.table("influencers").select("*").eq("user_id", user_id).eq("project_id", project_id).execute().data
+        if not data:
+            print(
+                f"  [influencers] Seed left project {project_id[:8]}... empty "
+                f"for user {user_id[:8]}..."
+            )
     return data
 
 def list_scripts_scoped(user_id: str, project_id: str, **filters):

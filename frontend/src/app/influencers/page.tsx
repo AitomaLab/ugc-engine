@@ -8,6 +8,7 @@ import { InfluencerModal } from '@/app/library/InfluencerModal';
 import Select from '@/components/ui/Select';
 import { useProgressiveList } from '@/hooks/useProgressiveList';
 import { useTranslation } from '@/lib/i18n';
+import { useApp } from '@/providers/AppProvider';
 
 // IDs of looks currently being generated (polling for completion)
 const pendingLookIds = new Set<string>();
@@ -605,6 +606,7 @@ function AiClonesTab() {
 
 export default function InfluencersPage() {
   const { t } = useTranslation();
+  const { session, activeProject, isLoading: authLoading } = useApp();
   const [influencers, setInfluencers] = useState<Influencer[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -614,21 +616,25 @@ export default function InfluencersPage() {
   const [activeTab, setActiveTab] = useState<'influencers' | 'ai_clones'>('influencers');
 
   const fetchInfluencers = useCallback(async () => {
+    if (!activeProject?.id) return;
+    setLoading(true);
     try {
       const data = await apiFetch<Influencer[]>('/influencers');
       setInfluencers(data);
     } catch (e) { console.error(e); }
     setLoading(false);
-  }, []);
+  }, [activeProject?.id]);
 
-  useEffect(() => { fetchInfluencers(); }, [fetchInfluencers]);
-
-  // Re-fetch when user switches projects
   useEffect(() => {
-    const handler = () => { setLoading(true); fetchInfluencers(); };
-    window.addEventListener('projectChanged', handler);
-    return () => window.removeEventListener('projectChanged', handler);
-  }, [fetchInfluencers]);
+    if (authLoading) return;
+    if (!session) {
+      setLoading(false);
+      setInfluencers([]);
+      return;
+    }
+    if (!activeProject?.id) return;
+    fetchInfluencers();
+  }, [authLoading, session, activeProject?.id, fetchInfluencers]);
 
   async function handleDelete(id: string) {
     if (!confirm('Delete this influencer? This cannot be undone.')) return;

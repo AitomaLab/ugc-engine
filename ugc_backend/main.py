@@ -542,7 +542,18 @@ def _resolve_project_id(request: Request, user: dict | None) -> str | None:
     if request.headers.get("x-skip-project-scope"):
         return None
     pid = request.headers.get("x-project-id")
-    if pid:
+    if pid and user:
+        user_projects = list_projects(user["id"])
+        owned_ids = {p["id"] for p in (user_projects or [])}
+        if pid in owned_ids:
+            return pid
+        # Stale X-Project-Id from another account/session — ignore and fall back
+        print(
+            f"  [scope] Ignoring foreign X-Project-Id {pid[:8]}... "
+            f"for user {user['id'][:8]}..."
+        )
+        pid = None
+    elif pid:
         return pid
     if user:
         user_projects = list_projects(user["id"])
@@ -1581,6 +1592,19 @@ def api_list_influencers(request: Request, user: dict = Depends(get_optional_use
         pid = _resolve_project_id(request, user)
         if pid:
             return list_influencers_scoped(user["id"], pid)
+        if not request.headers.get("x-skip-project-scope"):
+            # Last-chance default project (covers signup-trigger race before
+            # the frontend has activeProjectId in localStorage).
+            user_projects = list_projects(user["id"])
+            if user_projects:
+                default_proj = next(
+                    (p for p in user_projects if p.get("is_default")),
+                    user_projects[0],
+                )
+                return list_influencers_scoped(user["id"], default_proj["id"])
+            print(
+                f"  [influencers] User {user['id'][:8]}... has no project yet — skipping seed"
+            )
         # Skip-scope: list influencers across ALL of the user's projects
         sb = get_supabase()
         return sb.table("influencers").select("*").eq("user_id", user["id"]).execute().data or []

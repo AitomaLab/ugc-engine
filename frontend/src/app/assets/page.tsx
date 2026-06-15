@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { apiFetch } from '@/lib/utils';
+import { useApp } from '@/providers/AppProvider';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -79,20 +80,32 @@ export default function AssetsPage() {
 // Influencers Tab
 // ===========================================================================
 function InfluencersTab() {
+    const { session, activeProject, isLoading: authLoading } = useApp();
     const [influencers, setInfluencers] = useState<Influencer[]>([]);
     const [loading, setLoading] = useState(true);
     const [showForm, setShowForm] = useState(false);
     const [form, setForm] = useState({ name: '', description: '', personality: '', style: '', speaking_style: '', target_audience: '', image_url: '', elevenlabs_voice_id: '' });
 
     const loadData = useCallback(async () => {
+        if (!activeProject?.id) return;
+        setLoading(true);
         try {
             const data = await apiFetch<Influencer[]>('/influencers');
             setInfluencers(data);
         } catch (e) { console.error(e); }
         setLoading(false);
-    }, []);
+    }, [activeProject?.id]);
 
-    useEffect(() => { loadData(); }, [loadData]);
+    useEffect(() => {
+        if (authLoading) return;
+        if (!session) {
+            setLoading(false);
+            setInfluencers([]);
+            return;
+        }
+        if (!activeProject?.id) return;
+        loadData();
+    }, [authLoading, session, activeProject?.id, loadData]);
 
     const handleCreate = async () => {
         try {

@@ -67,6 +67,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setActiveProjectState(null);
         setSubscription(null);
         setWallet(null);
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('activeProjectId');
+        }
       }
     });
 
@@ -87,36 +90,57 @@ export function AppProvider({ children }: { children: ReactNode }) {
     ]);
 
     // Race condition guard: on signup the Supabase auth session is ready
-    // before the handle_new_user DB trigger finishes creating the profile
-    // and wallet rows. Retry a few times with a delay to let the trigger
-    // complete rather than rendering a ghost "User" state.
+    // before the handle_new_user DB trigger finishes creating the profile,
+    // wallet, and default project rows. Retry a few times with a delay to let
+    // the trigger complete rather than rendering a ghost "User" state.
     let resolvedProfile = profileData;
     let resolvedWallet = walletData;
+    let resolvedProjects = projectsData;
     if (!resolvedProfile && token) {
       for (let attempt = 1; attempt <= 3; attempt++) {
         await new Promise(r => setTimeout(r, 1000));
-        const [retryProfile, retryWallet] = await Promise.all([
+        const [retryProfile, retryWallet, retryProjects] = await Promise.all([
           authFetch<UserProfile>('/api/profile', token),
           authFetch<CreditWallet>('/api/wallet', token),
+          authFetch<Project[]>('/api/projects', token),
         ]);
         if (retryProfile) {
           resolvedProfile = retryProfile;
           resolvedWallet = retryWallet || resolvedWallet;
+          resolvedProjects = retryProjects || resolvedProjects;
+          break;
+        }
+        if (retryProjects && retryProjects.length > 0) {
+          resolvedProjects = retryProjects;
+        }
+      }
+    }
+
+    // Profile may exist while the default project is still being created.
+    if (resolvedProfile && (!resolvedProjects || resolvedProjects.length === 0) && token) {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        await new Promise(r => setTimeout(r, 1000));
+        const retryProjects = await authFetch<Project[]>('/api/projects', token);
+        if (retryProjects && retryProjects.length > 0) {
+          resolvedProjects = retryProjects;
           break;
         }
       }
     }
 
     if (resolvedProfile) setProfile(resolvedProfile);
-    if (projectsData) {
-      setProjects(projectsData);
+    if (resolvedProjects) {
+      setProjects(resolvedProjects);
       // Restore active project from localStorage
       const storedId = typeof window !== 'undefined' ? localStorage.getItem('activeProjectId') : null;
-      const restored = projectsData.find(p => p.id === storedId)
-        || projectsData.find(p => p.is_default)
-        || projectsData[0]
+      const restored = resolvedProjects.find(p => p.id === storedId)
+        || resolvedProjects.find(p => p.is_default)
+        || resolvedProjects[0]
         || null;
       setActiveProjectState(restored);
+      if (restored && typeof window !== 'undefined') {
+        localStorage.setItem('activeProjectId', restored.id);
+      }
     }
     if (subData) setSubscription(subData);
     if (resolvedWallet) setWallet(resolvedWallet);
