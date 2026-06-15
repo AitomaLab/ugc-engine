@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
-import { apiFetch } from '@/lib/utils';
+import { apiFetch, dedupeInfluencersByName } from '@/lib/utils';
 import { Influencer } from '@/lib/types';
 import { InfluencerModal } from '@/app/library/InfluencerModal';
 import Select from '@/components/ui/Select';
@@ -649,7 +649,7 @@ export default function InfluencersPage() {
     } catch (err) { console.error('Delete error:', err); }
   }
 
-  const filtered = influencers.filter(inf =>
+  const filtered = dedupeInfluencersByName(influencers).filter(inf =>
     inf.name.toLowerCase().includes(search.toLowerCase()) &&
     (genderFilter === '' || inf.gender === genderFilter)
   );

@@ -6,6 +6,7 @@ This avoids IPv6/TCP connection issues from Windows by using
 the Supabase REST API (PostgREST) instead of raw PostgreSQL.
 """
 import os
+import threading
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 
@@ -703,6 +704,45 @@ def add_credits(user_id: str, amount: int, tx_type: str, description: str, metad
 # Scoped Asset Queries — user_id + project_id filtered
 # ---------------------------------------------------------------------------
 
+_seed_locks: dict[str, threading.Lock] = {}
+_seed_locks_guard = threading.Lock()
+
+
+def _seed_lock_for(user_id: str, project_id: str) -> threading.Lock:
+    key = f"{user_id}:{project_id}"
+    with _seed_locks_guard:
+        if key not in _seed_locks:
+            _seed_locks[key] = threading.Lock()
+        return _seed_locks[key]
+
+
+def _is_unique_violation(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "23505" in text or "duplicate key" in text or "unique constraint" in text
+
+
+def _insert_influencer_clones(sb, clones: list[dict]) -> int:
+    """Insert seed clones; skip rows blocked by per-project name uniqueness."""
+    if not clones:
+        return 0
+    try:
+        sb.table("influencers").insert(clones).execute()
+        return len(clones)
+    except Exception as bulk_err:
+        if not _is_unique_violation(bulk_err):
+            raise
+    inserted = 0
+    for clone in clones:
+        try:
+            sb.table("influencers").insert(clone).execute()
+            inserted += 1
+        except Exception as row_err:
+            if _is_unique_violation(row_err):
+                continue
+            raise
+    return inserted
+
+
 def _find_template_admin_project_id(sb) -> str | None:
     """Locate the project that holds the global influencer template roster.
 
@@ -756,47 +796,60 @@ def seed_default_influencers(user_id: str, project_id: str):
     production. 'Lila' is the universal sentinel present in every template
     project (104 templates / project as of 2026-05) and is the stable anchor.
     """
-    sb = get_supabase()
+    lock = _seed_lock_for(user_id, project_id)
+    with lock:
+        sb = get_supabase()
 
-    admin_pid = _find_template_admin_project_id(sb)
-    if not admin_pid:
-        return
+        admin_pid = _find_template_admin_project_id(sb)
+        if not admin_pid:
+            return
 
-    # Don't seed if this IS the admin project querying itself
-    if project_id == admin_pid:
-        return
+        # Don't seed if this IS the admin project querying itself
+        if project_id == admin_pid:
+            return
 
-    # Idempotency guard: if ANY influencer already exists in this user's
-    # project, skip the seed entirely. Two concurrent callers (e.g. the
-    # onboarding modal + the project agent panel both firing /influencers
-    # on a fresh login) would otherwise each insert a fresh batch of 26
-    # templates, leaving 2–4× duplicates of every name (Mateo×4, Lila×4 …).
-    existing = sb.table("influencers").select("id").eq("user_id", user_id).eq("project_id", project_id).limit(1).execute().data
-    if existing:
-        return
+        # Idempotency guard: if ANY influencer already exists in this user's
+        # project, skip the seed entirely. Two concurrent callers (e.g. the
+        # onboarding modal + the project agent panel both firing /influencers
+        # on a fresh login) would otherwise each insert a fresh batch of 26
+        # templates, leaving 2–4× duplicates of every name (Mateo×4, Lila×4 …).
+        existing = (
+            sb.table("influencers")
+            .select("id")
+            .eq("user_id", user_id)
+            .eq("project_id", project_id)
+            .limit(1)
+            .execute()
+            .data
+        )
+        if existing:
+            return
 
-    template_infs = sb.table("influencers").select("*").eq("project_id", admin_pid).execute().data
+        template_infs = sb.table("influencers").select("*").eq("project_id", admin_pid).execute().data
 
-    exclude_names = {"meg", "max", "naiara"}
-    clones = []
+        exclude_names = {"meg", "max", "naiara"}
+        clones = []
 
-    for inf in template_infs:
-        inf_name = inf.get("name", "")
-        if inf_name.lower() in exclude_names:
-            continue
+        for inf in template_infs:
+            inf_name = inf.get("name", "")
+            if inf_name.lower() in exclude_names:
+                continue
 
-        clone = dict(inf)
-        clone.pop("id", None)
-        clone.pop("created_at", None)
-        clone["user_id"] = user_id
-        clone["project_id"] = project_id
-        clones.append(clone)
+            clone = dict(inf)
+            clone.pop("id", None)
+            clone.pop("created_at", None)
+            clone["user_id"] = user_id
+            clone["project_id"] = project_id
+            clones.append(clone)
 
-    if clones:
-        sb.table("influencers").insert(clones).execute()
-        print(f"  [seed] Cloned {len(clones)} template influencers into project {project_id[:8]}...")
-    else:
-        print(f"  [seed] WARN: Admin project {admin_pid[:8]}... had no cloneable influencers")
+        if clones:
+            inserted = _insert_influencer_clones(sb, clones)
+            print(
+                f"  [seed] Cloned {inserted}/{len(clones)} template influencers "
+                f"into project {project_id[:8]}..."
+            )
+        else:
+            print(f"  [seed] WARN: Admin project {admin_pid[:8]}... had no cloneable influencers")
 
 def list_influencers_scoped(user_id: str, project_id: str):
     sb = get_supabase()

@@ -1625,8 +1625,12 @@ def api_create_influencer(data: InfluencerCreate, request: Request, user: dict =
         if user:
             payload["user_id"] = user["id"]
             pid = _resolve_project_id(request, user)
-            if pid:
-                payload["project_id"] = pid
+            if not pid:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No active project scope. Select a project before creating an influencer.",
+                )
+            payload["project_id"] = pid
             print(f"  [DEBUG] CREATE INFLUENCER: user={user['id']}, project_id={pid}, payload_keys={list(payload.keys())}")
         else:
             print(f"  [DEBUG] CREATE INFLUENCER: NO USER (unauthenticated)")

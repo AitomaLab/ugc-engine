@@ -1,7 +1,7 @@
 ﻿'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { apiFetch } from '@/lib/utils';
+import { apiFetch, dedupeInfluencersByName } from '@/lib/utils';
 import { useApp } from '@/providers/AppProvider';
 
 // ---------------------------------------------------------------------------
@@ -129,10 +129,12 @@ function InfluencersTab() {
 
     if (loading) return <div className="text-[#4A5568] animate-pulse">Loading influencers...</div>;
 
+    const visibleInfluencers = dedupeInfluencersByName(influencers);
+
     return (
         <div>
             <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-semibold text-white">{influencers.length} Influencers</h2>
+                <h2 className="text-xl font-semibold text-white">{visibleInfluencers.length} Influencers</h2>
                 <button onClick={() => setShowForm(!showForm)} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium transition-all">
                     {showForm ? 'Cancel' : '+ Add Influencer'}
                 </button>
@@ -155,7 +157,7 @@ function InfluencersTab() {
             )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {influencers.map((inf) => (
+                {visibleInfluencers.map((inf) => (
                     <div key={inf.id} className="glass-panel rounded-xl p-5 flex gap-4 glow-hover transition-all">
                         {inf.image_url ? (
                             <img src={inf.image_url} alt={inf.name} className="w-16 h-16 rounded-full object-cover border-2 border-[#E8ECF4]" />
@@ -172,7 +174,7 @@ function InfluencersTab() {
                 ))}
             </div>
 
-            {influencers.length === 0 && <p className="text-[#94A3B8] text-center py-12">No influencers yet. Add your first one above.</p>}
+            {visibleInfluencers.length === 0 && <p className="text-[#94A3B8] text-center py-12">No influencers yet. Add your first one above.</p>}
         </div>
     );
 }

@@ -15,6 +15,36 @@ export function getApiUrl(): string {
     return API_URL;
 }
 
+/** Lowercase slug for deduping influencer names in UI lists. */
+export function slugifyName(s: string): string {
+    return (s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+}
+
+/**
+ * Collapse duplicate influencer rows that share the same name within a project.
+ * Prefers the row with an image_url when duplicates exist (matches AgentPanel).
+ */
+export function dedupeInfluencersByName<T extends { name?: string | null; image_url?: string | null }>(
+    rows: T[],
+): T[] {
+    const byTag = new Map<string, T>();
+    for (const row of rows) {
+        const tag = slugifyName(row.name || '');
+        if (!tag) continue;
+        const prev = byTag.get(tag);
+        if (!prev) {
+            byTag.set(tag, row);
+            continue;
+        }
+        const prevImg = prev.image_url?.trim();
+        const rowImg = row.image_url?.trim();
+        if (!prevImg && rowImg) {
+            byTag.set(tag, row);
+        }
+    }
+    return Array.from(byTag.values());
+}
+
 /**
  * Get the current auth token from Supabase session.
  * Returns the JWT access_token or null if not authenticated.
