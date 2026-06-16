@@ -11,8 +11,8 @@ if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
 if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
-from fastapi import FastAPI, HTTPException, Query, Depends, Request
-from pydantic import BaseModel
+from fastapi import FastAPI, HTTPException, Query, Depends, Request, BackgroundTasks
+from pydantic import BaseModel, model_validator
 from typing import List, Optional
 from fastapi.middleware.cors import CORSMiddleware
 import os
@@ -1660,8 +1660,34 @@ def api_create_influencer(data: InfluencerCreate, request: Request, user: dict =
             threading.Thread(target=_analyze_setting, daemon=True).start()
 
         return result
+    except HTTPException:
+        raise
     except Exception as e:
-        if "duplicate" in str(e).lower() or "unique" in str(e).lower():
+        msg = str(e)
+        is_dupe = "duplicate" in msg.lower() or "unique" in msg.lower() or "23505" in msg
+        if is_dupe:
+            # An influencer with this name already exists in the same project
+            # (unique constraint influencers_project_name_key on
+            # (project_id, name)). Re-saving the same name — e.g. re-adding
+            # "Maria" with new images after a delete that didn't take — should
+            # refresh the existing record instead of hard-failing. Only ever
+            # update a row the caller owns (or an unscoped row when anonymous).
+            try:
+                name_val = payload.get("name")
+                proj_id = payload.get("project_id")
+                q = get_supabase().table("influencers").select("id").eq("name", name_val)
+                q = q.eq("project_id", proj_id) if proj_id else q.is_("project_id", "null")
+                if payload.get("user_id"):
+                    q = q.eq("user_id", payload["user_id"])
+                existing = q.limit(1).execute().data or []
+                if existing:
+                    update_payload = {k: v for k, v in payload.items() if k not in ("user_id", "project_id")}
+                    updated = update_influencer(existing[0]["id"], update_payload)
+                    if updated:
+                        print(f"  [DEBUG] Influencer '{name_val}' already existed in project — updated id={existing[0]['id']}")
+                        return updated
+            except Exception as inner:
+                print(f"  [WARN] influencer create→update fallback failed: {inner}")
             raise HTTPException(status_code=409, detail=f"Influencer '{data.name}' already exists")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -3168,60 +3194,300 @@ def api_refund_job(job_id: str, user: dict = Depends(get_current_user)):
 import hashlib
 import hmac
 from ugc_backend import ayrshare_client
+from ugc_backend.schedule_media import prepare_image_url_for_ayrshare
+from ugc_backend.analytics import studio_service as analytics_studio_service
 
 
 # ---------------------------------------------------------------------------
 # JWT — Generate Ayrshare OAuth popup URL
 # ---------------------------------------------------------------------------
 
-@app.post("/api/ayrshare/jwt")
-async def api_ayrshare_jwt(user: dict = Depends(get_current_user)):
-    """Generate a JWT URL to open the Ayrshare social-account linking popup."""
-    sb = get_supabase()
-    user_id = user["id"]
+def _strip_missing_ayrshare_columns(payload: dict, err: Exception) -> bool:
+    """Drop optional columns PostgREST rejects (PGRST204 schema cache miss)."""
+    msg = str(err).lower()
+    if "pgrst204" not in msg and "could not find" not in msg:
+        return False
+    for col in ("updated_at", "ayrshare_ref_id", "connected_accounts"):
+        if col in payload and col in msg:
+            payload.pop(col, None)
+            return True
+    return False
 
-    # Check if user already has an Ayrshare profile
-    row = sb.table("ayrshare_profiles").select("ayrshare_profile_key").eq("user_id", user_id).execute()
 
-    if row.data:
-        profile_key = row.data[0]["ayrshare_profile_key"]
-        print(f"[Ayrshare] Found existing profile key: {profile_key[:20]}...")
-    else:
-        # Create a new Ayrshare sub-profile
+def _upsert_ayrshare_profile_row(sb, payload: dict) -> None:
+    data = dict(payload)
+    while True:
         try:
-            print(f"[Ayrshare] Creating new profile for user {user_id}")
-            profile_resp = await ayrshare_client.create_profile(user_id)
-            print(f"[Ayrshare] create_profile response: {profile_resp}")
-            profile_key = profile_resp.get("profileKey")
-            if not profile_key:
-                raise HTTPException(status_code=502, detail=f"Ayrshare did not return a profileKey. Response: {profile_resp}")
-            sb.table("ayrshare_profiles").insert({
-                "user_id": user_id,
-                "ayrshare_profile_key": profile_key,
-            }).execute()
-            print(f"[Ayrshare] Saved profile key: {profile_key}")
-        except HTTPException:
-            raise
+            sb.table("ayrshare_profiles").upsert(data, on_conflict="user_id").execute()
+            return
         except Exception as e:
-            import traceback
-            traceback.print_exc()
-            raise HTTPException(status_code=502, detail=f"Failed to create Ayrshare profile: {e}")
+            if not _strip_missing_ayrshare_columns(data, e):
+                raise
 
-    # Generate JWT URL
+
+def _update_ayrshare_profile_row(sb, payload: dict, **filters) -> None:
+    data = dict(payload)
+    while True:
+        try:
+            q = sb.table("ayrshare_profiles").update(data)
+            for key, val in filters.items():
+                q = q.eq(key, val)
+            q.execute()
+            return
+        except Exception as e:
+            if not _strip_missing_ayrshare_columns(data, e):
+                raise
+
+
+def _strip_missing_social_post_columns(payload: dict, err: Exception) -> bool:
+    """Drop optional columns missing from ``social_posts`` (PGRST204)."""
+    msg = str(err).lower()
+    if "pgrst204" not in msg and "could not find" not in msg:
+        return False
+    for col in ("updated_at", "posted_at", "media_kind", "product_shot_id", "error_message"):
+        if col in payload and col in msg:
+            payload.pop(col, None)
+            return True
+    return False
+
+
+def _update_social_post_row(sb, payload: dict, **filters) -> None:
+    data = dict(payload)
+    while True:
+        try:
+            q = sb.table("social_posts").update(data)
+            for key, val in filters.items():
+                q = q.eq(key, val)
+            q.execute()
+            return
+        except Exception as e:
+            if not _strip_missing_social_post_columns(data, e):
+                raise
+
+
+async def _save_ayrshare_profile(
+    sb,
+    user_id: str,
+    profile_key: str,
+    ref_id: str | None = None,
+) -> None:
+    payload: dict = {
+        "user_id": user_id,
+        "ayrshare_profile_key": profile_key,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if ref_id:
+        payload["ayrshare_ref_id"] = ref_id
+    _upsert_ayrshare_profile_row(sb, payload)
+
+
+def _select_ayrshare_profile(sb, user_id: str) -> dict | None:
+    """Load the user's Ayrshare row; tolerate missing ``ayrshare_ref_id`` column."""
+    for columns in ("ayrshare_profile_key, ayrshare_ref_id", "ayrshare_profile_key"):
+        try:
+            res = (
+                sb.table("ayrshare_profiles")
+                .select(columns)
+                .eq("user_id", user_id)
+                .limit(1)
+                .execute()
+            )
+            if res.data:
+                return res.data[0]
+            return None
+        except Exception as e:
+            if columns == "ayrshare_profile_key":
+                raise
+            if "ayrshare_ref_id" not in str(e).lower():
+                raise
+    return None
+
+
+async def _profile_has_linked_accounts(user_id: str, ref_id: str | None) -> bool:
+    if not ref_id:
+        block = await ayrshare_client.get_profile_by_title(user_id)
+    else:
+        block = await ayrshare_client.get_profile_by_ref_id(ref_id)
+    return ayrshare_client._profile_has_linked_socials(block)
+
+
+async def _reset_orphaned_ayrshare_profile(user_id: str, sb, ref_id: str | None) -> None:
+    """Drop an Ayrshare sub-profile we can no longer authenticate when it has
+    no linked social accounts — then callers can mint a fresh profileKey."""
+    if await _profile_has_linked_accounts(user_id, ref_id):
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Your Ayrshare profile exists but its credentials are out of sync. "
+                "Please contact support — we cannot auto-recover linked accounts."
+            ),
+        )
     try:
-        print(f"[Ayrshare] Generating JWT for profile_key: {profile_key[:20]}...")
-        jwt_resp = await ayrshare_client.generate_jwt(profile_key)
-        print(f"[Ayrshare] generate_jwt response: {jwt_resp}")
-        url = jwt_resp.get("url")
-        if not url:
-            raise HTTPException(status_code=502, detail=f"Ayrshare did not return a JWT URL. Response: {jwt_resp}")
-        return {"url": url}
+        await ayrshare_client.delete_profile_by_title(user_id)
+    except Exception as e:
+        print(f"[Ayrshare] delete_profile_by_title failed for {user_id}: {e}")
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to reset orphaned Ayrshare profile. Please try again.",
+        ) from e
+    sb.table("ayrshare_profiles").delete().eq("user_id", user_id).execute()
+
+
+async def _provision_ayrshare_profile(user_id: str, sb) -> str:
+    """Create a fresh Ayrshare sub-profile for the user and persist its keys
+    in ``ayrshare_profiles``. Returns the profileKey.
+
+    Avoids duplicate profiles by checking title first and only deleting an
+    orphaned remote profile (no linked socials) when the stored profileKey
+    is invalid and cannot be retrieved from Ayrshare."""
+    try:
+        print(f"[Ayrshare] Creating new profile for user {user_id}")
+        profile_resp = await ayrshare_client.create_profile(user_id)
+        print(f"[Ayrshare] create_profile response: {profile_resp}")
+        profile_key = profile_resp.get("profileKey")
+        ref_id = profile_resp.get("refId")
+        if not profile_key:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Ayrshare did not return a profileKey. Response: {profile_resp}",
+            )
+        await _save_ayrshare_profile(sb, user_id, profile_key, ref_id)
+        print(f"[Ayrshare] Saved profile key: {profile_key[:20]}… refId: {ref_id or '(none)'}")
+        return profile_key
+    except ayrshare_client.ProfileTitleExists as e:
+        print(f"[Ayrshare] Profile title already exists for {user_id}; attempting orphan reset")
+        await _reset_orphaned_ayrshare_profile(user_id, sb, e.ref_id)
+        profile_resp = await ayrshare_client.create_profile(user_id)
+        profile_key = profile_resp.get("profileKey")
+        ref_id = profile_resp.get("refId")
+        if not profile_key:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Ayrshare did not return a profileKey. Response: {profile_resp}",
+            )
+        await _save_ayrshare_profile(sb, user_id, profile_key, ref_id)
+        return profile_key
     except HTTPException:
         raise
     except Exception as e:
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=502, detail=f"Failed to generate JWT: {e}")
+        raise HTTPException(status_code=502, detail=f"Failed to create Ayrshare profile: {e}")
+
+
+async def _ensure_ayrshare_profile(user_id: str, sb) -> tuple[str, str | None]:
+    """Return ``(profile_key, ref_id)`` for the user, provisioning if needed."""
+    row = _select_ayrshare_profile(sb, user_id)
+    if row:
+        profile_key = row["ayrshare_profile_key"]
+        ref_id = row.get("ayrshare_ref_id")
+        try:
+            user_block = await ayrshare_client.fetch_user_profile(profile_key)
+            live_ref = user_block.get("refId")
+            if live_ref and live_ref != ref_id:
+                await _save_ayrshare_profile(sb, user_id, profile_key, str(live_ref))
+                ref_id = str(live_ref)
+            return profile_key, ref_id
+        except ayrshare_client.InvalidProfileKey:
+            print(f"[Ayrshare] Stored profileKey invalid for {user_id}; checking remote title")
+            remote = await ayrshare_client.get_profile_by_title(user_id)
+            if remote:
+                await _reset_orphaned_ayrshare_profile(
+                    user_id,
+                    sb,
+                    remote.get("refId") or ref_id,
+                )
+            else:
+                sb.table("ayrshare_profiles").delete().eq("user_id", user_id).execute()
+            profile_key = await _provision_ayrshare_profile(user_id, sb)
+            refreshed = _select_ayrshare_profile(sb, user_id) or {}
+            return profile_key, refreshed.get("ayrshare_ref_id")
+
+    profile_key = await _provision_ayrshare_profile(user_id, sb)
+    refreshed = _select_ayrshare_profile(sb, user_id) or {}
+    return profile_key, refreshed.get("ayrshare_ref_id")
+
+
+def _persist_connected_accounts(sb, user_id: str, socials: list[dict]) -> None:
+    """Best-effort cache of linked platforms for webhook propagation lag."""
+    if not socials:
+        return
+    try:
+        _update_ayrshare_profile_row(
+            sb,
+            {
+                "connected_accounts": socials,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            user_id=user_id,
+        )
+    except Exception as e:
+        print(f"[Ayrshare] connected_accounts cache update skipped: {e}")
+
+
+@app.post("/api/ayrshare/jwt")
+async def api_ayrshare_jwt(request: Request, user: dict = Depends(get_current_user)):
+    """Generate a JWT URL to open the Ayrshare social-account linking popup.
+
+    Self-heals when the stored profileKey is rejected by Ayrshare (code 144,
+    "The Profile Key is invalid") — typically after an AYRSHARE_API_KEY env
+    swap to a different Ayrshare account. The old profileKey gets dropped
+    and a fresh one is provisioned, all transparent to the caller.
+    """
+    sb = get_supabase()
+    user_id = user["id"]
+
+    # Optional `redirect` from the frontend so Ayrshare returns the user to
+    # our app (its real origin) after linking instead of leaving them on the
+    # social platform's site.
+    redirect_url: str | None = None
+    try:
+        body = await request.json()
+        if isinstance(body, dict):
+            cand = body.get("redirect")
+            if isinstance(cand, str) and cand.strip():
+                redirect_url = cand.strip()
+    except Exception:
+        pass  # No/invalid body — fall back to env default inside generate_jwt.
+
+    # Check if user already has an Ayrshare profile (validates profileKey too).
+    profile_key, _ref_id = await _ensure_ayrshare_profile(user_id, sb)
+    print(f"[Ayrshare] Using profile key: {profile_key[:20]}…")
+
+    # Generate JWT URL — retry once on InvalidProfileKey by re-provisioning.
+    for attempt in (1, 2):
+        try:
+            print(f"[Ayrshare] Generating JWT for profile_key: {profile_key[:20]}... (attempt {attempt})")
+            jwt_resp = await ayrshare_client.generate_jwt(
+                profile_key,
+                redirect=redirect_url,
+                logout=True,
+            )
+            print(f"[Ayrshare] generate_jwt response: {jwt_resp}")
+            url = jwt_resp.get("url")
+            if not url:
+                raise HTTPException(status_code=502, detail=f"Ayrshare did not return a JWT URL. Response: {jwt_resp}")
+            return {"url": url}
+        except ayrshare_client.InvalidProfileKey as e:
+            if attempt == 2:
+                raise HTTPException(status_code=502, detail=f"Ayrshare rejected the re-provisioned profile key: {e}")
+            print(f"[Ayrshare] Stale profileKey detected ({e}); re-provisioning…")
+            remote = await ayrshare_client.get_profile_by_title(user_id)
+            if remote:
+                await _reset_orphaned_ayrshare_profile(
+                    user_id,
+                    sb,
+                    remote.get("refId"),
+                )
+            else:
+                sb.table("ayrshare_profiles").delete().eq("user_id", user_id).execute()
+            profile_key = await _provision_ayrshare_profile(user_id, sb)
+        except HTTPException:
+            raise
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            raise HTTPException(status_code=502, detail=f"Failed to generate JWT: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -3229,23 +3495,116 @@ async def api_ayrshare_jwt(user: dict = Depends(get_current_user)):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/connections")
-async def api_get_connections(user: dict = Depends(get_current_user)):
+async def api_get_connections(
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user),
+):
     """Return the user's connected social media accounts."""
     sb = get_supabase()
-    row = sb.table("ayrshare_profiles").select("ayrshare_profile_key").eq("user_id", user["id"]).execute()
+    profile_row = _select_ayrshare_profile(sb, user["id"])
 
-    if not row.data:
+    if not profile_row:
         return {"socials": []}
 
-    profile_key = row.data[0]["ayrshare_profile_key"]
-
-    # Fetch live from Ayrshare
+    profile_key = profile_row["ayrshare_profile_key"]
+    ref_id = profile_row.get("ayrshare_ref_id")
+    cached = None
     try:
-        socials = await ayrshare_client.get_user_socials(profile_key)
+        cache_row = (
+            sb.table("ayrshare_profiles")
+            .select("connected_accounts")
+            .eq("user_id", user["id"])
+            .limit(1)
+            .execute()
+        )
+        if cache_row.data:
+            cached = cache_row.data[0].get("connected_accounts")
+    except Exception:
+        cached = None
+    # Fetch live from Ayrshare (`GET /user` with Profile-Key header).
+    try:
+        socials = await ayrshare_client.get_user_socials(profile_key, ref_id=ref_id)
+        if not socials:
+            # Webhook cache fallback — populated by POST /api/webhooks/ayrshare
+            # when Ayrshare pushes a social-account change before GET /user
+            # catches up. Column may be absent on older DBs — ignore if so.
+            if isinstance(cached, list) and cached:
+                socials = [
+                    {"platform": str(item).strip().lower()}
+                    for item in cached
+                    if str(item).strip()
+                ]
+            elif isinstance(cached, dict):
+                socials = [
+                    {"platform": str(k).strip().lower(), **(v if isinstance(v, dict) else {})}
+                    for k, v in cached.items()
+                    if str(k).strip()
+                ]
+        if socials:
+            _persist_connected_accounts(sb, user["id"], socials)
+        # Keep refId in sync when /user returns it during verification.
+        try:
+            user_block = await ayrshare_client.fetch_user_profile(profile_key)
+            live_ref = user_block.get("refId")
+            if live_ref and live_ref != ref_id:
+                await _save_ayrshare_profile(sb, user["id"], profile_key, str(live_ref))
+        except ayrshare_client.InvalidProfileKey:
+            pass
+        # Trigger the Studio sync regardless of whether ``socials`` is empty —
+        # an empty list is the *exact signal* that the user just disconnected
+        # every account on Ayrshare's portal, which is when the analytics
+        # tracked-accounts table most needs reconciling. Skipping the sync on
+        # ``[]`` was the bug behind "I disconnected but it still shows in
+        # analytics" — the cleanup that drops auto-managed rows lives inside
+        # ``sync_studio_connections_for_user``.
+        if analytics_studio_service.claim_debounced_sync(user["id"]):
+            background_tasks.add_task(
+                analytics_studio_service.sync_studio_connections_for_user,
+                user["id"],
+            )
         return {"socials": socials}
+    except ayrshare_client.InvalidProfileKey as e:
+        print(f"[Ayrshare] Stale profileKey on /connections ({e}); attempting recovery.")
+        try:
+            remote = await ayrshare_client.get_profile_by_title(user["id"])
+            if remote:
+                await _reset_orphaned_ayrshare_profile(
+                    user["id"],
+                    sb,
+                    remote.get("refId") or ref_id,
+                )
+            else:
+                sb.table("ayrshare_profiles").delete().eq("user_id", user["id"]).execute()
+        except HTTPException:
+            return {"socials": []}
+        except Exception as recover_err:
+            print(f"[Ayrshare] /connections recovery failed: {recover_err}")
+        return {"socials": []}
     except Exception as e:
         print(f"[Ayrshare] Failed to fetch socials: {e}")
         return {"socials": []}
+
+
+
+def _user_owns_product_shot(sb, user_id: str, shot: Optional[dict]) -> bool:
+    """True if this product_shots row belongs to ``user_id`` (via product or project).
+
+    Workflow B shots are sometimes stored **without product_id**, linked only via
+    ``project_id`` — indexing ``shot[\"product_id\"]`` raised ``KeyError`` and
+    returned 500 instead of scheduling.
+    """
+    if not shot or not isinstance(shot, dict):
+        return False
+    product_id = shot.get("product_id")
+    if product_id:
+        product = get_product(str(product_id))
+        return bool(product and str(product.get("user_id")) == str(user_id))
+    proj_id = shot.get("project_id")
+    if proj_id:
+        pres = sb.table("projects").select("user_id").eq("id", str(proj_id)).limit(1).execute()
+        prow = (pres.data or [None])[0]
+        return bool(prow and str(prow.get("user_id")) == str(user_id))
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -3253,18 +3612,34 @@ async def api_get_connections(user: dict = Depends(get_current_user)):
 # ---------------------------------------------------------------------------
 
 class SchedulePostItem(BaseModel):
-    video_job_id: str
+    """Schedule a single video job **or** a product shot (image / animation still)."""
+    video_job_id: Optional[str] = None
+    product_shot_id: Optional[str] = None
     platforms: List[str]
     caption: Optional[str] = None
     hashtags: Optional[List[str]] = None
     scheduled_at: str  # ISO 8601 UTC
 
+    @model_validator(mode="after")
+    def _exactly_one_media_asset(self):
+        has_v = bool((self.video_job_id or "").strip())
+        has_s = bool((self.product_shot_id or "").strip())
+        if has_v == has_s:
+            raise ValueError("Each item needs exactly one of video_job_id or product_shot_id.")
+        return self
+
+
 class BulkScheduleRequest(BaseModel):
     posts: List[SchedulePostItem]
 
+
 @app.post("/api/schedule/bulk")
-async def api_schedule_bulk(data: BulkScheduleRequest, user: dict = Depends(get_current_user)):
-    """Schedule one or more videos for social media posting."""
+async def api_schedule_bulk(
+    data: BulkScheduleRequest,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user),
+):
+    """Schedule one or more videos or images for social media posting."""
     sb = get_supabase()
     user_id = user["id"]
 
@@ -3279,29 +3654,69 @@ async def api_schedule_bulk(data: BulkScheduleRequest, user: dict = Depends(get_
     failed_count = 0
 
     for post in data.posts:
-        # Validate the video job belongs to this user and has a video URL
-        job = get_job(post.video_job_id)
-        if not job or job.get("user_id") != user_id:
-            results.append({"video_job_id": post.video_job_id, "status": "failed", "error": "Video not found"})
-            failed_count += 1
-            continue
-        if not job.get("final_video_url"):
-            results.append({"video_job_id": post.video_job_id, "status": "failed", "error": "Video not ready"})
-            failed_count += 1
-            continue
+        video_jid = (post.video_job_id or "").strip() or None
+        shot_id = (post.product_shot_id or "").strip() or None
+        media_url: Optional[str] = None
+        media_kind: str = "video"
+
+        if video_jid:
+            job = get_job(video_jid)
+            if not job or job.get("user_id") != user_id:
+                results.append({"video_job_id": video_jid, "status": "failed", "error": "Video not found"})
+                failed_count += 1
+                continue
+            media_url = job.get("final_video_url")
+            if not media_url:
+                results.append({"video_job_id": video_jid, "status": "failed", "error": "Video not ready"})
+                failed_count += 1
+                continue
+        else:
+            shot = get_product_shot(shot_id)  # type: ignore[arg-type]
+            if not shot:
+                results.append({"product_shot_id": shot_id, "status": "failed", "error": "Image not found"})
+                failed_count += 1
+                continue
+            if not _user_owns_product_shot(sb, user_id, shot):
+                results.append({"product_shot_id": shot_id, "status": "failed", "error": "Image not found"})
+                failed_count += 1
+                continue
+            media_url = shot.get("image_url") or shot.get("video_url") or shot.get("result_url")
+            media_kind = "image"
+            if not media_url:
+                results.append({"product_shot_id": shot_id, "status": "failed", "error": "Image has no media URL yet"})
+                failed_count += 1
+                continue
+
+        # Instagram (via Ayrshare) rejects images > 8 MB — compress + re-host.
+        if media_kind == "image" and media_url:
+            try:
+                media_url = await prepare_image_url_for_ayrshare(media_url, user_id=user_id)
+            except Exception as e:
+                results.append({
+                    **({"video_job_id": video_jid} if video_jid else {}),
+                    **({"product_shot_id": shot_id} if shot_id else {}),
+                    "status": "failed",
+                    "error": f"Image could not be prepared for Instagram: {e}",
+                })
+                failed_count += 1
+                continue
 
         # Create one social_posts record per platform
         for platform in post.platforms:
+            social_post_id = None
             try:
-                post_record = sb.table("social_posts").insert({
+                insert_payload = {
                     "user_id": user_id,
-                    "video_job_id": post.video_job_id,
                     "status": "scheduled",
                     "platform": platform,
                     "caption": post.caption,
                     "hashtags": post.hashtags,
                     "scheduled_at": post.scheduled_at,
-                }).execute()
+                    "media_kind": media_kind,
+                    "video_job_id": video_jid,
+                    "product_shot_id": shot_id,
+                }
+                post_record = sb.table("social_posts").insert(insert_payload).execute()
 
                 social_post_id = post_record.data[0]["id"] if post_record.data else None
 
@@ -3309,21 +3724,30 @@ async def api_schedule_bulk(data: BulkScheduleRequest, user: dict = Depends(get_
                 ayrshare_data = {
                     "post": post.caption or "",
                     "platforms": [platform],
-                    "mediaUrls": [job["final_video_url"]],
+                    "mediaUrls": [media_url],
                     "scheduleDate": post.scheduled_at,
                 }
                 if post.hashtags:
                     ayrshare_data["hashTags"] = post.hashtags
 
                 ayrshare_resp = await ayrshare_client.create_post(profile_key, ayrshare_data)
-                ayrshare_post_id = ayrshare_resp.get("id")
+                ayrshare_post_id = (
+                    ayrshare_resp.get("_resolved_post_id")
+                    or ayrshare_client.extract_post_id(ayrshare_resp)
+                )
 
                 if social_post_id and ayrshare_post_id:
                     sb.table("social_posts").update({
                         "ayrshare_post_id": ayrshare_post_id,
                     }).eq("id", social_post_id).execute()
 
-                results.append({"video_job_id": post.video_job_id, "platform": platform, "social_post_id": social_post_id, "status": "scheduled"})
+                results.append({
+                    **({"video_job_id": video_jid} if video_jid else {}),
+                    **({"product_shot_id": shot_id} if shot_id else {}),
+                    "platform": platform,
+                    "social_post_id": social_post_id,
+                    "status": "scheduled",
+                })
                 scheduled_count += 1
 
             except Exception as e:
@@ -3332,8 +3756,21 @@ async def api_schedule_bulk(data: BulkScheduleRequest, user: dict = Depends(get_
                         "status": "failed",
                         "error_message": str(e),
                     }).eq("id", social_post_id).execute()
-                results.append({"video_job_id": post.video_job_id, "platform": platform, "status": "failed", "error": str(e)})
+                results.append({
+                    **({"video_job_id": video_jid} if video_jid else {}),
+                    **({"product_shot_id": shot_id} if shot_id else {}),
+                    "platform": platform,
+                    "status": "failed",
+                    "error": str(e),
+                })
                 failed_count += 1
+
+    if scheduled_count > 0:
+        analytics_studio_service.allow_immediate_sync(user_id)
+        background_tasks.add_task(
+            analytics_studio_service.sync_studio_connections_for_user,
+            user_id,
+        )
 
     return {"status": "success", "scheduled": scheduled_count, "failed": failed_count, "results": results}
 
@@ -3359,7 +3796,24 @@ def api_get_schedule(
         .order("scheduled_at", desc=False)
         .execute()
     )
-    return rows.data or []
+    enriched: List[dict] = []
+    for r in rows.data or []:
+        row = dict(r)
+        jid = row.get("video_job_id")
+        sid = row.get("product_shot_id")
+        thumb = None
+        if jid:
+            job = get_job(jid)
+            if job and job.get("user_id") == user["id"]:
+                thumb = job.get("thumbnail_url") or job.get("preview_url")
+        elif sid:
+            shot = get_product_shot(sid)
+            if shot and _user_owns_product_shot(sb, user["id"], shot):
+                thumb = shot.get("image_url") or shot.get("video_url") or shot.get("result_url")
+        if thumb:
+            row["thumbnail_url"] = thumb
+        enriched.append(row)
+    return enriched
 
 
 # ---------------------------------------------------------------------------
@@ -3378,19 +3832,31 @@ async def api_cancel_schedule(post_id: str, user: dict = Depends(get_current_use
     if post["status"] != "scheduled":
         raise HTTPException(status_code=400, detail="Can only cancel scheduled posts")
 
-    # Cancel in Ayrshare
+    # Cancel in Ayrshare first — if this fails the post may still publish and
+    # Meta will block re-scheduling the same media as a duplicate.
     if post.get("ayrshare_post_id"):
         profile_row = sb.table("ayrshare_profiles").select("ayrshare_profile_key").eq("user_id", user["id"]).execute()
         if profile_row.data:
             try:
-                await ayrshare_client.delete_post(profile_row.data[0]["ayrshare_profile_key"], post["ayrshare_post_id"])
-            except Exception:
-                pass  # Best effort — still cancel locally
+                await ayrshare_client.delete_post(
+                    profile_row.data[0]["ayrshare_profile_key"],
+                    post["ayrshare_post_id"],
+                )
+            except Exception as exc:
+                msg = str(exc).lower()
+                if "already deleted" in msg or "383" in msg:
+                    pass
+                else:
+                    print(f"[Ayrshare] delete_post on cancel failed ({post.get('ayrshare_post_id')}): {exc}")
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"Could not cancel post on Instagram/Ayrshare: {exc}",
+                    ) from exc
 
-    sb.table("social_posts").update({
+    _update_social_post_row(sb, {
         "status": "cancelled",
         "updated_at": datetime.now(timezone.utc).isoformat(),
-    }).eq("id", post_id).execute()
+    }, id=post_id)
 
     return {"status": "cancelled", "id": post_id}
 
@@ -3505,17 +3971,38 @@ async def api_ayrshare_webhook(request: Request):
                 update_data["status"] = "failed"
                 update_data["error_message"] = payload.get("errorMessage", "Unknown error")
             if "status" in update_data:
-                sb.table("social_posts").update(update_data).eq("ayrshare_post_id", ayrshare_id).execute()
+                try:
+                    _update_social_post_row(sb, update_data, ayrshare_post_id=ayrshare_id)
+                except Exception as exc:
+                    print(f"[Ayrshare] webhook social_posts update failed: {exc}")
 
     # ── Social account change ───────────────────────────────────────────
     elif action == "social":
         profile_key = payload.get("profileKey")
         accounts = payload.get("activeSocialAccounts", [])
         if profile_key:
-            sb.table("ayrshare_profiles").update({
-                "connected_accounts": accounts,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }).eq("ayrshare_profile_key", profile_key).execute()
+            try:
+                _update_ayrshare_profile_row(
+                    sb,
+                    {
+                        "connected_accounts": accounts,
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                    ayrshare_profile_key=profile_key,
+                )
+            except Exception as e:
+                print(f"[Ayrshare] webhook connected_accounts update skipped: {e}")
 
     return {"status": "ok"}
 
+
+# ===========================================================================
+# Analytics & Admin routers
+#   • analytics_router  → /api/analytics/*  (Publish-page Analytics tab)
+#   • admin_router      → /api/admin/*      (hidden gated-beta invite console)
+# ===========================================================================
+from ugc_backend.analytics.router import router as analytics_router
+app.include_router(analytics_router)
+
+from ugc_backend.admin.router import router as admin_router
+app.include_router(admin_router, prefix="/api/admin")

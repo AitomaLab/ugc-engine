@@ -106,6 +106,7 @@ async def _schedule_via_ayrshare(
     platforms: list[str],
     scheduled_at: str,
     caption: Optional[str],
+    asset_type: Optional[str] = None,
 ) -> dict:
     """Book the post with Ayrshare and write a social_posts row per platform.
     Mirrors the backend's POST /api/schedule/bulk logic but runs with service
@@ -118,8 +119,20 @@ async def _schedule_via_ayrshare(
     # Call Ayrshare once per platform list — simpler than one call per platform.
     try:
         from ugc_backend.ayrshare_client import create_post as _ayr_create
+        from ugc_backend.schedule_media import (
+            IMAGE_CAMPAIGN_ASSET_TYPES,
+            is_image_asset_url,
+            prepare_image_url_for_ayrshare,
+        )
     except Exception as e:
         return {"error": f"ayrshare client unavailable: {e}"}
+
+    is_image = (asset_type or "") in IMAGE_CAMPAIGN_ASSET_TYPES or is_image_asset_url(asset_url)
+    if is_image:
+        try:
+            asset_url = await prepare_image_url_for_ayrshare(asset_url, user_id=user_id)
+        except Exception as e:
+            return {"error": f"Image could not be prepared for scheduling: {e}"[:400]}
 
     post_payload = {
         "post": caption or "",
@@ -223,6 +236,7 @@ async def _progress_item(item: dict) -> None:
             platforms=platforms,
             scheduled_at=item.get("scheduled_at") or "",
             caption=item.get("caption"),
+            asset_type=item.get("asset_type"),
         )
         if result.get("error"):
             await update_plan_item(None, item_id, {

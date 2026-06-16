@@ -1,8 +1,10 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { apiFetch } from '@/lib/utils';
+import { syncStudioConnections } from '@/components/analytics/analytics-types';
 import type { SocialConnection } from '@/lib/types';
 import { useTranslation } from '@/lib/i18n';
 
@@ -55,55 +57,177 @@ const PLATFORMS = [
 /* ── Page Component ─────────────────────────────────────────────────────── */
 export default function ConnectionsPage() {
     const { t } = useTranslation();
+    const search = useSearchParams();
     const [socials, setSocials] = useState<SocialConnection[]>([]);
     const [loading, setLoading] = useState(true);
     const [connecting, setConnecting] = useState(false);
+    const [verifying, setVerifying] = useState(false);
+    const [refreshing, setRefreshing] = useState(false);
+    const [connectError, setConnectError] = useState<string | null>(null);
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const pollDeadlineRef = useRef<number>(0);
+    const linkedPollStartedRef = useRef(false);
+
+    const stopPolling = () => {
+        if (pollRef.current) {
+            clearInterval(pollRef.current);
+            pollRef.current = null;
+        }
+    };
 
     /* Fetch connections */
-    const fetchConnections = async () => {
+    const fetchConnections = async (opts?: { syncAnalytics?: boolean }) => {
         try {
             const data = await apiFetch<{ socials: SocialConnection[] }>('/api/connections');
             setSocials(data.socials || []);
-        } catch { /* empty */ }
-        setLoading(false);
+            // Always nudge analytics sync when asked — empty socials is the
+            // disconnect signal the backend reconciler needs, and non-empty
+            // socials is the connect signal.
+            if (opts?.syncAnalytics) {
+                syncStudioConnections().catch(() => { /* best-effort */ });
+            }
+            return data.socials || [];
+        } catch {
+            return [];
+        } finally {
+            setLoading(false);
+        }
     };
 
     useEffect(() => { fetchConnections(); }, []);
 
-    /* Clean up polling on unmount */
-    useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
+    /* Re-poll connections whenever the SaaS tab regains focus or visibility.
+     * After the user finishes linking on the Ayrshare popup and switches back
+     * to our tab, Ayrshare's `/user` endpoint usually reflects the new
+     * platform within a few seconds — refetching on focus surfaces it
+     * without forcing a hard refresh. */
+    useEffect(() => {
+        const onVisible = () => {
+            if (document.visibilityState === 'visible') {
+                void fetchConnections({ syncAnalytics: true });
+            }
+        };
+        const onFocus = () => { void fetchConnections({ syncAnalytics: true }); };
+        document.addEventListener('visibilitychange', onVisible);
+        window.addEventListener('focus', onFocus);
+        return () => {
+            document.removeEventListener('visibilitychange', onVisible);
+            window.removeEventListener('focus', onFocus);
+        };
+    }, []);
 
-    /* Handle connect click — opens Ayrshare OAuth popup */
+    /* Clean up polling on unmount */
+    useEffect(() => () => stopPolling(), []);
+
+    /** Poll Ayrshare until a new platform appears or the deadline passes.
+     *  OAuth can take 2–3 minutes to propagate — we must NOT stop polling
+     *  just because the user closed the Ayrshare tab. */
+    const startConnectionPoll = useCallback((baselinePlatforms: Set<string>) => {
+        stopPolling();
+        setVerifying(true);
+        setConnectError(null);
+        pollDeadlineRef.current = Date.now() + 180_000;
+
+        pollRef.current = setInterval(async () => {
+            try {
+                const newSocials = await fetchConnections({ syncAnalytics: true });
+                const gained = newSocials.some(
+                    (s) => !baselinePlatforms.has((s.platform || '').toLowerCase()),
+                );
+                const expired = Date.now() >= pollDeadlineRef.current;
+                if (gained) {
+                    stopPolling();
+                    setConnecting(false);
+                    setVerifying(false);
+                    return;
+                }
+                if (expired) {
+                    stopPolling();
+                    setConnecting(false);
+                    setVerifying(false);
+                    setConnectError(t('connections.linkIncomplete'));
+                }
+            } catch { /* keep polling until deadline */ }
+        }, 3000);
+    }, [t]);
+
+    /* When Ayrshare redirects back after linking (?linked=1), start polling
+     * even if Connect wasn't clicked in this tab session. */
+    useEffect(() => {
+        if (search.get('linked') !== '1' || loading || linkedPollStartedRef.current) return;
+        linkedPollStartedRef.current = true;
+        const baseline = new Set(
+            socials.map((s) => (s.platform || '').toLowerCase()).filter(Boolean),
+        );
+        startConnectionPoll(baseline);
+    }, [search, loading, socials, startConnectionPoll]);
+
+    /* Handle connect click — opens Ayrshare OAuth popup
+     *
+     * CRITICAL: browsers only treat `window.open(...)` as user-initiated
+     * (and therefore allow the popup) when it runs SYNCHRONOUSLY inside a
+     * click handler. The Ayrshare JWT roundtrip is async — if we wait for
+     * it before calling `window.open`, Chrome/Brave/Safari silently block
+     * the popup ("nothing happens"). To dodge that we open about:blank
+     * synchronously and redirect it once the URL is back. */
     const handleConnect = async () => {
+        setConnectError(null);
+
+        // Step 1: open the popup synchronously while we still have the
+        // user-gesture token. `about:blank` is fine here — Meta / Instagram
+        // OAuth needs a full browser tab, not a fixed-size popup window,
+        // because cookies, storage partitioning, and bot detection behave
+        // differently inside small popups.
+        const popup = window.open('about:blank', '_blank');
+        if (!popup) {
+            setConnectError('Popup was blocked. Allow popups for this site and try again.');
+            return;
+        }
+
+        // Helpful holding screen so the user knows what's happening if
+        // the JWT fetch is slow. Inline HTML to avoid an extra round trip.
+        try {
+            popup.document.write(
+                '<!doctype html><meta charset="utf-8"><title>Connecting…</title>'
+                + '<style>html,body{height:100%;margin:0;display:flex;align-items:center;justify-content:center;'
+                + 'font:14px -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;color:#5b6679;'
+                + 'background:#F6F8FC}</style><div>Preparing secure connect link…</div>'
+            );
+        } catch { /* cross-origin guard — fine, the about:blank page already shows nothing */ }
+
         setConnecting(true);
         try {
-            const data = await apiFetch<{ url: string }>('/api/ayrshare/jwt', { method: 'POST' });
-            if (data.url) {
-                const popup = window.open(data.url, '_blank', 'width=600,height=700,left=400,top=100');
-
-                // Poll for updates every 3 seconds
-                pollRef.current = setInterval(async () => {
-                    try {
-                        const updated = await apiFetch<{ socials: SocialConnection[] }>('/api/connections');
-                        const newSocials = updated.socials || [];
-                        if (newSocials.length > socials.length || !popup || popup.closed) {
-                            setSocials(newSocials);
-                            setConnecting(false);
-                            if (pollRef.current) clearInterval(pollRef.current);
-                        }
-                    } catch { /* keep polling */ }
-                }, 3000);
-
-                // Also stop polling after 2 minutes max
-                setTimeout(() => {
-                    setConnecting(false);
-                    if (pollRef.current) clearInterval(pollRef.current);
-                    fetchConnections();
-                }, 120000);
+            // Pass our real origin so Ayrshare returns the user to this page
+            // after they finish linking instead of leaving them on the social
+            // platform's own site.
+            const redirect = `${window.location.origin}/connections?linked=1`;
+            const data = await apiFetch<{ url: string }>('/api/ayrshare/jwt', {
+                method: 'POST',
+                body: JSON.stringify({ redirect }),
+            });
+            if (!data.url) {
+                popup.close();
+                throw new Error('Ayrshare did not return a connect URL.');
             }
-        } catch {
+            // Step 2: redirect the already-open popup to the real URL.
+            popup.location.href = data.url;
+
+            // Snapshot which platforms were connected *before* this OAuth
+            // attempt so we can detect a newly-linked IG/TikTok/etc. even
+            // when the user already had other platforms connected.
+            const baselinePlatforms = new Set(
+                socials.map((s) => (s.platform || '').toLowerCase()).filter(Boolean),
+            );
+            startConnectionPoll(baselinePlatforms);
+        } catch (err) {
             setConnecting(false);
+            setVerifying(false);
+            stopPolling();
+            try { popup.close(); } catch { /* already closed */ }
+            // Surface the backend's `detail` message so the user / dev can
+            // see why a connection attempt is failing instead of staring
+            // at a button that just toggles state.
+            setConnectError(err instanceof Error ? err.message : 'Failed to start connection flow.');
         }
     };
 
@@ -137,8 +261,10 @@ export default function ConnectionsPage() {
                     <svg viewBox="0 0 24 24" style={{ width: 20, height: 20, stroke: 'var(--blue)', fill: 'none', strokeWidth: 2, flexShrink: 0 }}>
                         <circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" />
                     </svg>
-                    <span style={{ fontSize: '13px', color: 'var(--text-2)' }}>
+                    <span style={{ fontSize: '13px', color: 'var(--text-2)', lineHeight: 1.5 }}>
                         {t('connections.securityNote')}
+                        {' '}
+                        {t('connections.metaLoginHint')}
                     </span>
                 </div>
 
@@ -189,11 +315,38 @@ export default function ConnectionsPage() {
     return (
         <div className="content-area">
             <div className="page-header" style={{ marginBottom: '32px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
-                    <Link href="/schedule" style={{ color: 'var(--blue)', fontSize: '14px', textDecoration: 'none', fontWeight: 500 }}>{t('connections.backSchedule')}</Link>
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+                    <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+                            <Link href="/schedule" style={{ color: 'var(--blue)', fontSize: '14px', textDecoration: 'none', fontWeight: 500 }}>{t('connections.backSchedule')}</Link>
+                        </div>
+                        <h1>{t('connections.title')}</h1>
+                        <p>{t('connections.subtitle')}</p>
+                    </div>
+                    <button
+                        type="button"
+                        disabled={refreshing || connecting}
+                        onClick={async () => {
+                            setRefreshing(true);
+                            await fetchConnections({ syncAnalytics: true });
+                            setRefreshing(false);
+                        }}
+                        style={{
+                            padding: '9px 14px',
+                            borderRadius: '8px',
+                            border: '1px solid var(--border)',
+                            background: 'white',
+                            color: 'var(--text-1)',
+                            fontSize: '13px',
+                            fontWeight: 600,
+                            cursor: (refreshing || connecting) ? 'not-allowed' : 'pointer',
+                            whiteSpace: 'nowrap',
+                            alignSelf: 'flex-start',
+                        }}
+                    >
+                        {refreshing ? t('connections.refreshing') : t('connections.refresh')}
+                    </button>
                 </div>
-                <h1>{t('connections.title')}</h1>
-                <p>{t('connections.subtitle')}</p>
             </div>
 
             {/* Info banner */}
@@ -202,7 +355,7 @@ export default function ConnectionsPage() {
                 border: '1px solid rgba(51,122,255,0.15)',
                 borderRadius: '12px',
                 padding: '16px 20px',
-                marginBottom: '32px',
+                marginBottom: '16px',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '12px',
@@ -210,11 +363,63 @@ export default function ConnectionsPage() {
                 <svg viewBox="0 0 24 24" style={{ width: 20, height: 20, stroke: 'var(--blue)', fill: 'none', strokeWidth: 2, flexShrink: 0 }}>
                     <circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" />
                 </svg>
-                <span style={{ fontSize: '13px', color: 'var(--text-2)' }}>
-                    Your credentials are handled securely by Ayrshare — we never see your social media passwords.
-                    After connecting a new account, it may take 2–3 minutes to appear as connected on this page.
+                <span style={{ fontSize: '13px', color: 'var(--text-2)', lineHeight: 1.5 }}>
+                    {t('connections.securityNote')}
+                    {' '}
+                    {t('connections.metaLoginHint')}
                 </span>
             </div>
+
+            {verifying && (
+                <div style={{
+                    background: 'rgba(51,122,255,0.08)',
+                    border: '1px solid rgba(51,122,255,0.2)',
+                    borderRadius: '12px',
+                    padding: '12px 16px',
+                    marginBottom: '16px',
+                    fontSize: '13px',
+                    color: 'var(--text-2)',
+                }}>
+                    {t('connections.verifying')}
+                </div>
+            )}
+
+            {connectError && (
+                <div
+                    role="alert"
+                    style={{
+                        background: 'rgba(255,59,48,0.08)',
+                        border: '1px solid rgba(255,59,48,0.25)',
+                        color: '#b3261e',
+                        borderRadius: '12px',
+                        padding: '12px 16px',
+                        marginBottom: '32px',
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: '10px',
+                        fontSize: '13px',
+                    }}
+                >
+                    <svg viewBox="0 0 24 24" style={{ width: 18, height: 18, stroke: 'currentColor', fill: 'none', strokeWidth: 2, flexShrink: 0, marginTop: 1 }}>
+                        <circle cx="12" cy="12" r="10" />
+                        <line x1="12" y1="8" x2="12" y2="12" />
+                        <line x1="12" y1="16" x2="12.01" y2="16" />
+                    </svg>
+                    <span style={{ flex: 1 }}>{connectError}</span>
+                    <button
+                        onClick={() => setConnectError(null)}
+                        aria-label="Dismiss"
+                        style={{
+                            background: 'transparent', border: 'none',
+                            color: 'currentColor', cursor: 'pointer',
+                            fontWeight: 700, fontSize: '15px', lineHeight: 1,
+                            padding: '0 4px',
+                        }}
+                    >
+                        ×
+                    </button>
+                </div>
+            )}
 
             {/* Platform cards grid */}
             <div style={{
@@ -279,13 +484,17 @@ export default function ConnectionsPage() {
                             ) : (
                                 <div style={{
                                     fontSize: '13px',
-                                    color: 'var(--text-3)',
+                                    color: verifying ? 'var(--blue)' : 'var(--text-3)',
                                     display: 'flex',
                                     alignItems: 'center',
                                     gap: '6px',
                                 }}>
-                                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--border)' }} />
-                                    {t('connections.notConnected')}
+                                    <div style={{
+                                        width: 8, height: 8, borderRadius: '50%',
+                                        background: verifying ? 'var(--blue)' : 'var(--border)',
+                                        animation: verifying ? 'pulse 1.5s infinite' : undefined,
+                                    }} />
+                                    {verifying ? t('connections.verifyingShort') : t('connections.notConnected')}
                                 </div>
                             )}
 
