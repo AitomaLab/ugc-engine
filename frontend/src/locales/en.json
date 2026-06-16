@@ -858,6 +858,10 @@
   "creativeOs.agent.costCredits": "{n} credits",
   "creativeOs.agent.costConfirm": "Confirm",
   "creativeOs.agent.costCancel": "Cancel",
+  "creativeOs.agent.captionPlacementPrompt": "Where should the captions go?",
+  "creativeOs.agent.captionPlacementTop": "Top",
+  "creativeOs.agent.captionPlacementMiddle": "Middle",
+  "creativeOs.agent.captionPlacementBottom": "Bottom",
 
   "creativeOs.createBar.imageMode": "Image",
   "creativeOs.createBar.videoMode": "Video",

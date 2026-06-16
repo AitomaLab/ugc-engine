@@ -183,7 +183,7 @@ Gated tools cost real credits. You MUST get explicit user confirmation before sp
 
 ⚠️ ONE QUOTE, ONE CONFIRM, ONE FIRE. After you present a cost and the user agrees, call the gated tool(s) with `confirmed=true` IMMEDIATELY in the next turn. Do NOT re-call `estimate_credits` "to double-check", do NOT call the gated tool with `confirmed=false` again "to lock in the cost", do NOT re-present the same cost with different wording and ask again. **Specifically forbidden after a confirmation reply (the literal text "Confirmed — proceed with the pending generation now.", its Spanish equivalent "Confirmado — procede con la generación pendiente ahora.", OR plain "yes / sí / vale / dale / ok / proceed / adelante"): do NOT emit any prose summary of what you're about to do, do NOT restate the credits, do NOT ask "¿Quieres que proceda?" / "Shall I proceed?" / any equivalent re-confirmation. Your ONLY response to a confirmation must be the tool_use block with `confirmed=true` — no narration before it.** That forces the user to confirm twice and wastes their turn. The ONLY exception: if the user's confirmation included a change that affects the cost (e.g. "yes, but make it 10s instead of 5s"), you MUST re-estimate because the parameters changed — state that explicitly ("10s changes the cost to X credits, proceed?") and end turn. Otherwise, fire silently.
 
-⚠️ RETRIES / RE-FIRES. When the user asks to re-run, retry, or re-fire a previously-failed generation ("re-fire those cinematics", "try those two again", "redo"), treat it as a fresh gated call: `confirmed=false` ONCE to get the real cost from the tool, present it, end turn. When they confirm, fire `confirmed=true`. Do not quote from memory "that was 44 credits earlier" — always pull the number from a fresh tool result.
+⚠️ RETRIES / RE-FIRES. When the user asks to re-run, retry, or re-fire a previously-failed generation ("re-fire those cinematics", "try those two again", "redo"), treat it as a fresh gated call: `confirmed=false` ONCE to get the real cost from the tool, present it, end turn. When they confirm, fire `confirmed=true`. Do not quote from memory "that was 44 credits earlier" — always pull the number from a fresh tool result. **Exception — caption retries:** when the prior turn was "add captions" / subtitles (or a bare "retry" after a caption failure) and a finished video already exists, NEVER re-fire `create_ugc_video` / `generate_video`. Call `list_caption_styles()` if no style was picked yet, or `caption_video(job_id=...)` if they named a style — captions are free and do not need a credit confirmation gate.
 
 Do NOT bypass this gate. Do NOT call gated tools with `confirmed=true` on the first call — except for the explicitly-whitelisted fast-path below. Cost transparency is non-negotiable.
 
@@ -354,6 +354,7 @@ You MUST do this check BEFORE starting any generation. Do NOT skip it.
     • Music only → `combine_videos(video_urls=[<final_video_url>], music_prompt="<short style description matching the brand/vibe>")`.
     • Both → call `caption_video` FIRST (so the burned captions live in the asset), then `combine_videos(video_urls=[<captioned_video_url>], music_prompt=...)` so the music is layered on top of the captioned cut.
   Skip the follow-up offer entirely when the user explicitly opted out ("no music", "sin subtítulos") — and when they explicitly asked for music or captions UPFRONT (e.g. "create a UGC video with music and captions"), pass `music_enabled=true` and/or `subtitles_enabled=true` to `create_ugc_video` so they're baked into the first delivery and you don't need to offer a follow-up.
+  - **CRITICAL — post-delivery caption requests**: When a finished video already exists in this thread (or Referenced assets includes a `type=video` ref with `job_id`) and the user asks to "add captions", "add hormozi subtitles", "burn captions at the top", etc., you MUST call `caption_video(job_id=...)` on that existing job. NEVER call `create_ugc_video` again. NEVER treat "add captions" / "let's add captions" as a green light to fire pending generation or as `confirmed=true` for a gated tool. NEVER say "firing the video now" for a caption request — captions take ~30 seconds, not ~6 minutes. "Add captions" AFTER delivery = `caption_video`; "create a video WITH captions" BEFORE any video exists = `create_ugc_video(subtitles_enabled=true)`.
 
 **Cinematic clip (5-10s)**: list_project_assets → generate_video(mode="cinematic_video") (gated). Confirm completion in plain text.
 
@@ -1955,6 +1956,9 @@ class ToolContext:
     # @-mention refs from the current agent turn (includes carry-forward on Confirm).
     # Authoritative image_url per product/influencer — overrides agent tool kwargs.
     refs: list[dict] = field(default_factory=list)
+    # SSE events to yield as soon as a video_jobs row exists (generate_video / animate_image).
+    pending_video_job_events: list[dict] = field(default_factory=list)
+    emitted_video_job_ids: set[str] = field(default_factory=set)
 
     def core(self) -> CoreAPIClient:
         return CoreAPIClient(token=self.user_token, project_id=self.project_id)
@@ -2505,6 +2509,53 @@ def _compute_tool_fingerprint(tool_name: str, tool_input: dict) -> str:
         _joined = "\u0001".join(str(s) for s in _scripts)
         parts.append(f"scripts={_hashlib.sha1(_joined.encode('utf-8')).hexdigest()[:8]}")
     return "|".join(parts)
+
+
+def _clip_eta_seconds(clip_length: int) -> int:
+    """Expected wall-clock seconds for short generate_video / animate_image clips."""
+    return {5: 240, 7: 270, 8: 300, 10: 360, 15: 420}.get(clip_length, 300)
+
+
+def _clip_job_label(kwargs: dict) -> str:
+    mode = (kwargs.get("mode") or "ugc").lower()
+    length = int(kwargs.get("clip_length") or kwargs.get("duration") or 5)
+    labels = {
+        "ugc": "UGC clip",
+        "cinematic_video": "Cinematic clip",
+        "seedance_2_ugc": "UGC clip",
+        "seedance_2_cinematic": "Cinematic clip",
+        "seedance_2_product": "Product clip",
+    }
+    return f"{length}s {labels.get(mode, 'Video clip')}"
+
+
+def _queue_video_job_started(
+    ctx: ToolContext,
+    job_id: str,
+    *,
+    label: str,
+    duration: int,
+    eta_seconds: int,
+    tool_name: str,
+) -> None:
+    jid = str(job_id)
+    if jid in ctx.emitted_video_job_ids:
+        return
+    ctx.emitted_video_job_ids.add(jid)
+    ctx.pending_video_job_events.append({
+        "type": "video_job_started",
+        "job_id": jid,
+        "label": label,
+        "tool_name": tool_name,
+        "eta_seconds": eta_seconds,
+        "duration": duration,
+    })
+
+
+def _drain_pending_video_job_events(ctx: ToolContext) -> list[dict]:
+    events = list(ctx.pending_video_job_events)
+    ctx.pending_video_job_events.clear()
+    return events
 
 
 def _ugc_eta_seconds(duration: int) -> int:
@@ -3298,6 +3349,18 @@ async def _tool_animate_image(ctx: ToolContext, **kwargs: Any) -> str:
         result = await animate_image(req, background_tasks=bg, user=user)  # type: ignore[arg-type]
     except Exception as e:
         return json.dumps({"error": f"animate_image failed: {e}"})
+
+    job_id = result.get("job_id") if isinstance(result, dict) else None
+    if job_id:
+        _queue_video_job_started(
+            ctx,
+            job_id,
+            label=f"{duration}s animated clip",
+            duration=duration,
+            eta_seconds=_clip_eta_seconds(duration),
+            tool_name="animate_image",
+        )
+
     for task in bg.tasks:
         try:
             await task()
@@ -3443,10 +3506,21 @@ async def _tool_generate_video(ctx: ToolContext, **kwargs: Any) -> str:
         return json.dumps({"error": f"generate_video failed: {e}"})
 
     # The handler returns immediately with {status: "generating", job_id, ...}
-    # and queues the actual rendering on `bg`. Drain it ourselves so the
-    # pipeline runs to completion inline. CancelledError from the SSE
-    # generator propagates through these awaits → Stop works.
+    # and queues the actual rendering on `bg`. Queue video_job_started so the
+    # gallery can poll jobs-status while we drain bg inline below.
     job_id = result.get("job_id") if isinstance(result, dict) else None
+    if job_id:
+        _queue_video_job_started(
+            ctx,
+            job_id,
+            label=_clip_job_label(kwargs),
+            duration=clip_length,
+            eta_seconds=_clip_eta_seconds(clip_length),
+            tool_name="generate_video",
+        )
+
+    # Drain bg tasks inline. CancelledError from the SSE generator propagates
+    # through these awaits → Stop works.
     for task in bg.tasks:
         try:
             await task()
@@ -9784,7 +9858,30 @@ class ManagedAgentClient:
             # NEXT user Confirm; this loop only handles up to one tool execution
             # per Confirm click (no auto-chaining without user input).
             try:
-                af_result_text = await fn(ctx_af, **base_input)
+                if tool_name in ("generate_video", "animate_image"):
+                    af_task = asyncio.create_task(fn(ctx_af, **base_input))
+                    _af_elapsed = 0
+                    while not af_task.done():
+                        for _vj_ev in _drain_pending_video_job_events(ctx_af):
+                            yield _vj_ev
+                        try:
+                            await asyncio.wait_for(asyncio.shield(af_task), timeout=2.0)
+                        except asyncio.TimeoutError:
+                            _af_elapsed += 2
+                            if _af_elapsed % 15 == 0:
+                                yield {
+                                    "type": "keepalive",
+                                    "elapsed_seconds": _af_elapsed,
+                                    "pending_tools": 1,
+                                }
+                            continue
+                    af_result_text = af_task.result()
+                    for _vj_ev in _drain_pending_video_job_events(ctx_af):
+                        yield _vj_ev
+                else:
+                    af_result_text = await fn(ctx_af, **base_input)
+                    for _vj_ev in _drain_pending_video_job_events(ctx_af):
+                        yield _vj_ev
             except Exception as e:
                 import traceback as _tb
                 print(f"[ManagedAgent] auto-fire EXCEPTION: {type(e).__name__}: {e}")
@@ -10677,18 +10774,21 @@ class ManagedAgentClient:
                     elapsed = 0
                     try:
                         while any(not t.done() for t in _batch_tool_tasks):
+                            for _vj_ev in _drain_pending_video_job_events(ctx):
+                                yield _vj_ev
                             done, pending = await asyncio.wait(
                                 _batch_tool_tasks,
-                                timeout=15.0,
+                                timeout=2.0,
                                 return_when=asyncio.FIRST_COMPLETED,
                             )
                             if pending:
-                                elapsed += 15
-                                yield {
-                                    "type": "keepalive",
-                                    "elapsed_seconds": elapsed,
-                                    "pending_tools": len(pending),
-                                }
+                                elapsed += 2
+                                if elapsed % 15 == 0:
+                                    yield {
+                                        "type": "keepalive",
+                                        "elapsed_seconds": elapsed,
+                                        "pending_tools": len(pending),
+                                    }
                     except asyncio.CancelledError:
                         # SSE client disconnected — finish tools in background so
                         # Anthropic session receives tool results.
@@ -10711,6 +10811,9 @@ class ManagedAgentClient:
                         except Exception as e:
                             # Should already be caught inside _execute_tool, but be defensive.
                             results.append(("", json.dumps({"error": str(e)}), True))
+
+                    for _vj_ev in _drain_pending_video_job_events(ctx):
+                        yield _vj_ev
 
                     # Emit tool_result events for the UI activity log and build the batched send payload.
                     # Also collect cost-preview totals so we can synthesize a fallback message
@@ -10801,6 +10904,34 @@ class ManagedAgentClient:
                                             lang=_effective_lang if _effective_lang in ("es", "en") else None,
                                         ),
                                     }
+                                elif (
+                                    parsed.get("job_id")
+                                    and _id_to_name.get(tool_use_id) in ("generate_video", "animate_image")
+                                    and str(parsed["job_id"]) not in ctx.emitted_video_job_ids
+                                ):
+                                    _clip_dur = int(
+                                        parsed.get("clip_length")
+                                        or parsed.get("duration")
+                                        or 8
+                                    )
+                                    _tool = _id_to_name.get(tool_use_id) or "generate_video"
+                                    _label = (
+                                        f"{_clip_dur}s animated clip"
+                                        if _tool == "animate_image"
+                                        else _clip_job_label({
+                                            "mode": parsed.get("mode"),
+                                            "clip_length": _clip_dur,
+                                        })
+                                    )
+                                    yield {
+                                        "type": "video_job_started",
+                                        "job_id": str(parsed["job_id"]),
+                                        "label": _label,
+                                        "tool_name": _tool,
+                                        "eta_seconds": _clip_eta_seconds(_clip_dur),
+                                        "duration": _clip_dur,
+                                    }
+                                    ctx.emitted_video_job_ids.add(str(parsed["job_id"]))
                                 elif "total_credits" in parsed and "line_items" in parsed:
                                     c = parsed.get("total_credits")
                                     if isinstance(c, (int, float)):

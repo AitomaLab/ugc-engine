@@ -858,6 +858,10 @@
   "creativeOs.agent.costCredits": "{n} créditos",
   "creativeOs.agent.costConfirm": "Confirmar",
   "creativeOs.agent.costCancel": "Cancelar",
+  "creativeOs.agent.captionPlacementPrompt": "¿Dónde quieres los subtítulos?",
+  "creativeOs.agent.captionPlacementTop": "Arriba",
+  "creativeOs.agent.captionPlacementMiddle": "Centro",
+  "creativeOs.agent.captionPlacementBottom": "Abajo",
 
   "creativeOs.createBar.imageMode": "Imagen",
   "creativeOs.createBar.videoMode": "Video",

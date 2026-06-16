@@ -18,6 +18,7 @@ import {
 } from '@/lib/creative-os-api';
 import { fetchJobsStatus } from '@/lib/jobs-status-poll';
 import { CaptionStylePreviewCard } from '@/components/captions/CaptionStylePreviewCard';
+import { CAPTION_STYLE_PREVIEWS } from '@/components/captions/styles';
 import { supabase } from '@/lib/supabaseClient';
 import { useTranslation } from '@/lib/i18n';
 import ProductModal from '@/components/ui/ProductModal';
@@ -162,6 +163,36 @@ const _AI_EDIT_OPS_RE = /AI_EDIT_OPS\s*[\s\S]*/i;
 const _JSON_OPS_RE = /\[\s*\{\s*"op"[\s\S]*/;
 const _TOOL_CALL_RE = /(?:apply_editor_ops|caption_video|combine_videos|load_editor_state|save_editor_state|render_edited_video|generate_video|create_ugc_video|generate_music|splice_app_clip|extend_video|add_voiceover)\s*\([\s\S]*/;
 
+const CAPTION_INTENT_RE = /\b(add|put|apply|burn|overlay|include|change|redo|restyle|update|swap|remove)\b[^.!?]{0,50}\b(captions?|subtitles?|subtitulos?|subtítulos?)\b|\b(hormozi|minimal|bold|karaoke)\s+(?:style\s+)?(?:captions?|subtitles?)\b|\bcaption\s+this\b|\bcaption\s+the\s+video\b/i;
+const BARE_RETRY_RE = /^\s*(?:retry|try\s+again|re-?try|again|once\s+more)\s*[!.?]*\s*$/i;
+const CAPTION_FAILURE_RE = /editing assistant is temporarily unavailable/i;
+const CAPTION_STYLE_IDS = ['hormozi', 'bold', 'karaoke', 'minimal'] as const;
+type CaptionPlacement = 'top' | 'middle' | 'bottom';
+
+function parseCaptionPick(text: string): { style: string | null; placement: CaptionPlacement | null } {
+    const lc = text.toLowerCase();
+    const style = CAPTION_STYLE_IDS.find((id) => lc.includes(id)) ?? null;
+    let placement: CaptionPlacement | null = null;
+    if (/\b(top|arriba)\b/i.test(lc)) placement = 'top';
+    else if (/\b(bottom|abajo)\b/i.test(lc)) placement = 'bottom';
+    else if (/\b(middle|center|centro|medio)\b/i.test(lc)) placement = 'middle';
+    return { style, placement };
+}
+
+function captionStyleName(styleId: string): string {
+    return CAPTION_STYLE_PREVIEWS.find((s) => s.id === styleId)?.name
+        ?? styleId.charAt(0).toUpperCase() + styleId.slice(1);
+}
+
+function sessionHasCaptionIntent(turns: AgentTurn[]): boolean {
+    for (let i = turns.length - 1; i >= 0; i--) {
+        const turn = turns[i];
+        if (turn.role === 'user' && CAPTION_INTENT_RE.test(turn.text || '')) return true;
+        if (turn.role === 'agent' && CAPTION_FAILURE_RE.test(turn.text || '')) return true;
+    }
+    return false;
+}
+
 function scrubAgentText(text: string): string {
     return text
         .replace(_AI_EDIT_OPS_RE, '')
@@ -262,6 +293,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
     const [running, setRunning] = useState(false);
     const [activity, setActivity] = useState<string>('');
     const [error, setError] = useState<string | null>(null);
+    const [pendingCaptionStyle, setPendingCaptionStyle] = useState<string | null>(null);
     // ── Perceived-latency UX state ────────────────────────────────────────
     // `activityStartedAt` anchors the mm:ss counter next to the activity label;
     // `lastHeartbeatAt` re-triggers the pulsing dot on each SSE keepalive so
@@ -924,6 +956,9 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             pro = override.proSnapshot;
         } else {
             text = (overrideText || brief).trim();
+            if (BARE_RETRY_RE.test(text) && sessionHasCaptionIntent(turns)) {
+                text = 'add captions to the video';
+            }
             const readyAttachments = attachments.filter((a) => a.status === 'ready' && a.url);
             const stillUploading = attachments.some((a) => a.status === 'uploading');
             if (stillUploading) {
@@ -982,16 +1017,18 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                 pushUniqueRef(ref);
             }
 
-            // ── Auto-attach current video for music/soundtrack intents ──
-            // When the user says "add music" on a project page with a
-            // selected video, the managed agent's combine_videos tool needs
-            // the target video URL as a ref to know which clip to remix.
-            // Without this, the agent would either ask which video, or guess.
-            // We only inject when the user hasn't already attached a video
-            // ref themselves (via @-mention or upload).
+            // ── Auto-attach current video for music / caption intents ──
+            // When the user says "add music" or "add captions" on a project page
+            // with a selected video, the managed agent needs the target video's
+            // job_id + URL. Without this, the agent either asks which video, or
+            // wrongly fires create_ugc_video again with carried product/influencer refs.
+            // We only inject when the user hasn't already attached a video ref
+            // themselves (via @-mention or upload).
             const isMusicIntent = /\b(add|put|drop|include|swap|replace|change|background|bg)\b[^.!?]{0,40}\b(music|soundtrack|bgm|score|audio)\b|\bsound\s*track\b/i.test(text);
+            const isCaptionIntent = CAPTION_INTENT_RE.test(text);
+            const needsVideoRefForEdit = isMusicIntent || isCaptionIntent;
             const hasVideoRef = refsForRequest.some((r) => r.type === 'video');
-            if (isMusicIntent && !hasVideoRef && jobId) {
+            if (needsVideoRefForEdit && !hasVideoRef && jobId) {
                 try {
                     const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
                     const tok = (await supabase.auth.getSession()).data.session?.access_token;
@@ -1013,7 +1050,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                         }
                     }
                 } catch (err) {
-                    console.warn('Auto-attach current video for music intent failed:', err);
+                    console.warn('Auto-attach current video for music/caption intent failed:', err);
                 }
             }
 
@@ -1562,7 +1599,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             setActivityStartedAt(null);
             abortRef.current = null;
         }
-    }, [brief, running, projectId, onArtifact, activeRefs, attachments, onSubmitOverride, useSeedance, jobId, quickMode, proStripOpen, proMode, proAspectRatio, proQuality, proLanguage, proClipLength, proMultiShot, proMultiShotLength, proVideoLength, proType, queue.length, queuePaused]);
+    }, [brief, running, projectId, onArtifact, activeRefs, attachments, onSubmitOverride, useSeedance, jobId, quickMode, proStripOpen, proMode, proAspectRatio, proQuality, proLanguage, proClipLength, proMultiShot, proMultiShotLength, proVideoLength, proType, queue.length, queuePaused, turns]);
 
     // Phase 2: fire handleRun AFTER hydration completes (hydrating: true → false)
     // This ensures the panel is fully initialized before auto-submitting.
@@ -2138,6 +2175,21 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                     lastCreatorSelectorIdx = i;
                                 }
                             }
+                            let lastCaptionStyleTurnIdx = -1;
+                            for (let i = turns.length - 1; i >= 0; i--) {
+                                const t = turns[i];
+                                if (t.role === 'agent' && (t.artifacts || []).some((a) => a.type === 'caption_styles_preview')) {
+                                    lastCaptionStyleTurnIdx = i;
+                                    break;
+                                }
+                            }
+                            const captionPickCommitted = lastCaptionStyleTurnIdx >= 0 && turns
+                                .slice(lastCaptionStyleTurnIdx + 1)
+                                .some((t) => {
+                                    if (t.role !== 'user') return false;
+                                    const pick = parseCaptionPick(t.text || '');
+                                    return !!pick.style && !!pick.placement;
+                                });
                             return turns.map((turn, idx) => {
                                 const lastUserText = [...turns.slice(0, idx)].reverse().find((t) => t.role === 'user')?.text || '';
                                 // If this agent turn asked for aspect ratio ([[ASPECT_BUTTONS]]
@@ -2155,6 +2207,14 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                         : /\b10\s*s(econds?)?\b/i.test(nextUserText) ? 10
                                             : /\b15\s*s(econds?)?\b/i.test(nextUserText) ? 15
                                                 : null;
+                                const captionPick = (() => {
+                                    for (let i = idx + 1; i < turns.length; i++) {
+                                        if (turns[i].role !== 'user') continue;
+                                        const pick = parseCaptionPick(turns[i].text || '');
+                                        if (pick.style || pick.placement) return pick;
+                                    }
+                                    return { style: null, placement: null };
+                                })();
                                 const nextRefs = next?.role === 'user' ? (next.refs || []) : [];
                                 const selectedProductRef = nextRefs.find((r) => r.type === 'product') ?? null;
                                 const selectedCreatorRef = nextRefs.find((r) => r.type === 'influencer' || r.type === 'clone') ?? null;
@@ -2166,11 +2226,28 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                         turnIndex={idx}
                                         lastProductSelectorTurnIdx={lastProductSelectorIdx}
                                         lastCreatorSelectorTurnIdx={lastCreatorSelectorIdx}
+                                        lastCaptionStyleTurnIdx={lastCaptionStyleTurnIdx}
+                                        captionPickCommitted={captionPickCommitted}
                                         isLast={idx === turns.length - 1}
                                         running={running}
                                         onQuickReply={(text) => { handleRun(text); }}
                                         selectedAspect={selectedAspect}
                                         selectedDuration={selectedDuration}
+                                        selectedCaptionStyle={captionPick.style}
+                                        selectedCaptionPlacement={captionPick.placement}
+                                        pendingCaptionStyle={pendingCaptionStyle}
+                                        onCaptionStyleSelect={setPendingCaptionStyle}
+                                        onCaptionPlacementSelect={(placement) => {
+                                            if (!pendingCaptionStyle) return;
+                                            const styleName = captionStyleName(pendingCaptionStyle);
+                                            const placementLabel = placement === 'top'
+                                                ? t('creativeOs.agent.captionPlacementTop')
+                                                : placement === 'bottom'
+                                                    ? t('creativeOs.agent.captionPlacementBottom')
+                                                    : t('creativeOs.agent.captionPlacementMiddle');
+                                            setPendingCaptionStyle(null);
+                                            handleRun(`Use the ${styleName} caption style with ${placementLabel} placement`);
+                                        }}
                                         mentionGroups={groupedMentions}
                                         mentionsLoading={!mentionsLoaded}
                                         onAssetPick={handleAssetPickFromChat}
@@ -3537,11 +3614,18 @@ function TurnBubble({
     turnIndex,
     lastProductSelectorTurnIdx,
     lastCreatorSelectorTurnIdx,
+    lastCaptionStyleTurnIdx,
+    captionPickCommitted,
     isLast,
     running,
     onQuickReply,
     selectedAspect,
     selectedDuration,
+    selectedCaptionStyle,
+    selectedCaptionPlacement,
+    pendingCaptionStyle,
+    onCaptionStyleSelect,
+    onCaptionPlacementSelect,
     mentionGroups,
     mentionsLoading,
     onAssetPick,
@@ -3557,11 +3641,18 @@ function TurnBubble({
     turnIndex?: number;
     lastProductSelectorTurnIdx?: number;
     lastCreatorSelectorTurnIdx?: number;
+    lastCaptionStyleTurnIdx?: number;
+    captionPickCommitted?: boolean;
     isLast?: boolean;
     running?: boolean;
     onQuickReply?: (text: string) => void;
     selectedAspect?: 'vertical' | 'horizontal' | 'classic' | null;
     selectedDuration?: 5 | 10 | 15 | null;
+    selectedCaptionStyle?: string | null;
+    selectedCaptionPlacement?: CaptionPlacement | null;
+    pendingCaptionStyle?: string | null;
+    onCaptionStyleSelect?: (styleId: string) => void;
+    onCaptionPlacementSelect?: (placement: CaptionPlacement) => void;
     mentionGroups?: MentionGroups;
     mentionsLoading?: boolean;
     onAssetPick?: (item: MentionItem, chosenImageUrl?: string) => void;
@@ -3654,6 +3745,22 @@ function TurnBubble({
     const confirmChipActive = !!turn.pendingConfirmation && !!isLast && !!onQuickReply;
     const productSelectorActive = showProductSelector && !!isLast && !running && !!onAssetPick && !selectedProductRef;
     const creatorSelectorActive = showCreatorSelector && !!isLast && !running && !!onAssetPick && !selectedCreatorRef;
+    const styleArts = (turn.artifacts || []).filter((a) => a.type === 'caption_styles_preview');
+    const hasCaptionStylePicker = !isUser && styleArts.length > 0;
+    const captionPickerActive = hasCaptionStylePicker
+        && lastCaptionStyleTurnIdx !== undefined
+        && lastCaptionStyleTurnIdx >= 0
+        && turnIndex === lastCaptionStyleTurnIdx
+        && !captionPickCommitted
+        && !!onQuickReply
+        && !running;
+    const activeCaptionStyle = pendingCaptionStyle ?? null;
+    const resolvedCaptionStyle = selectedCaptionStyle ?? activeCaptionStyle;
+    const captionPlacementActive = !!isLast && !!onCaptionPlacementSelect && !!activeCaptionStyle && !selectedCaptionPlacement;
+    const showCaptionPlacement = !!resolvedCaptionStyle && (
+        (captionPlacementActive && !!isLast)
+        || (!!selectedCaptionPlacement && hasCaptionStylePicker)
+    );
     const hasContent = !!displayText || !!turn.artifacts?.length || turn.interrupted || turn.generation_failed || hasRefPreviews || hasAspectMarker || hasAccentMarker || hasDurationMarker || showProductSelector || showCreatorSelector || hasSaveOrGenMarker || !!turn.pendingConfirmation;
     const hasSelector = showProductSelector || showCreatorSelector;
     // While a run is active, show a placeholder "…" bubble (three breathing
@@ -4053,8 +4160,22 @@ function TurnBubble({
                                 </div>
                             )}
                             {styleArts.map((a, i) => (
-                                <CaptionStylesPreviewCard key={`cs-${i}`} styles={a.styles || []} />
+                                <CaptionStylesPreviewCard
+                                    key={`cs-${i}`}
+                                    styles={a.styles || []}
+                                    active={captionPickerActive}
+                                    selectedStyleId={resolvedCaptionStyle}
+                                    onSelectStyle={captionPickerActive ? onCaptionStyleSelect : undefined}
+                                />
                             ))}
+                            {showCaptionPlacement && (
+                                <CaptionPlacementButtons
+                                    active={captionPlacementActive}
+                                    selectedPlacement={selectedCaptionPlacement}
+                                    onSelect={onCaptionPlacementSelect}
+                                    label={t('creativeOs.agent.captionPlacementPrompt')}
+                                />
+                            )}
                         </>
                     );
                 })()}
@@ -4101,7 +4222,17 @@ function TurnBubble({
     );
 }
 
-function CaptionStylesPreviewCard({ styles }: { styles: CaptionStylePreview[] }) {
+function CaptionStylesPreviewCard({
+    styles,
+    active,
+    selectedStyleId,
+    onSelectStyle,
+}: {
+    styles: CaptionStylePreview[];
+    active?: boolean;
+    selectedStyleId?: string | null;
+    onSelectStyle?: (styleId: string) => void;
+}) {
     if (!styles || styles.length === 0) return null;
     return (
         <div
@@ -4113,8 +4244,72 @@ function CaptionStylesPreviewCard({ styles }: { styles: CaptionStylePreview[] })
             }}
         >
             {styles.map((s) => (
-                <CaptionStylePreviewCard key={s.id} style={s} size="sm" />
+                <CaptionStylePreviewCard
+                    key={s.id}
+                    style={s}
+                    size="sm"
+                    selected={selectedStyleId === s.id}
+                    onSelect={active ? onSelectStyle : undefined}
+                />
             ))}
+        </div>
+    );
+}
+
+function CaptionPlacementButtons({
+    active,
+    selectedPlacement,
+    onSelect,
+    label,
+}: {
+    active: boolean;
+    selectedPlacement?: CaptionPlacement | null;
+    onSelect?: (placement: CaptionPlacement) => void;
+    label: string;
+}) {
+    const { t } = useTranslation();
+    const placements: { id: CaptionPlacement; label: string }[] = [
+        { id: 'top', label: t('creativeOs.agent.captionPlacementTop') },
+        { id: 'middle', label: t('creativeOs.agent.captionPlacementMiddle') },
+        { id: 'bottom', label: t('creativeOs.agent.captionPlacementBottom') },
+    ];
+    return (
+        <div style={{ marginTop: '10px' }}>
+            <div style={{ fontSize: '12px', fontWeight: 600, color: '#5C6781', marginBottom: '8px' }}>
+                {label}
+            </div>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                {placements.map(({ id, label: placementLabel }) => {
+                    const isSelected = selectedPlacement === id;
+                    const muted = !!selectedPlacement && !isSelected;
+                    return (
+                        <button
+                            key={id}
+                            type="button"
+                            disabled={!active}
+                            onClick={() => active && onSelect?.(id)}
+                            style={{
+                                padding: '6px 14px',
+                                borderRadius: '8px',
+                                border: isSelected
+                                    ? '1px solid #337AFF'
+                                    : '1px solid rgba(51,122,255,0.15)',
+                                background: isSelected
+                                    ? 'linear-gradient(135deg, #337AFF 0%, #5B8FFF 100%)'
+                                    : muted
+                                        ? 'rgba(51,122,255,0.03)'
+                                        : 'white',
+                                color: isSelected ? 'white' : muted ? '#8A93B0' : '#337AFF',
+                                fontSize: '13px',
+                                fontWeight: 500,
+                                cursor: active ? 'pointer' : 'default',
+                            }}
+                        >
+                            {placementLabel}
+                        </button>
+                    );
+                })}
+            </div>
         </div>
     );
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, Children, isValidElement } from 'react';
 import dynamic from 'next/dynamic';
 import { creativeFetch } from '@/lib/creative-os-api';
 import { useTranslation } from '@/lib/i18n';
@@ -47,6 +47,84 @@ interface AssetGalleryProps {
 }
 
 const PAGE_SIZE = 20;
+
+const MASONRY_GAP = 16;
+const MIN_COL_PX = 240;
+const MAX_COLS = 6;
+
+function getColumnCount(containerWidth: number, _itemCount: number): number {
+    if (containerWidth <= 0) return 1;
+    const fitByWidth = Math.floor((containerWidth + MASONRY_GAP) / (MIN_COL_PX + MASONRY_GAP));
+    // Column count follows container width only — never shrink to 1 column just
+    // because there is a single asset, or one card stretches to full panel width.
+    return Math.max(1, Math.min(MAX_COLS, fitByWidth));
+}
+
+const MASONRY_ITEM_STYLE: React.CSSProperties = {
+    width: '100%',
+    alignSelf: 'flex-start',
+};
+
+const SKELETON_ASPECTS = ['9 / 16', '16 / 9', '1 / 1', '9 / 16', '1 / 1', '16 / 9'] as const;
+
+function MasonryGrid({ itemCount, children }: { itemCount: number; children: React.ReactNode }) {
+    const ref = useRef<HTMLDivElement>(null);
+    const [width, setWidth] = useState(0);
+
+    useEffect(() => {
+        const el = ref.current;
+        if (!el) return;
+
+        const update = () => setWidth(el.clientWidth);
+        update();
+
+        const ro = new ResizeObserver(() => update());
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, []);
+
+    const columnCount = getColumnCount(width, itemCount);
+
+    const childArray = useMemo(
+        () => Children.toArray(children).filter(child => isValidElement(child)),
+        [children],
+    );
+
+    const columns = useMemo(() => {
+        const cols: React.ReactNode[][] = Array.from({ length: columnCount }, () => []);
+        childArray.forEach((child, i) => {
+            cols[i % columnCount].push(child);
+        });
+        return cols;
+    }, [childArray, columnCount]);
+
+    return (
+        <div
+            ref={ref}
+            style={{
+                display: 'flex',
+                gap: `${MASONRY_GAP}px`,
+                width: '100%',
+                alignSelf: 'stretch',
+            }}
+        >
+            {columns.map((col, i) => (
+                <div
+                    key={i}
+                    style={{
+                        flex: 1,
+                        minWidth: 0,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: `${MASONRY_GAP}px`,
+                    }}
+                >
+                    {col}
+                </div>
+            ))}
+        </div>
+    );
+}
 
 /** Wall-clock ETA for in-flight video jobs (seconds). Never use the old 180s default. */
 function getVideoEtaSeconds(asset: { eta_seconds?: number; length?: number }): number {
@@ -175,27 +253,27 @@ export function AssetGallery({ assets, type, loading, projectId, onRefresh, onAn
 
     if (loading) {
         return (
-            <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))',
-                gap: '16px',
-            }}>
-                {[0, 1, 2, 3, 4, 5].map(i => (
-                    <div key={i} suppressHydrationWarning style={{
-                        aspectRatio: '9 / 16',
-                        borderRadius: '12px',
-                        background: 'linear-gradient(90deg, rgba(51,122,255,0.04) 25%, rgba(51,122,255,0.08) 50%, rgba(51,122,255,0.04) 75%)',
-                        backgroundSize: '200% 100%',
-                        animation: `shimmer 1.5s infinite linear ${(i * 150)}ms`,
-                    }} />
-                ))}
+            <>
+                <MasonryGrid itemCount={SKELETON_ASPECTS.length}>
+                    {SKELETON_ASPECTS.map((aspect, i) => (
+                        <div key={i} style={MASONRY_ITEM_STYLE}>
+                            <div suppressHydrationWarning style={{
+                                aspectRatio: aspect,
+                                borderRadius: '12px',
+                                background: 'linear-gradient(90deg, rgba(51,122,255,0.04) 25%, rgba(51,122,255,0.08) 50%, rgba(51,122,255,0.04) 75%)',
+                                backgroundSize: '200% 100%',
+                                animation: `shimmer 1.5s infinite linear ${(i * 150)}ms`,
+                            }} />
+                        </div>
+                    ))}
+                </MasonryGrid>
                 <style>{`
                     @keyframes shimmer {
                         0% { background-position: 200% 0; }
                         100% { background-position: -200% 0; }
                     }
                 `}</style>
-            </div>
+            </>
         );
     }
 
@@ -243,7 +321,7 @@ export function AssetGallery({ assets, type, loading, projectId, onRefresh, onAn
     }
 
     return (
-        <div>
+        <div style={{ width: '100%', alignSelf: 'stretch' }}>
             {/* ── Bulk Actions Bar ── */}
             {isSelecting && (
                 <div style={{
@@ -291,29 +369,26 @@ export function AssetGallery({ assets, type, loading, projectId, onRefresh, onAn
                 </div>
             )}
 
-            <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))',
-                gap: '16px',
-            }}>
+            <MasonryGrid itemCount={paged.length}>
                 {paged.map((asset, i) => (
-                    <AssetCard
-                        key={asset.id || i}
-                        asset={asset}
-                        type={type}
-                        generatedThumb={videoThumbs[asset.id]}
-                        projectId={projectId}
-                        isSelected={selectedIds.has(asset.id)}
-                        isSelecting={isSelecting}
-                        isConfirmingDelete={confirmingDeleteId === asset.id}
-                        onToggleSelect={() => toggleSelect(asset.id)}
-                        onDeleteClick={(e) => handleDeleteClick(asset.id, e)}
-                        onConfirmDelete={() => handleConfirmDelete(asset.id)}
-                        onCancelDelete={handleCancelDelete}
-                        onClick={type === 'images' ? () => setSelectedImage(asset) : () => setSelectedVideo(asset)}
-                    />
+                    <div key={asset.id || i} style={MASONRY_ITEM_STYLE}>
+                        <AssetCard
+                            asset={asset}
+                            type={type}
+                            generatedThumb={videoThumbs[asset.id]}
+                            projectId={projectId}
+                            isSelected={selectedIds.has(asset.id)}
+                            isSelecting={isSelecting}
+                            isConfirmingDelete={confirmingDeleteId === asset.id}
+                            onToggleSelect={() => toggleSelect(asset.id)}
+                            onDeleteClick={(e) => handleDeleteClick(asset.id, e)}
+                            onConfirmDelete={() => handleConfirmDelete(asset.id)}
+                            onCancelDelete={handleCancelDelete}
+                            onClick={type === 'images' ? () => setSelectedImage(asset) : () => setSelectedVideo(asset)}
+                        />
+                    </div>
                 ))}
-            </div>
+            </MasonryGrid>
 
             {/* Pagination */}
             {totalPages > 1 && (

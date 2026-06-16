@@ -26,6 +26,8 @@ export function CaptionStylePreviewCard({ style, selected, onSelect, size = 'sm'
             type="button"
             onClick={interactive ? () => onSelect!(style.id) : undefined}
             disabled={!interactive}
+            onMouseEnter={interactive && !selected ? (e) => { e.currentTarget.style.borderColor = 'rgba(51,122,255,0.45)'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(51,122,255,0.12)'; } : undefined}
+            onMouseLeave={interactive && !selected ? (e) => { e.currentTarget.style.borderColor = 'rgba(13,27,62,0.1)'; e.currentTarget.style.boxShadow = 'none'; } : undefined}
             style={{
                 display: 'flex',
                 flexDirection: 'column',

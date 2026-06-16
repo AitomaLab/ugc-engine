@@ -264,29 +264,52 @@ async def agent_stream(
     # that per-turn reinforcement is needed when the brief contains edit verbs.
     import re as _re
     _brief_lc = brief.lower()
-    # Regex: verb-near-noun patterns (add/swap/remove music | voiceover | caption)
+    # On-screen caption/subtitle requests — route to caption_video, NOT create_ugc_video.
+    _caption_intent_re = _re.compile(
+        r"\b(?:"
+        r"(?:add|put|apply|burn|overlay|include|change|redo|restyle|update|swap|remove)"
+        r"(?:\s+\w+){0,8}?\s+(?:captions?|subtitles?|subtitulos?|subtítulos?)"
+        r"|"
+        r"(?:hormozi|minimal|bold|karaoke)\s+(?:style\s+)?(?:captions?|subtitles?)"
+        r"|"
+        r"caption\s+this|caption\s+the\s+video"
+        r")\b",
+        _re.IGNORECASE,
+    )
+    # Regex: verb-near-noun patterns (add/swap/remove music | voiceover)
     # plus standalone edit verbs (trim / cut / shorten / re-edit).
+    # Captions/subtitles are handled separately via _caption_intent_re.
     _edit_intent_re = _re.compile(
         r"\b(?:"
-        # "add / swap / replace / remove / change / insert / put <up to 6 words> music/soundtrack/song/bgm/audio/voice ?over|vo|narration|caption|subtitle"
         r"(?:add|swap|replace|remove|change|insert|put|mix|layer|overlay|drop|stick|throw)"
         r"(?:\s+\w+){0,6}?\s+"
-        r"(?:music|soundtrack|song|bgm|audio|voice\s?over|vo|narration|captions?|subtitles?)"
+        r"(?:music|soundtrack|song|bgm|audio|voice\s?over|vo|narration)"
         r"|"
-        # Standalone edit verbs (note: 'extend' is intentionally excluded —
-        # it routes to the extend_video tool, not editor ops).
         r"trim|cut|shorten|re-?edit|edit\s+(?:the\s+)?(?:video|clip|timeline)"
         r")\b"
     )
-    is_edit_intent = bool(_edit_intent_re.search(_brief_lc))
+    is_caption_intent = bool(_caption_intent_re.search(_brief_lc))
+    is_edit_intent = bool(_edit_intent_re.search(_brief_lc)) and not is_caption_intent
+    caption_reminder = (
+        "[CAPTION TURN — the user wants on-screen subtitles burned onto an EXISTING video. "
+        "Call `caption_video(job_id=..., style=..., placement=...)` immediately — NOT `create_ugc_video`, "
+        "NOT `create_bulk_campaign`, and NOT `apply_editor_ops`. This is a fast overlay (~30s), NOT a "
+        "~6 minute full UGC regeneration. If a video ref with `job_id` is in Referenced assets, use THAT "
+        "job_id. If the user named a style (hormozi, minimal, bold, karaoke), call `caption_video` directly; "
+        "if they did not name a style, call `list_caption_styles()` first. NEVER interpret 'add captions' "
+        "as confirmation to fire a pending `create_ugc_video`. NEVER pass `subtitles_enabled=true` to "
+        "`create_ugc_video` when a finished video already exists in this thread.]"
+    )
     edit_reminder = (
         "[EDIT TURN REMINDER — do NOT respond with `AI_EDIT_OPS` text or any ops-JSON array as chat "
         "prose. That format is ignored by the dashboard and the edit will not apply. "
-        "Call the actual tools: for trim / fade / speed / opacity / captions / delete / text overlays / "
+        "Call the actual tools: for trim / fade / speed / opacity / delete / text overlays / "
         "add music on a single video, call `apply_editor_ops(job_id, ops=[...])` with the same ops you "
-        "would have emitted. For swap/remove/add-music on a finished COMBINED video, call combine_videos "
-        "again with the ORIGINAL per-clip source URLs from earlier in this thread + `music_prompt` "
-        "(and `mute_audio_indices` if needed). Never emit ops text without a matching tool_use block.]"
+        "would have emitted. For on-screen captions/subtitles, call `caption_video` — NEVER "
+        "`apply_editor_ops` or `create_ugc_video`. For swap/remove/add-music on a finished COMBINED video, "
+        "call combine_videos again with the ORIGINAL per-clip source URLs from earlier in this thread + "
+        "`music_prompt` (and `mute_audio_indices` if needed). Never emit ops text without a matching "
+        "tool_use block.]"
     )
 
     # Ref carry-forward: the frontend only re-sends a ref on a follow-up
@@ -319,6 +342,25 @@ async def agent_stream(
         _prior_turns_all = list((_prior_thread or {}).get("turns") or [])
     except Exception as _e:
         print(f"[agent_stream] prior thread load failed: {_e}")
+
+    _RETRY_BRIEF_RE = _re.compile(
+        r"^\s*(?:retry|try\s+again|re-?try|again|once\s+more)\s*[!.?]*\s*$",
+        _re.IGNORECASE,
+    )
+    if _RETRY_BRIEF_RE.match(brief.strip()) and not is_caption_intent:
+        for _past in reversed(_prior_turns_all):
+            _role = _past.get("role")
+            _txt = _past.get("text") or ""
+            if _role == "user" and _caption_intent_re.search(_txt.lower()):
+                is_caption_intent = True
+                brief = "add captions to the video"
+                print("[agent_stream] retry-after-caption: rewrote bare retry brief")
+                break
+            if _role == "agent" and "editing assistant is temporarily unavailable" in _txt.lower():
+                is_caption_intent = True
+                brief = "add captions to the video"
+                print("[agent_stream] retry-after-caption-failure: rewrote bare retry brief")
+                break
 
     if not refs:
         try:
@@ -360,6 +402,8 @@ async def agent_stream(
                 _added_new = False
                 for _pr in _turn_refs:
                     t = _pr.get("type")
+                    if is_caption_intent and t != "video" and not _pr.get("video_url"):
+                        continue
                     if not t or t in seen_types:
                         continue
                     try:
@@ -373,6 +417,9 @@ async def agent_stream(
                         sticky_video_ref = resurrected
                         has_video_ref = True
                 _ref_turns_seen += 1
+                # Caption turns only need the finished video ref — stop once found.
+                if is_caption_intent and sticky_video_ref:
+                    break
                 # Stop once we have the core product+creator pair, or this
                 # ref-bearing turn added nothing new (we've crossed into
                 # redundant / older state), or we've inspected the cap.
@@ -454,6 +501,8 @@ async def agent_stream(
 
     if not refs:
         prefix_lines = [engine_marker, quick_mode_marker]
+        if is_caption_intent:
+            prefix_lines.append(caption_reminder)
         if is_edit_intent:
             prefix_lines.append(edit_reminder)
         if asset_selection_reminder:
@@ -465,6 +514,8 @@ async def agent_stream(
         augmented_brief = "\n\n".join(prefix_lines + [augmented_brief])
     if refs:
         lines = [engine_marker, quick_mode_marker]
+        if is_caption_intent:
+            lines.append(caption_reminder)
         if is_edit_intent:
             lines.append(edit_reminder)
         if asset_selection_reminder:

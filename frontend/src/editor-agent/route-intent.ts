@@ -60,10 +60,12 @@ const EDIT_KEYWORDS = [
 	'set volume',
 	'mute',
 	'unmute',
-	'add captions',
-	'remove captions',
-	'caption this',
-	'caption the video',
+	// "add captions" / "subtitles" / "caption this" intentionally NOT in this
+	// list. Post-delivery captions belong to the managed agent's caption_video
+	// (Whisper transcription + burn + re-render) and list_caption_styles tools,
+	// not the Remotion editor-AI module (which only proposes AI_EDIT_OPS for
+	// manual apply and requires ANTHROPIC_API_KEY on the frontend). See
+	// AgentPanel handleRun for the auto video-ref injection on caption intents.
 	// "add music" / "background music" intentionally NOT in this list. The
 	// managed agent's combine_videos(music_prompt=...) tool is the working,
 	// production path for adding a soundtrack to a finished video (Suno V4

@@ -4,7 +4,7 @@
  * Clean utility helpers with auth-scoped API calls.
  */
 
-import { supabase } from '@/lib/supabaseClient';
+import { fetchWithAuth } from '@/lib/auth';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -46,19 +46,6 @@ export function dedupeInfluencersByName<T extends { name?: string | null; image_
 }
 
 /**
- * Get the current auth token from Supabase session.
- * Returns the JWT access_token or null if not authenticated.
- */
-async function getAuthToken(): Promise<string | null> {
-    try {
-        const { data: { session } } = await supabase.auth.getSession();
-        return session?.access_token ?? null;
-    } catch {
-        return null;
-    }
-}
-
-/**
  * Fetch wrapper for backend API calls.
  * Automatically includes the auth token so the backend can scope data by user.
  */
@@ -77,12 +64,6 @@ export async function apiFetch<T = unknown>(
         headers['Content-Type'] = 'application/json';
     }
 
-    // Auto-attach auth token
-    const token = await getAuthToken();
-    if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-    }
-
     // Send active project ID so the backend scopes assets to the correct project.
     // Callers that need data across all projects (dashboard aggregations) can
     // opt out via { skipProjectScope: true } — we send an explicit skip header
@@ -98,15 +79,16 @@ export async function apiFetch<T = unknown>(
         }
     }
 
-    const res = await fetch(`${API_URL}${path}`, {
+    const result = await fetchWithAuth<T>(`${API_URL}${path}`, {
         ...options,
         headers: { ...headers, ...options?.headers },
     });
-    if (!res.ok) {
-        const error = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(error.detail || `API error: ${res.status}`);
+    if (!result.ok) {
+        throw new Error(result.unauthorized
+            ? 'Session expired. Please sign in again.'
+            : `API error: ${result.status}`);
     }
-    return res.json();
+    return result.data;
 }
 
 /**

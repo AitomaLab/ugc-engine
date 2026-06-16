@@ -45,7 +45,7 @@ const isInFlightStatus = (status?: string) => {
 
 const isSuccessLikeStatus = (status?: string) => {
     const s = (status || '').toLowerCase();
-    return s === 'success' || s === 'complete';
+    return s === 'success' || s === 'complete' || s === 'completed' || s === 'done';
 };
 
 /** Video row still needs jobs-status polling (in-flight OR success without URL yet). */
@@ -281,6 +281,8 @@ export default function ProjectContainerPage() {
             }, ...prev];
         });
         setActiveTab('videos');
+        void fetchAssetsRef.current(true);
+        void pollInFlightRef.current();
     }, []);
 
     const fetchAssets = useCallback(async (silent = false): Promise<boolean> => {
@@ -661,9 +663,21 @@ export default function ProjectContainerPage() {
         const SLOW_MS = 5000;
         const FAST_UNTIL = 20000;
         const TOTAL_MS = 120000;
+        const WATCHED_MAX_MS = 600000;
         const tick = () => {
             const elapsed = Date.now() - startedAt;
-            if (elapsed <= FAST_UNTIL) {
+            const hasWatched = watchedVideoJobIdsRef.current.size > 0;
+            if (!hasWatched && elapsed > TOTAL_MS) {
+                if (burstRef.current) clearInterval(burstRef.current);
+                burstRef.current = null;
+                return;
+            }
+            if (hasWatched && elapsed > WATCHED_MAX_MS) {
+                if (burstRef.current) clearInterval(burstRef.current);
+                burstRef.current = null;
+                return;
+            }
+            if (elapsed <= FAST_UNTIL || hasWatched) {
                 void fetchAssets(true);
             }
             void pollInFlight();
@@ -671,12 +685,18 @@ export default function ProjectContainerPage() {
         tick();
         const schedule = (intervalMs: number) => setInterval(() => {
             const elapsed = Date.now() - startedAt;
-            if (elapsed > TOTAL_MS) {
+            const hasWatched = watchedVideoJobIdsRef.current.size > 0;
+            if (!hasWatched && elapsed > TOTAL_MS) {
                 if (burstRef.current) clearInterval(burstRef.current);
                 burstRef.current = null;
                 return;
             }
-            if (intervalMs === FAST_MS && elapsed > FAST_UNTIL) {
+            if (hasWatched && elapsed > WATCHED_MAX_MS) {
+                if (burstRef.current) clearInterval(burstRef.current);
+                burstRef.current = null;
+                return;
+            }
+            if (intervalMs === FAST_MS && elapsed > FAST_UNTIL && !hasWatched) {
                 if (burstRef.current) clearInterval(burstRef.current);
                 burstRef.current = schedule(SLOW_MS);
                 tick();
@@ -688,8 +708,10 @@ export default function ProjectContainerPage() {
     }, [fetchAssets, pollInFlight]);
 
     // Stop the burst early once any pending row appears — auto-poll takes over.
+    // Keep burst alive while watched background video jobs are still in flight.
     useEffect(() => {
         if (!burstRef.current) return;
+        if (watchedVideoJobIdsRef.current.size > 0) return;
         const hasPending = images.some(a => isInFlightStatus(a.status))
             || videos.some(a => videoNeedsStatusPoll(a));
         if (hasPending) {

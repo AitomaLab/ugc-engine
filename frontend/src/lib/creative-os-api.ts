@@ -5,7 +5,7 @@
  * Auto-attaches Supabase JWT and project ID, same pattern as utils.ts apiFetch.
  */
 
-import { supabase } from '@/lib/supabaseClient';
+import { getValidAccessToken, fetchWithAuth } from '@/lib/auth';
 
 const CREATIVE_OS_URL = process.env.NEXT_PUBLIC_CREATIVE_OS_URL || 'http://localhost:8001';
 
@@ -28,15 +28,6 @@ export class CreativeFetchAbortedError extends Error {
 
     get silent(): boolean {
         return this.kind === 'unmount';
-    }
-}
-
-async function getAuthToken(): Promise<string | null> {
-    try {
-        const { data: { session } } = await supabase.auth.getSession();
-        return session?.access_token ?? null;
-    } catch {
-        return null;
     }
 }
 
@@ -68,11 +59,6 @@ async function creativeFetchOnce<T = unknown>(
         headers['Content-Type'] = 'application/json';
     }
 
-    const token = await getAuthToken();
-    if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-    }
-
     if (typeof window !== 'undefined') {
         const projectId = localStorage.getItem('activeProjectId');
         if (projectId) {
@@ -97,18 +83,23 @@ async function creativeFetchOnce<T = unknown>(
     }, timeoutMs);
 
     try {
-        const res = await fetch(`${CREATIVE_OS_URL}${path}`, {
+        const result = await fetchWithAuth<T>(`${CREATIVE_OS_URL}${path}`, {
             ...options,
             headers: { ...headers, ...options?.headers },
             signal: controller.signal,
+            skipReauth: true,
         });
 
-        if (!res.ok) {
-            const error = await res.json().catch(() => ({ detail: res.statusText }));
-            throw new Error(error.detail || `Creative OS error: ${res.status}`);
+        if (!result.ok) {
+            if (result.unauthorized) {
+                const { forceReauth } = await import('@/lib/auth');
+                await forceReauth();
+            }
+            throw new Error(result.unauthorized
+                ? 'Session expired. Please sign in again.'
+                : `Creative OS error: ${result.status}`);
         }
-        const json = await res.json();
-        return json;
+        return result.data;
     } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') {
             if (externalSignal?.aborted) {
@@ -215,7 +206,7 @@ export interface UploadResult {
 
 /** Upload an image or video to the Creative OS user-uploads bucket. */
 export async function uploadAgentFile(file: File): Promise<UploadResult> {
-    const token = await getAuthToken();
+    const token = await getValidAccessToken();
     const headers: Record<string, string> = {};
     if (token) headers['Authorization'] = `Bearer ${token}`;
     const form = new FormData();
@@ -234,7 +225,7 @@ export async function uploadAgentFile(file: File): Promise<UploadResult> {
 
 /** Transcribe a recorded audio blob via ElevenLabs Scribe. */
 export async function transcribeAudio(blob: Blob): Promise<{ text: string; language: string }> {
-    const token = await getAuthToken();
+    const token = await getValidAccessToken();
     const headers: Record<string, string> = {};
     if (token) headers['Authorization'] = `Bearer ${token}`;
     const form = new FormData();
@@ -343,7 +334,7 @@ export type AgentStreamEvent =
 
 /** Load the persisted thread for the current project. */
 export async function getAgentThread(projectId: string): Promise<AgentThread> {
-    const token = await getAuthToken();
+    const token = await getValidAccessToken();
     const headers: Record<string, string> = {};
     if (token) headers['Authorization'] = `Bearer ${token}`;
     const res = await fetch(
@@ -359,7 +350,7 @@ export async function getAgentThread(projectId: string): Promise<AgentThread> {
 
 /** Wipe the persisted thread for the current project. */
 export async function resetAgentThread(projectId: string): Promise<void> {
-    const token = await getAuthToken();
+    const token = await getValidAccessToken();
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
     const res = await fetch(`${CREATIVE_OS_URL}/creative-os/agent/reset`, {
@@ -376,7 +367,7 @@ export async function resetAgentThread(projectId: string): Promise<void> {
  * failure falls back to the on-demand session creation in the send path.
  */
 export async function prewarmAgentSession(projectId: string): Promise<void> {
-    const token = await getAuthToken();
+    const token = await getValidAccessToken();
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
     try {
@@ -392,7 +383,7 @@ export async function prewarmAgentSession(projectId: string): Promise<void> {
 
 /** Best-effort: tell backend to interrupt the active session for this project. */
 export async function stopAgent(projectId: string): Promise<void> {
-    const token = await getAuthToken();
+    const token = await getValidAccessToken();
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
     try {
@@ -424,7 +415,7 @@ export async function streamAgent(
     lang?: 'en' | 'es',
     quickMode?: boolean,
 ): Promise<void> {
-    const token = await getAuthToken();
+    const token = await getValidAccessToken();
     const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         Accept: 'text/event-stream',

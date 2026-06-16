@@ -1,15 +1,24 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 
 export default function LoginPage() {
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [sessionNotice, setSessionNotice] = useState('');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (searchParams.get('reason') === 'session_expired') {
+      setSessionNotice('Your session expired. Please sign in again.');
+    }
+  }, [searchParams]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -22,7 +31,8 @@ export default function LoginPage() {
       setError(error.message);
       setLoading(false);
     } else {
-      window.location.href = '/';
+      const redirectTo = searchParams.get('redirectTo');
+      window.location.href = redirectTo && redirectTo.startsWith('/') ? redirectTo : '/';
     }
   };
 
@@ -36,6 +46,7 @@ export default function LoginPage() {
         </div>
 
         <form onSubmit={handleLogin} className="auth-form">
+          {sessionNotice && <div className="auth-notice">{sessionNotice}</div>}
           {error && <div className="auth-error">{error}</div>}
 
           <div className="auth-field">
@@ -199,6 +210,14 @@ export default function LoginPage() {
           border-radius: 8px;
           font-size: 0.85rem;
           border: 1px solid #fecaca;
+        }
+        .auth-notice {
+          background: #eff6ff;
+          color: #1d4ed8;
+          padding: 0.65rem 0.85rem;
+          border-radius: 8px;
+          font-size: 0.85rem;
+          border: 1px solid #bfdbfe;
         }
         .auth-footer {
           text-align: center;

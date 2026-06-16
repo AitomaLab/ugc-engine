@@ -576,13 +576,23 @@ function NotificationDropdown() {
 function ProfileDropdown() {
     const { t } = useTranslation();
     const [open, setOpen] = useState(false);
-    const { profile, subscription, wallet } = useApp();
+    const { session, profile, profileStatus, subscription, wallet } = useApp();
+
+    const displayName = profile?.name || profile?.email || (
+        session && profileStatus === 'loading' ? '…' :
+        session && profileStatus === 'error' ? 'Reconnecting…' :
+        session ? session.user.email || '…' : 'User'
+    );
 
     const initials = profile?.name
         ? profile.name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
         : profile?.email
             ? profile.email[0].toUpperCase()
-            : 'U';
+            : session?.user?.email
+                ? session.user.email[0].toUpperCase()
+                : profileStatus === 'loading' || profileStatus === 'error'
+                    ? '…'
+                    : 'U';
 
     const planName = subscription?.plan?.name || 'Free';
     const balance = wallet?.balance ?? 0;
@@ -602,7 +612,7 @@ function ProfileDropdown() {
                 <div className="pd-header">
                     <div className="pd-avatar">{initials}</div>
                     <div>
-                        <div className="pd-name">{profile?.name || profile?.email || 'User'}</div>
+                        <div className="pd-name">{displayName}</div>
                         <div className="pd-plan">{planName} {t('header.plan')}</div>
                     </div>
                 </div>

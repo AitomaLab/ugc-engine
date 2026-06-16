@@ -6,32 +6,21 @@
  * affect this path. Uses the same Supabase session token and the same
  * NEXT_PUBLIC_CREATIVE_OS_URL env var.
  */
-import { supabase } from '@/lib/supabaseClient';
+import { fetchWithAuth } from '@/lib/auth';
 
 const CREATIVE_OS_URL = process.env.NEXT_PUBLIC_CREATIVE_OS_URL || 'http://localhost:8001';
 
-async function getAuthToken(): Promise<string | null> {
-	try {
-		const { data: { session } } = await supabase.auth.getSession();
-		return session?.access_token ?? null;
-	} catch {
-		return null;
-	}
-}
-
 async function asyncFetch<T = unknown>(path: string, init?: RequestInit): Promise<T> {
-	const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-	const token = await getAuthToken();
-	if (token) headers['Authorization'] = `Bearer ${token}`;
-	const res = await fetch(`${CREATIVE_OS_URL}${path}`, {
+	const result = await fetchWithAuth<T>(`${CREATIVE_OS_URL}${path}`, {
 		...init,
-		headers: { ...headers, ...(init?.headers || {}) },
+		headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
 	});
-	if (!res.ok) {
-		const body = await res.json().catch(() => ({ detail: res.statusText }));
-		throw new Error(body.detail || `async-agent error: ${res.status}`);
+	if (!result.ok) {
+		throw new Error(result.unauthorized
+			? 'Session expired. Please sign in again.'
+			: `async-agent error: ${result.status}`);
 	}
-	return res.json() as Promise<T>;
+	return result.data;
 }
 
 export type AsyncJobStatus = 'dispatched' | 'running' | 'finishing' | 'success' | 'failed' | 'cancelled';
