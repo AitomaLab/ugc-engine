@@ -7,6 +7,7 @@ If this module fails, the existing SaaS continues to function normally.
 """
 
 import os
+import re
 import uuid
 import tempfile
 import subprocess
@@ -436,11 +437,20 @@ def get_editor_state(job_id: str, force_rebuild: bool = False, user: dict = Depe
         # If no transcription data, auto-transcribe the video so captions are editable
         if not job.get("transcription") and job.get("final_video_url"):
             try:
-                transcription = _auto_transcribe_video(job["final_video_url"])
+                metadata = job.get("metadata") or {}
+                if not isinstance(metadata, dict):
+                    metadata = {}
+                script_prompt = _script_prompt_from_job(job, metadata)
+                caption_lang = _resolve_caption_language(job, metadata, script_prompt)
+                transcription = _auto_transcribe_video(
+                    job["final_video_url"],
+                    script_prompt=script_prompt,
+                    language=caption_lang,
+                )
                 if transcription and transcription.get("words"):
                     job["transcription"] = transcription
                     # Persist transcription so we don't re-run Whisper next time
-                    _save_transcription(job_id, table, transcription)
+                    _save_transcription(job_id, table, transcription, language=caption_lang)
             except Exception as e:
                 print(f"[EDITOR] Auto-transcription failed (non-fatal): {e}")
 
@@ -551,19 +561,91 @@ def _auto_transcribe_video(
         return transcription
 
 
-def _save_transcription(job_id: str, table: str, transcription: dict):
+_SPANISH_SCRIPT_HINT = re.compile(
+    r"[ñáéíóúü¿¡]|\b(el|la|los|las|de|que|con|para|por|esta|este|es|son|muy|más|sin|como|cuando|qué|cómo)\b",
+    re.IGNORECASE,
+)
+
+
+def _script_prompt_from_job(job: dict, metadata: dict) -> Optional[str]:
+    """Collect known dialogue text to guide Whisper decoding."""
+    vo_script = metadata.get("voiceover_script")
+    if vo_script:
+        return str(vo_script).strip() or None
+    for key in ("script", "hook"):
+        val = job.get(key) or metadata.get(key)
+        if val:
+            return str(val).strip()
+    scenes = metadata.get("scenes") or job.get("scenes")
+    if isinstance(scenes, list):
+        parts: list[str] = []
+        for scene in scenes:
+            if not isinstance(scene, dict):
+                continue
+            dialogue = scene.get("dialogue") or scene.get("text") or ""
+            if dialogue:
+                parts.append(str(dialogue).strip())
+        if parts:
+            return " ".join(parts)
+    return None
+
+
+def _resolve_caption_language(job: dict, metadata: dict, script_prompt: Optional[str]) -> str:
+    """Resolve Whisper ISO-639-1 language for caption transcription."""
+    for source in (job.get("video_language"), metadata.get("video_language")):
+        lang = (source or "").strip().lower()
+        if lang in ("en", "es"):
+            return lang
+    if script_prompt and _SPANISH_SCRIPT_HINT.search(script_prompt):
+        return "es"
+    return "en"
+
+
+def _should_reuse_transcription(
+    transcription: Optional[dict],
+    stored_lang: Optional[str],
+    desired_lang: str,
+) -> bool:
+    if not transcription or not transcription.get("words"):
+        return False
+    if stored_lang:
+        return stored_lang == desired_lang
+    # Legacy rows: only trust cached transcription for English jobs.
+    return desired_lang == "en"
+
+
+def _save_transcription(
+    job_id: str,
+    table: str,
+    transcription: dict,
+    language: Optional[str] = None,
+):
     """Persist transcription data to the correct table."""
     try:
+        metadata_patch: Optional[dict] = None
+        if language:
+            job, _ = _get_job_any(job_id)
+            metadata = (job or {}).get("metadata") or {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            metadata = dict(metadata)
+            metadata["transcription_language"] = language
+            metadata_patch = metadata
+
         if table == "clone_video_jobs":
             try:
                 sb = get_supabase()
-                sb.table("clone_video_jobs").update(
-                    {"transcription": transcription}
-                ).eq("id", job_id).execute()
+                payload: dict = {"transcription": transcription}
+                if metadata_patch is not None:
+                    payload["metadata"] = metadata_patch
+                sb.table("clone_video_jobs").update(payload).eq("id", job_id).execute()
             except Exception:
                 pass  # transcription column may not exist yet
         else:
-            update_job(job_id, {"transcription": transcription})
+            payload = {"transcription": transcription}
+            if metadata_patch is not None:
+                payload["metadata"] = metadata_patch
+            update_job(job_id, payload)
     except Exception as e:
         print(f"[EDITOR] Failed to save transcription (non-fatal): {e}")
 
@@ -1183,12 +1265,25 @@ def caption_video(job_id: str, body: CaptionVideoRequest = CaptionVideoRequest()
         # For voiceover_on_video jobs the mix drops source audio volume which
         # confuses Whisper — prefer the clean TTS mp3 saved in metadata.
         vo_audio_url = metadata.get("voiceover_audio_url")
-        vo_script = metadata.get("voiceover_script")
-        # Fall back to other known dialogue fields the job may carry.
-        script_prompt = vo_script or job.get("hook") or job.get("script")
+        script_prompt = _script_prompt_from_job(job, metadata)
+        caption_lang = _resolve_caption_language(job, metadata, script_prompt)
+        stored_transcription_lang = metadata.get("transcription_language")
         transcription_source = vo_audio_url or video_url
 
         transcription = job.get("transcription")
+        if _should_reuse_transcription(transcription, stored_transcription_lang, caption_lang):
+            print(
+                f"[CAPTION] Reusing existing transcription for {job_id} "
+                f"({len(transcription['words'])} words, lang={stored_transcription_lang or caption_lang})"
+            )
+        else:
+            if transcription and transcription.get("words"):
+                print(
+                    f"[CAPTION] Discarding stale transcription for {job_id} "
+                    f"(stored_lang={stored_transcription_lang!r}, need={caption_lang})"
+                )
+            transcription = None
+
         if not transcription or not transcription.get("words"):
             if vo_audio_url:
                 print(f"[CAPTION] Using VO audio from metadata for {job_id}: {vo_audio_url}")
@@ -1196,16 +1291,19 @@ def caption_video(job_id: str, body: CaptionVideoRequest = CaptionVideoRequest()
                 print(f"[CAPTION] Transcribing final_video_url for {job_id}: {video_url}")
             if script_prompt:
                 print(f"[CAPTION] Seeding Whisper with {len(str(script_prompt).split())}-word script prompt")
-            transcription = _auto_transcribe_video(transcription_source, script_prompt=script_prompt)
+            print(f"[CAPTION] Whisper language={caption_lang}")
+            transcription = _auto_transcribe_video(
+                transcription_source,
+                script_prompt=script_prompt,
+                language=caption_lang,
+            )
             if not transcription or not transcription.get("words"):
                 raise HTTPException(
                     status_code=500,
                     detail=f"Whisper transcription returned no words (source={transcription_source})",
                 )
             # Persist so we don't re-transcribe next time
-            _save_transcription(job_id, table, transcription)
-        else:
-            print(f"[CAPTION] Reusing existing transcription for {job_id} ({len(transcription['words'])} words)")
+            _save_transcription(job_id, table, transcription, language=caption_lang)
 
         # ── Step 2: Build captions array (Remotion Caption format) ───
         captions = []
