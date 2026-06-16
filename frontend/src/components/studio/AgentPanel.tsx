@@ -184,6 +184,46 @@ function captionStyleName(styleId: string): string {
         ?? styleId.charAt(0).toUpperCase() + styleId.slice(1);
 }
 
+const CAPTION_PLACEMENT_REPLY_RE = /\bcaption style with\b/i;
+
+function findCaptionTargetVideoRefFromTurns(turns: AgentTurn[]): AgentRef | null {
+    for (let i = turns.length - 1; i >= 0; i--) {
+        const turn = turns[i];
+        if (turn.role !== 'user') continue;
+        const text = turn.text || '';
+        const videoRef = (turn.refs || []).find((r) => r.type === 'video' && r.video_url);
+        if (!videoRef) continue;
+        if (CAPTION_INTENT_RE.test(text) || CAPTION_PLACEMENT_REPLY_RE.test(text)) {
+            return videoRef;
+        }
+    }
+    return null;
+}
+
+async function fetchVideoRefForJob(jobId: string): Promise<AgentRef | null> {
+    try {
+        const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+        const tok = (await supabase.auth.getSession()).data.session?.access_token;
+        const jobRes = await fetch(`${apiBase}/jobs/${jobId}`, {
+            headers: tok ? { Authorization: `Bearer ${tok}` } : {},
+        });
+        if (!jobRes.ok) return null;
+        const job = await jobRes.json();
+        const videoUrl = job.final_video_url || job.video_url;
+        if (!videoUrl) return null;
+        const baseName = job.campaign_name || job.product_name || 'current_video';
+        return {
+            type: 'video',
+            tag: `${slugify(baseName)}_${String(jobId).slice(0, 8)}`,
+            name: baseName,
+            job_id: String(jobId),
+            video_url: videoUrl,
+        };
+    } catch {
+        return null;
+    }
+}
+
 function sessionHasCaptionIntent(turns: AgentTurn[]): boolean {
     for (let i = turns.length - 1; i >= 0; i--) {
         const turn = turns[i];
@@ -313,6 +353,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
     // Deferred confirmation — stored here when confirmation_pending arrives
     // before the agent's cost-message text, then applied to the next agent turn.
     const pendingConfirmRef = useRef<{ credits: number; summaries: string[] } | null>(null);
+    const captionTargetVideoRefRef = useRef<AgentRef | null>(null);
     // Cycles every 4s while the pill is showing a generic label, so the user
     // sees motion in the copy itself instead of a static "Processing…".
     const [pillTick, setPillTick] = useState(0);
@@ -1026,32 +1067,17 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             // themselves (via @-mention or upload).
             const isMusicIntent = /\b(add|put|drop|include|swap|replace|change|background|bg)\b[^.!?]{0,40}\b(music|soundtrack|bgm|score|audio)\b|\bsound\s*track\b/i.test(text);
             const isCaptionIntent = CAPTION_INTENT_RE.test(text);
-            const needsVideoRefForEdit = isMusicIntent || isCaptionIntent;
+            const isCaptionPlacementReply = CAPTION_PLACEMENT_REPLY_RE.test(text);
+            const needsVideoRefForEdit = isMusicIntent || isCaptionIntent || isCaptionPlacementReply;
             const hasVideoRef = refsForRequest.some((r) => r.type === 'video');
             if (needsVideoRefForEdit && !hasVideoRef && jobId) {
-                try {
-                    const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-                    const tok = (await supabase.auth.getSession()).data.session?.access_token;
-                    const jobRes = await fetch(`${apiBase}/jobs/${jobId}`, {
-                        headers: tok ? { Authorization: `Bearer ${tok}` } : {},
-                    });
-                    if (jobRes.ok) {
-                        const job = await jobRes.json();
-                        const videoUrl = job.final_video_url || job.video_url;
-                        if (videoUrl) {
-                            const baseName = job.campaign_name || job.product_name || 'current_video';
-                            refsForRequest.push({
-                                type: 'video',
-                                tag: `${slugify(baseName)}_${String(jobId).slice(0, 8)}`,
-                                name: baseName,
-                                job_id: String(jobId),
-                                video_url: videoUrl,
-                            });
-                        }
-                    }
-                } catch (err) {
-                    console.warn('Auto-attach current video for music/caption intent failed:', err);
-                }
+                const autoRef = await fetchVideoRefForJob(jobId);
+                if (autoRef) refsForRequest.push(autoRef);
+            }
+
+            const captionVideoRef = refsForRequest.find((r) => r.type === 'video' && r.video_url);
+            if (captionVideoRef && needsVideoRefForEdit) {
+                captionTargetVideoRefRef.current = captionVideoRef;
             }
 
             // ── Enqueue path ────────────────────────────────────────────
@@ -1633,6 +1659,36 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
             proSnapshot: snapshotPro(),
         });
     }, [handleRun, snapshotPro]);
+
+    const handleCaptionStyleSelect = useCallback((styleId: string) => {
+        setPendingCaptionStyle(styleId);
+        if (!captionTargetVideoRefRef.current) {
+            const fromTurns = findCaptionTargetVideoRefFromTurns(turns);
+            if (fromTurns) captionTargetVideoRefRef.current = fromTurns;
+        }
+    }, [turns]);
+
+    const handleCaptionPlacementSelect = useCallback(async (placement: CaptionPlacement) => {
+        if (!pendingCaptionStyle) return;
+        const styleName = captionStyleName(pendingCaptionStyle);
+        const placementLabel = placement === 'top'
+            ? t('creativeOs.agent.captionPlacementTop')
+            : placement === 'bottom'
+                ? t('creativeOs.agent.captionPlacementBottom')
+                : t('creativeOs.agent.captionPlacementMiddle');
+        setPendingCaptionStyle(null);
+
+        let videoRef = captionTargetVideoRefRef.current;
+        if (!videoRef) videoRef = findCaptionTargetVideoRefFromTurns(turns);
+        if (!videoRef && jobId) videoRef = await fetchVideoRefForJob(jobId);
+        if (videoRef) captionTargetVideoRefRef.current = videoRef;
+
+        handleRun({
+            text: `Use the ${styleName} caption style with ${placementLabel} placement`,
+            refs: videoRef ? [videoRef] : [],
+            proSnapshot: snapshotPro(),
+        });
+    }, [pendingCaptionStyle, turns, jobId, handleRun, snapshotPro, t]);
 
     // Eager-load mention inventory when the agent shows inline asset selectors.
     useEffect(() => {
@@ -2236,18 +2292,8 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                         selectedCaptionStyle={captionPick.style}
                                         selectedCaptionPlacement={captionPick.placement}
                                         pendingCaptionStyle={pendingCaptionStyle}
-                                        onCaptionStyleSelect={setPendingCaptionStyle}
-                                        onCaptionPlacementSelect={(placement) => {
-                                            if (!pendingCaptionStyle) return;
-                                            const styleName = captionStyleName(pendingCaptionStyle);
-                                            const placementLabel = placement === 'top'
-                                                ? t('creativeOs.agent.captionPlacementTop')
-                                                : placement === 'bottom'
-                                                    ? t('creativeOs.agent.captionPlacementBottom')
-                                                    : t('creativeOs.agent.captionPlacementMiddle');
-                                            setPendingCaptionStyle(null);
-                                            handleRun(`Use the ${styleName} caption style with ${placementLabel} placement`);
-                                        }}
+                                        onCaptionStyleSelect={handleCaptionStyleSelect}
+                                        onCaptionPlacementSelect={handleCaptionPlacementSelect}
                                         mentionGroups={groupedMentions}
                                         mentionsLoading={!mentionsLoaded}
                                         onAssetPick={handleAssetPickFromChat}
