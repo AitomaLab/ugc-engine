@@ -631,6 +631,122 @@ Generate the {num_parts}-part UGC script now."""
             return f"Check out {brand}! It's amazing. You have to try it."
 
     # ------------------------------------------------------------------
+    # Influencer-only talking-head (no product)
+    # ------------------------------------------------------------------
+
+    def generate_talking_head_script(
+        self,
+        influencer_data: Dict[str, Any],
+        duration: int = 15,
+        video_language: str = "en",
+        context: str = "",
+        language_accent: Optional[str] = None,
+    ) -> str:
+        """Persona-driven script with no product — direct-to-camera talking head."""
+        user_context = context.strip() if context else (
+            "Share a relatable personal story, insight, or tip in your natural voice."
+        )
+        if duration <= 10:
+            product_analysis = {
+                "brand_name": "the topic",
+                "visual_description": user_context,
+                "color_scheme": [],
+            }
+            return self._generate_raw_script(
+                product_analysis,
+                influencer_data,
+                duration,
+                video_language=video_language,
+                language_accent=language_accent,
+                context=user_context,
+            )
+
+        if not self.api_key:
+            if duration >= 30:
+                return (
+                    "Okay so I need to tell you something that completely changed my perspective. ||| "
+                    "It honestly made such a difference in my daily routine, I wish I knew this sooner. ||| "
+                    "If this resonates with you, let me know in the comments."
+                )
+            return (
+                "Okay so I need to tell you something that completely changed my perspective. ||| "
+                "If this resonates with you, let me know what you think."
+            )
+
+        if duration >= 30:
+            template = """You are {{influencer_name}}, a {{influencer_age}} {{influencer_gender}} content creator.
+
+Your personality: {{influencer_personality}}
+Your speaking style: {{influencer_tone}}, {{influencer_energy}} energy
+Your accent: {{influencer_accent}}
+
+Record a 30-second direct-to-camera talking-head video. NO product, NO app, NO brand placement.
+The video has 3 spoken scenes (~8 seconds each). Output exactly 3 parts separated by |||.
+
+**TOPIC / CREATIVE DIRECTION:**
+{{user_context}}
+
+Each part must be 19-21 words. Output ONLY spoken words separated by |||. No stage directions."""
+        else:
+            template = """You are {{influencer_name}}, a {{influencer_age}} {{influencer_gender}} content creator.
+
+Your personality: {{influencer_personality}}
+Your speaking style: {{influencer_tone}}, {{influencer_energy}} energy
+Your accent: {{influencer_accent}}
+
+Record a 15-second direct-to-camera talking-head video. NO product, NO app, NO brand placement.
+The video has 2 spoken scenes (~8 seconds each). Output exactly 2 parts separated by |||.
+
+**TOPIC / CREATIVE DIRECTION:**
+{{user_context}}
+
+Each part must be 19-21 words. Output ONLY spoken words separated by |||. No stage directions."""
+
+        system_prompt = (
+            template
+            .replace("{{influencer_name}}", influencer_data.get("name", "the creator"))
+            .replace("{{influencer_age}}", str(influencer_data.get("age", "25-year-old")))
+            .replace("{{influencer_gender}}", influencer_data.get("gender", "Female").lower())
+            .replace("{{influencer_personality}}", influencer_data.get("personality", "friendly and relatable"))
+            .replace("{{influencer_tone}}", influencer_data.get("tone", "Enthusiastic"))
+            .replace("{{influencer_energy}}", influencer_data.get("energy_level", "High"))
+            .replace("{{influencer_accent}}", influencer_data.get("accent", "neutral English"))
+            .replace("{{user_context}}", user_context)
+        )
+
+        if video_language == "es":
+            system_prompt += (
+                "\n\nLANGUAGE OVERRIDE: Write the ENTIRE script in Spanish."
+            )
+
+        try:
+            if not self.api_key:
+                raise RuntimeError("no api key")
+            response = self.client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": "Write the script now."},
+                ],
+                max_tokens=300 if duration >= 30 else 150,
+                temperature=0.85,
+            )
+            raw = (response.choices[0].message.content or "").strip()
+            if raw:
+                return raw
+        except Exception as e:
+            print(f"      [AIScript] Talking-head generation failed: {e}")
+
+        return self._generate_raw_script(
+            {"brand_name": "the topic", "visual_description": user_context, "color_scheme": []},
+            influencer_data,
+            duration,
+            video_language=video_language,
+            language_accent=language_accent,
+            context=user_context,
+        )
+
+    # ------------------------------------------------------------------
     # Digital Products (NEW)
     # ------------------------------------------------------------------
 

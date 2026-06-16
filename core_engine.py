@@ -38,6 +38,25 @@ def _upload_scene_preview(video_path):
     except Exception as e:
         print(f"      [PREVIEW] Upload failed (non-fatal): {e}")
         return None
+
+
+def _composite_or_influencer_ref(scene, influencer, product, *, seed=None):
+    """NanoBanana composite when product has an image; else influencer talking-head ref."""
+    prod_img = (product or {}).get("image_url")
+    if prod_img:
+        return generate_scenes.generate_composite_image_with_retry(
+            scene=scene,
+            influencer=influencer,
+            product=product,
+            seed=seed,
+        )
+    ref = (
+        scene.get("reference_image_url")
+        or (influencer or {}).get("reference_image_url")
+        or (influencer or {}).get("image_url")
+    )
+    print("      [SKIP] No product image — using influencer reference (talking-head)")
+    return ref
 from ugc_backend.transcription_client import TranscriptionClient
 try:
     from kie_ai.nano_banana_client import client as nano_client
@@ -326,11 +345,8 @@ def run_generation_pipeline(
                 if status_callback:
                     status_callback(f"Gen: Composite Image (1/{len(scenes)})")
                 print(f"      [EXTEND] Physical parallel-i2v: generating shared composite")
-                composite_url = generate_scenes.generate_composite_image_with_retry(
-                    scene=scene_1,
-                    influencer=influencer,
-                    product=product,
-                    seed=global_seed,
+                composite_url = _composite_or_influencer_ref(
+                    scene_1, influencer, product, seed=global_seed,
                 )
                 cached_composite_url = composite_url
                 print(f"      [EXTEND] Composite ready: {composite_url}")
@@ -365,11 +381,8 @@ def run_generation_pipeline(
                 if scene_1["type"] == "physical_product_scene":
                     if status_callback:
                         status_callback(f"Gen: Composite Image (1/{len(scenes)})")
-                    composite_url = generate_scenes.generate_composite_image_with_retry(
-                        scene=scene_1,
-                        influencer=influencer,
-                        product=product,
-                        seed=global_seed,
+                    composite_url = _composite_or_influencer_ref(
+                        scene_1, influencer, product, seed=global_seed,
                     )
                     cached_composite_url = composite_url
                     print(f"      [EXTEND] Composite ready: {composite_url}")
@@ -670,15 +683,12 @@ def run_generation_pipeline(
 
             try:
                 if scene["type"] == "physical_product_scene":
-                    # Step 1: Nano Banana (Composite Image)
+                    # Step 1: Nano Banana (Composite Image) — skip when no product
                     if status_callback: status_callback(f"Gen: Composite Image ({i}/{len(scenes)})")
-                    print(f"      Generating composite product image with prompt: {scene['nano_banana_prompt'][:50]}...")
-
-                    composite_url = generate_scenes.generate_composite_image_with_retry(
-                        scene=scene,
-                        influencer=influencer,
-                        product=product,
-                        seed=global_seed
+                    if (product or {}).get("image_url"):
+                        print(f"      Generating composite product image with prompt: {scene['nano_banana_prompt'][:50]}...")
+                    composite_url = _composite_or_influencer_ref(
+                        scene, influencer, product, seed=global_seed,
                     )
                     print(f"      Composite Ready: {composite_url}")
 

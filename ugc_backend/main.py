@@ -2059,6 +2059,7 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
         # ---------------------------------------------------------------
         is_digital_product = (data.product_type == "digital" and data.product_id)
         is_physical_product = (data.product_type == "physical" and data.product_id)
+        is_talking_head = not data.product_id
 
         if is_digital_product:
             # Product-scoped clips: only clips belonging to this product
@@ -2079,6 +2080,10 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
             # (or the agent-provided hook). Mirrors the single-job /jobs path.
             clip_pool = []
             scripts = []  # generated per-video in the loop
+        elif is_talking_head:
+            # Influencer-only talking-head: no app clips, no global script pool.
+            clip_pool = []
+            scripts = [] if data.scripts else []
         else:
             # Legacy path: global pools + category matching (unchanged) —
             # only used for product-less / uncategorized campaigns.
@@ -2095,7 +2100,7 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
             ] if clips else []
             clip_pool = matching_clips if matching_clips else clips
 
-        if not scripts and not (is_physical_product or is_digital_product):
+        if not scripts and not data.scripts and not (is_physical_product or is_digital_product or is_talking_head):
             raise HTTPException(status_code=400, detail="No scripts available. Add scripts first.")
 
         # Detect actual DB columns dynamically (same approach as single job)
@@ -2140,7 +2145,7 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
             # Varies only the environment/setting so the N videos differ; the
             # influencer's face is locked via the reference_image_url override.
             variation_prompt = None
-            if (is_digital_product or is_physical_product) and random.random() < 0.70:
+            if (is_digital_product or is_physical_product or is_talking_head) and random.random() < 0.70:
                 try:
                     from prompts.digital_prompts import generate_variation_prompt
                     default_setting = (inf.get("setting") or "").strip()
@@ -2197,6 +2202,21 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
                 except Exception as e:
                     print(f"   !! Per-video physical script generation failed for job {i}: {e}")
                     script_text = ""
+            elif is_talking_head:
+                try:
+                    from ugc_backend.ai_script_client import AIScriptClient
+                    client = AIScriptClient()
+                    script_text = client.generate_talking_head_script(
+                        influencer_data=inf,
+                        duration=data.duration,
+                        video_language=data.video_language,
+                        language_accent=data.language_accent,
+                        context=data.hook or "",
+                    )
+                    print(f"   [Bulk] Job {i+1}: Generated talking-head script ({len(script_text)} chars)")
+                except Exception as e:
+                    print(f"   !! Per-video talking-head script generation failed for job {i}: {e}")
+                    script_text = ""
             else:
                 script_text = selected_script.get("text", "") if selected_script else ""
             _music_enabled = (
@@ -2217,7 +2237,7 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
             job_data = {
                 "influencer_id": data.influencer_id,
                 "script_id": selected_script["id"] if (selected_script and not data.hook and not data.scripts) else None,
-                "app_clip_id": selected_clip["id"] if selected_clip else None,
+                "app_clip_id": None if is_talking_head else (selected_clip["id"] if selected_clip else None),
                 "product_type": data.product_type,
                 "product_id": data.product_id,
                 "model_api": data.model_api,

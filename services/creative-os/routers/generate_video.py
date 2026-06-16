@@ -2042,12 +2042,12 @@ async def _generate_ugc_clip(
             "product_type": product_type,
             "model_api": "veo-3.1-fast",
             "length": data.clip_length,
-            "campaign_name": _derive_asset_name(data.prompt),
+            "campaign_name": _derive_asset_name(data.prompt or data.hook or ""),
             "video_language": data.language,
             "language_accent": getattr(data, "language_accent", None),
             "subtitles_enabled": False,
             "music_enabled": False,
-            "hook": data.prompt[:500] if data.prompt else "",
+            "hook": (data.hook or data.prompt or "")[:500],
         })
         job_id = job.get("id") or job.get("job", {}).get("id")
         credit_cost = int(job.get("credits_deducted") or 0)
@@ -2079,6 +2079,137 @@ async def _generate_ugc_clip(
         "mode": "ugc",
         "clip_length": data.clip_length,
     }
+
+
+async def dispatch_bulk_ugc_clips(
+    *,
+    token: str,
+    project_id: str,
+    user_id: Optional[str],
+    influencer_id: str,
+    scripts: list[str],
+    kwargs: dict,
+) -> dict:
+    """Dispatch N parallel 8s UGC clips via the in-process Creative OS pipeline."""
+    import asyncio
+
+    client = CoreAPIClient(token=token, project_id=project_id)
+    user_selected_influencer = bool(influencer_id)
+    job_ids: list[str] = []
+    errors: list[dict] = []
+
+    for i, script in enumerate(scripts):
+        script = (script or "").strip()
+        if not script:
+            errors.append({"index": i, "error": "empty script"})
+            continue
+
+        data = VideoGenerateRequest(
+            prompt="",
+            hook=script,
+            mode="ugc",
+            project_id=project_id,
+            influencer_id=influencer_id,
+            reference_image_url=kwargs.get("reference_image_url"),
+            language=kwargs.get("video_language", "en"),
+            language_accent=kwargs.get("language_accent"),
+            clip_length=8,
+            product_id=kwargs.get("product_id"),
+            product_type=kwargs.get("product_type") or (
+                "physical" if kwargs.get("product_id") else "digital"
+            ),
+            aspect_ratio="9:16",
+            background_music=False,
+            captions=False,
+        )
+
+        try:
+            job = await client.create_job({
+                "influencer_id": influencer_id,
+                "product_id": data.product_id,
+                "product_type": data.product_type or "digital",
+                "model_api": kwargs.get("model_api") or "veo-3.1-fast",
+                "length": 8,
+                "campaign_name": kwargs.get("campaign_name") or _derive_asset_name(script),
+                "video_language": data.language,
+                "language_accent": data.language_accent,
+                "subtitles_enabled": False,
+                "music_enabled": False,
+                "hook": script[:500],
+            })
+            job_id = job.get("id") or job.get("job", {}).get("id")
+            credit_cost = int(job.get("credits_deducted") or 0)
+            if not job_id:
+                errors.append({"index": i, "error": "job created but no id returned"})
+                continue
+            job_ids.append(job_id)
+            asyncio.create_task(
+                _run_ugc_clip_pipeline(
+                    job_id=job_id,
+                    data=data,
+                    token=token,
+                    project_id=project_id,
+                    influencer_id=influencer_id,
+                    user_selected_influencer=user_selected_influencer,
+                    user_id=user_id,
+                    credit_cost=credit_cost,
+                )
+            )
+            print(f"[Bulk 8s] Dispatched clip {i + 1}/{len(scripts)} job_id={job_id}")
+        except Exception as e:
+            print(f"[Bulk 8s] Failed to dispatch clip {i + 1}: {e}")
+            errors.append({"index": i, "error": str(e)})
+
+    return {"job_ids": job_ids, "errors": errors or None, "count": len(job_ids)}
+
+
+def _prod_ref_url_from_request(data: VideoGenerateRequest) -> str | None:
+    """Explicit product @-mention shot URL from element_refs."""
+    for ref in data.element_refs or []:
+        if (ref.type or "").lower() == "product" and ref.image_url:
+            return ref.image_url
+    return None
+
+
+def _raw_product_upload_url(
+    data: VideoGenerateRequest,
+    influencer: dict | None = None,
+) -> str | None:
+    """User file upload intended as a product photo (type=image, no DB id).
+
+    Excludes URLs that belong to the influencer's view set — those are
+    character shots forwarded as reference_image_url, not product uploads.
+    """
+    for ref in data.element_refs or []:
+        if (ref.type or "").lower() != "image" or not ref.image_url:
+            continue
+        if getattr(ref, "id", None):
+            continue
+        url = ref.image_url
+        if influencer and url in _view_urls_for_entity(
+            influencer, primary_key="image_url", views_key="character_views"
+        ):
+            continue
+        return url
+    return None
+
+
+def needs_product_composite(
+    *,
+    product_id: str | None,
+    product_image_url: str | None,
+    app_clip_id: str | None,
+    prod_ref_url: str | None,
+    raw_product_upload_url: str | None = None,
+) -> bool:
+    """True when NanoBanana influencer+product composite should run."""
+    return bool(
+        product_id
+        or product_image_url
+        or prod_ref_url
+        or app_clip_id
+        or raw_product_upload_url
+    )
 
 
 def _view_urls_for_entity(entity: dict | None, *, primary_key: str, views_key: str) -> set[str]:
@@ -2264,8 +2395,9 @@ async def _run_ugc_clip_pipeline(
 
         # ── Step 1: Fetch & analyze product ──
         product = None
-        product_type = "physical"
+        product_type = "digital"
         if data.product_id:
+            product_type = "physical"
             try:
                 product = await client_sync.get_product(data.product_id)
                 if product and product.get("website_url"):
@@ -2428,42 +2560,22 @@ async def _run_ugc_clip_pipeline(
         # ── Step 4: Generate composite image or use reference ──
         has_reference_image = bool(data.reference_image_url)
 
-        # KEY LOGIC: When the user uploaded an image (reference_image_url)
-        # AND has either an influencer or product (but not both from DB),
-        # use the uploaded image to fill the missing role for NanoBanana compositing.
-        #
-        # Case A: upload + influencer (no product) → upload = product image
-        # Case B: upload + product (no influencer) → upload = influencer/character image
-        #
-        # This synthesis MUST run BEFORE _resolve_ugc_composite_urls: the
-        # resolver's _assign_explicit_urls_to_entities can only bind a URL to an
-        # entity that already exists. Without a synthesized product here, an
-        # uploaded product image has no product slot to land in and gets
-        # mis-routed into the influencer slot (character duplicated, product
-        # missing).
-        uploaded_product_for_composite = (
-            has_reference_image
-            and influencer
-            and not data.product_id  # No registered product — the upload IS the product
-        )
+        # Raw user file upload as product (type=image, no DB id) — NOT the
+        # influencer @-mention shot stored in reference_image_url.
+        raw_product_upload = _raw_product_upload_url(data, influencer)
         uploaded_influencer_for_composite = (
             has_reference_image
             and product
             and product.get("image_url")
-            and not influencer  # No registered influencer — the upload IS the character
+            and not influencer
         )
 
-        if uploaded_product_for_composite:
-            # Treat the uploaded image as a product image for NanoBanana compositing
-            print(f"[UGC Clip] Uploaded product image + influencer selected → NanoBanana composite")
-            if not product:
-                product = {
-                    "name": "uploaded product",
-                    "image_url": data.reference_image_url,
-                }
-            else:
-                product["image_url"] = data.reference_image_url
-            has_reference_image = False
+        if raw_product_upload and influencer and not data.product_id and not product:
+            print(f"[UGC Clip] Raw product upload + influencer → NanoBanana composite")
+            product = {
+                "name": "uploaded product",
+                "image_url": raw_product_upload,
+            }
 
         elif uploaded_influencer_for_composite:
             # Treat the uploaded image as an influencer/character for NanoBanana compositing
@@ -2487,7 +2599,16 @@ async def _run_ugc_clip_pipeline(
         # uploaded image binds to the correct slot.
         influencer, product = _resolve_ugc_composite_urls(data, influencer, product)
 
-        if has_reference_image:
+        prod_ref_url = _prod_ref_url_from_request(data)
+        want_composite = needs_product_composite(
+            product_id=data.product_id,
+            product_image_url=getattr(data, "product_image_url", None),
+            app_clip_id=data.app_clip_id,
+            prod_ref_url=prod_ref_url,
+            raw_product_upload_url=raw_product_upload,
+        )
+
+        if has_reference_image and not influencer:
             # User selected a pre-generated image with NO influencer → use directly
             composite_url = data.reference_image_url
             print(f"[UGC Clip] Using pre-generated reference image: {composite_url[:80]}...")
@@ -2497,7 +2618,22 @@ async def _run_ugc_clip_pipeline(
                 "preview_url": composite_url,
                 "preview_type": "image",
             })
-        elif product and influencer:
+        elif influencer and not want_composite:
+            composite_url = (
+                influencer.get("image_url")
+                or data.reference_image_url
+            )
+            print("[UGC Clip] talking-head mode — skipping composite (no product)")
+            if composite_url:
+                await _update_video_job_via_api(token, project_id, job_id, {
+                    "status_message": "Animating reference image...",
+                    "progress": 40,
+                    "preview_url": composite_url,
+                    "preview_type": "image",
+                })
+            else:
+                composite_url = None
+        elif product and influencer and want_composite:
             # Check if product actually has an image for the composite
             if not product.get("image_url"):
                 print(f"[UGC Clip] ⚠️ WARNING: Product '{product.get('name', '?')}' has NO image_url — "
@@ -2686,7 +2822,44 @@ async def _run_ugc_clip_pipeline(
                 )
 
             # Use enhanced action if available, else fallback to template
-            final_action = action_direction if action_direction else "person holds product at chest level showing it to camera, natural relaxed expression, soft eye contact with regular blinking"
+            has_product_in_frame = bool(
+                want_composite and product and product.get("image_url")
+            )
+            if has_product_in_frame:
+                final_action = (
+                    action_direction
+                    if action_direction
+                    else "person holds product at chest level showing it to camera, natural relaxed expression, soft eye contact with regular blinking"
+                )
+                motion_constraint = (
+                    "all movements must be slow, natural, and physically realistic like a real human — "
+                    "no instant or teleporting actions, no objects appearing or disappearing, "
+                    "if the character holds a product they keep holding it steadily throughout, "
+                    "no phantom biting or eating motions unless the product is visibly at the mouth, "
+                    "if the character drinks from or eats a packaged product, FIRST visibly open or remove the cap / lid / wrapper, THEN bring it to the mouth and consume; "
+                    "never drink from a sealed or capped bottle, never bite through packaging, "
+                    "hands and arms move at natural human speed with realistic inertia"
+                )
+                product_negative = (
+                    "no teleporting objects, no instant actions, no phantom eating, no objects appearing from nowhere, "
+                    "no oversized products, no physically impossible movements, "
+                    "no drinking from a closed bottle, no sealed cap while drinking, no drinking through packaging, "
+                )
+            else:
+                final_action = (
+                    action_direction
+                    if action_direction
+                    else "person speaks directly to camera, natural relaxed expression, soft eye contact with regular blinking, subtle natural hand gestures at sides"
+                )
+                motion_constraint = (
+                    "all movements must be slow, natural, and physically realistic like a real human — "
+                    "no instant or teleporting actions, no objects appearing or disappearing, "
+                    "hands and arms move at natural human speed with realistic inertia, "
+                    "no props or products appear in frame unless already visible in the reference image"
+                )
+                product_negative = (
+                    "no letterbox bars, no black bars, no pillarboxing, "
+                )
 
             veo_prompt = (
                 f"dialogue: {script_text}\n"
@@ -2697,22 +2870,14 @@ async def _run_ugc_clip_pipeline(
                 f"emotion: warm and natural, genuine but understated, calm relaxed face with regular natural blinking every 2-4 seconds, soft relaxed eyelids (NOT wide-eyed)\n"
                 f"voice_type: clear confident pronunciation, casual, {tone_str}, conversational {accent_str}, consistent medium-fast pacing\n"
                 f"style: raw UGC, candid, not polished\n"
-                f"motion_constraint: all movements must be slow, natural, and physically realistic like a real human — "
-                f"no instant or teleporting actions, no objects appearing or disappearing, "
-                f"if the character holds a product they keep holding it steadily throughout, "
-                f"no phantom biting or eating motions unless the product is visibly at the mouth, "
-                f"if the character drinks from or eats a packaged product, FIRST visibly open or remove the cap / lid / wrapper, THEN bring it to the mouth and consume; "
-                f"never drink from a sealed or capped bottle, never bite through packaging, "
-                f"hands and arms move at natural human speed with realistic inertia\n"
+                f"motion_constraint: {motion_constraint}\n"
                 f"speech_constraint: speak ONLY the exact dialogue words provided without alterations, crystal-clear pronunciation, "
                 f"absolutely no stuttering, zero auditory hallucinations, no duplicate syllables, "
                 f"speaking pace is consistent, MUST finish speaking all words entirely 1 second before the end of the video, "
                 f"character remains completely silent and just smiles warmly during the final 1-2 seconds\n"
                 f"negative: no auditory hallucinations, no filler words, no repeated words, no stuttering, no repeated syllables, "
                 f"no artificial smoothing, no plastic CGI appearance, no extra limbs, no extra fingers, no mutated hands, "
-                f"no teleporting objects, no instant actions, no phantom eating, no objects appearing from nowhere, "
-                f"no oversized products, no physically impossible movements, "
-                f"no drinking from a closed bottle, no sealed cap while drinking, no drinking through packaging, "
+                f"{product_negative}"
                 f"no wide-eyed stare, no bulging eyes, no unblinking gaze, no frozen surprised expression, "
                 f"no over-exaggerated facial expression, no startled look, no permanently raised eyebrows"
             )
@@ -2773,6 +2938,14 @@ async def _run_ugc_clip_pipeline(
             "progress": 50,
         })
 
+        target_aspect = data.aspect_ratio or "9:16"
+        veo_ref_url = composite_url or data.reference_image_url
+        if veo_ref_url:
+            from utils.image_aspect import crop_and_rehost_for_aspect
+            veo_ref_url = await crop_and_rehost_for_aspect(veo_ref_url, target_aspect)
+            if composite_url:
+                composite_url = veo_ref_url
+
         try:
             if composite_url:
                 # Image-to-video animation
@@ -2790,7 +2963,7 @@ async def _run_ugc_clip_pipeline(
                 result = await asyncio.to_thread(
                     generate_scenes.generate_video_with_retry,
                     prompt=veo_prompt,
-                    reference_image_url=data.reference_image_url,
+                    reference_image_url=veo_ref_url,
                     model_api="veo-3.1-fast",
                     duration=data.clip_length,
                     aspect_ratio=data.aspect_ratio or "9:16",

@@ -329,7 +329,7 @@ def veo31_fast_i2v(
     prompt: str,
     duration: int = 8,
     aspect_ratio: str = "9:16",
-    resolution: str = "1080p",
+    resolution: str = "720p",
     last_image: str | None = None,
     generate_audio: bool = True,
     negative_prompt: str | None = None,
@@ -345,7 +345,7 @@ def veo31_fast_i2v(
         "prompt": prompt,
         "aspect_ratio": _coerce_aspect(aspect_ratio, VEO_ASPECTS, "9:16"),
         "duration": _clamp_to(duration, VEO_DURATIONS),
-        "resolution": resolution if resolution in VEO_RESOLUTIONS else "1080p",
+        "resolution": resolution if resolution in VEO_RESOLUTIONS else "720p",
         "generate_audio": bool(generate_audio),
     }
     if last_image:

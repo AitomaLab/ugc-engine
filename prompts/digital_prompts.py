@@ -98,7 +98,9 @@ def build_15s(dur, app_clip, ctx):
     if caption_val and caption_val.lower() not in _default_captions and len(caption_val.split()) > 5:
         parts.append(caption_val)
     full_script = " ||| ".join(parts) if parts else (
-        "Okay you guys, I found this app and I am obsessed. You need to check it out."
+        "Okay you guys, I need to share something with you. Listen to this."
+        if ctx.get("talking_head")
+        else "Okay you guys, I found this app and I am obsessed. You need to check it out."
     )
 
     split_ctx = {**ctx, "product_type": "digital", "video_length": "15s"}
@@ -195,20 +197,37 @@ def build_15s(dur, app_clip, ctx):
             "trim_mode": "end",
         })
     else:
-        prompt_b, script_text_b = generate_ultra_prompt(
-            "reaction", ctx, script_override=script_parts[1], is_last_scene=True
-        )
-        scenes.append({
-            "name": "reaction",
-            "type": "veo",
-            "prompt": prompt_b,
-            "reference_image_url": ctx["ref_image"],
-            "video_url": None,
-            "target_duration": dur["app_demo"],
-            "subtitle_text": script_text_b,
-            "voice_id": ctx["voice_id"],
-            "trim_mode": "start",
-        })
+        if ctx.get("talking_head"):
+            prompt_b, script_text_b = generate_ultra_prompt(
+                "cta", ctx, script_override=script_parts[1] if len(script_parts) > 1 else None,
+                is_last_scene=True,
+            )
+            scenes.append({
+                "name": "reaction",
+                "type": "veo",
+                "prompt": prompt_b,
+                "reference_image_url": ctx["ref_image"],
+                "video_url": None,
+                "target_duration": dur["app_demo"],
+                "subtitle_text": script_text_b,
+                "voice_id": ctx["voice_id"],
+                "trim_mode": "start",
+            })
+        else:
+            prompt_b, script_text_b = generate_ultra_prompt(
+                "reaction", ctx, script_override=script_parts[1], is_last_scene=True
+            )
+            scenes.append({
+                "name": "reaction",
+                "type": "veo",
+                "prompt": prompt_b,
+                "reference_image_url": ctx["ref_image"],
+                "video_url": None,
+                "target_duration": dur["app_demo"],
+                "subtitle_text": script_text_b,
+                "voice_id": ctx["voice_id"],
+                "trim_mode": "start",
+            })
 
     return scenes
 
@@ -259,7 +278,11 @@ def build_30s(dur, app_clip, ctx, product=None, influencer=None):
     caption_val = (ctx.get("caption") or "").strip()
     if caption_val and caption_val.lower() not in _default_captions and len(caption_val.split()) > 5:
         parts.append(caption_val)
-    full_script = " ||| ".join(parts) if parts else "Okay you guys, I found this app and I am obsessed. You need to check it out."
+    full_script = " ||| ".join(parts) if parts else (
+        "Okay you guys, I need to share something with you. Listen to this."
+        if ctx.get("talking_head")
+        else "Okay you guys, I found this app and I am obsessed. You need to check it out."
+    )
 
     if ctx.get("scene_dialogues"):
         script_parts = ctx["scene_dialogues"]
@@ -286,7 +309,7 @@ def build_30s(dur, app_clip, ctx, product=None, influencer=None):
             print(f"      [build_30s] Word-based split: {len(words)} words / {num_veo_scenes} scenes")
             script_parts = _split_items_proportionally(words, num_veo_scenes, ctx)
 
-    brand = product.get("name", "this") if product else "this app"
+    brand = product.get("name", "this") if product else ("this topic" if ctx.get("talking_head") else "this app")
     if _video_lang == 'es':
         fallbacks = [
             f"En serio, {brand} me ha cambiado la vida, lo uso literalmente todos los días.",
@@ -591,20 +614,36 @@ def build_30s(dur, app_clip, ctx, product=None, influencer=None):
             "trim_mode": "end",
         })
     else:
-        # Fallback: Generic AI Lifestyle Scene if no clip provided
-        prompt_b, _ = generate_ultra_prompt("b-roll", ctx)
-        scenes.append({
-            "name": "lifestyle_fallback",
-            "type": "veo",
-            "prompt": f"{prompt_b} -- close up of phone screen showing app interface",
-            "reference_image_url": ctx["ref_image"],
-            "video_url": None,
-            "target_duration": dur.get("app_demo", 8),
-            "subtitle_text": "Check out the link in bio!",
-            "voice_id": ctx["voice_id"],
-            "seed": ctx.get("consistency_seed"),
-            "trim_mode": "start",
-        })
+        if ctx.get("talking_head"):
+            prompt_b, script_text_b = generate_ultra_prompt(
+                "cta", ctx, is_last_scene=True,
+            )
+            scenes.append({
+                "name": "cta",
+                "type": "veo",
+                "prompt": prompt_b,
+                "reference_image_url": ctx["ref_image"],
+                "video_url": None,
+                "target_duration": dur.get("app_demo", 8),
+                "subtitle_text": script_text_b,
+                "voice_id": ctx["voice_id"],
+                "seed": ctx.get("consistency_seed"),
+                "trim_mode": "start",
+            })
+        else:
+            prompt_b, _ = generate_ultra_prompt("b-roll", ctx)
+            scenes.append({
+                "name": "lifestyle_fallback",
+                "type": "veo",
+                "prompt": f"{prompt_b} -- close up of phone screen showing app interface",
+                "reference_image_url": ctx["ref_image"],
+                "video_url": None,
+                "target_duration": dur.get("app_demo", 8),
+                "subtitle_text": "Check out the link in bio!",
+                "voice_id": ctx["voice_id"],
+                "seed": ctx.get("consistency_seed"),
+                "trim_mode": "start",
+            })
 
     return scenes
 

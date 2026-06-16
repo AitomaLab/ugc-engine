@@ -46,13 +46,18 @@ app = FastAPI(
 
 # ── CORS ────────────────────────────────────────────────────────────────
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+_cors_origins = [
+    FRONTEND_URL,
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "https://studio.aitoma.ai",  # production Vercel frontend (parity with ugc_backend)
+]
+# De-dupe while preserving order
+_seen: set[str] = set()
+_cors_origins = [o for o in _cors_origins if o and not (o in _seen or _seen.add(o))]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        FRONTEND_URL,
-        "http://localhost:3000",
-        "http://localhost:3001",
-    ],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

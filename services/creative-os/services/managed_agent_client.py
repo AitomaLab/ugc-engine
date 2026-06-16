@@ -205,7 +205,7 @@ The gated tools are exactly: generate_image, generate_influencer, generate_ident
 
 ## Multiple videos at once — ALWAYS use a bulk tool, NEVER N single calls
 When the user wants MORE THAN ONE video in a single request (e.g. "5-video campaign", "make 3 clone videos", "render all 3 cinematic directions"), you MUST dispatch them via ONE bulk tool call — never fire N separate single-video tool calls. The engine de-dupes near-identical single calls within a session, so firing N of them launches only ONE; the bulk tools fan out all N jobs from a single Confirm.
-- **UGC videos (multiple):** ONE `create_bulk_campaign` — pass `scripts` (one verbatim script per video when you've drafted N distinct scripts) or `count` (auto-generate N distinct scripts). Works for individual clips and 15s/30s videos.
+- **UGC videos (multiple):** ONE `create_bulk_campaign` — pass `scripts` (one verbatim script per video when you've drafted N distinct scripts) or `count` (auto-generate N distinct scripts). Supports 8s clips and 15s/30s full videos.
 - **AI Clone videos (multiple):** ONE `create_bulk_clone` — same shape: `scripts[]` (one per video) or `count`. NEVER fire N `create_clone_video` calls.
 - **Cinematic ads (multiple):** if the user has NOT specified the format/length, FIRST confirm aspect ratio (and duration if missing) via `[[ASPECT_BUTTONS]]` / `[[DURATION_BUTTONS]]` — one marker per message, same as a single cinematic ad — then call `create_cinematic_ad` with `stage='propose'`, then ONE `create_cinematic_ad` with `stage='bulk'` + `directions=[...]` to render several directions (A/B/C) of the SAME product concurrently. NEVER fire N separate `stage='animate'` calls.
 Each bulk tool returns ONE batched cost chip; after the user confirms, all N jobs launch simultaneously.
@@ -331,6 +331,7 @@ You MUST do this check BEFORE starting any generation. Do NOT skip it.
 
 **Full UGC video (15-30s)**: list_project_assets → if product/creator not @-mentioned, ask with `[[PRODUCT_SELECTOR]]` then `[[CREATOR_SELECTOR]]` (rule 9c — visual pickers, never list names in prose) → check if the user supplied their own script/dialogue text.
   - **User provided script**: When the user wrote actual dialogue lines (hook, body, CTA, or any spoken text), pass ALL of it verbatim as the `hook` argument to generate_video or create_ugc_video. The `hook` field carries the user's EXACT spoken words — NEVER paraphrase, rewrite, or embellish the user's dialogue. Put your visual/action direction in the `prompt` field instead. The pipeline will use `hook` as-is for the character's speech and enhance only the visual direction from `prompt`.
+  - **Influencer-only talking-head (no product)**: When the user wants a character/influencer to say a script with NO product @-mentioned or selected, do NOT pass `product_id`. Use `product_type="digital"`. Pass the script in `hook` (single video) or `scripts[]` (bulk). The pipeline animates the influencer photo directly with Veo 3.1 — no product composite step. Only pass `product_id` / @-mention a product when the user explicitly wants the character holding or presenting a product.
   - **Script length auto-validation — DO NOT pre-judge from memory.** The create_ugc_video / create_clone_video / generate_video tools validate script/hook word count against the target duration server-side BEFORE charging credits. **You MUST NOT** make any assertion about whether a script "fits" a duration before calling the tool — the math depends on `product_type` (digital videos end in a silent app-clip B-roll, so the dialogue budget is much smaller than for physical) and `app_clip_duration`, neither of which you can compute reliably. Always call the tool with `confirmed=false` first; trust its `script_validation` response over your own estimate.
     Word count guidelines (the tool enforces the exact numbers; these are for your reasoning only):
     - 5s clip → 10-18 words (ideal ~14)
@@ -1422,7 +1423,7 @@ def _custom_tools_for_agent() -> list[dict]:
                         "description": "One verbatim script per video when the user approved N DISTINCT scripts. count = len(scripts); each video uses its own script.",
                     },
                     "count": {"type": "integer", "description": "Number of videos to generate (1-50) when no scripts[] given — per-video scripts are auto-generated."},
-                    "duration": {"type": "integer", "enum": [15, 30]},
+                    "duration": {"type": "integer", "enum": [8, 15, 30]},
                     "model_api": {"type": "string", "description": "Engine to use. 'veo-3.1-fast' (default) or 'seedance-2.0' when user has Seedance toggle on."},
                     "product_type": {"type": "string", "enum": ["physical", "digital"]},
                     "product_id": {"type": "string"},
@@ -1995,11 +1996,9 @@ def _merge_turn_refs_into_video_kwargs(kwargs: dict, refs: list[dict]) -> dict:
 
     Also routes a RAW uploaded image (ref type "image", no DB id) into the
     correct composite slot. The UGC pipeline only turns an upload into an
-    entity through the SINGULAR reference_image_url
-    (uploaded_product_for_composite / uploaded_influencer_for_composite), so a
-    type="image" upload — which _image_overrides_from_turn_refs does not
-    recognize — must be written there or it is silently dropped, leaving the
-    composite with the influencer duplicated and no product.
+    entity through explicit product upload detection — influencer @-mention
+    shots forwarded as reference_image_url must NOT be treated as product
+    uploads (see needs_product_composite in generate_video.py).
     """
     inf_url, prod_url = _image_overrides_from_turn_refs(refs, kwargs)
 
@@ -2009,6 +2008,7 @@ def _merge_turn_refs_into_video_kwargs(kwargs: dict, refs: list[dict]) -> dict:
     # type="image", no id): it becomes the PRODUCT when an influencer is
     # present, or the CHARACTER when a product is present. Only fill the
     # singular slot when it is currently empty so an explicit URL still wins.
+    # Never treat an influencer @-mention image URL as a product upload.
     upload_url: str | None = None
     for r in refs or []:
         if (r.get("type") or "").lower() == "image" and r.get("image_url") and not r.get("id"):
@@ -2017,7 +2017,8 @@ def _merge_turn_refs_into_video_kwargs(kwargs: dict, refs: list[dict]) -> dict:
     if upload_url and not out.get("reference_image_url"):
         has_influencer = bool(inf_url or out.get("influencer_id"))
         has_product = bool(prod_url or out.get("product_id"))
-        if has_influencer and not has_product:
+        upload_is_influencer_shot = bool(inf_url and upload_url == inf_url)
+        if has_influencer and not has_product and not upload_is_influencer_shot:
             out["reference_image_url"] = upload_url  # upload IS the product
             print("[generate_video] routed uploaded image -> reference_image_url (product slot)")
         elif has_product and not has_influencer:
@@ -2973,11 +2974,16 @@ def _credits_for_op(operation: str, params: dict) -> int:
     if operation == "create_clone_video":
         return get_clone_video_credit_cost(duration=int(params.get("duration", 15)))
     if operation == "create_bulk_campaign":
-        per_video = get_video_credit_cost(
-            product_type=params.get("product_type", "physical"),
-            duration=int(params.get("duration", 15)),
-        )
-        return per_video * int(params.get("count", 1))
+        duration = int(params.get("duration", 15))
+        count = int(params.get("count", 1))
+        if duration == 8:
+            per_video = get_video_clip_credit_cost(mode="ugc", clip_length=8)
+        else:
+            per_video = get_video_credit_cost(
+                product_type=params.get("product_type", "physical"),
+                duration=duration,
+            )
+        return per_video * count
     if operation == "render_edited_video":
         return get_editor_render_credit_cost()
     if operation == "combine_videos":
@@ -4398,7 +4404,13 @@ _SCRIPT_WORD_BUDGETS = {
 }
 
 
-def _budget_for_video(duration: int, product_type: str = "physical", app_clip_duration: int = 0) -> dict:
+def _budget_for_video(
+    duration: int,
+    product_type: str = "physical",
+    app_clip_duration: int = 0,
+    *,
+    has_product: bool = True,
+) -> dict:
     """Compute the script word-count budget for a given video shape.
 
     Digital products end with an app-clip B-roll segment that carries no
@@ -4417,7 +4429,7 @@ def _budget_for_video(duration: int, product_type: str = "physical", app_clip_du
 
     Returns: dict with keys {min, max, ideal, scenes, per_scene}.
     """
-    if product_type == "digital" and app_clip_duration > 0:
+    if product_type == "digital" and has_product and app_clip_duration > 0:
         # Subtract the silent B-roll from the dialogue budget.
         dialogue_seconds = max(1, duration - app_clip_duration)
         # ~3 words/sec sustainable speech, ±30% range for natural variance.
@@ -4445,6 +4457,8 @@ def _validate_script_for_video(
     video_language: str = "en",
     product_type: str = "physical",
     app_clip_duration: int = 0,
+    *,
+    has_product: bool = True,
 ) -> dict:
     """Validate a user-provided script against the target video duration.
 
@@ -4456,7 +4470,7 @@ def _validate_script_for_video(
         issues (list[str]): Human-readable issues found
         suggestions (list[str]): Actionable suggestions for the user
     """
-    budget = _budget_for_video(duration, product_type, app_clip_duration)
+    budget = _budget_for_video(duration, product_type, app_clip_duration, has_product=has_product)
     words = script.split()
     word_count = len(words)
     issues = []
@@ -4613,7 +4627,8 @@ async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
     # incorrectly accepted as a "perfect fit for 15s".
     _DIGITAL_CLIP_DEFAULT_S = 8
     _app_clip_duration_s = 0
-    if product_type == "digital" and not kwargs.get("confirmed"):
+    _has_product = bool(kwargs.get("product_id"))
+    if product_type == "digital" and _has_product and not kwargs.get("confirmed"):
         if kwargs.get("app_clip_id"):
             try:
                 _clip = await ctx.core().get_app_clip(kwargs["app_clip_id"])
@@ -4623,9 +4638,6 @@ async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
                 print(f"[create_ugc_video] app clip lookup for budget failed (using default {_DIGITAL_CLIP_DEFAULT_S}s): {e}")
                 _app_clip_duration_s = _DIGITAL_CLIP_DEFAULT_S
         else:
-            # Digital product without an app_clip_id is unusual but possible
-            # (e.g. cinematic-only render). Assume the typical app-clip slot
-            # so the budget stays honest about effective dialogue time.
             _app_clip_duration_s = _DIGITAL_CLIP_DEFAULT_S
         print(f"[create_ugc_video] digital budget setup: app_clip_duration={_app_clip_duration_s}s")
 
@@ -4635,6 +4647,7 @@ async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
             user_hook, duration, video_language,
             product_type=product_type,
             app_clip_duration=_app_clip_duration_s,
+            has_product=_has_product,
         )
         if not validation["valid"]:
             return json.dumps({
@@ -4666,6 +4679,7 @@ async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
                 user_hook, duration, kwargs.get("video_language", "en"),
                 product_type=product_type,
                 app_clip_duration=_app_clip_duration_s,
+                has_product=_has_product,
             )
             extra_info["script_status"] = "validated"
             extra_info["script_word_count"] = validation["word_count"]
@@ -6431,6 +6445,7 @@ async def _tool_create_bulk_campaign(ctx: ToolContext, **kwargs: Any) -> str:
     completion — bulk campaigns can take hours). The agent should follow up
     by polling list_jobs / get_job_status, or the user can watch the gallery.
     """
+    kwargs = _merge_turn_refs_into_video_kwargs(kwargs, ctx.refs)
     if not kwargs.get("influencer_id"):
         return json.dumps({"error": "influencer_id is required"})
     # scripts[] (one verbatim approved script per video) takes precedence over
@@ -6448,20 +6463,20 @@ async def _tool_create_bulk_campaign(ctx: ToolContext, **kwargs: Any) -> str:
     if n < 1 or n > 50:
         return json.dumps({"error": "count must be between 1 and 50"})
     duration = int(kwargs.get("duration", 15))
-    if duration not in (15, 30):
-        return json.dumps({"error": "duration must be 15 or 30"})
-    product_type = kwargs.get("product_type", "physical")
-    # All UGC videos render on Veo 3.1 (WaveSpeed) by default — same as the
-    # single create_ugc_video path. Only the Seedance toggle ([ENGINE=seedance])
-    # passes model_api="seedance-2.0". Set it BEFORE the gate so it rides in the
-    # echo and the Confirm re-fire keeps it. Without this the backend falls back
-    # to its stale seedance-1.5-pro default and renders on kie.ai.
+    if duration not in (8, 15, 30):
+        return json.dumps({"error": "duration must be 8, 15, or 30"})
+    product_type = kwargs.get("product_type") or ("physical" if kwargs.get("product_id") else "digital")
+    if product_type == "physical" and not kwargs.get("product_id"):
+        return json.dumps({
+            "error": "product_required_for_physical",
+            "message": (
+                "A physical-product bulk UGC campaign requires a product. Ask the user to "
+                "@-mention a product — or generate influencer-only talking-head videos "
+                "(no product attached)."
+            ),
+        })
     kwargs["model_api"] = kwargs.get("model_api") or "veo-3.1-fast"
 
-    # Honor the EXACT influencer/product images the user picked in the chat
-    # @-mention selector (same plumbing generate_video / create_ugc_video use).
-    # Resolve BEFORE the confirmation gate so the URLs ride in the echo and the
-    # confirm re-fire keeps them even if refs aren't re-sent on the next turn.
     inf_override, prod_override = _image_overrides_from_turn_refs(ctx.refs, kwargs)
     if inf_override:
         kwargs["reference_image_url"] = inf_override
@@ -6482,6 +6497,55 @@ async def _tool_create_bulk_campaign(ctx: ToolContext, **kwargs: Any) -> str:
             ),
             echo={k: v for k, v in kwargs.items() if k != "confirmed"},
         )
+
+    if duration == 8:
+        from routers.generate_video import dispatch_bulk_ugc_clips
+
+        clip_scripts = scripts if scripts else [""] * n
+        if not scripts:
+            try:
+                inf = await ctx.core().get_influencer(kwargs["influencer_id"])
+                from ugc_backend.ai_script_client import AIScriptClient
+                client = AIScriptClient()
+                clip_scripts = [
+                    client.generate_talking_head_script(
+                        influencer_data=inf or {},
+                        duration=8,
+                        video_language=kwargs.get("video_language", "en"),
+                        language_accent=kwargs.get("language_accent"),
+                    )
+                    for _ in range(n)
+                ]
+            except Exception as e:
+                return json.dumps({"error": f"bulk 8s script generation failed: {e}"})
+
+        try:
+            result = await dispatch_bulk_ugc_clips(
+                token=ctx.user_token,
+                project_id=ctx.project_id or "",
+                user_id=None,
+                influencer_id=kwargs["influencer_id"],
+                scripts=clip_scripts,
+                kwargs=kwargs,
+            )
+        except Exception as e:
+            return json.dumps({"error": f"create_bulk_campaign failed: {e}"})
+
+        job_ids = result.get("job_ids") or []
+        return json.dumps({
+            "status": "dispatched",
+            "count": len(job_ids),
+            "job_ids": job_ids,
+            "errors": result.get("errors"),
+            "credits_spent": _credits_for_op("create_bulk_campaign", {
+                "product_type": product_type, "duration": duration, "count": n,
+            }),
+            "message": (
+                f"{len(job_ids)} × 8s clips dispatched. Watch the gallery or use list_jobs "
+                f"to track progress."
+                + (f" ({len(result.get('errors') or [])} failed to start.)" if result.get("errors") else "")
+            ),
+        })
 
     payload = {
         "influencer_id": kwargs["influencer_id"],
@@ -6508,9 +6572,16 @@ async def _tool_create_bulk_campaign(ctx: ToolContext, **kwargs: Any) -> str:
     except Exception as e:
         return json.dumps({"error": f"create_bulk_campaign failed: {e}"})
 
-    # Result is typically a list of created job dicts
-    jobs_list = result if isinstance(result, list) else result.get("jobs", [])
-    job_ids = [j.get("id") for j in jobs_list if isinstance(j, dict) and j.get("id")]
+    if isinstance(result, dict) and result.get("job_ids"):
+        job_ids = [str(j) for j in result["job_ids"] if j]
+    elif isinstance(result, list):
+        job_ids = [
+            (j.get("id") if isinstance(j, dict) else j)
+            for j in result
+            if (j.get("id") if isinstance(j, dict) else j)
+        ]
+    else:
+        job_ids = []
     return json.dumps({
         "status": "dispatched",
         "count": len(job_ids),

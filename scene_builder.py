@@ -176,6 +176,11 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=Non
     if length not in config.VALID_LENGTHS:
         length = "15s"
 
+    if product is None:
+        product_type = "digital"
+        app_clip = None
+        print("      [SCENE] talking-head mode (no product)")
+
     durations = config.get_scene_durations(length)
 
     hook = content_row.get("Hook") or content_row.get("Script") or content_row.get("caption") or "Check this out!"
@@ -226,6 +231,9 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=Non
         # agent. Consumed by spanish_accent_line() in the prompt builders.
         "language_accent": content_row.get("language_accent"),
     }
+
+    if product is None:
+        ctx["talking_head"] = True
 
     # Dynamic Influencer Variation: override setting if a variation_prompt was
     # generated for this job (70% of bulk digital campaigns). The original

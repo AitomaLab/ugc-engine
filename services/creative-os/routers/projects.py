@@ -8,7 +8,7 @@ import asyncio
 import os
 import time
 from typing import Optional
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from openai import AsyncOpenAI
 from auth import get_current_user
@@ -576,11 +576,17 @@ async def _bulk_project_previews(
 async def list_projects(user: dict = Depends(get_current_user)):
     """List all projects with recent asset previews."""
     client = CoreAPIClient(token=user["token"])
-    projects = await client.list_projects()
+    try:
+        projects = await client.list_projects()
+    except Exception as e:
+        print(f"[Projects] list_projects core API failed: {e}")
+        raise HTTPException(status_code=502, detail="Core API unavailable — could not load projects") from e
 
-    # Single bulk fetch instead of per-project fan-out (N=9 previously meant
-    # ~18 round-trips; now it's ~3 regardless of project count).
-    preview_map = await _bulk_project_previews(client, projects)
+    try:
+        preview_map = await _bulk_project_previews(client, projects)
+    except Exception as e:
+        print(f"[Projects] bulk previews failed (returning projects without previews): {e}")
+        preview_map = {}
 
     for project in projects:
         result = preview_map.get(project["id"])

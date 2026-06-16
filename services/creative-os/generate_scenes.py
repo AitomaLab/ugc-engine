@@ -567,12 +567,16 @@ def _wavespeed_primary_video_attempt(
         if not reference_image_url:
             # WaveSpeed has no Veo t2v — let the legacy KIE path handle text-only Veo.
             raise ws.WaveSpeedError("WS Veo t2v not supported — falling through to KIE", transient=True)
+        from utils.image_aspect import crop_image_url_to_aspect  # repo-root shared module
+        ar = aspect_ratio or "9:16"
+        cropped_ref = crop_image_url_to_aspect(reference_image_url, ar)
         ws_dur = min((4, 6, 8), key=lambda d: abs(d - int(duration)))
         data = ws.veo31_fast_i2v(
-            image=reference_image_url,
+            image=cropped_ref,
             prompt=prompt or "",
             duration=ws_dur,
-            aspect_ratio=aspect_ratio,
+            aspect_ratio=ar,
+            resolution="720p",
         )
     elif family == "seedance":
         sd_dur = max(4, min(15, int(duration)))

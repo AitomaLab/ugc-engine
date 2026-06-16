@@ -562,6 +562,11 @@ def generate_video_wavespeed(prompt, reference_image_url=None, duration=8, aspec
     }
 
     if reference_image_url:
+        try:
+            from utils.image_aspect import crop_image_url_to_aspect
+            reference_image_url = crop_image_url_to_aspect(reference_image_url, ar)
+        except Exception as e:
+            print(f"      [WaveSpeed] aspect pre-crop skipped: {e}")
         # ── image-to-video (FAST) ──
         # Switched from `google/veo3.1/reference-to-video` (full quality) to
         # `google/veo3.1-fast/image-to-video` so the fallback matches the

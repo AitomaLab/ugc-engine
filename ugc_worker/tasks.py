@@ -148,7 +148,7 @@ def generate_ugc_video(self, job_id: str):
         # Fetch app clip if linked, or auto-select by influencer category
         app_clip_dict = None
         clip_id = job.get("app_clip_id")
-        if clip_id:
+        if clip_id and job.get("product_id"):
             print(f"      🔎 Fetching App Clip: {clip_id}")
             clip_result = sb.table("app_clips").select("*").eq("id", clip_id).execute()
             if clip_result.data:
@@ -181,10 +181,9 @@ def generate_ugc_video(self, job_id: str):
                         print(f"      ⚠️ Sync frame extraction failed: {e}")
             else:
                 print(f"      ⚠️ App Clip ID {clip_id} not found in database!")
+        elif clip_id and not job.get("product_id"):
+            print(f"      [talking-head] ignoring app_clip_id={clip_id} (no product on job)")
         else:
-            # No app_clip_id specified — skip app clip processing.
-            # Random auto-selection was removed (deprecated bulk campaign behavior).
-            # The agent or frontend must explicitly set app_clip_id if needed.
             print("      ℹ️ No app_clip_id specified — skipping app clip")
 
         # Fetch product if linked (any product type — physical or digital)
