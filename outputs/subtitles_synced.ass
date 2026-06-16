@@ -11,9 +11,17 @@ Style: Hormozi,Impact,140,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-Dialogue: 0,0:00:00.00,0:00:01.12,Hormozi,,0,0,0,,It's so {\c&H00FFFFFF\fscx130\fscy130}simple{\c&H0000FFFF\fscx100\fscy100}
-Dialogue: 0,0:00:01.25,0:00:02.46,Hormozi,,0,0,0,,{\c&H00FFFFFF\fscx130\fscy130}just{\c&H0000FFFF\fscx100\fscy100} three taps
-Dialogue: 0,0:00:02.46,0:00:03.31,Hormozi,,0,0,0,,and you've saved
-Dialogue: 0,0:00:03.31,0:00:05.17,Hormozi,,0,0,0,,yourself 45 minutes
-Dialogue: 0,0:00:05.17,0:00:06.82,Hormozi,,0,0,0,,planning vibrant meals
-Dialogue: 0,0:00:06.82,0:00:07.48,Hormozi,,0,0,0,,for the week
+Dialogue: 0,0:00:00.00,0:00:00.81,Hormozi,,0,0,0,,My lips were
+Dialogue: 0,0:00:00.81,0:00:01.96,Hormozi,,0,0,0,,constantly dry no
+Dialogue: 0,0:00:01.96,0:00:02.68,Hormozi,,0,0,0,,matter what I
+Dialogue: 0,0:00:02.68,0:00:03.85,Hormozi,,0,0,0,,used Then I
+Dialogue: 0,0:00:03.85,0:00:04.67,Hormozi,,0,0,0,,tried this lip
+Dialogue: 0,0:00:04.67,0:00:05.92,Hormozi,,0,0,0,,LipBalm and honestly
+Dialogue: 0,0:00:07.26,0:00:08.72,Hormozi,,0,0,0,,Game changer Super
+Dialogue: 0,0:00:08.72,0:00:10.23,Hormozi,,0,0,0,,hydrating goes on
+Dialogue: 0,0:00:10.23,0:00:11.69,Hormozi,,0,0,0,,smooth lasts all
+Dialogue: 0,0:00:11.69,0:00:12.61,Hormozi,,0,0,0,,day This is
+Dialogue: 0,0:00:12.61,0:00:13.11,Hormozi,,0,0,0,,the only one
+Dialogue: 0,0:00:13.11,0:00:13.64,Hormozi,,0,0,0,,I reach for
+Dialogue: 0,0:00:13.64,0:00:14.61,Hormozi,,0,0,0,,{\c&H00FFFFFF\fscx130\fscy130}now{\c&H0000FFFF\fscx100\fscy100} Link in
+Dialogue: 0,0:00:14.61,0:00:14.80,Hormozi,,0,0,0,,bio
