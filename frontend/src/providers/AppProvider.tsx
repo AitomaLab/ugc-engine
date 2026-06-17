@@ -5,7 +5,11 @@ import { supabase } from '@/lib/supabaseClient';
 import type { Session } from '@supabase/supabase-js';
 import type { UserProfile, Subscription, CreditWallet, Project } from '@/lib/saas-types';
 import { I18nProvider } from '@/lib/i18n';
-import { fetchWithAuth, getValidAccessToken } from '@/lib/auth';
+import {
+  fetchWithAuth,
+  refreshSessionOnce,
+  forceReauth,
+} from '@/lib/auth';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -42,6 +46,21 @@ async function authFetch<T>(url: string): Promise<{ data: T | null; unauthorized
   return { data: null, unauthorized: false };
 }
 
+async function authFetchWithRetry<T>(url: string): Promise<{ data: T | null; unauthorized: boolean }> {
+  let result = await authFetch<T>(url);
+  if (!result.unauthorized) return result;
+
+  await refreshSessionOnce();
+  result = await authFetch<T>(url);
+  return result;
+}
+
+async function handleAuthFailure(): Promise<void> {
+  const recovered = await refreshSessionOnce();
+  if (recovered?.access_token) return;
+  await forceReauth();
+}
+
 // ── Provider ───────────────────────────────────────────────────────────
 export function AppProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
@@ -54,6 +73,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [wallet, setWallet] = useState<CreditWallet | null>(null);
   const fetchUserDataRef = useRef<(() => Promise<void>) | null>(null);
   const lastTokenRef = useRef<string | null>(null);
+  const sessionRef = useRef<Session | null>(null);
+
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
 
   // ── Auth state ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -67,10 +91,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session);
       if (event === 'TOKEN_REFRESHED' && session) {
+        lastTokenRef.current = session.access_token;
         fetchUserDataRef.current?.();
       }
-      // Only wipe scoped state on explicit sign-out — not on transient null
-      // sessions during token refresh or INITIAL_SESSION races.
       if (event === 'SIGNED_OUT') {
         setProfile(null);
         setProfileStatus('idle');
@@ -87,20 +110,33 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => authListener.subscription.unsubscribe();
   }, []);
 
-  // Refocus: validate token and refetch if it changed while tab was backgrounded
+  // Proactive refresh when tab regains focus after idle
   useEffect(() => {
-    const onVisibilityChange = async () => {
-      if (document.visibilityState !== 'visible' || !session) return;
-      const token = await getValidAccessToken();
-      if (!token) return;
-      if (token !== lastTokenRef.current) {
-        lastTokenRef.current = token;
-        fetchUserDataRef.current?.();
+    const onResume = async () => {
+      if (document.visibilityState !== 'visible' || !sessionRef.current) return;
+
+      const refreshed = await refreshSessionOnce();
+      if (refreshed) {
+        setSession(refreshed);
+        lastTokenRef.current = refreshed.access_token;
       }
+
+      const { data: { session: current } } = await supabase.auth.getSession();
+      if (current) {
+        setSession(current);
+        lastTokenRef.current = current.access_token;
+      }
+
+      fetchUserDataRef.current?.();
     };
-    document.addEventListener('visibilitychange', onVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
-  }, [session]);
+
+    document.addEventListener('visibilitychange', onResume);
+    window.addEventListener('focus', onResume);
+    return () => {
+      document.removeEventListener('visibilitychange', onResume);
+      window.removeEventListener('focus', onResume);
+    };
+  }, []);
 
   const token = session?.access_token ?? null;
 
@@ -115,13 +151,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     lastTokenRef.current = token;
 
     const [profileResult, projectsResult, subResult, walletResult] = await Promise.all([
-      authFetch<UserProfile>('/api/profile'),
-      authFetch<Project[]>('/api/projects'),
-      authFetch<Subscription>('/api/subscription'),
-      authFetch<CreditWallet>('/api/wallet'),
+      authFetchWithRetry<UserProfile>('/api/profile'),
+      authFetchWithRetry<Project[]>('/api/projects'),
+      authFetchWithRetry<Subscription>('/api/subscription'),
+      authFetchWithRetry<CreditWallet>('/api/wallet'),
     ]);
 
-    // Hard auth failure after refresh — force re-login instead of ghost "User" state
     if (
       profileResult.unauthorized
       || projectsResult.unauthorized
@@ -129,8 +164,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       || walletResult.unauthorized
     ) {
       setProfileStatus('error');
-      const { forceReauth } = await import('@/lib/auth');
-      await forceReauth();
+      await handleAuthFailure();
       return;
     }
 
@@ -139,22 +173,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     let resolvedProjects = projectsResult.data;
     const subData = subResult.data;
 
-    // Race condition guard: on signup the Supabase auth session is ready
-    // before the handle_new_user DB trigger finishes creating the profile,
-    // wallet, and default project rows. Retry a few times with a delay to let
-    // the trigger complete rather than rendering a ghost "User" state.
     if (!resolvedProfile && token && !profileResult.unauthorized) {
       for (let attempt = 1; attempt <= 3; attempt++) {
         await new Promise(r => setTimeout(r, 1000));
         const [retryProfile, retryWallet, retryProjects] = await Promise.all([
-          authFetch<UserProfile>('/api/profile'),
-          authFetch<CreditWallet>('/api/wallet'),
-          authFetch<Project[]>('/api/projects'),
+          authFetchWithRetry<UserProfile>('/api/profile'),
+          authFetchWithRetry<CreditWallet>('/api/wallet'),
+          authFetchWithRetry<Project[]>('/api/projects'),
         ]);
         if (retryProfile.unauthorized) {
           setProfileStatus('error');
-          const { forceReauth } = await import('@/lib/auth');
-          await forceReauth();
+          await handleAuthFailure();
           return;
         }
         if (retryProfile.data) {
@@ -169,11 +198,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    // Profile may exist while the default project is still being created.
     if (resolvedProfile && (!resolvedProjects || resolvedProjects.length === 0) && token) {
       for (let attempt = 1; attempt <= 3; attempt++) {
         await new Promise(r => setTimeout(r, 1000));
-        const retryProjects = await authFetch<Project[]>('/api/projects');
+        const retryProjects = await authFetchWithRetry<Project[]>('/api/projects');
         if (retryProjects.unauthorized) break;
         if (retryProjects.data && retryProjects.data.length > 0) {
           resolvedProjects = retryProjects.data;
@@ -226,10 +254,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const refreshWallet = useCallback(async () => {
     if (!token) return;
-    const result = await authFetch<CreditWallet>('/api/wallet');
+    const result = await authFetchWithRetry<CreditWallet>('/api/wallet');
     if (result.unauthorized) {
-      const { forceReauth } = await import('@/lib/auth');
-      await forceReauth();
+      await handleAuthFailure();
       return;
     }
     if (result.data) setWallet(result.data);
@@ -237,10 +264,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const refreshSubscription = useCallback(async () => {
     if (!token) return;
-    const result = await authFetch<Subscription>('/api/subscription');
+    const result = await authFetchWithRetry<Subscription>('/api/subscription');
     if (result.unauthorized) {
-      const { forceReauth } = await import('@/lib/auth');
-      await forceReauth();
+      await handleAuthFailure();
       return;
     }
     if (result.data) setSubscription(result.data);
@@ -248,10 +274,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const refreshProjects = useCallback(async () => {
     if (!token) return;
-    const result = await authFetch<Project[]>('/api/projects');
+    const result = await authFetchWithRetry<Project[]>('/api/projects');
     if (result.unauthorized) {
-      const { forceReauth } = await import('@/lib/auth');
-      await forceReauth();
+      await handleAuthFailure();
       return;
     }
     if (result.data) {

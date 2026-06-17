@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/utils";
+import { waitForFreshSession } from "@/lib/auth";
 import { useApp } from "@/providers/AppProvider";
 import { useTranslation } from "@/lib/i18n";
 import Link from "next/link";
@@ -158,24 +159,36 @@ export default function StudioPage() {
   } as const;
   const { data: jobsData, isLoading: jobsLoading } = useSWR(
     "/jobs?limit=100&include_clones=true",
-    (path: string) => apiFetch<Job[]>(path, { skipProjectScope: true }),
+    async (path: string) => {
+      await waitForFreshSession();
+      return apiFetch<Job[]>(path, { skipProjectScope: true });
+    },
     swrOpts,
   );
   // /influencers is scoped by the active project header — key it by project
   // so switching projects revalidates instead of serving the old cache.
   const { data: infData } = useSWR(
     ["/influencers", activeProject?.id ?? ""],
-    ([path]: [string, string]) => apiFetch<Influencer[]>(path),
+    async ([path]: [string, string]) => {
+      await waitForFreshSession();
+      return apiFetch<Influencer[]>(path);
+    },
     swrOpts,
   );
   const { data: projectsData } = useSWR(
     "/creative-os/projects/",
-    (path: string) => creativeFetch<any[]>(path).catch(() => [] as any[]),
+    async (path: string) => {
+      await waitForFreshSession();
+      return creativeFetch<any[]>(path).catch(() => [] as any[]);
+    },
     swrOpts,
   );
   const { data: recentImgs } = useSWR(
     "/creative-os/projects/recent-images?limit=20",
-    (path: string) => creativeFetch<RecentImage[]>(path).catch(() => [] as RecentImage[]),
+    async (path: string) => {
+      await waitForFreshSession();
+      return creativeFetch<RecentImage[]>(path).catch(() => [] as RecentImage[]);
+    },
     swrOpts,
   );
   const jobs = jobsData ?? [];

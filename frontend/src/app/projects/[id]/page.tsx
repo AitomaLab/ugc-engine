@@ -9,6 +9,7 @@ import {
     GALLERY_FETCH_ATTEMPTS,
     GALLERY_FETCH_TIMEOUT_MS,
 } from '@/lib/creative-os-api';
+import { waitForFreshSession } from '@/lib/auth';
 import { fetchJobsStatus } from '@/lib/jobs-status-poll';
 import { useTranslation } from '@/lib/i18n';
 import { AssetGallery } from '@/components/studio/AssetGallery';
@@ -627,18 +628,20 @@ export default function ProjectContainerPage() {
 
     // Refetch on tab return / bfcache — fixes empty gallery after navigation.
     useEffect(() => {
-        const handleReturn = () => {
+        const handleReturn = async () => {
             if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+            await waitForFreshSession();
             void fetchAssetsRef.current(true);
             void pollInFlightRef.current();
         };
         const onPageShow = (e: PageTransitionEvent) => {
-            if (e.persisted) handleReturn();
+            if (e.persisted) void handleReturn();
         };
-        document.addEventListener('visibilitychange', handleReturn);
+        const onVisibilityChange = () => { void handleReturn(); };
+        document.addEventListener('visibilitychange', onVisibilityChange);
         window.addEventListener('pageshow', onPageShow);
         return () => {
-            document.removeEventListener('visibilitychange', handleReturn);
+            document.removeEventListener('visibilitychange', onVisibilityChange);
             window.removeEventListener('pageshow', onPageShow);
         };
     }, []);

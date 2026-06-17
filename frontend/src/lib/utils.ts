@@ -4,7 +4,7 @@
  * Clean utility helpers with auth-scoped API calls.
  */
 
-import { fetchWithAuth } from '@/lib/auth';
+import { fetchWithAuth, waitForFreshSession } from '@/lib/auth';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -78,6 +78,8 @@ export async function apiFetch<T = unknown>(
             }
         }
     }
+
+    await waitForFreshSession();
 
     const result = await fetchWithAuth<T>(`${API_URL}${path}`, {
         ...options,
