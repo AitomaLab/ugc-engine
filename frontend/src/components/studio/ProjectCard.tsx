@@ -2,9 +2,11 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
+import { preload } from 'swr';
 import { useApp } from '@/providers/AppProvider';
 import { useTranslation } from '@/lib/i18n';
 import { thumbUrl as sharedThumbUrl } from '@/lib/media';
+import { projectFullFetcher, projectFullKey } from '@/lib/swr';
 
 /** Project-card thumbnails crop to fill their grid cell. */
 const thumbUrl = (url: string, width: number) => sharedThumbUrl(url, width, 'cover');
@@ -231,7 +233,10 @@ export function ProjectCard({ project }: ProjectCardProps) {
                 overflow: 'hidden',
                 transform: hovered ? 'translateY(-3px)' : 'none',
             }}
-            onMouseEnter={() => setHovered(true)}
+            onMouseEnter={() => {
+                setHovered(true);
+                preload(projectFullKey(project.id), projectFullFetcher);
+            }}
             onMouseLeave={() => setHovered(false)}
         >
             {/* ── Preview Grid ──────────────────────────────── */}

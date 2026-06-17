@@ -17,17 +17,28 @@ type VideoAssetLike = {
 /** Max videos per batch request — endpoint generates max 3 concurrently. */
 const BATCH_LIMIT = 24;
 
+/** Persists poster URLs across page navigations within the same session. */
+const globalThumbCache = new Map<string, string>();
+
 /**
  * Lazily generates poster thumbnails for completed videos that have no usable
  * image preview, via the existing `/creative-os/projects/video-thumbnails`
  * batch endpoint (FFmpeg first-frame, DB-cached server-side).
  *
  * Returns a map of job id -> thumbnail URL that fills in as results arrive.
- * Each id is only ever requested once per mount.
+ * Each id is only ever requested once per session (module-level cache).
  */
 export function useVideoThumbnails(assets: VideoAssetLike[]): Record<string, string> {
-    const [thumbs, setThumbs] = useState<Record<string, string>>({});
-    const requested = useRef<Set<string>>(new Set());
+    const [thumbs, setThumbs] = useState<Record<string, string>>(() => {
+        const initial: Record<string, string> = {};
+        for (const a of assets) {
+            if (a?.id && globalThumbCache.has(a.id)) {
+                initial[a.id] = globalThumbCache.get(a.id)!;
+            }
+        }
+        return initial;
+    });
+    const requested = useRef<Set<string>>(new Set(globalThumbCache.keys()));
 
     useEffect(() => {
         const need = assets
@@ -58,6 +69,9 @@ export function useVideoThumbnails(assets: VideoAssetLike[]): Record<string, str
                     },
                 );
                 if (result?.thumbnails && Object.keys(result.thumbnails).length > 0) {
+                    for (const [id, url] of Object.entries(result.thumbnails)) {
+                        globalThumbCache.set(id, url);
+                    }
                     setThumbs(prev => ({ ...prev, ...result.thumbnails }));
                 }
             } catch {

@@ -1,9 +1,11 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
+import { SWRConfig } from 'swr';
 import { AppProvider } from '@/providers/AppProvider';
 import { Header } from '@/components/layout/Header';
 import { FeedbackBubble } from '@/components/feedback/FeedbackBubble';
+import { studioSwrOptions } from '@/lib/swr';
 
 /**
  * Client-side providers wrapper.
@@ -17,19 +19,23 @@ export function ClientProviders({ children }: { children: React.ReactNode }) {
   // Editor page: full viewport, no header/wrapper
   if (isEditorPage) {
     return (
-      <AppProvider>
-        {children}
-      </AppProvider>
+      <SWRConfig value={studioSwrOptions}>
+        <AppProvider>
+          {children}
+        </AppProvider>
+      </SWRConfig>
     );
   }
 
   return (
-    <AppProvider>
-      {!isAuthPage && <Header />}
-      <main className="app-body">
-        {children}
-      </main>
-      <FeedbackBubble />
-    </AppProvider>
+    <SWRConfig value={studioSwrOptions}>
+      <AppProvider>
+        {!isAuthPage && <Header />}
+        <main className="app-body">
+          {children}
+        </main>
+        <FeedbackBubble />
+      </AppProvider>
+    </SWRConfig>
   );
 }

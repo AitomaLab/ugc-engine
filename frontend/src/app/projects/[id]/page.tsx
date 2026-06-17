@@ -1,14 +1,14 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import useSWR, { useSWRConfig } from 'swr';
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useApp } from '@/providers/AppProvider';
 import {
     creativeFetch,
     CreativeFetchAbortedError,
-    GALLERY_FETCH_ATTEMPTS,
-    GALLERY_FETCH_TIMEOUT_MS,
 } from '@/lib/creative-os-api';
+import { projectFullFetcher, projectFullKey } from '@/lib/swr';
 import { waitForFreshSession } from '@/lib/auth';
 import { fetchJobsStatus } from '@/lib/jobs-status-poll';
 import { useTranslation } from '@/lib/i18n';
@@ -113,6 +113,59 @@ function dedupeVideosById(rows: any[]): any[] {
     return ordered;
 }
 
+type ProjectFullPayload = {
+    project: any;
+    images: any[];
+    videos: any[];
+};
+
+function mergeFullAssets<T extends { id?: string; is_placeholder?: boolean; status?: string; image_url?: string; final_video_url?: string; video_url?: string }>(
+    prev: T[],
+    fullRows: T[],
+    hasPlayableMedia: (v: T) => boolean,
+): T[] {
+    const placeholders = prev.filter(v => v.is_placeholder);
+    const fullMap = new Map(fullRows.map(r => [r.id, r]));
+    const localOnly = prev.filter(v => {
+        if (v.is_placeholder || !v.id || fullMap.has(v.id)) return false;
+        if (isInFlightStatus(v.status)) return true;
+        if ((v.status || '').toLowerCase() === 'success' && hasPlayableMedia(v)) return true;
+        return false;
+    });
+    return [...placeholders, ...localOnly, ...fullRows];
+}
+
+function mergeFullVideos(
+    prev: any[],
+    fullVideos: any[],
+    watchedVideoJobIds: Set<string>,
+    onWatchAdded: () => void,
+): any[] {
+    const fullMap = new Map(fullVideos.map((r: any) => [r.id, r]));
+    const placeholders = prev.filter(v => v.is_placeholder);
+    const localOnly = prev.filter(v => {
+        if (v.is_placeholder || !v.id || fullMap.has(v.id)) return false;
+        if (isInFlightStatus(v.status)) return true;
+        if (videoNeedsStatusPoll(v)) return true;
+        if (isSuccessLikeStatus(v.status) && hasPlayableVideo(v)) return true;
+        return false;
+    });
+    const mergedFull = fullVideos.map((f: any) => {
+        const local = prev.find((p) => p.id === f.id);
+        return local ? mergeVideoRow(local, f) : f;
+    });
+    const merged = dedupeVideosById([...placeholders, ...localOnly, ...mergedFull]);
+    let addedWatch = false;
+    for (const v of merged) {
+        if (v.id && isInFlightStatus(v.status) && !watchedVideoJobIds.has(v.id)) {
+            watchedVideoJobIds.add(v.id);
+            addedWatch = true;
+        }
+    }
+    if (addedWatch) onWatchAdded();
+    return merged;
+}
+
 /* ── Responsive hook: split layout only on >=1024px viewports ─── */
 function useIsWide(): boolean {
     // Always start from the SSR default (true = desktop) so the first client
@@ -173,6 +226,13 @@ export default function ProjectContainerPage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
     const { session, setActiveProject } = useApp();
+    const { cache } = useSWRConfig();
+    const swrKey = session && projectId ? projectFullKey(projectId) : null;
+    const { data: fullData, isLoading: swrLoading, mutate: mutateFull } = useSWR<ProjectFullPayload>(
+        swrKey,
+        projectFullFetcher,
+        { errorRetryCount: 2, keepPreviousData: false },
+    );
 
     const [activeTab, setActiveTab] = useState<TabId>('images');
     const [projectName, setProjectName] = useState('');
@@ -262,6 +322,25 @@ export default function ProjectContainerPage() {
     const fullRefreshTimersRef = useRef<number[]>([]);
     const fetchAssetsRef = useRef<(silent?: boolean) => Promise<boolean>>(async () => false);
 
+    const applyFullPayload = useCallback((full: ProjectFullPayload, gen?: number) => {
+        const g = gen ?? projectFetchGenRef.current;
+        if (g !== projectFetchGenRef.current) return;
+        setProjectName(full.project?.name || 'Project');
+        setImages(prev => mergeFullAssets(prev, full.images || [], v => !!v.image_url));
+        setVideos(prev => mergeFullVideos(
+            prev,
+            full.videos || [],
+            watchedVideoJobIdsRef.current,
+            () => setWatchPollTick((t) => t + 1),
+        ));
+    }, []);
+
+    useEffect(() => {
+        if (!fullData?.project?.id || fullData.project.id !== projectId) return;
+        applyFullPayload(fullData);
+        setLoading(false);
+    }, [fullData, applyFullPayload, projectId]);
+
     const registerVideoJobWatch = useCallback((payload: { job_id: string; label?: string; eta_seconds?: number; duration?: number }) => {
         const { job_id: jobId, label, eta_seconds, duration } = payload;
         if (!jobId) return;
@@ -299,62 +378,14 @@ export default function ProjectContainerPage() {
 
         const run = async (): Promise<boolean> => {
             const gen = projectFetchGenRef.current;
-            if (!silent) setLoading(true);
+            if (!silent && !fullData) setLoading(true);
             try {
-                const full = await creativeFetch<{
-                    project: any;
-                    images: any[];
-                    videos: any[];
-                }>(
-                    `/creative-os/projects/${projectId}/full`,
-                    { signal: mountAbortRef.current?.signal },
-                    GALLERY_FETCH_TIMEOUT_MS,
-                    GALLERY_FETCH_ATTEMPTS,
+                const full = await mutateFull(
+                    () => projectFullFetcher<ProjectFullPayload>(projectFullKey(projectId)),
+                    { revalidate: false, populateCache: true },
                 );
-                if (gen !== projectFetchGenRef.current) return false;
-                setProjectName(full.project?.name || 'Project');
-                const mergeFullAssets = <T extends { id?: string; is_placeholder?: boolean; status?: string; image_url?: string; final_video_url?: string; video_url?: string }>(
-                    prev: T[],
-                    fullRows: T[],
-                    hasPlayableMedia: (v: T) => boolean,
-                ): T[] => {
-                    const placeholders = prev.filter(v => v.is_placeholder);
-                    const fullMap = new Map(fullRows.map(r => [r.id, r]));
-                    const localOnly = prev.filter(v => {
-                        if (v.is_placeholder || !v.id || fullMap.has(v.id)) return false;
-                        if (isInFlightStatus(v.status)) return true;
-                        if ((v.status || '').toLowerCase() === 'success' && hasPlayableMedia(v)) return true;
-                        return false;
-                    });
-                    return [...placeholders, ...localOnly, ...fullRows];
-                };
-                setImages(prev => mergeFullAssets(prev, full.images || [], v => !!v.image_url));
-                setVideos(prev => {
-                    const fullVideos = full.videos || [];
-                    const fullMap = new Map(fullVideos.map((r: any) => [r.id, r]));
-                    const placeholders = prev.filter(v => v.is_placeholder);
-                    const localOnly = prev.filter(v => {
-                        if (v.is_placeholder || !v.id || fullMap.has(v.id)) return false;
-                        if (isInFlightStatus(v.status)) return true;
-                        if (videoNeedsStatusPoll(v)) return true;
-                        if (isSuccessLikeStatus(v.status) && hasPlayableVideo(v)) return true;
-                        return false;
-                    });
-                    const mergedFull = fullVideos.map((f: any) => {
-                        const local = prev.find((p) => p.id === f.id);
-                        return local ? mergeVideoRow(local, f) : f;
-                    });
-                    const merged = dedupeVideosById([...placeholders, ...localOnly, ...mergedFull]);
-                    let addedWatch = false;
-                    for (const v of merged) {
-                        if (v.id && isInFlightStatus(v.status) && !watchedVideoJobIdsRef.current.has(v.id)) {
-                            watchedVideoJobIdsRef.current.add(v.id);
-                            addedWatch = true;
-                        }
-                    }
-                    if (addedWatch) setWatchPollTick((t) => t + 1);
-                    return merged;
-                });
+                if (!full || gen !== projectFetchGenRef.current) return false;
+                applyFullPayload(full, gen);
                 return true;
             } catch (err) {
                 if (err instanceof CreativeFetchAbortedError && err.silent) {
@@ -382,7 +413,7 @@ export default function ProjectContainerPage() {
             }
         });
         return fetchAssetsInFlightRef.current;
-    }, [session, projectId]);
+    }, [session, projectId, fullData, mutateFull, applyFullPayload]);
 
     fetchAssetsRef.current = fetchAssets;
 
@@ -592,21 +623,31 @@ export default function ProjectContainerPage() {
         watchedVideoJobIdsRef.current.clear();
         seenInPollRef.current.clear();
         reportedFailuresRef.current.clear();
-        setImages([]);
-        setVideos([]);
-        setProjectName('');
         setFilterProduct('');
         setFilterInfluencer('');
         setFilterMode('');
         setWatchPollTick(0);
-        setLoading(true);
         setActiveProject(projectId);
         try {
             localStorage.setItem('activeProjectId', projectId);
         } catch { /* ignore */ }
-    }, [projectId, setActiveProject]);
 
-    // Mount-scoped abort for gallery fetches — silent on navigation away.
+        const key = projectFullKey(projectId);
+        const cachedData = cache.get(key)?.data as ProjectFullPayload | undefined;
+        if (cachedData?.project?.id === projectId) {
+            setImages(cachedData.images ?? []);
+            setVideos(cachedData.videos ?? []);
+            setProjectName(cachedData.project?.name ?? '');
+            setLoading(false);
+        } else {
+            setImages([]);
+            setVideos([]);
+            setProjectName('');
+            setLoading(true);
+        }
+    }, [projectId, setActiveProject, cache]);
+
+    // Mount-scoped abort for jobs-status polls — silent on navigation away.
     useEffect(() => {
         mountAbortRef.current = new AbortController();
         return () => {
@@ -615,16 +656,15 @@ export default function ProjectContainerPage() {
         };
     }, [projectId]);
 
-    // Initial + session-ready fetch
+    // Retry once if SWR initial fetch fails (e.g. transient timeout).
     useEffect(() => {
-        if (!session || !projectId) {
-            setLoading(false);
-            return;
+        if (!session || !projectId || fullData) return;
+        if (!swrLoading) {
+            void fetchAssets().then((ok) => {
+                if (!ok) void fetchAssets();
+            });
         }
-        void fetchAssets().then((ok) => {
-            if (!ok) void fetchAssets();
-        });
-    }, [session, projectId, fetchAssets]);
+    }, [session, projectId, fullData, swrLoading, fetchAssets]);
 
     // Refetch on tab return / bfcache — fixes empty gallery after navigation.
     useEffect(() => {
@@ -833,6 +873,8 @@ export default function ProjectContainerPage() {
     }, [currentAssets, filterProduct, filterInfluencer, filterMode]);
 
     const hasActiveFilters = !!(filterProduct || filterInfluencer || filterMode);
+
+    const galleryLoading = (swrLoading || loading) && images.length === 0 && videos.length === 0;
 
     const startEditing = () => {
         setEditName(projectName);
@@ -1087,7 +1129,7 @@ export default function ProjectContainerPage() {
         <AssetGallery
             assets={filteredAssets}
             type={activeTab}
-            loading={loading}
+            loading={galleryLoading}
             projectId={projectId}
             onRefresh={refreshGallery}
             onAnimated={() => {

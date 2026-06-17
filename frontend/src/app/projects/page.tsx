@@ -1,8 +1,10 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
+import useSWR from 'swr';
 import { useApp } from '@/providers/AppProvider';
 import { creativeFetch } from '@/lib/creative-os-api';
+import { creativeOsFetcher, projectsListKey } from '@/lib/swr';
 import { ProjectCard } from '@/components/studio/ProjectCard';
 import { useTranslation } from '@/lib/i18n';
 
@@ -21,11 +23,15 @@ interface ProjectWithCounts {
 }
 
 export default function StudioDashboard() {
-    const { session, isLoading } = useApp();
+    const { session, isLoading: authLoading } = useApp();
     const { t } = useTranslation();
-    const [projects, setProjects] = useState<ProjectWithCounts[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
+    const { data, error: swrError, isLoading, mutate } = useSWR(
+        session ? projectsListKey : null,
+        creativeOsFetcher<ProjectWithCounts[]>,
+    );
+    const projects = data ?? [];
+    const error = swrError ? (swrError instanceof Error ? swrError.message : 'Failed to load projects') : null;
+    const showSkeleton = authLoading || (isLoading && !data);
     const [showCreate, setShowCreate] = useState(false);
     const [newName, setNewName] = useState('');
     const [creating, setCreating] = useState(false);
@@ -34,23 +40,6 @@ export default function StudioDashboard() {
     // ── Selection state ──────────────────────────────────────────────
     const [selected, setSelected] = useState<Set<string>>(new Set());
     const [deleting, setDeleting] = useState(false);
-
-    const fetchProjects = useCallback(async () => {
-        if (!session) return;
-        setLoading(true);
-        try {
-            const data = await creativeFetch<ProjectWithCounts[]>('/creative-os/projects/');
-            setProjects(data);
-            setError(null);
-        } catch (err: unknown) {
-            console.error('Failed to load projects:', err);
-            setError(err instanceof Error ? err.message : 'Failed to load projects');
-        } finally {
-            setLoading(false);
-        }
-    }, [session]);
-
-    useEffect(() => { fetchProjects(); }, [fetchProjects]);
 
     const handleCreate = async () => {
         const name = newName.trim();
@@ -63,7 +52,7 @@ export default function StudioDashboard() {
             });
             setNewName('');
             setShowCreate(false);
-            await fetchProjects();
+            await mutate();
         } catch (err) {
             console.error('Failed to create project:', err);
             alert(t('creativeOs.projects.createFailed').replace('{err}', err instanceof Error ? err.message : 'Unknown error'));
@@ -105,7 +94,7 @@ export default function StudioDashboard() {
                 )
             );
             setSelected(new Set());
-            await fetchProjects();
+            await mutate();
         } catch (err) {
             console.error('Failed to delete projects:', err);
             alert(t('creativeOs.projects.deleteFailed').replace('{err}', err instanceof Error ? err.message : 'Unknown error'));
@@ -121,7 +110,7 @@ export default function StudioDashboard() {
 
     const selectionMode = selected.size > 0;
 
-    if (isLoading || loading) {
+    if (showSkeleton) {
         return (
             <div style={{
                 padding: '60px 32px',

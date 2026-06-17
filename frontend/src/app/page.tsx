@@ -12,6 +12,7 @@ import Link from "next/link";
 import { createProject } from "@/lib/supabaseData";
 import dynamic from "next/dynamic";
 import { creativeFetch, transcribeAudio, uploadAgentFile } from "@/lib/creative-os-api";
+import { creativeOsFetcher, projectsListKey, studioSwrOptions } from "@/lib/swr";
 
 // Only new users ever see onboarding — keep its bundle (and its autoplay
 // walkthrough videos) out of the dashboard's initial chunk.
@@ -150,20 +151,13 @@ export default function StudioPage() {
   const { session, profile, activeProject } = useApp();
 
   // ── Data layer (SWR) ──────────────────────────────────────────────
-  // 30s background refresh, revalidate on tab focus, keepPreviousData so
-  // back-navigation renders instantly from cache instead of a spinner.
-  const swrOpts = {
-    refreshInterval: 30000,
-    revalidateOnFocus: true,
-    keepPreviousData: true,
-  } as const;
   const { data: jobsData, isLoading: jobsLoading } = useSWR(
     "/jobs?limit=100&include_clones=true",
     async (path: string) => {
       await waitForFreshSession();
       return apiFetch<Job[]>(path, { skipProjectScope: true });
     },
-    swrOpts,
+    studioSwrOptions,
   );
   const { data: infData } = useSWR(
     "/influencers",
@@ -171,23 +165,17 @@ export default function StudioPage() {
       await waitForFreshSession();
       return apiFetch<Influencer[]>(path, { skipProjectScope: true });
     },
-    swrOpts,
+    studioSwrOptions,
   );
   const { data: projectsData } = useSWR(
-    "/creative-os/projects/",
-    async (path: string) => {
-      await waitForFreshSession();
-      return creativeFetch<any[]>(path).catch(() => [] as any[]);
-    },
-    swrOpts,
+    projectsListKey,
+    (path: string) => creativeOsFetcher<any[]>(path).catch(() => [] as any[]),
+    studioSwrOptions,
   );
   const { data: recentImgs } = useSWR(
     "/creative-os/projects/recent-images?limit=20",
-    async (path: string) => {
-      await waitForFreshSession();
-      return creativeFetch<RecentImage[]>(path).catch(() => [] as RecentImage[]);
-    },
-    swrOpts,
+    (path: string) => creativeOsFetcher<RecentImage[]>(path).catch(() => [] as RecentImage[]),
+    studioSwrOptions,
   );
   const jobs = jobsData ?? [];
   const influencers = infData ?? [];
