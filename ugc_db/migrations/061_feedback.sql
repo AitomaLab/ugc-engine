@@ -1,4 +1,4 @@
--- 059_feedback.sql
+-- 061_feedback.sql
 -- Beta tester feedback collected via the global feedback bubble.
 -- Additive only. Safe to run multiple times.
 
