@@ -205,7 +205,7 @@ The gated tools are exactly: generate_image, generate_influencer, generate_ident
 
 ## Multiple videos at once — ALWAYS use a bulk tool, NEVER N single calls
 When the user wants MORE THAN ONE video in a single request (e.g. "5-video campaign", "make 3 clone videos", "render all 3 cinematic directions"), you MUST dispatch them via ONE bulk tool call — never fire N separate single-video tool calls. The engine de-dupes near-identical single calls within a session, so firing N of them launches only ONE; the bulk tools fan out all N jobs from a single Confirm.
-- **UGC videos (multiple):** ONE `create_bulk_campaign` — pass `scripts` (one verbatim script per video when you've drafted N distinct scripts) or `count` (auto-generate N distinct scripts). Supports 8s clips and 15s/30s full videos.
+- **UGC videos (multiple):** ONE `create_bulk_campaign` — pass `scripts` (one verbatim script per video when you've drafted N distinct scripts) or `count` (auto-generate N distinct scripts). Supports 8s clips and 15s/30s full videos. If duration is missing, ask with `[[UGC_DURATION_BUTTONS]]` (8s / 15s / 30s) — NEVER use `[[DURATION_BUTTONS]]` for UGC bulk.
 - **AI Clone videos (multiple):** ONE `create_bulk_clone` — same shape: `scripts[]` (one per video) or `count`. NEVER fire N `create_clone_video` calls.
 - **Cinematic ads (multiple):** if the user has NOT specified the format/length, FIRST confirm aspect ratio (and duration if missing) via `[[ASPECT_BUTTONS]]` / `[[DURATION_BUTTONS]]` — one marker per message, same as a single cinematic ad — then call `create_cinematic_ad` with `stage='propose'`, then ONE `create_cinematic_ad` with `stage='bulk'` + `directions=[...]` to render several directions (A/B/C) of the SAME product concurrently. NEVER fire N separate `stage='animate'` calls.
 Each bulk tool returns ONE batched cost chip; after the user confirms, all N jobs launch simultaneously.
@@ -264,7 +264,10 @@ Do NOT default clip lengths to 5s. Reason about the appropriate length based on 
     - 31–49 words (overlap) → ask: "That's between 15s and 30s — which would you like?"
   Only ask the generic "15s or 30s?" when the user gave NO script at all. Use the same word-count thresholds documented under "Script length auto-validation" below.
 
-If the user explicitly states a desired length, always use their number. If the content type makes the ideal length ambiguous and the user didn't specify, ask in one short sentence: "How long — 5s quick showcase or 10s extended scene?" Do NOT silently pick 5s for everything.
+If the user explicitly states a desired length, always use their number. If the content type makes the ideal length ambiguous and the user didn't specify:
+- **UGC / bulk campaign (`create_bulk_campaign`)**: ask "8s short clips, 15s, or 30s full videos?" and end with `[[UGC_DURATION_BUTTONS]]`. NEVER use `[[DURATION_BUTTONS]]` for UGC.
+- **Cinematic (Kling)**: ask "How long — 5s quick showcase or 10s extended scene?" or use `[[DURATION_BUTTONS]]` for storyboard ads (5/10/15s).
+Do NOT silently pick 5s for everything.
 
 ## Common workflows
 
@@ -368,6 +371,7 @@ You MUST do this check BEFORE starting any generation. Do NOT skip it.
   - Spanish: pass `video_language='es'` and `language_accent` (spain | latam) like UGC.
 
 **Bulk campaign**: list_project_assets → create_bulk_campaign (gated). Returns immediately with job_ids; tell the user to watch the gallery or check back.
+  - **Duration (MANDATORY before cost chip):** If the user has not chosen 8s, 15s, or 30s, ask in ONE short message ending with `[[UGC_DURATION_BUTTONS]]` on the last line (EN: "How long should each video be? [[UGC_DURATION_BUTTONS]]"). Wait for the choice. **NEVER use `[[DURATION_BUTTONS]]` in UGC bulk flows** — that marker is cinematic-only (5/10/15s).
   - **Music + captions are post-delivery options, NOT defaults** (same as single `create_ugc_video`): `create_bulk_campaign` produces bare assembled videos (no music, no captions) so each video finishes faster. Do NOT pass `subtitles_enabled=true` or `music_enabled=true` unless the user explicitly asked for baked-in captions/music upfront.
   - After dispatch: tell the user the batch is running and to watch the gallery. Do NOT claim all videos are "Done" until every job in the batch has `status=success` with a `final_video_url` (use `list_jobs` / `get_job_status(job_id)` when the user checks back).
   - When **all** jobs in the batch are complete, offer once in the user's language: "Want to add captions or background music to any of these?" If the user accepts, apply per video:
@@ -460,9 +464,11 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
 9b. MULTI-IMAGE GENERATION — when the user asks for multiple images in one breath ("3 images in different angles", "5 variations", "10 lifestyle photos", "haz 10 imágenes"), call `generate_image` ONCE with `count=N` and a prompt that bakes the variation into the description ("different angle", "varied pose", "alternate composition"). The server fans out N concurrent NanoBanana calls and returns all `image_urls` together in one tool result — you summarize all of them in a single reply. Do NOT emit N parallel `tool_use` blocks for `generate_image` and do NOT write narrative prose like "Firing all 10 in parallel now" without a matching tool_use — that pattern triggers the server-side IDEMPOTENCY guard which silently blocks all but the first call, leaving the user with 1 image when they asked for N. The cost confirmation is bundled: the first (unconfirmed) call previews `per_image × count` credits, then the confirmed call dispatches all N in parallel. Range: count ≤ 10. **If the user asks for MORE than 10**: call `generate_image` ONCE with `count=10` and explicitly tell them in your reply "I can generate up to 10 per batch — confirm and I'll queue another batch for the remaining X right after this one completes." NEVER split into multiple parallel tool_use blocks to work around the cap.
 9c. ASSET SELECTION — MANDATORY when a product or creator is needed but not yet chosen. Before UGC ads, product showcases, or any generation that requires a specific product and/or influencer/clone, call `list_project_assets()` once if you haven't this session. If the user has NOT @-mentioned the needed asset:
   - Missing product: ask ONE short question only (e.g. "Which product should we feature?"), then append the literal marker `[[PRODUCT_SELECTOR]]` on the last line. The frontend renders a visual product picker with preview images — do NOT enumerate product names in prose.
-  - Missing creator (model or AI clone): ask ONE short question only (e.g. "Who should present it?"), then append `[[CREATOR_SELECTOR]]` on the last line. The frontend renders Models + AI Clones tabs with preview images — do NOT list creator names in prose. **For UGC ads, cinematic model-led videos, and bulk/multi-video campaigns (`create_bulk_campaign`)** — NEVER for `generate_product_shots`, captions-only tasks, or other product-only workflows.
+  - Missing creator (model or AI clone): ask ONE short question only (e.g. "Who should present it?"), then append `[[CREATOR_SELECTOR]]` on the last line. The frontend renders Models + AI Clones tabs with preview images — do NOT list creator names in prose. **For UGC ads, model-led cinematic/commercial videos (brief explicitly requests a person/model/presenter), and bulk/multi-video campaigns (`create_bulk_campaign`)** — NEVER for `generate_product_shots`, product-only cinematic ads, captions-only tasks, or other product-only workflows.
   **ONE selector per message** — ask product first, wait for the user's pick, then ask creator in a separate message if still needed (same discipline as `[[ASPECT_BUTTONS]]` vs `[[DURATION_BUTTONS]]`). Never combine `[[PRODUCT_SELECTOR]]` and `[[CREATOR_SELECTOR]]` in the same message.
-  **Product shots exception:** when the user asks for product shots (`generate_product_shots`), use `[[PRODUCT_SELECTOR]]` only if product is unknown. After the user picks a product, call `generate_product_shots` directly — do NOT ask for a creator or use `[[CREATOR_SELECTOR]]`.
+  **Product shots exception:** when the user asks for product shots (`generate_product_shots` — the 4-view professional sheet: hero, macro, functional, alternate angle), use `[[PRODUCT_SELECTOR]]` only if product is unknown. After the user picks a product, call `generate_product_shots` directly — do NOT ask for a creator or use `[[CREATOR_SELECTOR]]`.
+  **Product-only cinematic ads exception:** when the user asks for a cinematic/commercial ad for a product with NO person, model, influencer, or presenter in the brief — use `[[PRODUCT_SELECTOR]]` only if product is unknown, then call `create_cinematic_ad stage='propose'` directly. Do NOT use `[[CREATOR_SELECTOR]]`. The propose stage returns product-only AND model-led directions A/B/C; the user picks at propose — you do not need a creator upfront.
+  **Model-led ad images exception:** when the user asks for N commercial/ad images WITH a person or model (e.g. "5 commercial ad images", "ad images with a creator", "imágenes de anuncio con modelo"), that is NOT `generate_product_shots` — ask who should appear with `[[CREATOR_SELECTOR]]` (one message, one marker), then use `generate_image` with product + influencer refs. Only product-shot sheets skip the creator step.
   Skip the selector when: the user already @-mentioned the asset; only one product (or one creator) exists in the project — use it directly; or the brief doesn't need that asset type.
   When the user picks from a selector, their reply includes structured refs with real `id=` values — treat exactly like an @mention (use those ids in tool calls, never call `create_product` / `create_influencer` to duplicate).
 10. ASPECT RATIO — MANDATORY before gated generation. Before calling `generate_image` or `generate_video` with `confirmed=true`, you MUST know the aspect ratio. If the user's brief already specifies it ("vertical", "9:16", "horizontal", "16:9", "square", "1:1", "for TikTok", "for YouTube", "for Instagram feed", "landscape", "portrait"), use it directly. For images, '1:1' is available for Instagram feed posts. Otherwise you MUST ask the user BEFORE presenting the cost confirmation: ask the question in one short sentence, then append the literal marker `[[ASPECT_BUTTONS]]` on the last line of your message. The frontend detects this marker and renders clickable Vertical / Horizontal buttons for the user. When the user replies with their choice, THEN show the cost confirmation, THEN call the tool with `confirmed=true` and `aspect_ratio="9:16"` or `"16:9"` (or `"1:1"` for images). Never skip this step for gated generation. Do NOT include the marker when the aspect is already known.
@@ -475,7 +481,7 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
 11. NO RANDOM INFLUENCER / PRODUCT — for cinematic / scene / b-roll prompts that do not mention a specific person or product (e.g. "rooftop chase", "sunset over a city", "close-up of a coffee cup"), you MUST call `generate_video` WITHOUT `influencer_id` and WITHOUT `product_id`. Never auto-attach an influencer or product "to be safe" — the pipeline will generate the scene from the prompt alone, which is what the user wants. Only pass `influencer_id` / `product_id` when the user @-mentioned that asset or explicitly named them in the brief.
 12. DIGITAL PRODUCTS — when the user @-mentions a digital product (app / SaaS / software), the `[Referenced assets]` preface includes both `product_id=...` AND `app_clip_id=...` (the specific clip the user picked from the shot modal). You MUST forward BOTH to `generate_video` along with `product_type='digital'`. The Seedance pipeline automatically generates a NanoBanana composite (influencer holding device with app UI on screen) and uses it as the reference image for Seedance — you do NOT need to handle compositing yourself. Just pass product_id, influencer_id, and app_clip_id and let the pipeline do the rest. Then — **in the SAME turn, immediately after `generate_video` returns status=success** — you MUST chain `splice_app_clip(job_id=<returned_job_id>, app_clip_id=<same_app_clip_id>)` to append the app clip walkthrough as B-roll with a dissolve transition. Present the splice step in natural language (\"Your cinematic is ready — now splicing the app clip as B-roll...\") so the user knows what's happening during the ~1-2 min splice. This two-step flow applies to ALL modes (ugc, cinematic_video, seedance_2_ugc, seedance_2_cinematic, seedance_2_product). Do NOT call `combine_videos` for the app-clip splice — that's what `splice_app_clip` is for. `combine_videos` is only for stitching two *independently generated* videos the user explicitly asked to combine. Never call `list_app_clips` to pick a clip manually — the preface already tells you which one. Do NOT manually pass the app clip's first_frame_url or video_url as `reference_image_url` / `reference_image_urls` / `reference_video_urls` — the pipeline handles all reference resolution internally from `app_clip_id`.
 
-13. CINEMATIC ADS (Fal AI: GPT Image 2 storyboard + Seedance 2.0 Pro animation) — when the user asks for a "cinematic ad", "cinematic advert", "cinematic ads", "cinematic video", "cinematic spot", "cinematic clip", "film-style ad/video/spot", "movie-style ad/video/spot", "hollywood-look ad/video", "storyboard for [product]", "animate this product as a cinematic spot", or **any ad/video framed as cinematic / filmic / movie-quality / film-look** — OR the Spanish equivalents "anuncio cinematográfico", "anuncio cinemático", "vídeo cinematográfico", "spot cinemático", "anuncio de cine", "estilo cine", "estilo película", "spot publicitario cinemático" — against an @mentioned product or uploaded product photo, use the `create_cinematic_ad` tool — NOT `generate_video(mode=cinematic_video)` and NOT `animate_image`. `generate_video(cinematic_video)` is reserved for cases where the user EXPLICITLY opts out of the storyboard flow ("just a quick clip", "no storyboard", "single shot", "skip the directions"). If you cannot tell whether the user wants the full storyboard workflow vs. a one-shot cinematic clip, ASK in ONE short message: "Do you want a curated cinematic ad (3 direction options → storyboard → animated 5/10/15s spot) or a quick single-shot cinematic clip (one 5–10s render, no storyboard)?" Default to `create_cinematic_ad` if they pick the first or don't answer in the same turn. This tool is multi-stage with mandatory pause points:
+13. CINEMATIC ADS (Fal AI: GPT Image 2 storyboard + Seedance 2.0 Pro animation) — when the user asks for a "cinematic ad", "cinematic advert", "cinematic ads", "cinematic video", "cinematic spot", "cinematic clip", "film-style ad/video/spot", "movie-style ad/video/spot", "hollywood-look ad/video", "storyboard for [product]", "animate this product as a cinematic spot", or **any ad/video framed as cinematic / filmic / movie-quality / film-look** — OR the Spanish equivalents "anuncio cinematográfico", "anuncio cinemático", "vídeo cinematográfico", "spot cinemático", "anuncio de cine", "estilo cine", "estilo película", "spot publicitario cinemático" — against an @mentioned product or uploaded product photo, use the `create_cinematic_ad` tool — NOT `generate_video(mode=cinematic_video)` and NOT `animate_image`. `generate_video(cinematic_video)` is reserved for cases where the user EXPLICITLY opts out of the storyboard flow ("just a quick clip", "no storyboard", "single shot", "skip the directions"). If you cannot tell whether the user wants the full storyboard workflow vs. a one-shot cinematic clip, ASK in ONE short message: "Do you want a curated cinematic ad (3 direction options → storyboard → animated 5/10/15s spot) or a quick single-shot cinematic clip (one 5–10s render, no storyboard)?" Default to `create_cinematic_ad` if they pick the first or don't answer in the same turn. **Default for a product-only cinematic/commercial brief (no person/model in the request):** skip creator selection — go straight to `stage='propose'` after product + aspect/duration are known. Only ask for a creator when the brief explicitly requests a person/model/presenter or the user picks a model-led direction that needs a face. This tool is multi-stage with mandatory pause points:
   - **a) `stage='propose'` (FREE):** First call. Pass `product_id` (from @mention) OR `image_url` (from upload) + the user's `brief` + `aspect_ratio` + `duration_seconds` (see ASPECT + DURATION rule below). The tool returns 3 storyboard directions (A/B/C) tailored to the brief + format + length. Read them back to the user in natural language — name, vibe, hero moment, model-led or product-only, mark the recommended one — and STOP. Wait for the user to pick A/B/C (or remix). Never auto-pick.
   - **b) `stage='storyboard'` (~4 cr, NO cost gate):** Once direction is chosen, call with `direction`, plus `tagline` + `domain` + the SAME `aspect_ratio` and `duration_seconds` from propose. NO `confirmed=false` step — the storyboard renders directly (4 cr auto-debited; trivial enough not to gate). The tool blocks while it renders (usually a couple of minutes, sometimes longer) then returns `action='confirmation_required'` for the NEXT stage (animate) — the storyboard image surfaces via the artifact stream, the panels themselves describe the scenes, so DO NOT separately narrate beats. The frontend renders the animate cost chip automatically. **STORYBOARD NARRATION (when you tell the user it is rendering):** (1) The panel count VARIES with `duration_seconds` — 3 panels for 5s, 4 for 10s, 6 for 15s. NEVER hardcode "6-panel" — state the count that matches the chosen duration, or just say "storyboard" with no number. (2) Do NOT give any render-time estimate or ETA — no "2 minutes", no "a couple of minutes", no "this takes about…". Just say the storyboard is rendering now and stop. **DIRECT-SEEDANCE BYPASS:** for lip-application / Fal-sensitive directions the server skips the storyboard sheet entirely and the response has `direct_seedance: true`, NO `storyboard_url`, and a `scene_breakdown` (the shots described in text). When you see `direct_seedance: true`, tell the user (briefly, using `direct_seedance_note`) that this direction has no visual storyboard and the video is generated directly via Seedance 2.0 — present the `scene_breakdown` beats and the animate cost chip. For direct_seedance responses do NOT narrate a storyboard render, a panel count, or a render time — there is no storyboard render step. Do NOT treat the missing storyboard image as an error.
   - **c) `stage='animate'` (32–96 cr depending on duration):** Use the `next_call` payload returned by storyboard (it pre-fills `storyboard_url`, `direction`, `aspect_ratio`, `duration_seconds`, `tagline`, `domain` — and `direct_seedance` when set). Pass the ENTIRE `next_call` through verbatim, INCLUDING `direct_seedance` when present (the direct path has no `storyboard_url`; that is expected). FIRST `confirmed=false` for the cost chip; after Confirm, `confirmed=true`. The tool renders the ad at the chosen format + length, saves to the Videos tab, returns `action='ad_ready'` with `video_url`.
@@ -2604,6 +2610,80 @@ def _clone_started_ack_message(duration: int, *, lang: Optional[str] = None) -> 
         f"On it — your {duration}s AI Clone lip-sync video is generating now. "
         f"About **{eta_min} minutes** left — watch the progress card in the **Videos** tab."
     )
+
+
+def _bulk_dispatched_ack_message(
+    count: int,
+    duration: int,
+    tool_name: str,
+    *,
+    lang: Optional[str] = None,
+) -> str:
+    """User-facing chat ack when a bulk video campaign dispatches N background jobs."""
+    if tool_name == "create_bulk_clone":
+        eta_min = _clone_eta_minutes_approx(duration)
+    else:
+        eta_min = _ugc_eta_minutes_approx(duration)
+    if lang == "es":
+        return (
+            f"¡En marcha! **{count} vídeos** de {duration}s se están generando ahora. "
+            f"Cada uno tarda aproximadamente **{eta_min} minutos** — sigue las tarjetas de progreso "
+            f"en la pestaña **Vídeos**; aparecerán automáticamente al terminar."
+        )
+    return (
+        f"On it — all **{count}** {duration}s videos are generating now. "
+        f"Each takes about **{eta_min} minutes** — watch the progress cards in the **Videos** tab; "
+        f"they'll appear automatically when ready."
+    )
+
+
+_BULK_VIDEO_TOOLS = frozenset({"create_bulk_campaign", "create_bulk_clone"})
+
+
+def _bulk_job_ids_from_parsed(parsed: dict) -> list[str]:
+    raw = parsed.get("job_ids") or []
+    ids = [str(j) for j in raw if j]
+    if not ids and parsed.get("job_id"):
+        ids = [str(parsed["job_id"])]
+    return ids
+
+
+def _should_use_bulk_dispatched_flow(parsed: dict, tool_name: str) -> bool:
+    if not isinstance(parsed, dict):
+        return False
+    job_ids = _bulk_job_ids_from_parsed(parsed)
+    if not job_ids:
+        return False
+    if tool_name in _BULK_VIDEO_TOOLS:
+        return parsed.get("status") == "dispatched" or len(job_ids) > 1
+    return parsed.get("status") == "dispatched" and len(job_ids) > 1
+
+
+def _bulk_video_job_started_events(
+    parsed: dict,
+    tool_name: str,
+    *,
+    duration: int,
+    eta_seconds: int,
+) -> list[dict]:
+    """Build video_job_started SSE payloads for each job in a bulk dispatch."""
+    job_ids = _bulk_job_ids_from_parsed(parsed)
+    if tool_name == "create_bulk_clone":
+        default_label = "AI Clone video"
+    else:
+        default_label = "UGC video"
+    label = parsed.get("campaign_name") or default_label
+    out: list[dict] = []
+    for jid in job_ids:
+        out.append({
+            "type": "video_job_started",
+            "job_id": jid,
+            "label": label,
+            "tool_name": tool_name,
+            "eta_seconds": eta_seconds,
+            "duration": duration,
+        })
+    return out
 
 
 def _job_id_from_create_response(job: dict) -> Optional[str]:
@@ -6578,18 +6658,26 @@ async def _tool_create_bulk_campaign(ctx: ToolContext, **kwargs: Any) -> str:
         clip_scripts = scripts if scripts else [""] * n
         if not scripts:
             try:
-                inf = await ctx.core().get_influencer(kwargs["influencer_id"])
-                from ugc_backend.ai_script_client import AIScriptClient
-                client = AIScriptClient()
-                clip_scripts = [
-                    client.generate_talking_head_script(
-                        influencer_data=inf or {},
-                        duration=8,
-                        video_language=kwargs.get("video_language", "en"),
-                        language_accent=kwargs.get("language_accent"),
+                from routers.generate_video import generate_ugc_clip_script
+
+                core = ctx.core()
+                clip_scripts = []
+                for i in range(n):
+                    variation_ctx = (
+                        f"Bulk campaign clip {i + 1} of {n}. "
+                        "Use a DISTINCT hook and angle from the other clips in this series."
                     )
-                    for _ in range(n)
-                ]
+                    text = await generate_ugc_clip_script(
+                        core,
+                        product_id=kwargs.get("product_id"),
+                        influencer_id=kwargs.get("influencer_id"),
+                        clip_length=8,
+                        language=kwargs.get("video_language", "en"),
+                        language_accent=kwargs.get("language_accent"),
+                        context=variation_ctx,
+                        reference_image_url=kwargs.get("reference_image_url"),
+                    )
+                    clip_scripts.append(text or f"Check this out — variation {i + 1}.")
             except Exception as e:
                 return json.dumps({"error": f"bulk 8s script generation failed: {e}"})
 
@@ -6610,6 +6698,7 @@ async def _tool_create_bulk_campaign(ctx: ToolContext, **kwargs: Any) -> str:
             "status": "dispatched",
             "count": len(job_ids),
             "job_ids": job_ids,
+            "duration": duration,
             "errors": result.get("errors"),
             "credits_spent": _credits_for_op("create_bulk_campaign", {
                 "product_type": product_type, "duration": duration, "count": n,
@@ -6660,6 +6749,7 @@ async def _tool_create_bulk_campaign(ctx: ToolContext, **kwargs: Any) -> str:
         "status": "dispatched",
         "count": len(job_ids),
         "job_ids": job_ids,
+        "duration": duration,
         "credits_spent": _credits_for_op("create_bulk_campaign", {
             "product_type": product_type, "duration": duration, "count": n,
         }),
@@ -9261,23 +9351,26 @@ def _strip_ai_edit_ops_leak(text: str) -> str:
 # visual picker when those markers are present — so we normalize here.
 _ASSET_PICK_QUESTION_RE = _re_module.compile(
     r"(?:"
-    r"which\s+product|what\s+product|pick\s+(?:a|your)\s+product|choose\s+(?:a|your)\s+product|"
-    r"qué\s+producto|cuál\s+producto|"
-    r"which\s+(?:influencer|creator|model)|who\s+should\s+(?:present|deliver|host)|"
+    r"which\s+product|what\s+product|for\s+which.*product|pick\s+(?:a|your)\s+product|choose\s+(?:a|your)\s+product|"
+    r"qué\s+producto|cuál\s+producto|para\s+cuál.*producto|cuál\s+de\s+tus\s+productos|"
+    r"which\s+(?:influencer|creator|model)|who\s+should\s+(?:present|deliver|host|star|feature|be\s+in)|"
     r"pick\s+(?:a|the|your)\s+(?:influencer|creator|model)|"
     r"qué\s+(?:influencer|creador|modelo)|cuál\s+(?:influencer|creador|modelo)|"
+    r"quién\s+debería|quién\s+protagonizar|"
     r"or\s+tell\s+me\s+to\s+pick\s+the\s+best\s+match"
     r")",
     _re_module.IGNORECASE,
 )
 _PRODUCT_PICK_RE = _re_module.compile(
-    r"which\s+product|what\s+product|qué\s+producto|cuál\s+producto|"
+    r"which\s+product|what\s+product|for\s+which.*product|qué\s+producto|cuál\s+producto|"
+    r"para\s+cuál.*producto|cuál\s+de\s+tus\s+productos|"
     r"\b1\.\s*\**which\s+product",
     _re_module.IGNORECASE,
 )
 _CREATOR_PICK_RE = _re_module.compile(
     r"which\s+(?:influencer|creator|model|persona)|who\s+should\s+(?:present|deliver|host|star|be\s+in|feature)|"
     r"who\s+do\s+you\s+want|qué\s+(?:influencer|creador|modelo)|cuál\s+(?:influencer|creador|modelo)|"
+    r"quién\s+debería|quién\s+protagonizar|"
     r"pick\s+(?:a|an|the|your)\s+(?:influencer|creator|model|persona)|"
     r"choose\s+(?:a|an|the|your)\s+(?:influencer|creator|model|persona)|"
     r"\b2\.\s*\**which\s+influencer|or\s+tell\s+me\s+to\s+pick\s+the\s+best|"
@@ -9286,24 +9379,58 @@ _CREATOR_PICK_RE = _re_module.compile(
 )
 
 
-def _normalize_asset_selection_message(text: str) -> str:
+def _collapse_asset_selection_paragraphs(text: str) -> str:
+    """Merge bare selector markers into the preceding paragraph (one bubble)."""
+    parts = [p.strip() for p in text.split("\n\n") if p.strip()]
+    if len(parts) < 2:
+        return text
+    merged: list[str] = []
+    for p in parts:
+        stripped = p.strip()
+        if stripped in ("[[CREATOR_SELECTOR]]", "[[PRODUCT_SELECTOR]]") and merged:
+            merged[-1] = f"{merged[-1].rstrip()}\n\n{stripped}"
+        else:
+            merged.append(p)
+    return "\n\n".join(merged)
+
+
+def _normalize_asset_selection_message(text: str, lang: Optional[str] = None) -> str:
     """Rewrite product/creator interrogation into marker-driven picker prompts."""
     if not text:
         return text
     stripped = text.strip()
+    is_spanish = lang == "es" or bool(
+        _re_module.search(
+            r"\b(qué|cuál|quién|para|producto|creador|modelo|guión|segundos|tienes|protagonizar)\b",
+            text,
+            _re_module.IGNORECASE,
+        )
+    )
     if stripped == "[[PRODUCT_SELECTOR]]":
+        if is_spanish:
+            return "¿Qué producto quieres usar? [[PRODUCT_SELECTOR]]"
         return "Which product should we use? [[PRODUCT_SELECTOR]]"
     if stripped == "[[CREATOR_SELECTOR]]":
+        if is_spanish:
+            return "¿Quién debería presentarlo? [[CREATOR_SELECTOR]]"
         return "Who should present it? [[CREATOR_SELECTOR]]"
     if "[[PRODUCT_SELECTOR]]" in text or "[[CREATOR_SELECTOR]]" in text:
         if stripped == "[[PRODUCT_SELECTOR]]":
+            if is_spanish:
+                return "¿Qué producto quieres usar? [[PRODUCT_SELECTOR]]"
             return "Which product should we use? [[PRODUCT_SELECTOR]]"
         if stripped == "[[CREATOR_SELECTOR]]":
+            if is_spanish:
+                return "¿Quién debería presentarlo? [[CREATOR_SELECTOR]]"
             return "Who should present it? [[CREATOR_SELECTOR]]"
         body = text.replace("[[PRODUCT_SELECTOR]]", "").replace("[[CREATOR_SELECTOR]]", "").strip()
         if "[[PRODUCT_SELECTOR]]" in text and not body:
+            if is_spanish:
+                return "¿Qué producto quieres usar? [[PRODUCT_SELECTOR]]"
             return "Which product should we use? [[PRODUCT_SELECTOR]]"
         if "[[CREATOR_SELECTOR]]" in text and not body:
+            if is_spanish:
+                return "¿Quién debería presentarlo? [[CREATOR_SELECTOR]]"
             return "Who should present it? [[CREATOR_SELECTOR]]"
         return text
     if not _ASSET_PICK_QUESTION_RE.search(text):
@@ -9311,13 +9438,6 @@ def _normalize_asset_selection_message(text: str) -> str:
 
     asks_product = bool(_PRODUCT_PICK_RE.search(text))
     asks_creator = bool(_CREATOR_PICK_RE.search(text))
-    is_spanish = bool(
-        _re_module.search(
-            r"\b(qué|cuál|producto|creador|modelo|guión|segundos|tienes)\b",
-            text,
-            _re_module.IGNORECASE,
-        )
-    )
 
     # ONE selector per message — product before creator.
     if asks_product:
@@ -9331,6 +9451,36 @@ def _normalize_asset_selection_message(text: str) -> str:
         return "Who should present it? [[CREATOR_SELECTOR]]"
 
     return text
+
+
+def _is_redundant_pre_selector_message(msg: str, marker: str) -> bool:
+    """True when a prior bubble was a pick question without the selector marker."""
+    if marker not in ("[[PRODUCT_SELECTOR]]", "[[CREATOR_SELECTOR]]"):
+        return False
+    if marker in msg:
+        return False
+    if marker == "[[PRODUCT_SELECTOR]]":
+        return bool(_PRODUCT_PICK_RE.search(msg))
+    return bool(_CREATOR_PICK_RE.search(msg))
+
+
+def _is_stagable_pick_question(text: str) -> bool:
+    """Product/creator ask in prose — may be followed by a bare selector marker."""
+    if "[[PRODUCT_SELECTOR]]" in text or "[[CREATOR_SELECTOR]]" in text:
+        return False
+    return bool(_PRODUCT_PICK_RE.search(text) or _CREATOR_PICK_RE.search(text))
+
+
+def _coalesce_selector_paragraphs(paragraphs: list[str]) -> list[str]:
+    """Drop text-only pick questions immediately before a selector paragraph."""
+    out: list[str] = []
+    for p in paragraphs:
+        if out and "[[PRODUCT_SELECTOR]]" in p and _is_redundant_pre_selector_message(out[-1], "[[PRODUCT_SELECTOR]]"):
+            out.pop()
+        elif out and "[[CREATOR_SELECTOR]]" in p and _is_redundant_pre_selector_message(out[-1], "[[CREATOR_SELECTOR]]"):
+            out.pop()
+        out.append(p)
+    return out
 
 
 def _summarize_result(result_text: str, max_len: int = 120) -> str:
@@ -10019,6 +10169,29 @@ class ManagedAgentClient:
                     "summary": af_parsed.get("message") or "Video edit started",
                     "is_error": False,
                 }
+            elif isinstance(af_parsed, dict) and _should_use_bulk_dispatched_flow(af_parsed, tool_name):
+                _job_ids = _bulk_job_ids_from_parsed(af_parsed)
+                _count = int(af_parsed.get("count") or len(_job_ids))
+                _duration = int(af_parsed.get("duration") or 15)
+                _af_lang = lang if lang in ("es", "en") else _detect_user_lang(brief)
+                _eta_fn = _clone_eta_seconds if tool_name == "create_bulk_clone" else _ugc_eta_seconds
+                _eta_seconds = int(af_parsed.get("eta_seconds") or _eta_fn(_duration))
+                for ev in _bulk_video_job_started_events(
+                    af_parsed, tool_name, duration=_duration, eta_seconds=_eta_seconds,
+                ):
+                    yield ev
+                yield {
+                    "type": "agent_message",
+                    "text": _bulk_dispatched_ack_message(
+                        _count, _duration, tool_name, lang=_af_lang,
+                    ),
+                }
+                yield {
+                    "type": "tool_result",
+                    "tool_use_id": f"autofire_{tool_name}_result",
+                    "summary": af_parsed.get("message") or f"{_count} videos dispatched",
+                    "is_error": False,
+                }
             elif isinstance(af_parsed, dict) and af_parsed.get("action") == "ugc_started":
                 _vjid = af_parsed.get("job_id")
                 _duration = int(af_parsed.get("duration") or 15)
@@ -10078,6 +10251,8 @@ class ManagedAgentClient:
                         narration = "Here's the storyboard — say go to animate it (or cancel)."
                     elif af_parsed.get("error"):
                         narration = f"Error: {af_parsed['error']}"
+                    elif af_parsed.get("message") and _bulk_job_ids_from_parsed(af_parsed):
+                        narration = af_parsed["message"]
                 if not narration:
                     narration = "Done."
                 yield {"type": "agent_message", "text": narration}
@@ -10334,6 +10509,7 @@ class ManagedAgentClient:
             # agent.message events and tool-chain stream passes.
             _emitted_product_selector_this_turn = False
             _emitted_creator_selector_this_turn = False
+            _staged_agent_msg: Optional[str] = None
             # Bounded recovery for narration-without-tool-call passes (see the
             # hallucinated-action block below). Cap at 1 re-prompt per turn so a
             # stubborn model can't spin the loop forever.
@@ -10387,27 +10563,57 @@ class ManagedAgentClient:
                             text = getattr(block, "text", None)
                             if not text:
                                 continue
+                            text = _collapse_asset_selection_paragraphs(text)
                             # Split on paragraph breaks so each paragraph
                             # renders as its own bubble in the UI.
                             paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+                            normalized_block: list[str] = []
                             for p in paragraphs:
-                                # Scrub leaked AI_EDIT_OPS chat text — old
-                                # in-editor format that the dashboard ignores.
                                 p = _strip_ai_edit_ops_leak(p)
-                                p = _normalize_asset_selection_message(p)
-                                if not p:
-                                    continue
-                                # Agent often asks "which product?" in two
-                                # paragraphs of the same message; both normalize
-                                # to identical [[PRODUCT_SELECTOR]] bubbles.
+                                p = _normalize_asset_selection_message(
+                                    p,
+                                    lang=_effective_lang if _effective_lang in ("es", "en") else None,
+                                )
+                                if p:
+                                    normalized_block.append(p)
+                            for p in _coalesce_selector_paragraphs(normalized_block):
                                 if "[[PRODUCT_SELECTOR]]" in p:
                                     if _emitted_product_selector_this_turn:
                                         continue
+                                    if _staged_agent_msg and _is_redundant_pre_selector_message(
+                                        _staged_agent_msg, "[[PRODUCT_SELECTOR]]"
+                                    ):
+                                        _staged_agent_msg = None
                                     _emitted_product_selector_this_turn = True
-                                if "[[CREATOR_SELECTOR]]" in p:
+                                elif "[[CREATOR_SELECTOR]]" in p:
                                     if _emitted_creator_selector_this_turn:
                                         continue
+                                    if _staged_agent_msg and _is_redundant_pre_selector_message(
+                                        _staged_agent_msg, "[[CREATOR_SELECTOR]]"
+                                    ):
+                                        _staged_agent_msg = None
                                     _emitted_creator_selector_this_turn = True
+                                elif _is_stagable_pick_question(p):
+                                    if _staged_agent_msg is not None:
+                                        emitted_text_this_pass = True
+                                        messages_this_pass.append(_staged_agent_msg)
+                                        yield {"type": "agent_message", "text": _staged_agent_msg}
+                                    _staged_agent_msg = p
+                                    continue
+                                if _staged_agent_msg is not None:
+                                    if "[[PRODUCT_SELECTOR]]" in p and _is_redundant_pre_selector_message(
+                                        _staged_agent_msg, "[[PRODUCT_SELECTOR]]"
+                                    ):
+                                        _staged_agent_msg = None
+                                    elif "[[CREATOR_SELECTOR]]" in p and _is_redundant_pre_selector_message(
+                                        _staged_agent_msg, "[[CREATOR_SELECTOR]]"
+                                    ):
+                                        _staged_agent_msg = None
+                                    else:
+                                        emitted_text_this_pass = True
+                                        messages_this_pass.append(_staged_agent_msg)
+                                        yield {"type": "agent_message", "text": _staged_agent_msg}
+                                        _staged_agent_msg = None
                                 emitted_text_this_pass = True
                                 messages_this_pass.append(p)
                                 yield {"type": "agent_message", "text": p}
@@ -10868,6 +11074,37 @@ class ManagedAgentClient:
                                         "label": "AI edit",
                                         "tool_name": _id_to_name.get(tool_use_id) or "edit_video",
                                     }
+                                elif _should_use_bulk_dispatched_flow(
+                                    parsed,
+                                    _id_to_name.get(tool_use_id) or "",
+                                ):
+                                    _bulk_tool = _id_to_name.get(tool_use_id) or "create_bulk_campaign"
+                                    _bulk_dur = int(parsed.get("duration") or 15)
+                                    _eta_fn = (
+                                        _clone_eta_seconds
+                                        if _bulk_tool == "create_bulk_clone"
+                                        else _ugc_eta_seconds
+                                    )
+                                    _bulk_eta = int(parsed.get("eta_seconds") or _eta_fn(_bulk_dur))
+                                    _bulk_count = int(
+                                        parsed.get("count") or len(_bulk_job_ids_from_parsed(parsed))
+                                    )
+                                    for ev in _bulk_video_job_started_events(
+                                        parsed,
+                                        _bulk_tool,
+                                        duration=_bulk_dur,
+                                        eta_seconds=_bulk_eta,
+                                    ):
+                                        yield ev
+                                    yield {
+                                        "type": "agent_message",
+                                        "text": _bulk_dispatched_ack_message(
+                                            _bulk_count,
+                                            _bulk_dur,
+                                            _bulk_tool,
+                                            lang=_effective_lang if _effective_lang in ("es", "en") else None,
+                                        ),
+                                    }
                                 elif parsed.get("action") == "ugc_started" and parsed.get("job_id"):
                                     _ugc_dur = int(parsed.get("duration") or 15)
                                     _ugc_eta = int(parsed.get("eta_seconds") or _ugc_eta_seconds(_ugc_dur))
@@ -11032,7 +11269,13 @@ class ManagedAgentClient:
                     yield {"type": "agent_message", "text": fallback}
                 pending_confirmation = None
                 if went_idle:
+                    if _staged_agent_msg is not None:
+                        yield {"type": "agent_message", "text": _staged_agent_msg}
+                        _staged_agent_msg = None
                     break
+                if _staged_agent_msg is not None:
+                    yield {"type": "agent_message", "text": _staged_agent_msg}
+                    _staged_agent_msg = None
                 # Stream ended without idle and without any tool calls — nothing left
                 # to do for this turn.
                 break

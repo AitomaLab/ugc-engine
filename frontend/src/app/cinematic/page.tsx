@@ -2,10 +2,13 @@
 
 import { Suspense, useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { apiFetch } from '@/lib/utils';
+import { apiFetch, slugifyName } from '@/lib/utils';
 import type { ProductShot } from '@/lib/types';
 import Select from '@/components/ui/Select';
 import MediaPreviewModal from '@/components/ui/MediaPreviewModal';
+import { launchCreativeOsProject } from '@/lib/launchCreativeOsProject';
+import type { AgentRef } from '@/lib/creative-os-api';
+import { useTranslation } from '@/lib/i18n';
 
 const SHOT_STYLES = [
   { key: 'hero', label: 'Hero', icon: <svg viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" /><polyline points="10 17 15 12 10 7" /><line x1="15" y1="12" x2="3" y2="12" /></svg> },
@@ -21,6 +24,7 @@ const SHOT_STYLES = [
 function CinematicContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { t } = useTranslation();
   const [products, setProducts] = useState<any[]>([]);
   const [selectedProductId, setSelectedProductId] = useState<string>('');
   const [selectedStyles, setSelectedStyles] = useState<Set<string>>(new Set(['hero']));
@@ -35,6 +39,30 @@ function CinematicContent() {
   const [productShots, setProductShots] = useState<ProductShot[]>([]);
   const [animatingIds, setAnimatingIds] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<'images' | 'videos'>('images');
+  const [launchingProductId, setLaunchingProductId] = useState<string | null>(null);
+
+  async function handleUseProductVideo(productId: string) {
+    const product = products.find((p) => p.id === productId);
+    if (!product) return;
+    setLaunchingProductId(productId);
+    try {
+      const tag = slugifyName(product.name);
+      const brief = t('products.useVideoPrompt').replace('{name}', tag);
+      const refs: AgentRef[] = [{
+        type: 'product',
+        tag,
+        name: product.name,
+        id: product.id,
+        image_url: product.image_url,
+        product_type: product.type === 'digital' ? 'digital' : 'physical',
+      }];
+      await launchCreativeOsProject(router, { brief, refs });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLaunchingProductId(null);
+    }
+  }
 
   const fetchProducts = useCallback(async () => {
     try {
@@ -452,8 +480,9 @@ function CinematicContent() {
                                 Download
                               </button>
                               <button
-                                style={{ flex: 1, padding: '6px 0', backgroundColor: 'transparent', color: 'var(--text-2)', borderRadius: '4px', fontSize: '12px', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px', border: '1px solid var(--border)', cursor: 'pointer' }}
-                                onClick={() => router.push(`/create?product_id=${shot.product_id}`)}
+                                style={{ flex: 1, padding: '6px 0', backgroundColor: 'transparent', color: 'var(--text-2)', borderRadius: '4px', fontSize: '12px', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px', border: '1px solid var(--border)', cursor: launchingProductId === shot.product_id ? 'wait' : 'pointer' }}
+                                disabled={launchingProductId === shot.product_id}
+                                onClick={() => handleUseProductVideo(shot.product_id)}
                               >
                                 <svg viewBox="0 0 24 24" style={{ width: '12px', height: '12px', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
                                 Use

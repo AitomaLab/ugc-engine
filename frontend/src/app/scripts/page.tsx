@@ -1,9 +1,12 @@
 'use client';
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/lib/utils';
 import { Script, Influencer, Product, ScriptJSON, ScriptScene } from '@/lib/types';
 import { useProgressiveList } from '@/hooks/useProgressiveList';
 import Select from '@/components/ui/Select';
+import { useTranslation } from '@/lib/i18n';
+import { launchCreativeOsProject } from '@/lib/launchCreativeOsProject';
 
 /* ── constants ─────────────────────────────────────────────── */
 const METHODOLOGIES = [
@@ -76,13 +79,12 @@ const IconSpin = () => <svg viewBox="0 0 24 24" className="spin-anim"><path d="M
 const IconClock = () => <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg>;
 const IconUser = () => <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>;
 
-import { useTranslation } from '@/lib/i18n';
-
 /* ================================================================
    MAIN COMPONENT
 ================================================================ */
 export default function ScriptsPage() {
   const { t } = useTranslation();
+  const router = useRouter();
   const [scripts, setScripts] = useState<Script[]>([]);
   const [influencers, setInfluencers] = useState<Influencer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -103,6 +105,7 @@ export default function ScriptsPage() {
   const [trendModalOpen, setTrendModalOpen] = useState(false);
   const [trendingDismissed, setTrendingDismissed] = useState(false);
   const [toast, setToast] = useState<{msg:string;visible:boolean}>({msg:'',visible:false});
+  const [usingScriptId, setUsingScriptId] = useState<string | null>(null);
 
   // Edit modal
   const [editOpen, setEditOpen] = useState(false);
@@ -203,9 +206,24 @@ export default function ScriptsPage() {
     if (!confirm('Delete this script? This cannot be undone.')) return;
     try { await apiFetch(`/api/scripts/${id}`, {method:'DELETE'}); setScripts(prev => prev.filter(s => s.id !== id)); } catch (e) { console.error(e); }
   }
-  function handleUse(id: string) {
-    apiFetch(`/api/scripts/${id}/use`, {method:'POST'}).catch(()=>{});
-    window.location.href = `/create?script_id=${id}`;
+  async function handleUse(id: string) {
+    const script = scripts.find((s) => s.id === id);
+    setUsingScriptId(id);
+    apiFetch(`/api/scripts/${id}/use`, { method: 'POST' }).catch(() => {});
+    try {
+      const hook = script ? getHook(script) : '';
+      const dialogue = (script?.script_json?.scenes || [])
+        .map((sc) => sc.dialogue)
+        .filter(Boolean)
+        .join(' ');
+      const scriptText = [hook, dialogue].filter(Boolean).join('. ').trim() || 'script';
+      const brief = t('scripts.useVideoPrompt').replace('{script}', scriptText);
+      await launchCreativeOsProject(router, { brief });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setUsingScriptId(null);
+    }
   }
   function openEdit(script: Script) {
     setEditId(script.id);

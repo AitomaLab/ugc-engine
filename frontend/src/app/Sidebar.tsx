@@ -62,7 +62,7 @@ function BellIcon() {
 
 const navItems = [
     { href: '/', label: 'Studio', icon: StudioIcon, shortcut: null },
-    { href: '/create', label: 'Create', icon: CreateIcon, shortcut: 'N' },
+    { href: '/', label: 'Create', icon: CreateIcon, shortcut: 'N' },
     { href: '/library', label: 'Library', icon: LibraryIcon, shortcut: 'L' },
     { href: '/activity', label: 'Activity', icon: ActivityIcon, shortcut: null },
 ];
@@ -84,7 +84,7 @@ export default function Sidebar() {
 
             if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
                 e.preventDefault();
-                router.push('/create');
+                router.push('/');
             } else if ((e.ctrlKey || e.metaKey) && e.key === 'l') {
                 e.preventDefault();
                 router.push('/library');

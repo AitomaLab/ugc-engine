@@ -450,6 +450,31 @@ async def agent_stream(
         r")\b",
         _re.IGNORECASE,
     )
+    _model_led_ad_images_re = _re.compile(
+        r"\b(?:"
+        r"commercial\s+ad\s+images?|ad\s+images?|"
+        r"imágenes?\s+(?:de\s+)?anuncios?"
+        r")\b",
+        _re.IGNORECASE,
+    )
+    _cinematic_ad_intent_re = _re.compile(
+        r"\b(?:"
+        r"cinematic\s+ad|cinematic\s+video|cinematic\s+spot|anuncio\s+cinematogr|"
+        r"anuncio\s+cinemático|vídeo\s+cinematográfico|spot\s+cinemático|"
+        r"commercial\s+ad|anuncio\s+comercial|create\s+a\s+cinematic|"
+        r"crear\s+(?:un\s+)?anuncio\s+cinematogr"
+        r")\b",
+        _re.IGNORECASE,
+    )
+    _presenter_intent_re = _re.compile(
+        r"\b(?:"
+        r"with\s+(?:a\s+)?(?:model|influencer|creator|person|presenter|host|spokesperson)|"
+        r"model[\s-]led|starring|featuring|who\s+should|"
+        r"con\s+(?:un\s+)?(?:modelo|influencer|creador|persona|presentador)|"
+        r"protagoniz|presentador"
+        r")\b",
+        _re.IGNORECASE,
+    )
     _has_product_ref = any(r.type == "product" for r in refs)
     _has_creator_ref = any(r.type in ("influencer", "clone") for r in refs)
 
@@ -458,46 +483,123 @@ async def agent_stream(
         bulk_reminder = (
             "[MULTI-VIDEO REQUEST — the user wants MORE THAN ONE video. Dispatch via ONE bulk tool, "
             "NEVER N separate single-video calls (the engine de-dupes near-identical single calls, so "
-            "only ONE would launch). UGC -> create_bulk_campaign (scripts[] one per video, or count). "
-            "AI Clone -> create_bulk_clone (scripts[] or count). Cinematic -> if the user has NOT specified the "
-            "format/length in the brief, FIRST confirm aspect ratio (end the message with [[ASPECT_BUTTONS]]) and, "
-            "if still missing, duration (end with [[DURATION_BUTTONS]]) — one marker per message, exactly as for a "
-            "single cinematic ad — BEFORE create_cinematic_ad stage='propose'; then ONE create_cinematic_ad "
-            "stage='bulk' with directions=[...]. ONE batched cost chip; on "
-            "Confirm all N jobs launch at once.]"
+            "only ONE would launch). "
+            "UGC -> create_bulk_campaign (scripts[] one per video, or count). If duration is missing, "
+            "ask with [[UGC_DURATION_BUTTONS]] (8s/15s/30s) — NEVER [[DURATION_BUTTONS]] for UGC. "
+            "AI Clone -> create_bulk_clone (scripts[] or count). "
+            "Cinematic -> if the user has NOT specified the format/length in the brief, FIRST confirm aspect ratio "
+            "(end the message with [[ASPECT_BUTTONS]]) and, if still missing, duration (end with [[DURATION_BUTTONS]] "
+            "for 5/10/15s only) — one marker per message, exactly as for a single cinematic ad — BEFORE "
+            "create_cinematic_ad stage='propose'; then ONE create_cinematic_ad stage='bulk' with directions=[...]. "
+            "ONE batched cost chip; on Confirm all N jobs launch at once.]"
         )
 
     def _session_is_product_shots() -> bool:
+        if _model_led_ad_images_re.search(brief):
+            return False
         if _product_shots_intent_re.search(brief):
             return True
         for _past in _prior_turns_all:
-            if _past.get("role") == "user" and _product_shots_intent_re.search(_past.get("text") or ""):
-                return True
+            if _past.get("role") == "user":
+                _past_text = _past.get("text") or ""
+                if _model_led_ad_images_re.search(_past_text):
+                    return False
+                if _product_shots_intent_re.search(_past_text):
+                    return True
         return False
 
     _is_product_shots_session = _session_is_product_shots()
+
+    def _session_user_text() -> str:
+        parts = [brief or ""]
+        for _past in _prior_turns_all:
+            if _past.get("role") == "user":
+                parts.append(_past.get("text") or "")
+        return " ".join(parts)
+
+    def _session_wants_presenter() -> bool:
+        text = _session_user_text()
+        if _model_led_ad_images_re.search(text):
+            return True
+        if _presenter_intent_re.search(text):
+            return True
+        if _has_creator_ref:
+            return True
+        for _past in _prior_turns_all:
+            if _past.get("role") == "user":
+                _past_refs = _past.get("refs") or []
+                if any(
+                    isinstance(r, dict) and r.get("type") in ("influencer", "clone")
+                    for r in _past_refs
+                ):
+                    return True
+        return False
+
+    def _session_is_product_only_cinematic() -> bool:
+        text = _session_user_text()
+        if not _cinematic_ad_intent_re.search(text):
+            return False
+        return not _session_wants_presenter()
+
+    _is_product_only_cinematic = _session_is_product_only_cinematic()
+    _reminder_lang = _detect_input_language(brief) or data.lang
     asset_selection_reminder: Optional[str] = None
     if not _has_product_ref and (_ugc_intent_re.search(brief) or _product_shots_intent_re.search(brief) or CAMPAIGN_INTENT_RE.search(brief)):
-        asset_selection_reminder = (
-            "[ASSET PICKER — user has not chosen a product yet. Reply with ONE short question "
-            "ending with the literal marker [[PRODUCT_SELECTOR]] on the last line. The frontend "
-            "renders a visual product grid — do NOT list product names in prose. Do NOT ask about "
-            "influencer, script, or duration in the same message.]"
-        )
+        if _reminder_lang == "es":
+            asset_selection_reminder = (
+                "[SELECTOR DE ACTIVOS — el usuario aún no ha elegido un producto. Responde con UNA "
+                "pregunta corta en español que termine con el marcador literal [[PRODUCT_SELECTOR]] "
+                "en la última línea. El frontend muestra una cuadrícula visual de productos — NO "
+                "listes nombres de productos en prosa. NO preguntes por influencer, guión o "
+                "duración en el mismo mensaje.]"
+            )
+        else:
+            asset_selection_reminder = (
+                "[ASSET PICKER — user has not chosen a product yet. Reply with ONE short question "
+                "ending with the literal marker [[PRODUCT_SELECTOR]] on the last line. The frontend "
+                "renders a visual product grid — do NOT list product names in prose. Do NOT ask about "
+                "influencer, script, or duration in the same message.]"
+            )
     elif _has_product_ref and not _has_creator_ref and _is_product_shots_session:
         asset_selection_reminder = (
             "[PRODUCT SHOTS — product is chosen (see Referenced assets). Call generate_product_shots "
             "with the product image_url from the preface. Do NOT ask for an influencer. "
             "Do NOT use [[CREATOR_SELECTOR]]. Proceed to the cost confirmation gate.]"
         )
+    elif _has_product_ref and not _has_creator_ref and _is_product_only_cinematic:
+        if _reminder_lang == "es":
+            asset_selection_reminder = (
+                "[ANUNCIO CINEMATOGRÁFICO DE PRODUCTO — el producto ya está elegido (ver Referenced assets). "
+                "NO pidas creador ni uses [[CREATOR_SELECTOR]]. Llama create_cinematic_ad stage='propose' "
+                "con el product_id de Referenced assets. Si falta formato o duración, pregunta con "
+                "[[ASPECT_BUTTONS]] o [[DURATION_BUTTONS]] (un marcador por mensaje) ANTES de propose.]"
+            )
+        else:
+            asset_selection_reminder = (
+                "[CINEMATIC PRODUCT AD — product is chosen (see Referenced assets). Do NOT ask for a "
+                "creator or use [[CREATOR_SELECTOR]]. Call create_cinematic_ad stage='propose' with the "
+                "product from Referenced assets. If aspect ratio or duration is missing, ask with "
+                "[[ASPECT_BUTTONS]] or [[DURATION_BUTTONS]] (one marker per message) BEFORE propose.]"
+            )
     elif _has_product_ref and not _has_creator_ref and not _is_product_shots_session:
-        asset_selection_reminder = (
-            "[ASSET PICKER — product is chosen (see Referenced assets). User still needs a creator. "
-            "Your ENTIRE reply must be ONE short question ending with the literal marker "
-            "[[CREATOR_SELECTOR]] on the last line — nothing else. The frontend renders Models + "
-            "AI Clones tabs with preview images. Do NOT list creator names. Do NOT ask about script "
-            "or duration yet — creator selection comes first.]"
-        )
+        if _reminder_lang == "es":
+            asset_selection_reminder = (
+                "[SELECTOR DE ACTIVOS — el producto ya está elegido (ver Referenced assets). "
+                "El usuario aún necesita un creador. Tu respuesta COMPLETA debe ser UNA pregunta "
+                "corta en español que termine con el marcador literal [[CREATOR_SELECTOR]] en la "
+                "última línea — nada más. Ejemplo: "
+                "'¿Quién debería presentarlo? [[CREATOR_SELECTOR]]'. El frontend muestra las "
+                "pestañas Modelos + Clones IA con imágenes. NO listes nombres de creadores. "
+                "NO preguntes por guión o duración todavía.]"
+            )
+        else:
+            asset_selection_reminder = (
+                "[ASSET PICKER — product is chosen (see Referenced assets). User still needs a creator. "
+                "Your ENTIRE reply must be ONE short question ending with the literal marker "
+                "[[CREATOR_SELECTOR]] on the last line — nothing else. The frontend renders Models + "
+                "AI Clones tabs with preview images. Do NOT list creator names. Do NOT ask about script "
+                "or duration yet — creator selection comes first.]"
+            )
 
     if not refs:
         prefix_lines = [engine_marker, quick_mode_marker]

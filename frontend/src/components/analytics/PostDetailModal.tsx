@@ -18,6 +18,7 @@ import {
     type VideoPrepStatus,
 } from './analytics-types';
 import { exportPostAnalysisPdf } from './exportPostAnalysisPdf';
+import { launchCreativeOsProject } from '@/lib/launchCreativeOsProject';
 
 const PLATFORM_COLORS: Record<string, string> = {
     instagram: '#E1306C',
@@ -452,7 +453,7 @@ export default function PostDetailModal({ postId, onClose }: Props) {
      * concatenate the AI hook + summary + takeaways when present — gives
      * the user a richer brief to riff off in the Create wizard.
      */
-    const handleUseAsTemplate = useCallback(() => {
+    const handleUseAsTemplate = useCallback(async () => {
         if (!post) return;
         const sections: string[] = [];
         if (breakdown?.hook?.on_screen_text) {
@@ -470,14 +471,15 @@ export default function PostDetailModal({ postId, onClose }: Props) {
             sections.push(`Takeaways:\n${breakdown.takeaways.map((t) => `• ${t}`).join('\n')}`);
         }
         const customScript = sections.join('\n\n').trim();
-
-        const params = new URLSearchParams();
-        if (customScript) params.set('customScript', customScript);
-        params.set('templatePostId', post.id);
-        if (post.platform) params.set('templatePlatform', post.platform);
-        if (post.source) params.set('templateSource', post.source);
-        router.push(`/create?${params.toString()}`);
-        onClose();
+        const brief = customScript
+            ? `create a video inspired by this template:\n\n${customScript}`.slice(0, 4000)
+            : 'create a video inspired by this analytics post template';
+        try {
+            await launchCreativeOsProject(router, { brief });
+            onClose();
+        } catch (e) {
+            console.error(e);
+        }
     }, [post, breakdown, router, onClose]);
 
     return (

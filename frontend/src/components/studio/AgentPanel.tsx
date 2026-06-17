@@ -1356,6 +1356,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     const videoTools = new Set([
                         'generate_video', 'animate_image',
                         'create_ugc_video', 'create_clone_video',
+                        'create_bulk_campaign', 'create_bulk_clone',
                         'render_edited_video', 'edit_video',
                     ]);
                     const imageTools = new Set([
@@ -2197,9 +2198,36 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                 (t) => t.role === 'user' && (t.refs || []).some((r) => r.type === 'influencer' || r.type === 'clone'),
                             );
                             const sessionIntent = detectSessionIntent(turns);
-                            const needsCreatorPick = sessionIntent === 'ugc_ad' || sessionIntent === 'cinematic_ad' || sessionIntent === 'campaign';
-                            const awaitingProductPick = !userPickedProduct;
-                            const awaitingCreatorPick = needsCreatorPick && userPickedProduct && !userPickedCreator;
+                            const wantsPresenter = sessionWantsPresenter(turns);
+                            const needsCreatorPick =
+                                sessionIntent === 'ugc_ad'
+                                || sessionIntent === 'campaign'
+                                || (sessionIntent === 'cinematic_ad' && wantsPresenter);
+                            const needsProductPick = sessionIntent === 'product_shots' || needsCreatorPick;
+                            const sessionWantsProduct = turns.some(
+                                (t) => t.role === 'agent' && turnWantsProductSelector(t),
+                            );
+                            const sessionAskedForCreator = turns.some(
+                                (t) => t.role === 'agent' && turnWantsCreatorSelector(t),
+                            );
+                            const awaitingProductPick = !userPickedProduct && (needsProductPick || sessionWantsProduct);
+                            const awaitingCreatorPick =
+                                userPickedProduct
+                                && !userPickedCreator
+                                && (needsCreatorPick || sessionAskedForCreator)
+                                && (sessionIntent === 'ugc_ad' || sessionIntent === 'campaign' || wantsPresenter);
+                            const suppressRedundantProductTextTurns = new Set<number>();
+                            for (let i = 0; i < turns.length - 1; i++) {
+                                const t = turns[i];
+                                const n = turns[i + 1];
+                                if (t.role !== 'agent' || n.role !== 'agent') continue;
+                                const raw = t.text || '';
+                                const textOnlyProductQ = !raw.includes('[[PRODUCT_SELECTOR]]')
+                                    && PRODUCT_SELECTOR_HEURISTIC_RE.test(raw);
+                                if (textOnlyProductQ && turnWantsProductSelector(n)) {
+                                    suppressRedundantProductTextTurns.add(i);
+                                }
+                            }
                             let lastProductUserIdx = -1;
                             for (let i = turns.length - 1; i >= 0; i--) {
                                 const t = turns[i];
@@ -2263,6 +2291,13 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                         : /\b10\s*s(econds?)?\b/i.test(nextUserText) ? 10
                                             : /\b15\s*s(econds?)?\b/i.test(nextUserText) ? 15
                                                 : null;
+                                const turnHasUgcDuration = turn.role !== 'user' && (turn.text || '').includes('[[UGC_DURATION_BUTTONS]]');
+                                const selectedUgcDuration: 8 | 15 | 30 | null = turnHasUgcDuration
+                                    ? (/\b8\s*s(econds?)?\b/i.test(nextUserText) ? 8
+                                        : /\b30\s*s(econds?)?\b/i.test(nextUserText) ? 30
+                                            : /\b15\s*s(econds?)?\b/i.test(nextUserText) ? 15
+                                                : null)
+                                    : null;
                                 const captionPick = (() => {
                                     for (let i = idx + 1; i < turns.length; i++) {
                                         if (turns[i].role !== 'user') continue;
@@ -2289,6 +2324,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                         onQuickReply={(text) => { handleRun(text); }}
                                         selectedAspect={selectedAspect}
                                         selectedDuration={selectedDuration}
+                                        selectedUgcDuration={selectedUgcDuration}
                                         selectedCaptionStyle={captionPick.style}
                                         selectedCaptionPlacement={captionPick.placement}
                                         pendingCaptionStyle={pendingCaptionStyle}
@@ -2302,6 +2338,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                         selectedCreatorRef={selectedCreatorRef}
                                         awaitingCreatorPick={awaitingCreatorPick}
                                         awaitingProductPick={awaitingProductPick}
+                                        suppressRedundantProductText={suppressRedundantProductTextTurns.has(idx)}
                                         lastUserText={lastUserText}
                                     />
                                 );
@@ -3627,7 +3664,10 @@ function detectSessionIntent(turns: AgentTurn[]): 'product_shots' | 'ugc_ad' | '
     if (/create\s+(?:a\s+)?(?:ugc\s+)?ad|ugc\s+ad|anuncio\s+ugc|make\s+(?:a\s+)?ugc\s+video/.test(text)) {
         return 'ugc_ad';
     }
-    if (/cinematic\s+ad|anuncio\s+cinematogr|create\s+a\s+cinematic/.test(text)) {
+    if (
+        /cinematic\s+ad|anuncio\s+cinematogr|create\s+a\s+cinematic|commercial\s+ads?|ads?\s+comerciales?|anuncios?\s+comerciales?|commercial\s+ad\s+images?|ad\s+images?|imágenes?\s+(?:de\s+)?anuncios?/.test(text)
+        || /\d+\s+(?:ads?|anuncios?)\b/.test(text)
+    ) {
         return 'cinematic_ad';
     }
     if (/\d+[\s-]*video\s+campaign|bulk\s+campaign|build\s+(?:a\s+)?\d+[\s-]*video|campaña/.test(text)) {
@@ -3639,14 +3679,33 @@ function detectSessionIntent(turns: AgentTurn[]): 'product_shots' | 'ugc_ad' | '
     return 'generic';
 }
 
+const MODEL_LED_AD_IMAGES_RE = /commercial\s+ad\s+images?|ad\s+images?|imágenes?\s+(?:de\s+)?anuncios?/i;
+
+const PRESENTER_INTENT_RE = /with\s+(?:a\s+)?(?:model|influencer|creator|person|presenter|host|spokesperson)|model[\s-]led|starring|featuring|who\s+should|@[\w-]+_clone\b|con\s+(?:un\s+)?(?:modelo|influencer|creador|persona|presentador)|protagoniz|presentador/i;
+
+/** True when the user asked for a person/model/presenter (or model-led ad images). */
+function sessionWantsPresenter(turns: AgentTurn[]): boolean {
+    const userTexts = turns
+        .filter((t) => t.role === 'user')
+        .map((t) => t.text || '')
+        .join(' ');
+    if (MODEL_LED_AD_IMAGES_RE.test(userTexts)) return true;
+    if (PRESENTER_INTENT_RE.test(userTexts)) return true;
+    return turns.some(
+        (t) => t.role === 'user'
+            && (t.refs || []).some((r) => r.type === 'influencer' || r.type === 'clone'),
+    );
+}
+
+const PRODUCT_SELECTOR_HEURISTIC_RE = /which product|what product|for which.*product|qué producto|cuál producto|para cuál.*producto|cuál de tus productos|\b1\.\s*\**which product/i;
+
 function turnWantsProductSelector(turn: AgentTurn): boolean {
     if (turn.role !== 'agent') return false;
     const raw = turn.text || '';
-    return raw.includes('[[PRODUCT_SELECTOR]]')
-        || /which product|what product|qué producto|cuál producto|\b1\.\s*\**which product/i.test(raw);
+    return raw.includes('[[PRODUCT_SELECTOR]]') || PRODUCT_SELECTOR_HEURISTIC_RE.test(raw);
 }
 
-const CREATOR_SELECTOR_HEURISTIC_RE = /which (influencer|creator|model|persona)|who should (present|deliver|host|star|be in|feature)|who do you want|qué (influencer|creador|modelo)|cuál (influencer|creador|modelo)|pick (?:a |an |your )?(?:influencer|creator|model|persona)|choose (?:a |an |your )?(?:influencer|creator|model|persona)|\b2\.\s*\**which influencer|or tell me to pick the best|\([A-Za-z][^)]{12,},\s*[A-Za-z]/i;
+const CREATOR_SELECTOR_HEURISTIC_RE = /which (influencer|creator|model|persona)|who should (present|deliver|host|star|be in|feature)|who do you want|qué (influencer|creador|modelo)|cuál (influencer|creador|modelo)|quién debería|quién protagonizar|pick (?:a |an |your )?(?:influencer|creator|model|persona)|choose (?:a |an |your )?(?:influencer|creator|model|persona)|\b2\.\s*\**which influencer|or tell me to pick the best|\([A-Za-z][^)]{12,},\s*[A-Za-z]/i;
 
 function turnWantsCreatorSelector(turn: AgentTurn): boolean {
     if (turn.role !== 'agent') return false;
@@ -3667,6 +3726,7 @@ function TurnBubble({
     onQuickReply,
     selectedAspect,
     selectedDuration,
+    selectedUgcDuration,
     selectedCaptionStyle,
     selectedCaptionPlacement,
     pendingCaptionStyle,
@@ -3680,6 +3740,7 @@ function TurnBubble({
     selectedCreatorRef,
     awaitingCreatorPick,
     awaitingProductPick,
+    suppressRedundantProductText,
     lastUserText,
 }: {
     turn: AgentTurn;
@@ -3694,6 +3755,7 @@ function TurnBubble({
     onQuickReply?: (text: string) => void;
     selectedAspect?: 'vertical' | 'horizontal' | 'classic' | null;
     selectedDuration?: 5 | 10 | 15 | null;
+    selectedUgcDuration?: 8 | 15 | 30 | null;
     selectedCaptionStyle?: string | null;
     selectedCaptionPlacement?: CaptionPlacement | null;
     pendingCaptionStyle?: string | null;
@@ -3707,6 +3769,7 @@ function TurnBubble({
     selectedCreatorRef?: AgentRef | null;
     awaitingCreatorPick?: boolean;
     awaitingProductPick?: boolean;
+    suppressRedundantProductText?: boolean;
     lastUserText?: string;
 }) {
     const { t } = useTranslation();
@@ -3726,9 +3789,10 @@ function TurnBubble({
     const hasAspectMarker = !isUser && rawText.includes('[[ASPECT_BUTTONS]]');
     const hasAccentMarker = !isUser && rawText.includes('[[SPANISH_ACCENT_BUTTONS]]');
     const hasDurationMarker = !isUser && rawText.includes('[[DURATION_BUTTONS]]');
+    const hasUgcDurationMarker = !isUser && rawText.includes('[[UGC_DURATION_BUTTONS]]');
     const hasProductMarker = !isUser && rawText.includes('[[PRODUCT_SELECTOR]]');
     const hasCreatorMarker = !isUser && rawText.includes('[[CREATOR_SELECTOR]]');
-    const asksProductHeuristic = !isUser && !hasProductMarker && /which product|what product|qué producto|cuál producto|\b1\.\s*\**which product/i.test(rawText);
+    const asksProductHeuristic = !isUser && !hasProductMarker && PRODUCT_SELECTOR_HEURISTIC_RE.test(rawText);
     const asksCreatorHeuristic = !isUser && !hasCreatorMarker && !asksProductHeuristic && CREATOR_SELECTOR_HEURISTIC_RE.test(rawText);
     const showCreatorByContext = !isUser && !!awaitingCreatorPick && !!isLast && !running && !selectedCreatorRef && !hasProductMarker && !asksProductHeuristic;
     const showProductSelectorRaw = hasProductMarker || asksProductHeuristic;
@@ -3758,34 +3822,29 @@ function TurnBubble({
     if (hasAspectMarker) displayText = displayText.replace(/\s*\[\[ASPECT_BUTTONS\]\]\s*/g, '').trim();
     if (hasAccentMarker) displayText = displayText.replace(/\s*\[\[SPANISH_ACCENT_BUTTONS\]\]\s*/g, '').trim();
     if (hasDurationMarker) displayText = displayText.replace(/\s*\[\[DURATION_BUTTONS\]\]\s*/g, '').trim();
+    if (hasUgcDurationMarker) displayText = displayText.replace(/\s*\[\[UGC_DURATION_BUTTONS\]\]\s*/g, '').trim();
     if (hasProductMarker) displayText = displayText.replace(/\s*\[\[PRODUCT_SELECTOR\]\]\s*/g, '').trim();
     if (hasCreatorMarker) displayText = displayText.replace(/\s*\[\[CREATOR_SELECTOR\]\]\s*/g, '').trim();
     if (hasSaveOrGenMarker) displayText = displayText.replace(/\s*\[\[SAVE_OR_GENERATE:[^\]]+\]\]\s*/g, '').trim();
-    if (asksProductHeuristic && !hasProductMarker) {
-        displayText = /qué|cuál|producto/i.test(rawText)
-            ? '¿Qué producto quieres usar?'
-            : 'Which product should we use?';
+    const isProductShotsSession = /product\s+shots|tomas?\s+de\s+producto/i.test(lastUserText || '');
+    if (showProductSelector) {
+        displayText = isProductShotsSession
+            ? t('creativeOs.agent.pickProductForShots')
+            : t('creativeOs.agent.pickProduct');
+    } else if (showCreatorSelector) {
+        displayText = t('creativeOs.agent.pickCreator');
+    } else if (asksProductHeuristic && !hasProductMarker) {
+        displayText = isProductShotsSession
+            ? t('creativeOs.agent.pickProductForShots')
+            : t('creativeOs.agent.pickProduct');
     } else if ((asksCreatorHeuristic || showCreatorByContext) && !hasCreatorMarker && awaitingCreatorPick) {
-        displayText = /qué|cuál|creador|modelo/i.test(rawText)
-            ? '¿Quién debería presentarlo?'
-            : 'Who should present it?';
-    }
-    if (showProductSelector && !displayText.trim()) {
-        displayText = /product\s+shots|tomas?\s+de\s+producto/i.test(lastUserText || '')
-            ? 'Which product should I generate the shots for?'
-            : 'Which product should we use?';
-    } else if (showProductSelector && /product\s+shots|tomas?\s+de\s+producto/i.test(lastUserText || '')) {
-        displayText = 'Which product should I generate the shots for?';
-    }
-    if (showCreatorSelector && !displayText.trim()) {
-        displayText = /qué|cuál|creador|modelo/i.test(lastUserText || '')
-            ? '¿Quién debería presentarlo?'
-            : 'Who should present it?';
+        displayText = t('creativeOs.agent.pickCreator');
     }
 
     // Save-or-generate modal state — selectedAccent used below for accent buttons.
     const aspectButtonsActive = hasAspectMarker && !!isLast && !!onQuickReply && !selectedAspect;
     const durationButtonsActive = hasDurationMarker && !!isLast && !!onQuickReply && !selectedDuration;
+    const ugcDurationButtonsActive = hasUgcDurationMarker && !!isLast && !!onQuickReply && !selectedUgcDuration;
     const accentButtonsActive = hasAccentMarker && !!isLast && !!onQuickReply && !selectedAccent;
     const saveOrGenActive = hasSaveOrGenMarker && !!isLast && !!onQuickReply && !saveChoice;
     const confirmChipActive = !!turn.pendingConfirmation && !!isLast && !!onQuickReply;
@@ -3807,14 +3866,14 @@ function TurnBubble({
         (captionPlacementActive && !!isLast)
         || (!!selectedCaptionPlacement && hasCaptionStylePicker)
     );
-    const hasContent = !!displayText || !!turn.artifacts?.length || turn.interrupted || turn.generation_failed || hasRefPreviews || hasAspectMarker || hasAccentMarker || hasDurationMarker || showProductSelector || showCreatorSelector || hasSaveOrGenMarker || !!turn.pendingConfirmation;
+    const hasContent = !!displayText || !!turn.artifacts?.length || turn.interrupted || turn.generation_failed || hasRefPreviews || hasAspectMarker || hasAccentMarker || hasDurationMarker || hasUgcDurationMarker || showProductSelector || showCreatorSelector || hasSaveOrGenMarker || !!turn.pendingConfirmation;
     const hasSelector = showProductSelector || showCreatorSelector;
     // While a run is active, show a placeholder "…" bubble (three breathing
     // dots) in place of the empty agent turn so the UI never looks frozen
     // while waiting for the first `agent_message`. Historical empty turns
     // (e.g. mid-run refresh from Supabase) still render nothing.
     const showThinkingDots = !isUser && !hasContent && !!isLast && !!running;
-    if (suppressDuplicateProduct || suppressDuplicateCreator) return null;
+    if (suppressDuplicateProduct || suppressDuplicateCreator || suppressRedundantProductText) return null;
     if (!isUser && !hasContent && !showThinkingDots) return null;
     return (
         <div
@@ -3964,6 +4023,42 @@ function TurnBubble({
                                         fontSize: '13px',
                                         fontWeight: 500,
                                         cursor: durationButtonsActive ? 'pointer' : 'default',
+                                    }}
+                                >
+                                    {label}
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
+
+                {hasUgcDurationMarker && (
+                    <div style={{ display: 'flex', gap: '8px', marginTop: (displayText || hasAspectMarker) ? '8px' : 0, flexWrap: 'wrap' }}>
+                        {([8, 15, 30] as const).map((sec) => {
+                            const label = `${sec}s`;
+                            const isSelected = selectedUgcDuration === sec;
+                            const muted = !!selectedUgcDuration && !isSelected;
+                            return (
+                                <button
+                                    key={sec}
+                                    type="button"
+                                    disabled={!ugcDurationButtonsActive}
+                                    onClick={() => ugcDurationButtonsActive && onQuickReply?.(label)}
+                                    style={{
+                                        padding: '6px 14px',
+                                        borderRadius: '8px',
+                                        border: isSelected
+                                            ? '1px solid #337AFF'
+                                            : '1px solid rgba(51,122,255,0.15)',
+                                        background: isSelected
+                                            ? 'linear-gradient(135deg, #337AFF 0%, #5B8FFF 100%)'
+                                            : muted
+                                                ? 'rgba(51,122,255,0.03)'
+                                                : 'white',
+                                        color: isSelected ? 'white' : muted ? '#8A93B0' : '#337AFF',
+                                        fontSize: '13px',
+                                        fontWeight: 500,
+                                        cursor: ugcDurationButtonsActive ? 'pointer' : 'default',
                                     }}
                                 >
                                     {label}

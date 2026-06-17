@@ -1,14 +1,23 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import Link from 'next/link';
-import { apiFetch, dedupeInfluencersByName } from '@/lib/utils';
+import { useRouter } from 'next/navigation';
+import { apiFetch, dedupeInfluencersByName, slugifyName } from '@/lib/utils';
 import { Influencer } from '@/lib/types';
 import { InfluencerModal } from '@/app/library/InfluencerModal';
 import Select from '@/components/ui/Select';
 import { useProgressiveList } from '@/hooks/useProgressiveList';
 import { useTranslation } from '@/lib/i18n';
 import { useApp } from '@/providers/AppProvider';
+import { launchCreativeOsProject } from '@/lib/launchCreativeOsProject';
+import type { AgentRef } from '@/lib/creative-os-api';
+
+function fillTemplate(template: string, vars: Record<string, string>): string {
+  return Object.entries(vars).reduce(
+    (s, [k, v]) => s.replace(new RegExp(`\\{${k}\\}`, 'g'), v),
+    template,
+  );
+}
 
 // IDs of looks currently being generated (polling for completion)
 const pendingLookIds = new Set<string>();
@@ -21,11 +30,13 @@ const SUPABASE_URL_CLONES = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 
 function AiClonesTab() {
   const { t } = useTranslation();
+  const router = useRouter();
   const [clones, setClones] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedCloneId, setSelectedCloneId] = useState<string>('');
   const [looks, setLooks] = useState<any[]>([]);
   const [looksLoading, setLooksLoading] = useState(false);
+  const [launchingLookId, setLaunchingLookId] = useState<string | null>(null);
 
   // Setup form state (shown when no clone exists yet)
   const [setupName, setSetupName] = useState('My AI Clone');
@@ -55,6 +66,30 @@ function AiClonesTab() {
   const [editGender, setEditGender] = useState('male');
   const [editSaving, setEditSaving] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
+
+  async function handleUseCloneLook(look: { id: string; image_url?: string; label?: string }) {
+    const clone = clones.find((c) => c.id === selectedCloneId);
+    if (!clone || !look.image_url) return;
+    setLaunchingLookId(look.id);
+    try {
+      const name = clone.name || 'clone';
+      const tag = `${slugifyName(name)}_clone`;
+      const brief = fillTemplate(t('clones.useVideoPrompt'), { name: tag });
+      const refs: AgentRef[] = [{
+        type: 'clone',
+        tag,
+        name,
+        id: clone.id,
+        image_url: look.image_url,
+        look_id: look.id,
+      }];
+      await launchCreativeOsProject(router, { brief, refs });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLaunchingLookId(null);
+    }
+  }
 
   // Fetch clones on mount
   useEffect(() => {
@@ -501,10 +536,16 @@ function AiClonesTab() {
                   </div>
                   {isReady && (
                     <div style={{ display: 'flex', borderTop: '1px solid var(--border-soft)', marginTop: '12px' }}>
-                      <Link href={`/create?creator_mode=ai_clone`} style={{ flex: 1, padding: '12px', textAlign: 'center', fontSize: '13px', fontWeight: 600, color: 'var(--blue)', textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                      <button
+                        type="button"
+                        disabled={launchingLookId === look.id}
+                        onClick={() => handleUseCloneLook(look)}
+                        style={{ flex: 1, padding: '12px', textAlign: 'center', fontSize: '13px', fontWeight: 600, color: 'var(--blue)', textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'transparent', border: 'none', cursor: launchingLookId === look.id ? 'wait' : 'pointer' }}
+                        className='hover:bg-[rgba(51,122,255,0.05)] transition-colors'
+                      >
                         <svg viewBox='0 0 24 24' style={{ width: '14px', height: '14px', fill: 'currentColor' }}><polygon points='5,3 19,12 5,21' /></svg>
-                        {t('clones.useInVideo')}
-                      </Link>
+                        {launchingLookId === look.id ? t('common.loading') : t('clones.useInVideo')}
+                      </button>
                     </div>
                   )}
                 </div>
@@ -606,6 +647,7 @@ function AiClonesTab() {
 
 export default function InfluencersPage() {
   const { t } = useTranslation();
+  const router = useRouter();
   const { session, activeProject, isLoading: authLoading } = useApp();
   const [influencers, setInfluencers] = useState<Influencer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -614,6 +656,27 @@ export default function InfluencersPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<Influencer | null>(null);
   const [activeTab, setActiveTab] = useState<'influencers' | 'ai_clones'>('influencers');
+  const [launchingInfluencerId, setLaunchingInfluencerId] = useState<string | null>(null);
+
+  async function handleUseInfluencerVideo(inf: Influencer) {
+    setLaunchingInfluencerId(inf.id);
+    try {
+      const tag = slugifyName(inf.name);
+      const brief = fillTemplate(t('influencers.useVideoPrompt'), { name: tag });
+      const refs: AgentRef[] = [{
+        type: 'influencer',
+        tag,
+        name: inf.name,
+        id: inf.id,
+        image_url: inf.image_url,
+      }];
+      await launchCreativeOsProject(router, { brief, refs });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLaunchingInfluencerId(null);
+    }
+  }
 
   const fetchInfluencers = useCallback(async () => {
     if (!activeProject?.id) return;
@@ -739,10 +802,16 @@ export default function InfluencersPage() {
                     </div>
                   </div>
                   <div style={{ display: 'flex', borderTop: '1px solid var(--border-soft)', marginTop: '12px' }}>
-                    <Link href={`/create?influencer_id=${inf.id}`} style={{ flex: 1, padding: '12px', textAlign: 'center', fontSize: '13px', fontWeight: 600, color: 'var(--blue)', textDecoration: 'none', borderRight: '1px solid var(--border-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }} className='hover:bg-[rgba(51,122,255,0.05)] transition-colors'>
+                    <button
+                      type="button"
+                      disabled={launchingInfluencerId === inf.id}
+                      onClick={() => handleUseInfluencerVideo(inf)}
+                      style={{ flex: 1, padding: '12px', textAlign: 'center', fontSize: '13px', fontWeight: 600, color: 'var(--blue)', border: 'none', borderRight: '1px solid var(--border-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'transparent', cursor: launchingInfluencerId === inf.id ? 'wait' : 'pointer' }}
+                      className='hover:bg-[rgba(51,122,255,0.05)] transition-colors'
+                    >
                       <svg viewBox='0 0 24 24' style={{ width: '14px', height: '14px', fill: 'currentColor' }}><polygon points='5,3 19,12 5,21' /></svg>
-                      {t('influencers.useVideo')}
-                    </Link>
+                      {launchingInfluencerId === inf.id ? t('common.loading') : t('influencers.useVideo')}
+                    </button>
                     <button onClick={() => { setEditTarget(inf); setModalOpen(true); }} style={{ flex: 1, padding: '12px', textAlign: 'center', fontSize: '13px', fontWeight: 600, color: 'var(--text-2)', textDecoration: 'none', border: 'none', background: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }} className='hover:bg-[rgba(0,0,0,0.02)] transition-colors'>
                       <svg viewBox='0 0 24 24' style={{ width: '14px', height: '14px', stroke: 'currentColor', fill: 'none', strokeWidth: '2' }}><path d='M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z' /></svg>
                       {t('common.edit')}

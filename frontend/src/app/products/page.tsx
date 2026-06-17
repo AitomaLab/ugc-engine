@@ -6,10 +6,12 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Select from '@/components/ui/Select';
 import ProductModal from '@/components/ui/ProductModal';
 import MediaPreviewModal from '@/components/ui/MediaPreviewModal';
-import { apiFetch } from '@/lib/utils';
+import { apiFetch, slugifyName } from '@/lib/utils';
 import { Product } from '@/lib/types';
 import { useProgressiveList } from '@/hooks/useProgressiveList';
 import { useTranslation } from '@/lib/i18n';
+import { launchCreativeOsProject } from '@/lib/launchCreativeOsProject';
+import type { AgentRef } from '@/lib/creative-os-api';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 
@@ -311,6 +313,28 @@ function ProductsContent() {
 
   // Digital tab: product drill-down state
   const [selectedDigitalProduct, setSelectedDigitalProduct] = useState<Product | null>(null);
+  const [launchingProductId, setLaunchingProductId] = useState<string | null>(null);
+
+  async function handleUseProductVideo(product: Product) {
+    setLaunchingProductId(product.id);
+    try {
+      const tag = slugifyName(product.name);
+      const brief = t('products.useVideoPrompt').replace('{name}', tag);
+      const refs: AgentRef[] = [{
+        type: 'product',
+        tag,
+        name: product.name,
+        id: product.id,
+        image_url: product.image_url,
+        product_type: product.type === 'digital' ? 'digital' : 'physical',
+      }];
+      await launchCreativeOsProject(router, { brief, refs });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLaunchingProductId(null);
+    }
+  }
 
   // Product handlers (unchanged)
   async function handleDelete(id: string) {
@@ -469,10 +493,16 @@ function ProductsContent() {
                         <svg viewBox='0 0 24 24'><rect x='2' y='2' width='20' height='20' rx='2.18' ry='2.18' /><line x1='7' y1='2' x2='7' y2='22' /><line x1='17' y1='2' x2='17' y2='22' /><line x1='2' y1='12' x2='22' y2='12' /><line x1='2' y1='7' x2='7' y2='7' /><line x1='2' y1='17' x2='7' y2='17' /><line x1='17' y1='7' x2='22' y2='7' /><line x1='17' y1='17' x2='22' y2='17' /></svg>
                         {t('products.cinematic')}
                       </Link>
-                      <Link href={`/create?product_id=${product.id}`} className='product-btn secondary' style={{ textDecoration: 'none' }}>
+                      <button
+                        type="button"
+                        className='product-btn secondary'
+                        disabled={launchingProductId === product.id}
+                        onClick={() => handleUseProductVideo(product)}
+                        style={{ textDecoration: 'none', flex: 1, cursor: launchingProductId === product.id ? 'wait' : 'pointer' }}
+                      >
                         <svg viewBox='0 0 24 24'><polygon points='5,3 19,12 5,21' /></svg>
-                        {t('common.create')}
-                      </Link>
+                        {launchingProductId === product.id ? t('common.loading') : t('common.create')}
+                      </button>
                       <button onClick={() => handleOpenModal(product)} className='product-btn secondary' style={{ flex: '0 0 auto', padding: '10px' }} title="Edit Product">
                         <svg viewBox="0 0 24 24"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" /></svg>
                       </button>
@@ -555,10 +585,16 @@ function ProductsContent() {
                             <div className='product-meta'>Digital · {product.job_count ?? 0} videos</div>
                           </div>
                           <div className='product-actions'>
-                            <Link href={`/create?product_id=${product.id}`} className='product-btn secondary' style={{ textDecoration: 'none', flex: 1 }} onClick={(e) => e.stopPropagation()}>
+                            <button
+                              type="button"
+                              className='product-btn secondary'
+                              disabled={launchingProductId === product.id}
+                              onClick={(e) => { e.stopPropagation(); handleUseProductVideo(product); }}
+                              style={{ textDecoration: 'none', flex: 1, cursor: launchingProductId === product.id ? 'wait' : 'pointer' }}
+                            >
                               <svg viewBox='0 0 24 24'><polygon points='5,3 19,12 5,21' /></svg>
-                              {t('common.create')}
-                            </Link>
+                              {launchingProductId === product.id ? t('common.loading') : t('common.create')}
+                            </button>
                             <button onClick={(e) => { e.stopPropagation(); handleOpenModal(product); }} className='product-btn secondary' style={{ flex: '0 0 auto', padding: '10px' }} title="Edit">
                               <svg viewBox="0 0 24 24"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" /></svg>
                             </button>
@@ -591,10 +627,16 @@ function ProductsContent() {
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
-                  <Link href={`/create?product_id=${selectedDigitalProduct.id}`} className='btn-create' style={{ textDecoration: 'none' }}>
+                  <button
+                    type="button"
+                    className='btn-create'
+                    disabled={launchingProductId === selectedDigitalProduct.id}
+                    onClick={() => handleUseProductVideo(selectedDigitalProduct)}
+                    style={{ cursor: launchingProductId === selectedDigitalProduct.id ? 'wait' : 'pointer' }}
+                  >
                     <svg viewBox='0 0 24 24'><polygon points='5,3 19,12 5,21' /></svg>
-                    {t('header.createVideo')}
-                  </Link>
+                    {launchingProductId === selectedDigitalProduct.id ? t('common.loading') : t('header.createVideo')}
+                  </button>
                   <button className='btn-create' onClick={() => setClipModalOpen(true)} style={{ background: 'var(--surface-hover)', color: 'var(--blue)', border: '1px solid rgba(51,122,255,0.2)' }}>
                     <svg viewBox='0 0 24 24'><line x1='12' y1='5' x2='12' y2='19' /><line x1='5' y1='12' x2='19' y2='12' /></svg>
                     {t('products.addClip')}

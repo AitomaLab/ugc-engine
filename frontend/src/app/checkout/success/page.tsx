@@ -56,7 +56,7 @@ function SuccessContent() {
           View Account
         </Link>
         <Link
-          href="/create"
+          href="/"
           style={{
             padding: '10px 24px', borderRadius: '8px', fontSize: '13px', fontWeight: 700,
             color: 'white', background: 'linear-gradient(135deg, var(--blue), #667eea)', textDecoration: 'none',

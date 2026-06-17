@@ -8,6 +8,7 @@ import { supabase } from '@/lib/supabaseClient';
 import { apiFetch } from '@/lib/utils';
 import { useTranslation } from '@/lib/i18n';
 import type { Notification } from '@/lib/types';
+import MediaPreviewModal from '@/components/ui/MediaPreviewModal';
 
 // SVG icon components — no emoji allowed
 const IconHome = () => <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><polyline points="9 22 9 12 15 12 15 22" /></svg>;
@@ -102,7 +103,7 @@ function CreateDropdown() {
     const [open, setOpen] = useState(false);
     const ref = useRef<HTMLDivElement>(null);
     const pathname = usePathname();
-    const isActive = pathname === '/create' || pathname === '/cinematic';
+    const isActive = pathname === '/cinematic';
     const { t } = useTranslation();
 
     useEffect(() => {
@@ -133,7 +134,7 @@ function CreateDropdown() {
                     border: '1px solid var(--border-soft)', zIndex: 200,
                     overflow: 'hidden', animation: 'cssFadeIn 0.15s ease',
                 }}>
-                    <Link href="/create" className="cd-item" onClick={() => setOpen(false)}>
+                    <Link href="/" className="cd-item" onClick={() => setOpen(false)}>
                         <div className="cd-icon">
                             <svg viewBox="0 0 24 24"><polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" /></svg>
                         </div>
@@ -223,8 +224,11 @@ function NotificationDropdown() {
         message: string;
         type: 'success' | 'error';
         projectId?: string;
+        videoUrl?: string;
+        imageUrl?: string;
     }
     const [toasts, setToasts] = useState<ToastItem[]>([]);
+    const [previewMedia, setPreviewMedia] = useState<{ src: string; type: 'video' | 'image' | 'mixed' } | null>(null);
     const seenIdsRef = useRef<Set<string>>(loadToastSeenKeys());
     const firstLoadDoneRef = useRef(false);
 
@@ -318,6 +322,8 @@ function NotificationDropdown() {
                             message: toastMsg,
                             type: isSuccess ? 'success' : 'error',
                             projectId: (n as unknown as Record<string, unknown>).project_id as string | undefined,
+                            videoUrl: n.video_url || undefined,
+                            imageUrl: n.image_url || undefined,
                         };
 
                         setToasts(prev => {
@@ -374,15 +380,28 @@ function NotificationDropdown() {
         try { localStorage.setItem('notif_read_ids', JSON.stringify([...ids])); } catch { /* ignore */ }
     };
 
+    const openNotificationMedia = (n: { video_url?: string | null; image_url?: string | null }) => {
+        if (n.video_url) {
+            setPreviewMedia({ src: n.video_url, type: 'video' });
+            return true;
+        }
+        if (n.image_url) {
+            setPreviewMedia({ src: n.image_url, type: 'image' });
+            return true;
+        }
+        return false;
+    };
+
     const handleItemClick = (n: Notification) => {
         const next = new Set(readIds);
         next.add(n.id);
         setReadIds(next);
         try { localStorage.setItem('notif_read_ids', JSON.stringify([...next])); } catch { /* ignore */ }
         setOpen(false);
-        if (n.type === 'job_success' && n.video_url) {
-            window.location.href = '/videos';
-        } else if (n.type === 'script_created') {
+        if (n.type === 'job_success' && openNotificationMedia(n)) {
+            return;
+        }
+        if (n.type === 'script_created') {
             window.location.href = '/scripts';
         } else {
             window.location.href = '/activity';
@@ -427,10 +446,12 @@ function NotificationDropdown() {
                             }}
                             onClick={() => {
                                 dismissToast(toast.seenKey, toast.id);
-                                if (toast.projectId) {
+                                if (toast.videoUrl) {
+                                    setPreviewMedia({ src: toast.videoUrl, type: 'video' });
+                                } else if (toast.imageUrl) {
+                                    setPreviewMedia({ src: toast.imageUrl, type: 'image' });
+                                } else if (toast.projectId) {
                                     window.location.href = `/projects/${toast.projectId}`;
-                                } else {
-                                    window.location.href = '/videos';
                                 }
                             }}
                         >
@@ -569,6 +590,13 @@ function NotificationDropdown() {
                     to { opacity: 1; transform: translateY(0) scale(1); }
                 }
             `}</style>
+
+            <MediaPreviewModal
+                isOpen={!!previewMedia}
+                onClose={() => setPreviewMedia(null)}
+                src={previewMedia?.src || ''}
+                type={previewMedia?.type || 'mixed'}
+            />
         </div>
     );
 }
@@ -670,7 +698,7 @@ export function Header() {
                 )}
                 {/* Mobile-only items */}
                 <div className="nav-divider mobile-only" />
-                <Link href="/create" className="nav-item mobile-only-item" onClick={() => setMenuOpen(false)}>
+                <Link href="/" className="nav-item mobile-only-item" onClick={() => setMenuOpen(false)}>
                     <IconPlay /> {t('header.createVideo')}
                 </Link>
                 <Link href="/cinematic" className="nav-item mobile-only-item" onClick={() => setMenuOpen(false)}>

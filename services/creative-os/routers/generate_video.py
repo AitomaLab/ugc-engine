@@ -444,6 +444,107 @@ async def _poll_kie_task(
 
 # ── AI Script Generation ─────────────────────────────────────────────
 
+async def generate_ugc_clip_script(
+    client: CoreAPIClient,
+    *,
+    product_id: Optional[str] = None,
+    influencer_id: Optional[str] = None,
+    clip_length: int = 8,
+    language: str = "en",
+    language_accent: Optional[str] = None,
+    context: Optional[str] = None,
+    reference_image_url: Optional[str] = None,
+) -> str:
+    """Generate one short UGC clip script (Core API or prompt_enhancer fallback)."""
+    lang_name = "English" if language.lower() in ("en", "english") else "Spanish"
+    script_text = ""
+
+    if product_id:
+        try:
+            product_type = "physical"
+            try:
+                product = await client.get_product(product_id)
+                if product and product.get("website_url"):
+                    product_type = "digital"
+            except Exception:
+                pass
+
+            result = await client.generate_script(
+                product_id=product_id,
+                duration=clip_length,
+                influencer_id=influencer_id,
+                product_type=product_type,
+                output_format="legacy",
+                video_language=language,
+                language_accent=language_accent,
+                context=context,
+            )
+            generated = result.get("script", "")
+            if generated:
+                if "|||" in generated:
+                    script_text = generated.split("|||")[0].strip()
+                else:
+                    script_text = generated.strip()
+        except Exception as e:
+            print(f"[UGC Script] Core engine failed: {e}")
+
+    if not script_text:
+        try:
+            from services.prompt_enhancer import enhance_prompt
+
+            enhance_ctx: dict = {"duration": clip_length}
+            if reference_image_url:
+                enhance_ctx["image_url"] = reference_image_url
+
+            if product_id:
+                try:
+                    product = await client.get_product(product_id)
+                    if product:
+                        enhance_ctx["product_name"] = product.get("name")
+                        desc = product.get("visual_description") or {}
+                        enhance_ctx["product_description"] = (
+                            desc if isinstance(desc, str)
+                            else desc.get("visual_description", "")
+                        )
+                except Exception:
+                    pass
+
+            if influencer_id:
+                try:
+                    influencer = await client.get_influencer(influencer_id)
+                    if influencer:
+                        enhance_ctx["influencer_name"] = influencer.get("name")
+                except Exception:
+                    pass
+
+            user_prompt = context or "Create a natural UGC video script"
+            clip_prompt = (
+                f"Generate exactly ONE UGC script option for a {clip_length}-second clip. "
+                f"The dialogue must be in {lang_name}. "
+                f"User's creative direction: {user_prompt}"
+            )
+
+            enhanced = await enhance_prompt(
+                user_prompt=clip_prompt,
+                mode="ugc",
+                language=language,
+                context=enhance_ctx,
+            )
+
+            if enhanced:
+                raw = enhanced[0]["prompt"]
+                for line in raw.split("\n"):
+                    if line.lower().startswith("dialogue:"):
+                        script_text = line[len("dialogue:"):].strip()
+                        break
+                if not script_text:
+                    script_text = raw.strip()
+        except Exception as e:
+            print(f"[UGC Script] prompt_enhancer failed: {e}")
+
+    return (script_text or "").strip()
+
+
 class AIScriptRequest(BaseModel):
     project_id: str
     product_id: Optional[str] = None

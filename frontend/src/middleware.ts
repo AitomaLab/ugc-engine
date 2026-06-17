@@ -44,6 +44,14 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(new URL('/', req.url));
   }
 
+  // Legacy standalone pages — bare URLs only (contextual ?query deep links are
+  // migrated on source pages or handled by /create launcher fallback).
+  const isBareCreate = path === '/create' && !req.nextUrl.search;
+  const isBareVideos = path === '/videos' && !req.nextUrl.search;
+  if (isBareCreate || isBareVideos) {
+    return NextResponse.redirect(new URL(isBareVideos ? '/projects' : '/', req.url));
+  }
+
   return NextResponse.next();
 }
 
