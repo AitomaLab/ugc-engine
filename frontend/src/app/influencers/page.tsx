@@ -648,7 +648,7 @@ function AiClonesTab() {
 export default function InfluencersPage() {
   const { t } = useTranslation();
   const router = useRouter();
-  const { session, activeProject, isLoading: authLoading } = useApp();
+  const { session, isLoading: authLoading } = useApp();
   const [influencers, setInfluencers] = useState<Influencer[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -679,14 +679,13 @@ export default function InfluencersPage() {
   }
 
   const fetchInfluencers = useCallback(async () => {
-    if (!activeProject?.id) return;
     setLoading(true);
     try {
-      const data = await apiFetch<Influencer[]>('/influencers');
+      const data = await apiFetch<Influencer[]>('/influencers', { skipProjectScope: true });
       setInfluencers(data);
     } catch (e) { console.error(e); }
     setLoading(false);
-  }, [activeProject?.id]);
+  }, []);
 
   useEffect(() => {
     if (authLoading) return;
@@ -695,14 +694,8 @@ export default function InfluencersPage() {
       setInfluencers([]);
       return;
     }
-    if (!activeProject?.id) {
-      // Avoid infinite "Loading..." when profile/projects are still resolving
-      // or the account has no default project yet.
-      setLoading(false);
-      return;
-    }
     fetchInfluencers();
-  }, [authLoading, session, activeProject?.id, fetchInfluencers]);
+  }, [authLoading, session, fetchInfluencers]);
 
   async function handleDelete(id: string) {
     if (!confirm('Delete this influencer? This cannot be undone.')) return;

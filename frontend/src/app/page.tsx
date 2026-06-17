@@ -165,13 +165,11 @@ export default function StudioPage() {
     },
     swrOpts,
   );
-  // /influencers is scoped by the active project header — key it by project
-  // so switching projects revalidates instead of serving the old cache.
   const { data: infData } = useSWR(
-    ["/influencers", activeProject?.id ?? ""],
-    async ([path]: [string, string]) => {
+    "/influencers",
+    async (path: string) => {
       await waitForFreshSession();
-      return apiFetch<Influencer[]>(path);
+      return apiFetch<Influencer[]>(path, { skipProjectScope: true });
     },
     swrOpts,
   );

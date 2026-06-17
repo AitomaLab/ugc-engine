@@ -2210,12 +2210,20 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                             const sessionAskedForCreator = turns.some(
                                 (t) => t.role === 'agent' && turnWantsCreatorSelector(t),
                             );
-                            const awaitingProductPick = !userPickedProduct && (needsProductPick || sessionWantsProduct);
+                            const skippedProduct = userSkippedProduct(turns);
+                            const skippedCreator = userSkippedCreator(turns);
+                            const awaitingProductPick = !userPickedProduct && !skippedProduct && (needsProductPick || sessionWantsProduct);
                             const awaitingCreatorPick =
-                                userPickedProduct
+                                (userPickedProduct || skippedProduct)
                                 && !userPickedCreator
+                                && !skippedCreator
                                 && (needsCreatorPick || sessionAskedForCreator)
-                                && (sessionIntent === 'ugc_ad' || sessionIntent === 'campaign' || wantsPresenter);
+                                && (
+                                    sessionIntent === 'ugc_ad'
+                                    || sessionIntent === 'campaign'
+                                    || wantsPresenter
+                                    || sessionAskedForCreator
+                                );
                             const suppressRedundantProductTextTurns = new Set<number>();
                             for (let i = 0; i < turns.length - 1; i++) {
                                 const t = turns[i];
@@ -2338,8 +2346,10 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                         selectedCreatorRef={selectedCreatorRef}
                                         awaitingCreatorPick={awaitingCreatorPick}
                                         awaitingProductPick={awaitingProductPick}
+                                        sessionIntent={sessionIntent}
                                         suppressRedundantProductText={suppressRedundantProductTextTurns.has(idx)}
                                         lastUserText={lastUserText}
+                                        nextUserText={nextUserText}
                                     />
                                 );
                             });
@@ -3665,7 +3675,7 @@ function detectSessionIntent(turns: AgentTurn[]): 'product_shots' | 'ugc_ad' | '
         return 'ugc_ad';
     }
     if (
-        /cinematic\s+ad|anuncio\s+cinematogr|create\s+a\s+cinematic|commercial\s+ads?|ads?\s+comerciales?|anuncios?\s+comerciales?|commercial\s+ad\s+images?|ad\s+images?|imágenes?\s+(?:de\s+)?anuncios?/.test(text)
+        /cinematic\s+ad|anuncio\s+cinematogr|create\s+a\s+cinematic|commercial\s+ads?|ads?\s+comerciales?|anuncios?\s+comerciales?|commercial\s+ads?\s+images?|ad\s+images?|imágenes?\s+(?:de\s+)?anuncios?/.test(text)
         || /\d+\s+(?:ads?|anuncios?)\b/.test(text)
     ) {
         return 'cinematic_ad';
@@ -3679,12 +3689,27 @@ function detectSessionIntent(turns: AgentTurn[]): 'product_shots' | 'ugc_ad' | '
     return 'generic';
 }
 
-const MODEL_LED_AD_IMAGES_RE = /commercial\s+ad\s+images?|ad\s+images?|imágenes?\s+(?:de\s+)?anuncios?/i;
+const MODEL_LED_AD_IMAGES_RE = /commercial\s+ads?\s+images?|ad\s+images?|imágenes?\s+(?:de\s+)?anuncios?/i;
 
 const PRESENTER_INTENT_RE = /with\s+(?:a\s+)?(?:model|influencer|creator|person|presenter|host|spokesperson)|model[\s-]led|starring|featuring|who\s+should|@[\w-]+_clone\b|con\s+(?:un\s+)?(?:modelo|influencer|creador|persona|presentador)|protagoniz|presentador/i;
 
+const PRODUCT_SKIP_RE =
+    /^(skip|omitir)\b|influencer[\s-]only|creator[\s-]only|solo (influencer|creador|modelo)|sin producto|no product/i;
+
+const CREATOR_SKIP_RE =
+    /^(skip|omitir)\b|product[\s-]only|solo producto|sin (modelo|influencer|creador)|no (model|influencer|creator)/i;
+
+function userSkippedProduct(turns: AgentTurn[]): boolean {
+    return turns.some((t) => t.role === 'user' && PRODUCT_SKIP_RE.test(t.text || ''));
+}
+
+function userSkippedCreator(turns: AgentTurn[]): boolean {
+    return turns.some((t) => t.role === 'user' && CREATOR_SKIP_RE.test(t.text || ''));
+}
+
 /** True when the user asked for a person/model/presenter (or model-led ad images). */
 function sessionWantsPresenter(turns: AgentTurn[]): boolean {
+    if (userSkippedCreator(turns)) return false;
     const userTexts = turns
         .filter((t) => t.role === 'user')
         .map((t) => t.text || '')
@@ -3705,12 +3730,45 @@ function turnWantsProductSelector(turn: AgentTurn): boolean {
     return raw.includes('[[PRODUCT_SELECTOR]]') || PRODUCT_SELECTOR_HEURISTIC_RE.test(raw);
 }
 
-const CREATOR_SELECTOR_HEURISTIC_RE = /which (influencer|creator|model|persona)|who should (present|deliver|host|star|be in|feature)|who do you want|qué (influencer|creador|modelo)|cuál (influencer|creador|modelo)|quién debería|quién protagonizar|pick (?:a |an |your )?(?:influencer|creator|model|persona)|choose (?:a |an |your )?(?:influencer|creator|model|persona)|\b2\.\s*\**which influencer|or tell me to pick the best|\([A-Za-z][^)]{12,},\s*[A-Za-z]/i;
+const CREATOR_SELECTOR_HEURISTIC_RE = /which (influencer|creator|model|persona)|who should (?:appear|present|deliver|host|star|be in|feature)|who do you want|qué (influencer|creador|modelo)|cuál (influencer|creador|modelo)|quién debería|quién protagonizar|pick (?:a |an |your )?(?:influencer|creator|model|persona)|choose (?:a |an |your )?(?:influencer|creator|model|persona)|\b2\.\s*\**which influencer|or tell me to pick the best|\([A-Za-z][^)]{12,},\s*[A-Za-z]/i;
 
 function turnWantsCreatorSelector(turn: AgentTurn): boolean {
     if (turn.role !== 'agent') return false;
     const raw = turn.text || '';
     return raw.includes('[[CREATOR_SELECTOR]]') || CREATOR_SELECTOR_HEURISTIC_RE.test(raw);
+}
+
+type SessionIntent = ReturnType<typeof detectSessionIntent>;
+
+function SelectorSkipButton({
+    active,
+    label,
+    onClick,
+}: {
+    active: boolean;
+    label: string;
+    onClick: () => void;
+}) {
+    return (
+        <button
+            type="button"
+            disabled={!active}
+            onClick={() => active && onClick()}
+            style={{
+                padding: '4px 10px',
+                borderRadius: '8px',
+                border: '1px solid rgba(51,122,255,0.15)',
+                background: 'white',
+                color: active ? '#337AFF' : '#8A93B0',
+                fontSize: '12px',
+                fontWeight: 500,
+                cursor: active ? 'pointer' : 'default',
+                flexShrink: 0,
+            }}
+        >
+            {label}
+        </button>
+    );
 }
 
 function TurnBubble({
@@ -3740,8 +3798,10 @@ function TurnBubble({
     selectedCreatorRef,
     awaitingCreatorPick,
     awaitingProductPick,
+    sessionIntent = 'generic',
     suppressRedundantProductText,
     lastUserText,
+    nextUserText = '',
 }: {
     turn: AgentTurn;
     refMap: Map<string, AgentRef>;
@@ -3769,8 +3829,10 @@ function TurnBubble({
     selectedCreatorRef?: AgentRef | null;
     awaitingCreatorPick?: boolean;
     awaitingProductPick?: boolean;
+    sessionIntent?: SessionIntent;
     suppressRedundantProductText?: boolean;
     lastUserText?: string;
+    nextUserText?: string;
 }) {
     const { t } = useTranslation();
     const [chatShotPickerItem, setChatShotPickerItem] = useState<MentionItem | null>(null);
@@ -3850,6 +3912,12 @@ function TurnBubble({
     const confirmChipActive = !!turn.pendingConfirmation && !!isLast && !!onQuickReply;
     const productSelectorActive = showProductSelector && !!isLast && !running && !!onAssetPick && !selectedProductRef;
     const creatorSelectorActive = showCreatorSelector && !!isLast && !running && !!onAssetPick && !selectedCreatorRef;
+    const productSkipCommitted = PRODUCT_SKIP_RE.test(nextUserText);
+    const creatorSkipCommitted = CREATOR_SKIP_RE.test(nextUserText);
+    const productSkipVisible = productSelectorActive && sessionIntent !== 'product_shots';
+    const creatorSkipVisible = creatorSelectorActive && sessionIntent !== 'ugc_ad' && sessionIntent !== 'campaign';
+    const productSkipActive = productSkipVisible && !productSkipCommitted;
+    const creatorSkipActive = creatorSkipVisible && !creatorSkipCommitted;
     const styleArts = (turn.artifacts || []).filter((a) => a.type === 'caption_styles_preview');
     const hasCaptionStylePicker = !isUser && styleArts.length > 0;
     const captionPickerActive = hasCaptionStylePicker
@@ -3944,13 +4012,39 @@ function TurnBubble({
                     <ThinkingIndicator />
                 )}
 
-                {displayText && (
+                {displayText && !((showProductSelector && productSkipVisible) || (showCreatorSelector && creatorSkipVisible)) && (
                     <div style={{ whiteSpace: 'pre-wrap' }}>
                         {/* Progressive reveal only for the agent's active last bubble — gives
                             a streaming feel even though Managed Agents delivers whole messages. */}
                         {!isUser && !!isLast && !!running
                             ? <AnimatedText text={displayText} refMap={refMap} />
                             : renderMessageContent(displayText, refMap, isUser)}
+                    </div>
+                )}
+
+                {displayText && ((showProductSelector && productSkipVisible) || (showCreatorSelector && creatorSkipVisible)) && (
+                    <div
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: '10px',
+                        }}
+                    >
+                        <div style={{ whiteSpace: 'pre-wrap', flex: 1, minWidth: 0 }}>
+                            {!isUser && !!isLast && !!running
+                                ? <AnimatedText text={displayText} refMap={refMap} />
+                                : renderMessageContent(displayText, refMap, isUser)}
+                        </div>
+                        <SelectorSkipButton
+                            active={showProductSelector ? productSkipActive : creatorSkipActive}
+                            label={t('creativeOs.agent.skip')}
+                            onClick={() => onQuickReply?.(
+                                showProductSelector
+                                    ? t('creativeOs.agent.skipProductReply')
+                                    : t('creativeOs.agent.skipCreatorReply'),
+                            )}
+                        />
                     </div>
                 )}
 

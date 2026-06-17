@@ -452,7 +452,7 @@ async def agent_stream(
     )
     _model_led_ad_images_re = _re.compile(
         r"\b(?:"
-        r"commercial\s+ad\s+images?|ad\s+images?|"
+        r"commercial\s+ads?\s+images?|ad\s+images?|"
         r"imágenes?\s+(?:de\s+)?anuncios?"
         r")\b",
         _re.IGNORECASE,
@@ -473,6 +473,24 @@ async def agent_stream(
         r"con\s+(?:un\s+)?(?:modelo|influencer|creador|persona|presentador)|"
         r"protagoniz|presentador"
         r")\b",
+        _re.IGNORECASE,
+    )
+    _product_skip_re = _re.compile(
+        r"(?:"
+        r"^(?:skip|omitir)\b|"
+        r"influencer[\s-]only|creator[\s-]only|"
+        r"solo\s+(?:influencer|creador|modelo)|"
+        r"sin\s+producto|no\s+product"
+        r")",
+        _re.IGNORECASE,
+    )
+    _creator_skip_re = _re.compile(
+        r"(?:"
+        r"^(?:skip|omitir)\b|"
+        r"product[\s-]only|solo\s+producto|"
+        r"sin\s+(?:modelo|influencer|creador)|"
+        r"no\s+(?:model|influencer|creator)"
+        r")",
         _re.IGNORECASE,
     )
     _has_product_ref = any(r.type == "product" for r in refs)
@@ -517,7 +535,15 @@ async def agent_stream(
                 parts.append(_past.get("text") or "")
         return " ".join(parts)
 
+    def _session_skipped_product() -> bool:
+        return bool(_product_skip_re.search(_session_user_text()))
+
+    def _session_skipped_creator() -> bool:
+        return bool(_creator_skip_re.search(_session_user_text()))
+
     def _session_wants_presenter() -> bool:
+        if _session_skipped_creator():
+            return False
         text = _session_user_text()
         if _model_led_ad_images_re.search(text):
             return True
@@ -537,6 +563,8 @@ async def agent_stream(
 
     def _session_is_product_only_cinematic() -> bool:
         text = _session_user_text()
+        if _model_led_ad_images_re.search(text):
+            return False
         if not _cinematic_ad_intent_re.search(text):
             return False
         return not _session_wants_presenter()
@@ -544,7 +572,11 @@ async def agent_stream(
     _is_product_only_cinematic = _session_is_product_only_cinematic()
     _reminder_lang = _detect_input_language(brief) or data.lang
     asset_selection_reminder: Optional[str] = None
-    if not _has_product_ref and (_ugc_intent_re.search(brief) or _product_shots_intent_re.search(brief) or CAMPAIGN_INTENT_RE.search(brief)):
+    if (
+        not _has_product_ref
+        and not _session_skipped_product()
+        and (_ugc_intent_re.search(brief) or _product_shots_intent_re.search(brief) or CAMPAIGN_INTENT_RE.search(brief))
+    ):
         if _reminder_lang == "es":
             asset_selection_reminder = (
                 "[SELECTOR DE ACTIVOS — el usuario aún no ha elegido un producto. Responde con UNA "
@@ -559,6 +591,41 @@ async def agent_stream(
                 "ending with the literal marker [[PRODUCT_SELECTOR]] on the last line. The frontend "
                 "renders a visual product grid — do NOT list product names in prose. Do NOT ask about "
                 "influencer, script, or duration in the same message.]"
+            )
+    elif (
+        not _has_product_ref
+        and _session_skipped_product()
+        and not _has_creator_ref
+        and not _is_product_shots_session
+    ):
+        if _reminder_lang == "es":
+            asset_selection_reminder = (
+                "[SOLO INFLUENCER — el usuario omitió el selector de producto. NO uses "
+                "[[PRODUCT_SELECTOR]]. Pregunta quién debe presentar con [[CREATOR_SELECTOR]] si "
+                "aún no hay creador. UGC → create_ugc_video / create_bulk_campaign solo con "
+                "influencer_id, sin product_id. Imágenes → generate_image solo con ref de influencer.]"
+            )
+        else:
+            asset_selection_reminder = (
+                "[INFLUENCER-ONLY — user skipped product picker. Do NOT use [[PRODUCT_SELECTOR]]. "
+                "Ask who should present with [[CREATOR_SELECTOR]] if creator not yet chosen. "
+                "UGC → create_ugc_video / create_bulk_campaign with influencer_id only, no product_id. "
+                "Images → generate_image with influencer ref only.]"
+            )
+    elif _has_creator_ref and not _has_product_ref and _session_skipped_product():
+        if _reminder_lang == "es":
+            asset_selection_reminder = (
+                "[SOLO INFLUENCER — creador elegido, usuario omitió producto. Continúa sin product_id. "
+                "UGC → create_ugc_video (talking-head, product_type=digital). "
+                "Imágenes → generate_image solo con ref de influencer. "
+                "NO uses [[PRODUCT_SELECTOR]].]"
+            )
+        else:
+            asset_selection_reminder = (
+                "[INFLUENCER-ONLY — creator chosen, user skipped product. Proceed without product_id. "
+                "UGC → create_ugc_video (talking-head, product_type=digital). "
+                "Images → generate_image with influencer ref only. "
+                "Do NOT use [[PRODUCT_SELECTOR]].]"
             )
     elif _has_product_ref and not _has_creator_ref and _is_product_shots_session:
         asset_selection_reminder = (
@@ -580,6 +647,42 @@ async def agent_stream(
                 "creator or use [[CREATOR_SELECTOR]]. Call create_cinematic_ad stage='propose' with the "
                 "product from Referenced assets. If aspect ratio or duration is missing, ask with "
                 "[[ASPECT_BUTTONS]] or [[DURATION_BUTTONS]] (one marker per message) BEFORE propose.]"
+            )
+    elif (
+        _has_product_ref
+        and not _has_creator_ref
+        and _session_skipped_creator()
+        and _model_led_ad_images_re.search(_session_user_text())
+    ):
+        if _reminder_lang == "es":
+            asset_selection_reminder = (
+                "[IMÁGENES DE ANUNCIO SOLO PRODUCTO — el usuario omitió el creador. Llama generate_image "
+                "solo con ref de producto (sin influencer_id). Usa count=N del brief. "
+                "NO uses [[CREATOR_SELECTOR]]. Pregunta aspecto con [[ASPECT_BUTTONS]] si falta.]"
+            )
+        else:
+            asset_selection_reminder = (
+                "[PRODUCT-ONLY COMMERCIAL AD IMAGES — user skipped creator. Call generate_image "
+                "with product ref only (no influencer_id). Use count=N from brief. "
+                "Do NOT use [[CREATOR_SELECTOR]]. Ask aspect with [[ASPECT_BUTTONS]] if missing.]"
+            )
+    elif (
+        _has_product_ref
+        and not _has_creator_ref
+        and _session_skipped_creator()
+        and not _is_product_shots_session
+    ):
+        if _reminder_lang == "es":
+            asset_selection_reminder = (
+                "[SOLO PRODUCTO — el usuario omitió el creador. Continúa sin influencer_id. "
+                "NO uses [[CREATOR_SELECTOR]]. Imágenes → generate_image con producto. "
+                "Cinematográfico → create_cinematic_ad stage='propose' solo producto.]"
+            )
+        else:
+            asset_selection_reminder = (
+                "[PRODUCT-ONLY — user skipped creator. Proceed without influencer_id. "
+                "Do NOT use [[CREATOR_SELECTOR]]. Images → generate_image with product. "
+                "Cinematic → create_cinematic_ad stage='propose' product-only.]"
             )
     elif _has_product_ref and not _has_creator_ref and not _is_product_shots_session:
         if _reminder_lang == "es":

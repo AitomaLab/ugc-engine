@@ -130,7 +130,6 @@ export async function forceReauth(reason = 'session_expired'): Promise<void> {
     reauthing = true;
 
     try {
-        localStorage.removeItem('activeProjectId');
         await clearAllAuthState();
     } catch {
         // Still redirect even if signOut fails

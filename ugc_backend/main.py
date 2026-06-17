@@ -52,7 +52,7 @@ from ugc_db.db_manager import (
     get_plan_by_stripe_price_id, get_plan_by_id,
     upsert_subscription, cancel_subscription,
     get_user_id_by_stripe_customer, add_credits,
-    list_influencers_scoped, list_scripts_scoped, list_products_scoped,
+    list_influencers_for_user, list_scripts_scoped, list_products_scoped,
     list_products_for_user, list_app_clips_scoped, list_app_clips_for_user,
     list_jobs_scoped, list_product_shots_scoped,
     get_stats_scoped,
@@ -1593,25 +1593,8 @@ def health():
 @app.get("/influencers")
 def api_list_influencers(request: Request, user: dict = Depends(get_optional_user)):
     if user:
-        pid = _resolve_project_id(request, user)
-        if pid:
-            return list_influencers_scoped(user["id"], pid)
-        if not request.headers.get("x-skip-project-scope"):
-            # Last-chance default project (covers signup-trigger race before
-            # the frontend has activeProjectId in localStorage).
-            user_projects = list_projects(user["id"])
-            if user_projects:
-                default_proj = next(
-                    (p for p in user_projects if p.get("is_default")),
-                    user_projects[0],
-                )
-                return list_influencers_scoped(user["id"], default_proj["id"])
-            print(
-                f"  [influencers] User {user['id'][:8]}... has no project yet — skipping seed"
-            )
-        # Skip-scope: list influencers across ALL of the user's projects
-        sb = get_supabase()
-        return sb.table("influencers").select("*").eq("user_id", user["id"]).execute().data or []
+        # Influencers are per-user account, not per-project.
+        return list_influencers_for_user(user["id"])
     return list_influencers()
 
 @app.get("/influencers/{influencer_id}")
@@ -1666,25 +1649,24 @@ def api_create_influencer(data: InfluencerCreate, request: Request, user: dict =
         msg = str(e)
         is_dupe = "duplicate" in msg.lower() or "unique" in msg.lower() or "23505" in msg
         if is_dupe:
-            # An influencer with this name already exists in the same project
-            # (unique constraint influencers_project_name_key on
-            # (project_id, name)). Re-saving the same name — e.g. re-adding
-            # "Maria" with new images after a delete that didn't take — should
-            # refresh the existing record instead of hard-failing. Only ever
-            # update a row the caller owns (or an unscoped row when anonymous).
+            # An influencer with this name already exists for this user account.
+            # Re-saving the same name should refresh the existing record.
             try:
-                name_val = payload.get("name")
-                proj_id = payload.get("project_id")
-                q = get_supabase().table("influencers").select("id").eq("name", name_val)
-                q = q.eq("project_id", proj_id) if proj_id else q.is_("project_id", "null")
+                name_val = (payload.get("name") or "").strip()
+                name_norm = name_val.lower()
+                q = get_supabase().table("influencers").select("id,name")
                 if payload.get("user_id"):
                     q = q.eq("user_id", payload["user_id"])
-                existing = q.limit(1).execute().data or []
+                existing_rows = q.execute().data or []
+                existing = next(
+                    (r for r in existing_rows if (r.get("name") or "").strip().lower() == name_norm),
+                    None,
+                )
                 if existing:
                     update_payload = {k: v for k, v in payload.items() if k not in ("user_id", "project_id")}
-                    updated = update_influencer(existing[0]["id"], update_payload)
+                    updated = update_influencer(existing["id"], update_payload)
                     if updated:
-                        print(f"  [DEBUG] Influencer '{name_val}' already existed in project — updated id={existing[0]['id']}")
+                        print(f"  [DEBUG] Influencer '{name_val}' already existed for user — updated id={existing['id']}")
                         return updated
             except Exception as inner:
                 print(f"  [WARN] influencer create→update fallback failed: {inner}")

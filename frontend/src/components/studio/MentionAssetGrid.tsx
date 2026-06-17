@@ -19,6 +19,8 @@ export interface MentionAssetGridProps {
     shotPickerItem?: MentionItem | null;
     onPickShot?: (imageUrl: string) => void;
     onBackFromShotPicker?: () => void;
+    headerTitle?: string;
+    headerAction?: React.ReactNode;
 }
 
 const GROUP_ORDER: MentionGroupType[] = ['influencer', 'clone', 'product', 'image', 'video'];
@@ -38,6 +40,8 @@ export function MentionAssetGrid({
     shotPickerItem,
     onPickShot,
     onBackFromShotPicker,
+    headerTitle,
+    headerAction,
 }: MentionAssetGridProps) {
     const { t } = useTranslation();
     const GROUP_LABELS_T: Record<MentionGroupType, string> = {
@@ -178,8 +182,30 @@ export function MentionAssetGrid({
         );
     }
 
+    const headerBar = (headerTitle || headerAction) ? (
+        <div
+            style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '8px',
+                padding: '10px 12px 8px',
+                flexShrink: 0,
+                borderBottom: '1px solid rgba(13,27,62,0.08)',
+            }}
+        >
+            {headerTitle ? (
+                <span style={{ fontSize: '11px', fontWeight: 600, color: '#0D1B3E' }}>
+                    {headerTitle}
+                </span>
+            ) : <span />}
+            {headerAction}
+        </div>
+    ) : null;
+
     return (
         <div style={containerStyle}>
+            {headerBar}
             {availableGroups.length > 1 && (
                 <div
                     style={{

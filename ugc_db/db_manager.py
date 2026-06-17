@@ -753,13 +753,70 @@ def _seed_lock_for(user_id: str, project_id: str) -> threading.Lock:
         return _seed_locks[key]
 
 
+def _seed_lock_for_user(user_id: str) -> threading.Lock:
+    key = f"user:{user_id}"
+    with _seed_locks_guard:
+        if key not in _seed_locks:
+            _seed_locks[key] = threading.Lock()
+        return _seed_locks[key]
+
+
+def _norm_influencer_name(name: str | None) -> str:
+    return (name or "").strip().lower()
+
+
+def _influencer_has_image(row: dict) -> bool:
+    for key in ("image_url", "reference_image_url"):
+        val = (row.get(key) or "").strip()
+        if val:
+            return True
+    return False
+
+
+def _dedupe_influencer_rows_by_name(rows: list[dict]) -> list[dict]:
+    """Collapse duplicate names to one row per user (prefer image, then oldest)."""
+    by_name: dict[str, dict] = {}
+    for row in rows:
+        norm = _norm_influencer_name(row.get("name"))
+        if not norm:
+            continue
+        prev = by_name.get(norm)
+        if not prev:
+            by_name[norm] = row
+            continue
+        if not _influencer_has_image(prev) and _influencer_has_image(row):
+            by_name[norm] = row
+            continue
+        prev_created = prev.get("created_at") or ""
+        row_created = row.get("created_at") or ""
+        if row_created and (not prev_created or str(row_created) < str(prev_created)):
+            by_name[norm] = row
+    return list(by_name.values())
+
+
+def _default_project_id_for_user(sb, user_id: str) -> str | None:
+    projects = (
+        sb.table("projects")
+        .select("id,is_default,created_at")
+        .eq("user_id", user_id)
+        .order("created_at")
+        .execute()
+        .data
+        or []
+    )
+    if not projects:
+        return None
+    default = next((p for p in projects if p.get("is_default")), projects[0])
+    return default.get("id")
+
+
 def _is_unique_violation(exc: Exception) -> bool:
     text = str(exc).lower()
     return "23505" in text or "duplicate key" in text or "unique constraint" in text
 
 
 def _insert_influencer_clones(sb, clones: list[dict]) -> int:
-    """Insert seed clones; skip rows blocked by per-project name uniqueness."""
+    """Insert seed clones; skip rows blocked by per-user name uniqueness."""
     if not clones:
         return 0
     try:
@@ -823,38 +880,19 @@ def _find_template_admin_project_id(sb) -> str | None:
     return None
 
 
-def seed_default_influencers(user_id: str, project_id: str):
+def seed_default_influencers_for_user(user_id: str, project_id: str | None = None):
     """
-    Auto-populates a new/empty project with the base template influencers.
-    Finds the admin project (the one that owns the 'Lila' template row) and
-    clones its influencers, excluding deprecated entries.
-
-    Anchor history: this used to look up 'Meg', but that row was removed from
-    production. 'Lila' is the universal sentinel present in every template
-    project (104 templates / project as of 2026-05) and is the stable anchor.
+    Auto-populates a new user's account with the base template influencers (once).
+    Clones from the admin template project into the user's default project.
     """
-    lock = _seed_lock_for(user_id, project_id)
+    lock = _seed_lock_for_user(user_id)
     with lock:
         sb = get_supabase()
 
-        admin_pid = _find_template_admin_project_id(sb)
-        if not admin_pid:
-            return
-
-        # Don't seed if this IS the admin project querying itself
-        if project_id == admin_pid:
-            return
-
-        # Idempotency guard: if ANY influencer already exists in this user's
-        # project, skip the seed entirely. Two concurrent callers (e.g. the
-        # onboarding modal + the project agent panel both firing /influencers
-        # on a fresh login) would otherwise each insert a fresh batch of 26
-        # templates, leaving 2–4× duplicates of every name (Mateo×4, Lila×4 …).
         existing = (
             sb.table("influencers")
             .select("id")
             .eq("user_id", user_id)
-            .eq("project_id", project_id)
             .limit(1)
             .execute()
             .data
@@ -862,12 +900,25 @@ def seed_default_influencers(user_id: str, project_id: str):
         if existing:
             return
 
+        if not project_id:
+            project_id = _default_project_id_for_user(sb, user_id)
+        if not project_id:
+            print(f"  [seed] User {user_id[:8]}... has no project — cannot seed influencers")
+            return
+
+        admin_pid = _find_template_admin_project_id(sb)
+        if not admin_pid:
+            return
+
+        if project_id == admin_pid:
+            return
+
         template_infs = sb.table("influencers").select("*").eq("project_id", admin_pid).execute().data
 
         exclude_names = {"meg", "max", "naiara"}
         clones = []
 
-        for inf in template_infs:
+        for inf in template_infs or []:
             inf_name = inf.get("name", "")
             if inf_name.lower() in exclude_names:
                 continue
@@ -877,54 +928,39 @@ def seed_default_influencers(user_id: str, project_id: str):
             clone.pop("created_at", None)
             clone["user_id"] = user_id
             clone["project_id"] = project_id
+            clone["is_custom"] = False
             clones.append(clone)
 
         if clones:
             inserted = _insert_influencer_clones(sb, clones)
             print(
                 f"  [seed] Cloned {inserted}/{len(clones)} template influencers "
-                f"into project {project_id[:8]}..."
+                f"for user {user_id[:8]}... (project {project_id[:8]}...)"
             )
         else:
             print(f"  [seed] WARN: Admin project {admin_pid[:8]}... had no cloneable influencers")
 
-def list_influencers_scoped(user_id: str, project_id: str):
-    sb = get_supabase()
-    data = sb.table("influencers").select("*").eq("user_id", user_id).eq("project_id", project_id).execute().data
-    if not data:
-        # If the project has NO influencers, automatically seed the default templates.
-        # Concurrent callers (onboarding modal + agent panel + /influencers page
-        # often fire at the same time on a fresh login) would each see 0 rows
-        # and each seed a fresh batch — leaving 2-4× duplicates. The seeder is
-        # now idempotent (checks again under the same query) so this can no
-        # longer compound, but we still avoid the extra insert work when a
-        # concurrent caller has already populated the project.
-        seed_default_influencers(user_id, project_id)
-        # Fetch again after seeding
-        data = sb.table("influencers").select("*").eq("user_id", user_id).eq("project_id", project_id).execute().data
-        if not data:
-            print(
-                f"  [influencers] Seed left project {project_id[:8]}... empty "
-                f"for user {user_id[:8]}..."
-            )
 
-    # Custom (user-created) influencers belong to the USER, not a single
-    # project: merge them in so they appear in every project + the @mention
-    # picker, regardless of which project they were created in. Dedupe by id
-    # so a custom created in THIS project isn't listed twice.
-    custom = (
-        sb.table("influencers")
-        .select("*")
-        .eq("user_id", user_id)
-        .eq("is_custom", True)
-        .execute()
-        .data
-        or []
-    )
-    merged = {row["id"]: row for row in (data or [])}
-    for row in custom:
-        merged[row["id"]] = row
-    return list(merged.values())
+def seed_default_influencers(user_id: str, project_id: str):
+    """Backward-compatible alias — seeds once per user account."""
+    seed_default_influencers_for_user(user_id, project_id)
+
+
+def list_influencers_for_user(user_id: str) -> list[dict]:
+    """Return the full influencer roster for a user (templates + custom), deduped by name."""
+    sb = get_supabase()
+    rows = sb.table("influencers").select("*").eq("user_id", user_id).execute().data or []
+    if not rows:
+        seed_default_influencers_for_user(user_id)
+        rows = sb.table("influencers").select("*").eq("user_id", user_id).execute().data or []
+        if not rows:
+            print(f"  [influencers] Seed left user {user_id[:8]}... with empty roster")
+    return _dedupe_influencer_rows_by_name(rows)
+
+
+def list_influencers_scoped(user_id: str, project_id: str):
+    """Influencers are per-user; project_id is ignored (kept for call-site compat)."""
+    return list_influencers_for_user(user_id)
 
 def list_scripts_scoped(user_id: str, project_id: str, **filters):
     sb = get_supabase()

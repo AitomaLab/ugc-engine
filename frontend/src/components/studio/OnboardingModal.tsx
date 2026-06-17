@@ -217,13 +217,7 @@ export function OnboardingModal({ onComplete, onSkip }: OnboardingModalProps) {
             try {
                 const [prods, infs] = await Promise.all([
                     apiFetch<RealProduct[]>('/api/products', { skipProjectScope: true }).catch(() => []),
-                    // Do NOT skip project scope here — the project-scoped influencer
-                    // endpoint triggers the auto-seed in list_influencers_scoped
-                    // (db_manager.py) which clones the 18 template influencers
-                    // (Mateo, Lexi, Amelie, …) into the user's default project on
-                    // first read. The skip-scope branch in main.py doesn't
-                    // auto-seed, which is why brand-new users saw an empty list.
-                    apiFetch<RealInfluencer[]>('/influencers').catch(() => []),
+                    apiFetch<RealInfluencer[]>('/influencers', { skipProjectScope: true }).catch(() => []),
                 ]);
                 if (cancelled) return;
                 // Fall back to template products when user has none
