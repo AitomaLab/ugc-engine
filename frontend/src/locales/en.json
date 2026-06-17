@@ -1349,6 +1349,7 @@
   "analytics.detail.template.hint": "Open the Create flow with this post's hook + caption pre-filled.",
   "analytics.refresh.cta": "Refresh data",
   "analytics.refresh.refreshing": "Refreshing…",
+  "analytics.refresh.asOf": "Metrics as of {when}",
   "analytics.filters.sort.likes": "Most likes",
   "analytics.filters.sort.comments": "Most comments",
   "analytics.filters.exportCsv": "Export CSV",

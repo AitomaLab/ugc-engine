@@ -7,6 +7,7 @@ import {
     analyticsFetch,
     ANALYTICS_PRIMARY,
     ANALYTICS_STUDIO_SYNCED_EVENT,
+    pollRefreshStatus,
 } from '@/components/analytics/analytics-types';
 import CalendarTab from './CalendarTab';
 import AnalyticsTab from './AnalyticsTab';
@@ -28,6 +29,7 @@ export default function SchedulePage() {
                 method: 'POST',
                 skipProjectScope: true,
             });
+            await pollRefreshStatus();
             if (typeof window !== 'undefined') {
                 window.dispatchEvent(new CustomEvent(ANALYTICS_STUDIO_SYNCED_EVENT));
             }

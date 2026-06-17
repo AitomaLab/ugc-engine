@@ -577,9 +577,29 @@ def stats(
         username=username,
         limit=500,
     )
-    total_views = sum(int(r.get("views") or 0) for r in rows)
-    total_eng = sum(int(r.get("total_engagement") or 0) for r in rows)
-    posts_tracked = len(rows)
+    return stats_from_rows(
+        user_id,
+        rows,
+        all_rows,
+        platform=platform,
+        source=source,
+        username=username,
+    )
+
+
+def stats_from_rows(
+    user_id: str,
+    period_rows: list[dict],
+    all_rows: list[dict],
+    *,
+    platform: Optional[str] = None,
+    source: Optional[str] = None,
+    username: Optional[str] = None,
+) -> dict:
+    """KPI strip aggregates from a pre-fetched post set."""
+    total_views = sum(int(r.get("views") or 0) for r in period_rows)
+    total_eng = sum(int(r.get("total_engagement") or 0) for r in period_rows)
+    posts_tracked = len(period_rows)
     posts_total = len(all_rows)
 
     if username and platform and platform != "all":
@@ -637,14 +657,7 @@ def stats_extras(
     source: Optional[str] = None,
     username: Optional[str] = None,
 ) -> dict:
-    """Sparkline arrays + period-over-period deltas for KPI cards.
-
-    Returned shape:
-        - daily_views/engagement/posts: arrays sized to ``period_days`` (or 30
-          when no period is set), zero-filled for days with no activity
-        - {views,engagement,posts}_delta_pct: % change vs. the equal-length
-          previous window, ``0.0`` when there's no prior data to compare
-    """
+    """Sparkline arrays + period-over-period deltas for KPI cards."""
     rows, all_rows = _fetch_dashboard_posts(
         user_id,
         period_days=period_days,
@@ -653,6 +666,16 @@ def stats_extras(
         username=username,
         limit=500,
     )
+    return stats_extras_from_rows(rows, all_rows, period_days=period_days)
+
+
+def stats_extras_from_rows(
+    period_rows: list[dict],
+    all_rows: list[dict],
+    *,
+    period_days: Optional[int] = None,
+) -> dict:
+    """Sparkline arrays + period-over-period deltas from a pre-fetched post set."""
     spark_len = max(int(period_days or 30), 1)
     today = datetime.now(timezone.utc).date()
     spark_index = {
@@ -662,7 +685,7 @@ def stats_extras(
     daily_views = [0] * spark_len
     daily_eng = [0] * spark_len
     daily_posts = [0] * spark_len
-    for r in rows:
+    for r in period_rows:
         bucket = _bucket_key(r)
         if not bucket or bucket not in spark_index:
             continue
@@ -676,9 +699,9 @@ def stats_extras(
     delta_eng = 0.0
     delta_posts = 0.0
     if period_days:
-        total_views = sum(int(r.get("views") or 0) for r in rows)
-        total_eng = sum(int(r.get("total_engagement") or 0) for r in rows)
-        posts_tracked = len(rows)
+        total_views = sum(int(r.get("views") or 0) for r in period_rows)
+        total_eng = sum(int(r.get("total_engagement") or 0) for r in period_rows)
+        posts_tracked = len(period_rows)
         span = int(period_days)
         prev_end = today - timedelta(days=span)
         prev_start = today - timedelta(days=2 * span - 1)
@@ -728,9 +751,14 @@ def stats_distribution(
         username=username,
         limit=500,
     )
+    return stats_distribution_from_rows(rows)
+
+
+def stats_distribution_from_rows(period_rows: list[dict]) -> dict:
+    """Platform + media-type buckets from a pre-fetched post set."""
     platform_buckets: dict[str, dict[str, int]] = {}
     media_buckets: dict[str, dict[str, int]] = {}
-    for r in rows:
+    for r in period_rows:
         plat = (r.get("platform") or "unknown").lower()
         pb = platform_buckets.setdefault(plat, {"value": 0, "posts": 0})
         pb["value"] += int(r.get("views") or 0)
@@ -1198,6 +1226,33 @@ def list_account_posts(
             reverse=True,
         )
     return rows
+
+
+def fetch_all_posts_for_account_aggregates(user_id: str, *, limit: int = 2000) -> list[dict]:
+    """Single fetch for per-account dashboard aggregates."""
+    sb = get_supabase()
+    res = (
+        sb.table("analytics_posts")
+        .select(
+            "platform,username,views,total_engagement,posted_at,added_at,scraped_at",
+        )
+        .eq("user_id", user_id)
+        .limit(min(max(int(limit or 2000), 1), 2000))
+        .execute()
+    )
+    return res.data or []
+
+
+def group_posts_by_account(posts: list[dict]) -> dict[tuple[str, str], list[dict]]:
+    grouped: dict[tuple[str, str], list[dict]] = {}
+    for post in posts:
+        plat, nick = _normalize_account_slug(
+            str(post.get("platform") or ""),
+            str(post.get("username") or ""),
+        )
+        if plat and nick:
+            grouped.setdefault((plat, nick), []).append(post)
+    return grouped
 
 
 def prune_account_posts_to_top_n(

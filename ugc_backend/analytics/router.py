@@ -47,6 +47,7 @@ from .models import (
     PostRefreshRequest,
     PostsListResponse,
     RefreshAllResponse,
+    RefreshStatusResponse,
     ScrapeRequest,
     ScrapeResponse,
     StatsResponse,
@@ -63,7 +64,11 @@ from .url_parser import detect
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
+DEFAULT_ANALYTICS_PERIOD = "7d"
+
 _ANALYTICS_PLATFORMS = studio_service.ANALYTICS_PLATFORMS
+
+_refresh_jobs: dict[str, dict] = {}
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -390,7 +395,7 @@ async def api_scrape(
 def api_list_posts(
     background_tasks: BackgroundTasks,
     user: dict = Depends(get_current_user),
-    period: Optional[str] = Query(default="30d"),
+    period: Optional[str] = Query(default=DEFAULT_ANALYTICS_PERIOD),
     platform: Optional[str] = Query(default=None),
     source: Optional[str] = Query(default=None),
     username: Optional[str] = Query(
@@ -699,7 +704,7 @@ def _background_stale_metrics_refresh(user_id: str) -> None:
                     user_id,
                     profile_key,
                     usernames,
-                    force_metrics=True,
+                    force_metrics=False,
                 )
 
         asyncio.run(_run())
@@ -712,51 +717,120 @@ def _background_stale_metrics_refresh(user_id: str) -> None:
 @router.post("/sync-studio-connections", response_model=SyncStudioConnectionsResponse)
 async def api_sync_studio_connections(
     background_tasks: BackgroundTasks,
+    force: bool = Query(default=False, description="Force live Ayrshare metrics refresh"),
     user: dict = Depends(get_current_user),
 ):
-    """Mirror OAuth-linked profiles into `analytics_tracked_accounts` so the
-    Accounts grid Studio filter matches reality even when IG sends a human
-    `displayName` that doesn't intersect with scraped `@handle`s.
+    """Mirror OAuth-linked profiles into `analytics_tracked_accounts`.
 
-    Idempotent — safe on every Publish > Analytics landing."""
-    studio_service.allow_immediate_sync(user["id"])
-    counts = await studio_service.sync_studio_connections_for_user(user["id"])
+    Linking completes in the HTTP response; metrics refresh runs in the
+    background unless data is fresh (<24h) and ``force`` is false."""
+    user_id = user["id"]
+    settings = analytics_db.get_analytics_settings(user_id)
+    counts = await studio_service.sync_studio_connections_for_user(
+        user_id,
+        force_metrics=force,
+        skip_pipeline=True,
+    )
+    profile_key = analytics_db.get_ayrshare_profile_key(user_id)
+    if profile_key:
+        platform_usernames = await studio_service._connected_platform_usernames(
+            user_id, profile_key,
+        )
+        should_refresh = force or studio_service.metrics_refresh_is_stale(settings)
+        if platform_usernames and should_refresh:
+            background_tasks.add_task(
+                studio_service.run_studio_pipeline_background,
+                user_id,
+                profile_key,
+                platform_usernames,
+                force_metrics=True,
+            )
     return SyncStudioConnectionsResponse(**counts)
 
 
-@router.post("/refresh-all", response_model=RefreshAllResponse)
+async def _execute_refresh_all(user_id: str) -> None:
+    """Background worker for POST /refresh-all."""
+    _refresh_jobs[user_id] = {
+        "status": "running",
+        "started_at": _iso_now(),
+        "finished_at": None,
+        "error_message": None,
+    }
+    try:
+        sync = await studio_service.sync_studio_connections_for_user(
+            user_id,
+            force_metrics=True,
+            skip_pipeline=False,
+        )
+        profile_key = analytics_db.get_ayrshare_profile_key(user_id)
+        metric_counts = await studio_service.refresh_all_post_metrics(
+            user_id, profile_key, include_external=False,
+        )
+        metrics_refreshed = metric_counts.get("studio", 0) + metric_counts.get("external", 0)
+        breakdowns_queued = studio_service.enqueue_all_account_breakdowns(
+            user_id,
+            force=True,
+        )
+        settings = analytics_db.get_analytics_settings(user_id)
+        _refresh_jobs[user_id] = {
+            "status": "completed",
+            "started_at": _refresh_jobs[user_id].get("started_at"),
+            "finished_at": _iso_now(),
+            "error_message": None,
+            "last_metrics_refreshed_at": settings.get("last_metrics_refreshed_at"),
+            "publications_synced": sync.get("publications_synced", 0),
+            "metrics_refreshed": metrics_refreshed,
+            "breakdowns_queued": breakdowns_queued,
+            "linked_profiles": sync.get("linked_profiles", 0),
+            "tracked_rows_linked": sync.get("tracked_rows_linked", 0),
+            "scrape_jobs_enqueued": sync.get("scrape_jobs_enqueued", 0),
+        }
+    except Exception as exc:
+        settings = analytics_db.get_analytics_settings(user_id)
+        _refresh_jobs[user_id] = {
+            "status": "failed",
+            "started_at": _refresh_jobs.get(user_id, {}).get("started_at"),
+            "finished_at": _iso_now(),
+            "error_message": str(exc),
+            "last_metrics_refreshed_at": settings.get("last_metrics_refreshed_at"),
+        }
+
+
+@router.post("/refresh-all", response_model=RefreshAllResponse, status_code=202)
 async def api_refresh_all(
     background_tasks: BackgroundTasks,
     user: dict = Depends(get_current_user),
 ):
-    """Full analytics refresh — Connections sync, Studio publications, live
-    Ayrshare metrics for posted content, and AI breakdowns for Studio videos.
+    """Full analytics refresh — queued for background processing.
 
     External (BrightData) accounts are deliberately NOT re-scraped here — they
     are analyzed once on first add and afterwards only via the per-account
     "Analyze" button (``POST /tracked-accounts/{id}/refresh``)."""
     user_id = user["id"]
+    studio_service.allow_immediate_sync(user_id)
+    _refresh_jobs[user_id] = {
+        "status": "queued",
+        "started_at": _iso_now(),
+        "finished_at": None,
+        "error_message": None,
+    }
+    background_tasks.add_task(_execute_refresh_all, user_id)
+    return RefreshAllResponse(status="queued")
 
-    sync = await api_sync_studio_connections(background_tasks, user)
 
-    profile_key = analytics_db.get_ayrshare_profile_key(user_id)
-    metric_counts = await studio_service.refresh_all_post_metrics(
-        user_id, profile_key, include_external=False,
-    )
-    metrics_refreshed = metric_counts.get("studio", 0) + metric_counts.get("external", 0)
-
-    breakdowns_queued = studio_service.enqueue_all_account_breakdowns(
-        user_id,
-        force=True,
-    )
-
-    return RefreshAllResponse(
-        publications_synced=sync.publications_synced,
-        metrics_refreshed=metrics_refreshed,
-        breakdowns_queued=breakdowns_queued,
-        linked_profiles=sync.linked_profiles,
-        tracked_rows_linked=sync.tracked_rows_linked,
-        scrape_jobs_enqueued=sync.scrape_jobs_enqueued,
+@router.get("/refresh-status", response_model=RefreshStatusResponse)
+def api_refresh_status(user: dict = Depends(get_current_user)):
+    """Poll refresh job state + last known metrics timestamp."""
+    user_id = user["id"]
+    settings = analytics_db.get_analytics_settings(user_id)
+    job = _refresh_jobs.get(user_id) or {}
+    status = job.get("status") or "idle"
+    return RefreshStatusResponse(
+        status=status,
+        last_metrics_refreshed_at=settings.get("last_metrics_refreshed_at"),
+        started_at=job.get("started_at"),
+        finished_at=job.get("finished_at"),
+        error_message=job.get("error_message"),
     )
 
 
@@ -971,7 +1045,7 @@ def api_account_strategy_report(
 
 @router.get("/stats", response_model=StatsResponse)
 def api_stats(
-    period: Optional[str] = Query(default="30d"),
+    period: Optional[str] = Query(default=DEFAULT_ANALYTICS_PERIOD),
     platform: Optional[str] = Query(default=None),
     source: Optional[str] = Query(default=None),
     username: Optional[str] = Query(default=None),
@@ -988,18 +1062,26 @@ def api_stats(
     everything in one round-trip.
     """
     days = _period_days(period)
-    base = analytics_db.stats(
-        user["id"], period_days=days,
-        platform=platform, source=source, username=username,
+    period_rows, all_rows = analytics_db._fetch_dashboard_posts(
+        user["id"],
+        period_days=days,
+        platform=platform,
+        source=source,
+        username=username,
+        limit=500,
     )
-    extras = analytics_db.stats_extras(
-        user["id"], period_days=days,
-        platform=platform, source=source, username=username,
+    base = analytics_db.stats_from_rows(
+        user["id"],
+        period_rows,
+        all_rows,
+        platform=platform,
+        source=source,
+        username=username,
     )
-    dist = analytics_db.stats_distribution(
-        user["id"], period_days=days,
-        platform=platform, source=source, username=username,
+    extras = analytics_db.stats_extras_from_rows(
+        period_rows, all_rows, period_days=days,
     )
+    dist = analytics_db.stats_distribution_from_rows(period_rows)
     return StatsResponse(
         **base,
         **extras,
@@ -1010,7 +1092,7 @@ def api_stats(
 
 @router.get("/stats/distribution")
 def api_stats_distribution(
-    period: Optional[str] = Query(default="30d"),
+    period: Optional[str] = Query(default=DEFAULT_ANALYTICS_PERIOD),
     platform: Optional[str] = Query(default=None),
     source: Optional[str] = Query(default=None),
     username: Optional[str] = Query(default=None),
@@ -1038,7 +1120,7 @@ def api_stats_distribution(
 
 @router.get("/stats/cumulative", response_model=CumulativeStatsResponse)
 def api_stats_cumulative(
-    period: Optional[str] = Query(default="30d"),
+    period: Optional[str] = Query(default=DEFAULT_ANALYTICS_PERIOD),
     platform: Optional[str] = Query(default=None),
     source: Optional[str] = Query(default=None),
     username: Optional[str] = Query(default=None),
@@ -1098,53 +1180,35 @@ def _compute_health_score(*, avg_engagement_rate: float, posts_in_period: int) -
 @router.get("/accounts", response_model=AccountAggregatesResponse)
 def api_list_accounts_with_aggregates(
     background_tasks: BackgroundTasks,
-    period: Optional[str] = Query(default="30d"),
+    period: Optional[str] = Query(default=DEFAULT_ANALYTICS_PERIOD),
     user: dict = Depends(get_current_user),
 ):
     background_tasks.add_task(_background_stale_metrics_refresh, user["id"])
     period_days = _period_days(period)
     accounts = analytics_db.list_tracked_accounts(user["id"])
+    all_posts = analytics_db.fetch_all_posts_for_account_aggregates(user["id"])
+    posts_by_account = analytics_db.group_posts_by_account(all_posts)
     aggregates: list[TrackedAccountAggregateOut] = []
     total_posts_all = 0
     health_scores: list[int] = []
 
     for a in accounts:
-        post_source = None  # Studio-linked: show scraped feed + app-published posts
-        posts = analytics_db.list_account_posts(
-            user["id"],
-            platform=a["platform"],
-            username=a["username"],
-            period_days=period_days,
-            source=post_source,
-        )
-        posts_for_er = analytics_db.list_account_posts(
-            user["id"],
-            platform=a["platform"],
-            username=a["username"],
-            source=post_source,
-        )
-        total_views = sum(int(p.get("views") or 0) for p in posts)
-        total_eng = sum(int(p.get("total_engagement") or 0) for p in posts)
-        posts_in_period = len(posts)
-        posts_total = len(posts_for_er)
+        plat = (a.get("platform") or "").strip().lower()
+        nick = (a.get("username") or "").strip().lower().lstrip("@")
+        account_posts = posts_by_account.get((plat, nick), [])
+        posts_in_period = analytics_db._filter_posts_by_period(account_posts, period_days)
+        total_views = sum(int(p.get("views") or 0) for p in posts_in_period)
+        total_eng = sum(int(p.get("total_engagement") or 0) for p in posts_in_period)
+        posts_in_period_count = len(posts_in_period)
         followers = int(a.get("follower_count") or a.get("followers") or 0)
-        avg_eng_rate = analytics_db.compute_engagement_rate(posts_for_er, followers)
-        total_posts_all += posts_in_period
-        # Prefer the stored health score (if a future cron sets it) over our
-        # heuristic — but the heuristic is good enough for v2 launch.
+        avg_eng_rate = analytics_db.compute_engagement_rate(account_posts, followers)
+        total_posts_all += posts_in_period_count
         score = a.get("health_score")
         if score is None:
             score = _compute_health_score(
-                avg_engagement_rate=avg_eng_rate, posts_in_period=posts_in_period,
+                avg_engagement_rate=avg_eng_rate,
+                posts_in_period=posts_in_period_count,
             )
-            # Persist the freshly-computed score so the next refresh is cheap.
-            if score is not None:
-                try:
-                    analytics_db.update_tracked_account_config(
-                        user["id"], a["id"], {"health_score": score},
-                    )
-                except Exception:
-                    pass  # best-effort — score is recomputed on every fetch anyway
         if score is not None:
             health_scores.append(score)
         aggregates.append(TrackedAccountAggregateOut(
@@ -1152,7 +1216,7 @@ def api_list_accounts_with_aggregates(
             total_views=total_views,
             total_engagement=total_eng,
             avg_engagement_rate=avg_eng_rate,
-            posts_in_period=posts_in_period,
+            posts_in_period=posts_in_period_count,
             health_label=_health_label_from_score(score),
         ))
 
@@ -1443,7 +1507,7 @@ def api_update_settings(
 
 @router.get("/export/csv")
 def api_export_csv(
-    period: Optional[str] = Query(default="30d"),
+    period: Optional[str] = Query(default=DEFAULT_ANALYTICS_PERIOD),
     platform: Optional[str] = Query(default=None),
     source: Optional[str] = Query(default=None),
     username: Optional[str] = Query(default=None),

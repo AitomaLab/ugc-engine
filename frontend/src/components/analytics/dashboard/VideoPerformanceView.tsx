@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from '@/lib/i18n';
 import VideoThumbnail from '@/components/ui/VideoThumbnail';
 import {
@@ -43,12 +43,15 @@ export default function VideoPerformanceView({ period, refreshKey = 0, onOpenPos
     const { t } = useTranslation();
     const [posts, setPosts] = useState<AnalyticsPost[]>([]);
     const [loading, setLoading] = useState(true);
+    const [isRefreshing, setIsRefreshing] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const postsRef = useRef<AnalyticsPost[]>([]);
 
     useEffect(() => {
         let cancelled = false;
         (async () => {
-            setLoading(true);
+            if (!postsRef.current.length) setLoading(true);
+            setIsRefreshing(true);
             setError(null);
             const params = new URLSearchParams({
                 period: periodToApiParam(period),
@@ -64,12 +67,17 @@ export default function VideoPerformanceView({ period, refreshKey = 0, onOpenPos
                 );
                 if (cancelled) return;
                 setPosts(data.items || []);
+                postsRef.current = data.items || [];
             } catch (e) {
                 if (cancelled) return;
                 setError(e instanceof Error ? e.message : 'Failed to load video performance');
                 setPosts([]);
+                postsRef.current = [];
             } finally {
-                if (!cancelled) setLoading(false);
+                if (!cancelled) {
+                    setLoading(false);
+                    setIsRefreshing(false);
+                }
             }
         })();
         return () => { cancelled = true; };

@@ -6,6 +6,8 @@ import type { AnalyticsPlatform } from '@/lib/types';
 import {
     useAnalyticsCumulative,
     useAnalyticsStats,
+    useMetricsFreshness,
+    timeAgo,
     type AccountFilter,
     type AccountOwnership,
     type Period,
@@ -128,25 +130,26 @@ export default function DashboardView({
         ? (selectedAccount.platform as AnalyticsPlatform)
         : 'all';
 
-    const { data: stats, loading: statsLoading } = useAnalyticsStats(
+    const { data: stats, loading: statsLoading, isRefreshing: statsRefreshing } = useAnalyticsStats(
         period,
         platformFilter,
         'all',
         accountFilter,
         refreshKey,
     );
-    const { data: cumulative, loading: cumulativeLoading } = useAnalyticsCumulative(
+    const { data: cumulative, loading: cumulativeLoading, isRefreshing: cumulativeRefreshing } = useAnalyticsCumulative(
         period,
         platformFilter,
         'all',
         accountFilter,
         refreshKey,
     );
+    const { lastRefreshedAt } = useMetricsFreshness(refreshKey);
 
     const showKpiSkeleton = statsLoading && !stats;
     const showChartSkeleton = cumulativeLoading && !cumulative;
     const showPanelSkeleton = statsLoading && !stats;
-    const isRefreshing = statsLoading || cumulativeLoading;
+    const isRefreshing = statsRefreshing || cumulativeRefreshing || accountsLoading;
 
     return (
         <div
@@ -196,7 +199,14 @@ export default function DashboardView({
                 }}
             >
                 <SubviewToggle subview={subview} onChange={setSubview} />
-                <DashboardPeriodToggle period={period} onChange={onPeriodChange} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                    {lastRefreshedAt && (
+                        <span style={{ fontSize: 12, color: '#64748B', whiteSpace: 'nowrap' }}>
+                            {t('analytics.refresh.asOf').replace('{when}', timeAgo(lastRefreshedAt))}
+                        </span>
+                    )}
+                    <DashboardPeriodToggle period={period} onChange={onPeriodChange} />
+                </div>
             </div>
 
             {subview === 'accounts' ? (
@@ -366,13 +376,13 @@ export default function DashboardView({
                         )}
                     </div>
                 </>
-            ) : (
+            ) : subview === 'videos' ? (
                 <VideoPerformanceView
                     period={period}
                     refreshKey={refreshKey}
                     onOpenPost={onOpenPost}
                 />
-            )}
+            ) : null}
 
             <style>{`
                 .dash-kpi-grid {

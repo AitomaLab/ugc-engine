@@ -9,8 +9,8 @@ import DashboardView from '@/components/analytics/dashboard/DashboardView';
 import PostDetailModal from '@/components/analytics/PostDetailModal';
 import {
     ANALYTICS_STUDIO_SYNCED_EVENT,
+    DEFAULT_ANALYTICS_PERIOD,
     deleteTrackedAccount,
-    syncStudioConnections,
     useAccountAggregates,
     useConnections,
     useTrackedAccounts,
@@ -38,7 +38,7 @@ export default function AnalyticsTab() {
     const search = useSearchParams();
 
     // ── Filter state owned by the dashboard ────────────────────────────
-    const [period, setPeriod] = useState<Period>('30d');
+    const [period, setPeriod] = useState<Period>(DEFAULT_ANALYTICS_PERIOD);
 
     // ── Modal state ────────────────────────────────────────────────────
     // `?post=<id>` deep-link support — lets external surfaces (CTAs in the
@@ -99,24 +99,10 @@ export default function AnalyticsTab() {
         [activeAccountId, overviewAccountId, reloadAllMetrics],
     );
 
-    // ── Initial sync — mirror Studio connections into analytics_posts so
-    // the dashboard isn't empty on first load. Best-effort; widgets render
-    // happily against cached aggregates if this fails. ──────────────────
+    // ── Initial load — show cached DB aggregates immediately. Studio sync
+    // runs debounced in the background via GET /api/connections (see main.py).
     useEffect(() => {
-        let cancelled = false;
-        let followUpTimer: number | null = null;
         reloadAllMetrics();
-        syncStudioConnections().catch(() => { /* Best-effort */ }).finally(() => {
-            if (cancelled) return;
-            reloadAllMetrics();
-            followUpTimer = window.setTimeout(() => {
-                if (!cancelled) reloadAllMetrics();
-            }, 15_000);
-        });
-        return () => {
-            cancelled = true;
-            if (followUpTimer) window.clearTimeout(followUpTimer);
-        };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only bootstrap
     }, [reloadAllMetrics]);
 

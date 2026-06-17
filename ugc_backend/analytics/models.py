@@ -346,12 +346,21 @@ class SyncStudioConnectionsResponse(BaseModel):
 
 class RefreshAllResponse(BaseModel):
     """Summary for POST /refresh-all — studio sync + Ayrshare metrics + AI queue."""
-    publications_synced: int = Field(ge=0)
-    metrics_refreshed: int = Field(ge=0, description="Studio posts updated from Ayrshare analytics.")
-    breakdowns_queued: int = Field(ge=0, description="AI breakdown jobs started for Studio videos.")
-    linked_profiles: int = Field(ge=0)
-    tracked_rows_linked: int = Field(ge=0)
-    scrape_jobs_enqueued: int = Field(ge=0)
+    status: str = Field(default="queued", description="queued when accepted for background processing")
+    publications_synced: int = Field(default=0, ge=0)
+    metrics_refreshed: int = Field(default=0, description="Studio posts updated from Ayrshare analytics.")
+    breakdowns_queued: int = Field(default=0, description="AI breakdown jobs started for Studio videos.")
+    linked_profiles: int = Field(default=0, ge=0)
+    tracked_rows_linked: int = Field(default=0, ge=0)
+    scrape_jobs_enqueued: int = Field(default=0, ge=0)
+
+
+class RefreshStatusResponse(BaseModel):
+    status: str = Field(default="idle", description="idle | queued | running | completed | failed")
+    last_metrics_refreshed_at: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    error_message: Optional[str] = None
 
 
 class AccountStrategyReportResponse(BaseModel):

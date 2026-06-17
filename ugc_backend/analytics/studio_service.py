@@ -874,7 +874,12 @@ async def _connected_platform_usernames(
     return out
 
 
-async def sync_studio_connections_for_user(user_id: str) -> dict[str, int]:
+async def sync_studio_connections_for_user(
+    user_id: str,
+    *,
+    force_metrics: bool = False,
+    skip_pipeline: bool = False,
+) -> dict[str, int]:
     """Mirror OAuth-linked profiles into ``analytics_tracked_accounts``, sync
     Studio ``social_posts`` into ``analytics_posts``, refresh Ayrshare metrics,
     and queue AI breakdowns for Studio videos.
@@ -898,14 +903,14 @@ async def sync_studio_connections_for_user(user_id: str) -> dict[str, int]:
     }
 
     async def _finish_pipeline() -> None:
-        if not platform_usernames:
+        if not platform_usernames or skip_pipeline:
             return
         try:
             result = await run_connected_accounts_pipeline(
                 user_id,
                 profile_key,
                 platform_usernames,
-                force_metrics=True,
+                force_metrics=force_metrics,
             )
             counts["publications_synced"] = int(result.get("publications_synced") or 0)
         except Exception as exc:
@@ -980,9 +985,30 @@ async def sync_studio_connections_for_user(user_id: str) -> dict[str, int]:
 
 async def _background_sync_studio_connections(user_id: str) -> None:
     try:
-        await sync_studio_connections_for_user(user_id)
+        await sync_studio_connections_for_user(user_id, force_metrics=False)
     except Exception as exc:
         logger.warning("[analytics] background studio sync failed for %s: %s", user_id, exc)
+
+
+async def run_studio_pipeline_background(
+    user_id: str,
+    profile_key: Optional[str],
+    platform_usernames: dict[str, str],
+    *,
+    force_metrics: bool = False,
+) -> None:
+    """Metrics refresh + breakdown queue — never block read endpoints."""
+    if not platform_usernames or not profile_key:
+        return
+    try:
+        await run_connected_accounts_pipeline(
+            user_id,
+            profile_key,
+            platform_usernames,
+            force_metrics=force_metrics,
+        )
+    except Exception as exc:
+        logger.warning("[analytics] background pipeline failed for %s: %s", user_id, exc)
 
 
 def claim_debounced_sync(user_id: str) -> bool:

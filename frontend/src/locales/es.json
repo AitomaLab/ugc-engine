@@ -1349,6 +1349,7 @@
   "analytics.detail.template.hint": "Abre el flujo de Crear con el hook y caption de esta publicación pre-rellenados.",
   "analytics.refresh.cta": "Actualizar datos",
   "analytics.refresh.refreshing": "Actualizando…",
+  "analytics.refresh.asOf": "Métricas de hace {when}",
   "analytics.filters.sort.likes": "Más me gusta",
   "analytics.filters.sort.comments": "Más comentarios",
   "analytics.filters.exportCsv": "Exportar CSV",

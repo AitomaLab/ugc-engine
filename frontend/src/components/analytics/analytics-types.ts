@@ -244,7 +244,17 @@ export function periodToApiParam(period: Period): string {
     return period === 'quarter' ? '90d' : period;
 }
 
+export const DEFAULT_ANALYTICS_PERIOD: Period = '7d';
+
 export const DASHBOARD_PERIODS: Period[] = ['7d', '30d', 'quarter'];
+
+export interface RefreshStatusResponse {
+    status: 'idle' | 'queued' | 'running' | 'completed' | 'failed';
+    last_metrics_refreshed_at: string | null;
+    started_at?: string | null;
+    finished_at?: string | null;
+    error_message?: string | null;
+}
 export type PlatformFilter = 'all' | AnalyticsPlatform;
 export type SourceFilter = 'all' | AnalyticsSource;
 /**
@@ -476,6 +486,50 @@ export function useAnalyticsPosts(args: UseAnalyticsPostsArgs) {
     };
 }
 
+export async function pollRefreshStatus(
+    opts?: { maxMs?: number; intervalMs?: number },
+): Promise<RefreshStatusResponse> {
+    const maxMs = opts?.maxMs ?? 120_000;
+    const intervalMs = opts?.intervalMs ?? 2500;
+    const start = Date.now();
+    while (Date.now() - start < maxMs) {
+        const res = await analyticsFetch<RefreshStatusResponse>(
+            '/api/analytics/refresh-status',
+            { skipProjectScope: true },
+        );
+        if (res.status === 'completed' || res.status === 'failed') {
+            return res;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, intervalMs));
+    }
+    throw new Error('Refresh timed out — metrics may still be updating in the background.');
+}
+
+export function useMetricsFreshness(refreshKey = 0) {
+    const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
+    const [refreshing, setRefreshing] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const res = await analyticsFetch<RefreshStatusResponse>(
+                    '/api/analytics/refresh-status',
+                    { skipProjectScope: true },
+                );
+                if (cancelled) return;
+                setLastRefreshedAt(res.last_metrics_refreshed_at);
+                setRefreshing(res.status === 'queued' || res.status === 'running');
+            } catch {
+                if (!cancelled) setLastRefreshedAt(null);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [refreshKey]);
+
+    return { lastRefreshedAt, refreshing };
+}
+
 export function useAnalyticsStats(
     period: Period,
     platform: PlatformFilter,
@@ -485,8 +539,10 @@ export function useAnalyticsStats(
 ) {
     const [data, setData] = useState<AnalyticsStats | null>(null);
     const [loading, setLoading] = useState(true);
+    const [isRefreshing, setIsRefreshing] = useState(false);
     const requestGen = useRef(0);
     const prevAccountKey = useRef('');
+    const dataRef = useRef<AnalyticsStats | null>(null);
 
     const accountKey = account ? `${account.platform}:${account.username}` : '';
     const scopeKey = `${periodToApiParam(period)}|${platform}|${source}|${accountKey}|${refreshKey}`;
@@ -496,9 +552,11 @@ export function useAnalyticsStats(
         const gen = ++requestGen.current;
         if (prevAccountKey.current !== accountKey) {
             setData(null);
+            dataRef.current = null;
             prevAccountKey.current = accountKey;
         }
-        setLoading(true);
+        if (!dataRef.current) setLoading(true);
+        setIsRefreshing(true);
 
         const effectivePlatform = account ? account.platform : platform;
         const params = new URLSearchParams({
@@ -514,11 +572,21 @@ export function useAnalyticsStats(
                     `/api/analytics/stats?${params.toString()}`,
                     { skipProjectScope: true },
                 );
-                if (!cancelled && gen === requestGen.current) setData(res);
+                if (!cancelled && gen === requestGen.current) {
+                    setData(res);
+                    dataRef.current = res;
+                }
             } catch {
-                if (!cancelled && gen === requestGen.current) setData(emptyStats());
+                if (!cancelled && gen === requestGen.current) {
+                    const empty = emptyStats();
+                    setData(empty);
+                    dataRef.current = empty;
+                }
             } finally {
-                if (!cancelled && gen === requestGen.current) setLoading(false);
+                if (!cancelled && gen === requestGen.current) {
+                    setLoading(false);
+                    setIsRefreshing(false);
+                }
             }
         })();
 
@@ -528,7 +596,8 @@ export function useAnalyticsStats(
     }, [scopeKey]);
 
     const reload = useCallback(async () => {
-        setLoading(true);
+        if (!dataRef.current) setLoading(true);
+        setIsRefreshing(true);
         const effectivePlatform = account ? account.platform : platform;
         const params = new URLSearchParams({
             period: periodToApiParam(period),
@@ -542,14 +611,18 @@ export function useAnalyticsStats(
                 { skipProjectScope: true },
             );
             setData(res);
+            dataRef.current = res;
         } catch {
-            setData(emptyStats());
+            const empty = emptyStats();
+            setData(empty);
+            dataRef.current = empty;
         } finally {
             setLoading(false);
+            setIsRefreshing(false);
         }
     }, [period, platform, source, accountKey, refreshKey, account]);
 
-    return { data, loading, reload };
+    return { data, loading, isRefreshing, reload };
 }
 
 function emptyStats(): AnalyticsStats {
@@ -580,10 +653,15 @@ export function useAnalyticsCumulative(
     account?: AccountFilter,
     refreshKey = 0,
 ) {
+    const emptyCumulative = (): CumulativeStatsResponse => ({
+        points: [], total_views: 0, total_engagement: 0, total_posts: 0,
+    });
     const [data, setData] = useState<CumulativeStatsResponse | null>(null);
     const [loading, setLoading] = useState(true);
+    const [isRefreshing, setIsRefreshing] = useState(false);
     const requestGen = useRef(0);
     const prevAccountKey = useRef('');
+    const dataRef = useRef<CumulativeStatsResponse | null>(null);
 
     const accountKey = account ? `${account.platform}:${account.username}` : '';
     const scopeKey = `${periodToApiParam(period)}|${platform}|${source}|${accountKey}|${refreshKey}`;
@@ -593,9 +671,11 @@ export function useAnalyticsCumulative(
         const gen = ++requestGen.current;
         if (prevAccountKey.current !== accountKey) {
             setData(null);
+            dataRef.current = null;
             prevAccountKey.current = accountKey;
         }
-        setLoading(true);
+        if (!dataRef.current) setLoading(true);
+        setIsRefreshing(true);
 
         const effectivePlatform = account ? account.platform : platform;
         const params = new URLSearchParams({
@@ -611,13 +691,21 @@ export function useAnalyticsCumulative(
                     `/api/analytics/stats/cumulative?${params.toString()}`,
                     { skipProjectScope: true },
                 );
-                if (!cancelled && gen === requestGen.current) setData(res);
+                if (!cancelled && gen === requestGen.current) {
+                    setData(res);
+                    dataRef.current = res;
+                }
             } catch {
                 if (!cancelled && gen === requestGen.current) {
-                    setData({ points: [], total_views: 0, total_engagement: 0, total_posts: 0 });
+                    const empty = emptyCumulative();
+                    setData(empty);
+                    dataRef.current = empty;
                 }
             } finally {
-                if (!cancelled && gen === requestGen.current) setLoading(false);
+                if (!cancelled && gen === requestGen.current) {
+                    setLoading(false);
+                    setIsRefreshing(false);
+                }
             }
         })();
 
@@ -627,7 +715,8 @@ export function useAnalyticsCumulative(
     }, [scopeKey]);
 
     const reload = useCallback(async () => {
-        setLoading(true);
+        if (!dataRef.current) setLoading(true);
+        setIsRefreshing(true);
         const effectivePlatform = account ? account.platform : platform;
         const params = new URLSearchParams({
             period: periodToApiParam(period),
@@ -641,14 +730,18 @@ export function useAnalyticsCumulative(
                 { skipProjectScope: true },
             );
             setData(res);
+            dataRef.current = res;
         } catch {
-            setData({ points: [], total_views: 0, total_engagement: 0, total_posts: 0 });
+            const empty = emptyCumulative();
+            setData(empty);
+            dataRef.current = empty;
         } finally {
             setLoading(false);
+            setIsRefreshing(false);
         }
     }, [period, platform, source, accountKey, refreshKey, account]);
 
-    return { data, loading, reload };
+    return { data, loading, isRefreshing, reload };
 }
 
 /** Backward-compat alias — older callers imported this name. */
@@ -699,12 +792,18 @@ export interface AccountAggregatesResponse {
  * switches between the two tabs.
  */
 export function useAccountAggregates(period: Period) {
+    const emptyAggregates = (): AccountAggregatesResponse => ({
+        accounts: [], total_accounts: 0, total_scraped_posts: 0, avg_health_score: null,
+    });
     const [data, setData] = useState<AccountAggregatesResponse | null>(null);
     const [loading, setLoading] = useState(true);
+    const [isRefreshing, setIsRefreshing] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const dataRef = useRef<AccountAggregatesResponse | null>(null);
 
     const reload = useCallback(async () => {
-        setLoading(true);
+        if (!dataRef.current) setLoading(true);
+        setIsRefreshing(true);
         setError(null);
         try {
             const res = await analyticsFetch<AccountAggregatesResponse>(
@@ -712,11 +811,15 @@ export function useAccountAggregates(period: Period) {
                 { skipProjectScope: true },
             );
             setData(res);
+            dataRef.current = res;
         } catch (e) {
             setError(e instanceof Error ? e.message : 'Failed to load accounts');
-            setData({ accounts: [], total_accounts: 0, total_scraped_posts: 0, avg_health_score: null });
+            const empty = emptyAggregates();
+            setData(empty);
+            dataRef.current = empty;
         } finally {
             setLoading(false);
+            setIsRefreshing(false);
         }
     }, [period]);
 
@@ -724,7 +827,7 @@ export function useAccountAggregates(period: Period) {
         reload();
     }, [reload]);
 
-    return { data, loading, error, reload };
+    return { data, loading, isRefreshing, error, reload };
 }
 
 export interface AccountTrendResponse {
@@ -1092,8 +1195,9 @@ export const ANALYTICS_STUDIO_SYNCED_EVENT = 'analyticsStudioSynced';
  * Mirror OAuth connections into tracked accounts, sync scheduled/posted Studio
  * content into analytics_posts, refresh metrics, and queue AI breakdowns.
  */
-export async function syncStudioConnections(): Promise<void> {
-    await analyticsFetch('/api/analytics/sync-studio-connections', {
+export async function syncStudioConnections(options?: { force?: boolean }): Promise<void> {
+    const qs = options?.force ? '?force=true' : '';
+    await analyticsFetch(`/api/analytics/sync-studio-connections${qs}`, {
         method: 'POST',
         skipProjectScope: true,
     });

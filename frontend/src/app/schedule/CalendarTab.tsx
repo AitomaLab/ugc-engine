@@ -502,7 +502,7 @@ export default function CalendarTab() {
                 onClose={() => setScheduleModalOpen(false)}
                 onScheduled={async () => {
                     await loadPosts();
-                    syncStudioConnections().catch(() => { /* backend also syncs */ });
+                    syncStudioConnections({ force: true }).catch(() => { /* backend also syncs */ });
                 }}
             />
         </>
