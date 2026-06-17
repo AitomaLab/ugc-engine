@@ -3,6 +3,7 @@
 import { usePathname } from 'next/navigation';
 import { AppProvider } from '@/providers/AppProvider';
 import { Header } from '@/components/layout/Header';
+import { FeedbackBubble } from '@/components/feedback/FeedbackBubble';
 
 /**
  * Client-side providers wrapper.
@@ -28,6 +29,7 @@ export function ClientProviders({ children }: { children: React.ReactNode }) {
       <main className="app-body">
         {children}
       </main>
+      <FeedbackBubble />
     </AppProvider>
   );
 }
