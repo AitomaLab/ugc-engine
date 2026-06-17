@@ -3821,13 +3821,9 @@ def api_get_schedule(
     """Return all social posts for the user within the given date range."""
     sb = get_supabase()
     user_id = user["id"]
-    schedule_cols = (
-        "id,platform,status,caption,scheduled_at,posted_at,video_job_id,"
-        "product_shot_id,ayrshare_post_id,error_message,hashtags"
-    )
     rows = (
         sb.table("social_posts")
-        .select(schedule_cols)
+        .select("*")
         .eq("user_id", user_id)
         .gte("scheduled_at", start_date)
         .lte("scheduled_at", end_date)
@@ -3837,8 +3833,16 @@ def api_get_schedule(
     raw_rows = [dict(r) for r in (rows.data or [])]
     job_ids = [str(r["video_job_id"]) for r in raw_rows if r.get("video_job_id")]
     shot_ids = [str(r["product_shot_id"]) for r in raw_rows if r.get("product_shot_id")]
-    jobs_by_id = get_jobs_by_ids(job_ids, user_id=user_id)
-    shots_by_id = get_product_shots_by_ids(shot_ids)
+    jobs_by_id: dict[str, dict] = {}
+    shots_by_id: dict[str, dict] = {}
+    try:
+        jobs_by_id = get_jobs_by_ids(job_ids, user_id=user_id)
+    except Exception as exc:
+        print(f"[schedule] thumbnail job batch failed: {exc}")
+    try:
+        shots_by_id = get_product_shots_by_ids(shot_ids)
+    except Exception as exc:
+        print(f"[schedule] thumbnail shot batch failed: {exc}")
     shot_ownership: dict[str, bool] = {}
 
     enriched: List[dict] = []

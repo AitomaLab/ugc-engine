@@ -339,12 +339,9 @@ def get_jobs_by_ids(job_ids: list[str], *, user_id: str) -> dict[str, dict]:
     if not ids:
         return {}
     sb = get_supabase()
-    res = (
-        sb.table("video_jobs")
-        .select("id,thumbnail_url,preview_url,user_id")
-        .in_("id", ids)
-        .execute()
-    )
+    # select("*") — same as get_job(); avoids PGRST204 when optional columns
+    # (e.g. thumbnail_url on clone_video_jobs) are missing in older DBs.
+    res = sb.table("video_jobs").select("*").in_("id", ids).execute()
     out: dict[str, dict] = {}
     for row in res.data or []:
         if str(row.get("user_id")) == str(user_id):
@@ -353,7 +350,7 @@ def get_jobs_by_ids(job_ids: list[str], *, user_id: str) -> dict[str, dict]:
     if missing:
         clone_res = (
             sb.table("clone_video_jobs")
-            .select("id,thumbnail_url,preview_url,user_id")
+            .select("*")
             .in_("id", missing)
             .execute()
         )
@@ -369,12 +366,7 @@ def get_product_shots_by_ids(shot_ids: list[str]) -> dict[str, dict]:
     if not ids:
         return {}
     sb = get_supabase()
-    res = (
-        sb.table("product_shots")
-        .select("id,image_url,video_url,result_url,product_id,project_id")
-        .in_("id", ids)
-        .execute()
-    )
+    res = sb.table("product_shots").select("*").in_("id", ids).execute()
     return {str(row["id"]): row for row in (res.data or [])}
 
 def create_job(data: dict):
