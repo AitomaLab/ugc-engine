@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { apiFetch } from '@/lib/utils';
 import { syncStudioConnections } from '@/components/analytics/analytics-types';
@@ -45,27 +45,48 @@ export default function CalendarTab() {
     const [posts, setPosts] = useState<SocialPost[]>([]);
     const [connectedCount, setConnectedCount] = useState(0);
     const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
-    const [loading, setLoading] = useState(true);
+    const [initialLoading, setInitialLoading] = useState(true);
+    const [isRefreshing, setIsRefreshing] = useState(false);
+    const postsRef = useRef<SocialPost[]>([]);
     const [cancellingId, setCancellingId] = useState<string | null>(null);
     const [cancelError, setCancelError] = useState<string | null>(null);
+
+    const loadConnectedCount = useCallback(async () => {
+        try {
+            const d = await apiFetch<{ socials: SocialConnection[] }>(
+                '/api/connections?cached=true',
+            );
+            setConnectedCount((d.socials || []).length);
+        } catch {
+            /* keep prior count */
+        }
+    }, []);
 
     const year = viewDate.getFullYear();
     const month = viewDate.getMonth();
     const days = useMemo(() => getMonthDays(year, month), [year, month]);
 
     const loadPosts = useCallback(async () => {
-        setLoading(true);
+        const hasCached = postsRef.current.length > 0;
+        if (!hasCached) setInitialLoading(true);
+        setIsRefreshing(true);
         const start = new Date(year, month, 1).toISOString();
         const end = new Date(year, month + 1, 0, 23, 59, 59).toISOString();
         try {
             const d = await apiFetch<SocialPost[]>(
                 `/api/schedule?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}`,
             );
-            setPosts(d || []);
+            const next = d || [];
+            setPosts(next);
+            postsRef.current = next;
         } catch {
-            setPosts([]);
+            if (!hasCached) {
+                setPosts([]);
+                postsRef.current = [];
+            }
         } finally {
-            setLoading(false);
+            setInitialLoading(false);
+            setIsRefreshing(false);
         }
     }, [year, month]);
 
@@ -74,12 +95,10 @@ export default function CalendarTab() {
         loadPosts();
     }, [loadPosts]);
 
-    /* Connected platforms count (shown in stats strip) — refetch occasionally */
+    /* Connected platforms count — DB cache only; live refresh happens in background */
     useEffect(() => {
-        apiFetch<{ socials: SocialConnection[] }>('/api/connections')
-            .then(d => setConnectedCount((d.socials || []).length))
-            .catch(() => {});
-    }, []);
+        loadConnectedCount();
+    }, [loadConnectedCount]);
 
     const cancelScheduledPost = async (post: SocialPost) => {
         if (post.status !== 'scheduled' || cancellingId) return;
@@ -89,9 +108,7 @@ export default function CalendarTab() {
         try {
             await apiFetch(`/api/schedule/${post.id}`, { method: 'DELETE' });
             await loadPosts();
-            apiFetch<{ socials: SocialConnection[] }>('/api/connections')
-                .then(d => setConnectedCount((d.socials || []).length))
-                .catch(() => {});
+            loadConnectedCount();
         } catch (err) {
             setCancelError(err instanceof Error ? err.message : t('schedule.cancelFailed'));
             await loadPosts();
@@ -260,9 +277,31 @@ export default function CalendarTab() {
             </div>
 
             {/* Main layout: calendar + sidebar */}
-            <div style={{ display: 'flex', gap: '24px' }}>
+            <div style={{ display: 'flex', gap: '24px', position: 'relative' }}>
+                {isRefreshing && !initialLoading && (
+                    <div
+                        aria-hidden
+                        style={{
+                            position: 'absolute',
+                            top: 8,
+                            right: 8,
+                            width: 18,
+                            height: 18,
+                            borderRadius: '50%',
+                            border: '2px solid rgba(51,122,255,0.25)',
+                            borderTopColor: 'var(--blue)',
+                            animation: 'calendarRefreshSpin 0.8s linear infinite',
+                            zIndex: 2,
+                        }}
+                    />
+                )}
                 {/* Left: Calendar */}
-                <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                    flex: 1,
+                    minWidth: 0,
+                    opacity: isRefreshing && !initialLoading ? 0.65 : 1,
+                    transition: 'opacity 0.2s ease',
+                }}>
                     {/* Month navigator */}
                     <div style={{
                         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -379,7 +418,7 @@ export default function CalendarTab() {
                                 {cancelError}
                             </div>
                         )}
-                        {loading ? (
+                        {initialLoading && posts.length === 0 ? (
                             <div style={{ color: 'var(--text-3)', fontSize: '13px' }}>{t('common.loading')}</div>
                         ) : upcoming.length === 0 ? (
                             <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--text-3)' }}>
@@ -502,9 +541,11 @@ export default function CalendarTab() {
                 onClose={() => setScheduleModalOpen(false)}
                 onScheduled={async () => {
                     await loadPosts();
+                    loadConnectedCount();
                     syncStudioConnections({ force: true }).catch(() => { /* backend also syncs */ });
                 }}
             />
+            <style>{`@keyframes calendarRefreshSpin { to { transform: rotate(360deg); } }`}</style>
         </>
     );
 }

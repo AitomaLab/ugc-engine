@@ -41,9 +41,9 @@ from ugc_db.db_manager import (
     list_scripts, create_script, update_script, delete_script, get_script,
     bulk_create_scripts, increment_script_usage,
     list_app_clips, list_app_clips_by_product, update_app_clip, create_app_clip, delete_app_clip,
-    list_jobs, get_job, create_job, update_job, delete_job,
+    list_jobs, get_job, get_jobs_by_ids, create_job, update_job, delete_job,
     list_products, create_product, delete_product, get_product, update_product,
-    list_product_shots, get_product_shot, create_product_shot, update_product_shot, delete_product_shot,
+    list_product_shots, get_product_shot, get_product_shots_by_ids, create_product_shot, update_product_shot, delete_product_shot,
     # SaaS layer
     get_profile, update_profile,
     create_project as db_create_project, update_project as db_update_project, delete_project as db_delete_project,
@@ -3494,9 +3494,31 @@ async def api_ayrshare_jwt(request: Request, user: dict = Depends(get_current_us
 # Connections — List connected social accounts
 # ---------------------------------------------------------------------------
 
+def _socials_from_connected_accounts_cache(cached) -> list[dict]:
+    """Normalize ``connected_accounts`` JSONB into the API ``socials`` list shape."""
+    if isinstance(cached, list) and cached:
+        out: list[dict] = []
+        for item in cached:
+            if isinstance(item, dict):
+                plat = str(item.get("platform") or "").strip().lower()
+                if plat:
+                    out.append({**item, "platform": plat})
+            elif str(item).strip():
+                out.append({"platform": str(item).strip().lower()})
+        return out
+    if isinstance(cached, dict):
+        return [
+            {"platform": str(k).strip().lower(), **(v if isinstance(v, dict) else {})}
+            for k, v in cached.items()
+            if str(k).strip()
+        ]
+    return []
+
+
 @app.get("/api/connections")
 async def api_get_connections(
     background_tasks: BackgroundTasks,
+    cached: bool = Query(default=False, description="Return DB-cached accounts without live Ayrshare"),
     user: dict = Depends(get_current_user),
 ):
     """Return the user's connected social media accounts."""
@@ -3506,9 +3528,31 @@ async def api_get_connections(
     if not profile_row:
         return {"socials": []}
 
+    if cached:
+        cached_accounts = None
+        try:
+            cache_row = (
+                sb.table("ayrshare_profiles")
+                .select("connected_accounts")
+                .eq("user_id", user["id"])
+                .limit(1)
+                .execute()
+            )
+            if cache_row.data:
+                cached_accounts = cache_row.data[0].get("connected_accounts")
+        except Exception:
+            cached_accounts = None
+        socials = _socials_from_connected_accounts_cache(cached_accounts)
+        if analytics_studio_service.claim_debounced_sync(user["id"]):
+            background_tasks.add_task(
+                analytics_studio_service.sync_studio_connections_for_user,
+                user["id"],
+            )
+        return {"socials": socials}
+
     profile_key = profile_row["ayrshare_profile_key"]
     ref_id = profile_row.get("ayrshare_ref_id")
-    cached = None
+    cached_accounts = None
     try:
         cache_row = (
             sb.table("ayrshare_profiles")
@@ -3518,9 +3562,9 @@ async def api_get_connections(
             .execute()
         )
         if cache_row.data:
-            cached = cache_row.data[0].get("connected_accounts")
+            cached_accounts = cache_row.data[0].get("connected_accounts")
     except Exception:
-        cached = None
+        cached_accounts = None
     # Fetch live from Ayrshare (`GET /user` with Profile-Key header).
     try:
         socials = await ayrshare_client.get_user_socials(profile_key, ref_id=ref_id)
@@ -3528,18 +3572,7 @@ async def api_get_connections(
             # Webhook cache fallback — populated by POST /api/webhooks/ayrshare
             # when Ayrshare pushes a social-account change before GET /user
             # catches up. Column may be absent on older DBs — ignore if so.
-            if isinstance(cached, list) and cached:
-                socials = [
-                    {"platform": str(item).strip().lower()}
-                    for item in cached
-                    if str(item).strip()
-                ]
-            elif isinstance(cached, dict):
-                socials = [
-                    {"platform": str(k).strip().lower(), **(v if isinstance(v, dict) else {})}
-                    for k, v in cached.items()
-                    if str(k).strip()
-                ]
+            socials = _socials_from_connected_accounts_cache(cached_accounts)
         if socials:
             _persist_connected_accounts(sb, user["id"], socials)
         # Keep refId in sync when /user returns it during verification.
@@ -3787,29 +3820,44 @@ def api_get_schedule(
 ):
     """Return all social posts for the user within the given date range."""
     sb = get_supabase()
+    user_id = user["id"]
+    schedule_cols = (
+        "id,platform,status,caption,scheduled_at,posted_at,video_job_id,"
+        "product_shot_id,ayrshare_post_id,error_message,hashtags"
+    )
     rows = (
         sb.table("social_posts")
-        .select("*")
-        .eq("user_id", user["id"])
+        .select(schedule_cols)
+        .eq("user_id", user_id)
         .gte("scheduled_at", start_date)
         .lte("scheduled_at", end_date)
         .order("scheduled_at", desc=False)
         .execute()
     )
+    raw_rows = [dict(r) for r in (rows.data or [])]
+    job_ids = [str(r["video_job_id"]) for r in raw_rows if r.get("video_job_id")]
+    shot_ids = [str(r["product_shot_id"]) for r in raw_rows if r.get("product_shot_id")]
+    jobs_by_id = get_jobs_by_ids(job_ids, user_id=user_id)
+    shots_by_id = get_product_shots_by_ids(shot_ids)
+    shot_ownership: dict[str, bool] = {}
+
     enriched: List[dict] = []
-    for r in rows.data or []:
-        row = dict(r)
+    for row in raw_rows:
         jid = row.get("video_job_id")
         sid = row.get("product_shot_id")
         thumb = None
         if jid:
-            job = get_job(jid)
-            if job and job.get("user_id") == user["id"]:
+            job = jobs_by_id.get(str(jid))
+            if job:
                 thumb = job.get("thumbnail_url") or job.get("preview_url")
         elif sid:
-            shot = get_product_shot(sid)
-            if shot and _user_owns_product_shot(sb, user["id"], shot):
-                thumb = shot.get("image_url") or shot.get("video_url") or shot.get("result_url")
+            shot = shots_by_id.get(str(sid))
+            if shot:
+                sid_key = str(sid)
+                if sid_key not in shot_ownership:
+                    shot_ownership[sid_key] = _user_owns_product_shot(sb, user_id, shot)
+                if shot_ownership[sid_key]:
+                    thumb = shot.get("image_url") or shot.get("video_url") or shot.get("result_url")
         if thumb:
             row["thumbnail_url"] = thumb
         enriched.append(row)

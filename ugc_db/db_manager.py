@@ -332,6 +332,51 @@ def get_job(job_id: str):
     clone["_source"] = "clone"
     return clone
 
+
+def get_jobs_by_ids(job_ids: list[str], *, user_id: str) -> dict[str, dict]:
+    """Batch calendar thumbnail lookup — video_jobs with clone_video_jobs fallback."""
+    ids = list({jid for jid in job_ids if jid})
+    if not ids:
+        return {}
+    sb = get_supabase()
+    res = (
+        sb.table("video_jobs")
+        .select("id,thumbnail_url,preview_url,user_id")
+        .in_("id", ids)
+        .execute()
+    )
+    out: dict[str, dict] = {}
+    for row in res.data or []:
+        if str(row.get("user_id")) == str(user_id):
+            out[str(row["id"])] = row
+    missing = [jid for jid in ids if jid not in out]
+    if missing:
+        clone_res = (
+            sb.table("clone_video_jobs")
+            .select("id,thumbnail_url,preview_url,user_id")
+            .in_("id", missing)
+            .execute()
+        )
+        for row in clone_res.data or []:
+            if str(row.get("user_id")) == str(user_id):
+                out[str(row["id"])] = row
+    return out
+
+
+def get_product_shots_by_ids(shot_ids: list[str]) -> dict[str, dict]:
+    """Batch fetch product_shots rows for calendar thumbnail enrichment."""
+    ids = list({sid for sid in shot_ids if sid})
+    if not ids:
+        return {}
+    sb = get_supabase()
+    res = (
+        sb.table("product_shots")
+        .select("id,image_url,video_url,result_url,product_id,project_id")
+        .in_("id", ids)
+        .execute()
+    )
+    return {str(row["id"]): row for row in (res.data or [])}
+
 def create_job(data: dict):
     sb = get_supabase()
     result = sb.table("video_jobs").insert(data).execute()
