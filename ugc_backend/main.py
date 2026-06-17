@@ -4006,3 +4006,6 @@ app.include_router(analytics_router)
 
 from ugc_backend.admin.router import router as admin_router
 app.include_router(admin_router, prefix="/api/admin")
+
+from ugc_backend.feedback.router import router as feedback_router
+app.include_router(feedback_router, prefix="/api/feedback")
