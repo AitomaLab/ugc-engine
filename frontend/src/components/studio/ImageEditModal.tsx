@@ -14,13 +14,8 @@ import SchedulePostModal from '@/components/modals/SchedulePostModal';
    The container is a fixed 9:16 box to match Kling's output aspect ratio. */
 function AnimationPreview({ style }: { style: { emoji: string; previewUrl?: string } }) {
     const [failed, setFailed] = useState(false);
-    const [active, setActive] = useState(false);
-    // Don't autoload 12 preview MP4s when the style grid opens — mount each
-    // video only while its card is hovered.
     return (
         <div
-            onMouseEnter={() => setActive(true)}
-            onMouseLeave={() => setActive(false)}
             style={{
                 width: '100%',
                 aspectRatio: '9 / 16',
@@ -31,13 +26,14 @@ function AnimationPreview({ style }: { style: { emoji: string; previewUrl?: stri
                 overflow: 'hidden',
             }}
         >
-            {style.previewUrl && !failed && active ? (
+            {style.previewUrl && !failed ? (
                 <video
                     src={style.previewUrl}
                     autoPlay
                     loop
                     muted
                     playsInline
+                    preload="auto"
                     onError={() => setFailed(true)}
                     style={{
                         width: '100%',
