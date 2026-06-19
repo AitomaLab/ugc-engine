@@ -28,6 +28,7 @@ const AgentPanel = dynamic(
     }
 );
 import Select from '@/components/ui/Select';
+import { VeoOutageBanner } from '@/components/studio/VeoOutageBanner';
 
 /** Failed jobs with no media URL are ghost cards — hide from gallery. */
 const isGhostAsset = (a: { status?: string; image_url?: string; final_video_url?: string; video_url?: string; is_placeholder?: boolean }, kind: 'images' | 'videos') => {
@@ -1146,15 +1147,18 @@ export default function ProjectContainerPage() {
     // Narrow viewports (<1024px): single-column layout with floating AgentPanel.
     if (!isWide) {
         return (
-            <div style={{
-                // Create Bar hidden — padding-bottom no longer reserves space for it.
-                padding: '32px 32px 32px',
-                maxWidth: '1200px',
-                margin: '0 auto',
-            }}>
-                {projectHeaderBar}
-                {galleryBlock}
-                <AgentPanel ref={agentRef} projectId={projectId} jobId={selectedJobId} onArtifact={refreshGallery} onArtifactPending={addPendingPlaceholder} onArtifactReady={clearOnePlaceholder} onStateChange={setAgentState} initialBrief={initialBrief || undefined} initialRefs={initialRefs} initialUseSeedance={initialUseSeedance} onJobStart={(kind) => { setActiveTab(kind === 'video' ? 'videos' : 'images'); startJobRefetchBurst(); }} onVideoJobStarted={registerVideoJobWatch} />
+            <div>
+                <VeoOutageBanner />
+                <div style={{
+                    // Create Bar hidden — padding-bottom no longer reserves space for it.
+                    padding: '32px 32px 32px',
+                    maxWidth: '1200px',
+                    margin: '0 auto',
+                }}>
+                    {projectHeaderBar}
+                    {galleryBlock}
+                    <AgentPanel ref={agentRef} projectId={projectId} jobId={selectedJobId} onArtifact={refreshGallery} onArtifactPending={addPendingPlaceholder} onArtifactReady={clearOnePlaceholder} onStateChange={setAgentState} initialBrief={initialBrief || undefined} initialRefs={initialRefs} initialUseSeedance={initialUseSeedance} onJobStart={(kind) => { setActiveTab(kind === 'video' ? 'videos' : 'images'); startJobRefetchBurst(); }} onVideoJobStarted={registerVideoJobWatch} />
+                </div>
             </div>
         );
     }
@@ -1171,6 +1175,7 @@ export default function ProjectContainerPage() {
             overflow: 'hidden',
             background: '#F8FAFC',
         }}>
+            <VeoOutageBanner />
             {/* Unified header bar */}
             {projectHeaderBar}
 
