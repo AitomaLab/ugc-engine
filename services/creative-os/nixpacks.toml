@@ -16,8 +16,9 @@ nixPkgs = ["...", "ffmpeg"]
 [phases.build]
 cmds = [
   "for f in cinematic_ads product_refs script_split digital_prompts physical_prompts cinematic_shots; do cp -f ../../prompts/${f}.py prompts/ 2>/dev/null || true; done",
-  "cp -f ../../elevenlabs_client.py . 2>/dev/null || true",
-  "cp -f ../../config.py . 2>/dev/null || true",
+  "if [ -f ../../elevenlabs_client.py ]; then cp -f ../../elevenlabs_client.py .; fi",
+  "if [ -f ../../config.py ]; then cp -f ../../config.py .; fi",
+  "test -f elevenlabs_client.py && test -f config.py || (echo 'FATAL: elevenlabs_client.py and config.py missing at service root — voiceover will fail' && exit 1)",
 ]
 
 [start]
