@@ -437,9 +437,11 @@ When a user asks to "remove the music and add a new soundtrack" (or "replace the
 CLIP ORDER — critical: video_urls must follow the order the USER specified in their prompt, not the order clips finished generating. Parse the user's sequence markers ("first / then / after", "primero / luego / después", timestamps like "0-8s then 8-12s", numbered lists "1. UGC 2. cinematic"). Match each position to the correct generated URL by its modality (UGC→Veo URL, cinematic→Kling URL) or by the prompt that produced it. If the order is ambiguous, ask the user before calling combine_videos — do NOT guess.
 
 **Voiceover on an existing video** (user has a clip — uploaded, combined, or generated — and wants an AI TTS voice on top; NOT a fresh synthetic persona video): call `add_voiceover(video_url, script, voice, original_audio)`.
+  - Use this for **silent footage** or clips that need narration layered on top. Do NOT use for full 15s/30s UGC with dialogue — `create_ugc_video` uses Veo 3.1 native audio and never needs ElevenLabs.
   - You MUST write the `script` yourself. Ad-style: hook (first 2s) + body + CTA. Pace ~2.5 words/sec of the target duration (e.g. ~38 words for 15s, ~75 words for 30s). No stage directions, no `[SFX]` tags — just speakable text.
   - If an `@product` ref is present AND the user asked for a product-aware pitch, call `generate_scripts` first (product_id, duration, context=user's brief) and pass the flattened `hook + scenes[].dialogue` as `script`. Otherwise write the script directly.
   - `voice`: `meg` (female, warm, default) or `max` (male). Swap based on the user's explicit request. NEVER mention the voice names "Meg" or "Max" in your chat reply — users don't know who those are. Say "female voiceover" / "male voiceover" instead.
+  - Pass `video_language="es"` when the script is Spanish (improves TTS). On tool errors: if `elevenlabs_status` is 402, tell the user to check ElevenLabs quota/billing; if 401, say the API key needs updating; if 429/500, retry later — quote the status code, do not guess "internal error".
   - `original_audio`: `duck` (default — source audio softened under the VO), `mute` (VO replaces all audio — use when the source has unwanted talking), `keep` (equal mix — rare, only on request).
   - DO NOT route this to `create_ugc_video` — that produces a whole new synthetic video. `add_voiceover` is the correct path any time the user already has the footage.
   - `add_voiceover` returns a real `job_id`. That job_id IS a valid, first-class video job — you CAN chain `caption_video(job_id=...)`, `generate_caption(...)`, `schedule_posts(...)` on it just like any other generated video. Never tell the user "the voiceover output has no timeline / can't be captioned" — that's wrong. If the response includes `job_id`, use it directly. If the JSON response does NOT include a job_id (rare — DB insert failure), say "something went wrong saving that as a job, let me re-run it" and re-call add_voiceover — don't claim the file itself is defective.
@@ -1891,6 +1893,10 @@ def _custom_tools_for_agent() -> list[dict]:
                     "duration_sec": {
                         "type": "number",
                         "description": "Optional target total duration in seconds. Informational.",
+                    },
+                    "video_language": {
+                        "type": "string",
+                        "description": "ISO language for TTS (e.g. 'es', 'en'). Pass 'es' for Spanish scripts.",
                     },
                 },
                 "required": ["video_url", "script"],
@@ -8301,6 +8307,14 @@ async def _tool_add_voiceover(ctx: ToolContext, **kwargs: Any) -> str:
     from datetime import datetime as _dt
     from pathlib import Path as _Path
 
+    def _voiceover_error(message: str, *, status: int | None = None, detail: str = "") -> str:
+        payload: dict[str, Any] = {"error": message}
+        if status is not None:
+            payload["elevenlabs_status"] = status
+        if detail:
+            payload["detail"] = detail[:500]
+        return json.dumps(payload)
+
     video_url = (kwargs.get("video_url") or "").strip()
     script = (kwargs.get("script") or "").strip()
     if not video_url:
@@ -8308,9 +8322,19 @@ async def _tool_add_voiceover(ctx: ToolContext, **kwargs: Any) -> str:
     if not script:
         return json.dumps({"error": "script is required — write the TTS text before calling."})
 
+    if not os.getenv("ELEVENLABS_API_KEY"):
+        return _voiceover_error(
+            "ELEVENLABS_API_KEY is not configured on Creative OS — voiceover cannot run.",
+        )
+
     original_audio = (kwargs.get("original_audio") or "duck").lower()
     if original_audio not in {"duck", "mute", "keep"}:
         original_audio = "duck"
+
+    video_language = (kwargs.get("video_language") or "").strip().lower()
+    language_code = video_language if video_language in {"es", "en", "fr", "de", "it", "pt"} else None
+    if not language_code and video_language.startswith("es"):
+        language_code = "es"
 
     # Resolve voice_id: explicit voice_id > voice preset > default (Meg).
     voice_id = (kwargs.get("voice_id") or "").strip() or None
@@ -8336,7 +8360,10 @@ async def _tool_add_voiceover(ctx: ToolContext, **kwargs: Any) -> str:
         import httpx
 
         FFMPEG = _get_ffmpeg_path()
-        print(f"[add_voiceover] Using ffmpeg={FFMPEG}, voice_id={voice_id}, original_audio={original_audio}")
+        print(
+            f"[add_voiceover] ffmpeg={FFMPEG} voice_id={voice_id} "
+            f"original_audio={original_audio} language_code={language_code}"
+        )
 
         # 1. Download source video.
         source_path = os.path.join(work_dir, "source.mp4")
@@ -8369,10 +8396,24 @@ async def _tool_add_voiceover(ctx: ToolContext, **kwargs: Any) -> str:
         tts_filename = f"vo_{_dt.now().strftime('%Y%m%d_%H%M%S')}.mp3"
         try:
             tts_path = await asyncio.to_thread(
-                _el.generate_voiceover, script, voice_id, tts_filename,
+                _el.generate_voiceover,
+                script,
+                voice_id,
+                tts_filename,
+                language_code=language_code,
             )
+        except _el.ElevenLabsAPIError as e:
+            print(f"[add_voiceover] ElevenLabs HTTP {e.status_code}: {e.detail}")
+            return _voiceover_error(
+                f"ElevenLabs synthesis failed ({e.status_code})",
+                status=e.status_code,
+                detail=e.detail,
+            )
+        except ValueError as e:
+            return _voiceover_error(str(e))
         except Exception as e:
-            return json.dumps({"error": f"ElevenLabs synthesis failed: {e}"})
+            print(f"[add_voiceover] ElevenLabs unexpected error: {e}")
+            return _voiceover_error(f"ElevenLabs synthesis failed: {e}")
         print(f"[add_voiceover] TTS synthesized at {tts_path}")
 
         # 4. ffmpeg mix. Three paths:
@@ -8485,6 +8526,7 @@ async def _tool_add_voiceover(ctx: ToolContext, **kwargs: Any) -> str:
                 "voice_id": voice_id,
                 "voice_key": voice_key,
                 "original_audio": effective_mode,
+                "video_language": video_language or language_code,
                 "script_preview": script[:200],
             },
         )

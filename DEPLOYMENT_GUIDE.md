@@ -134,9 +134,23 @@ modal secret create ugc-engine-secrets \
   SUPABASE_URL="https://kzvdfponrzwfwdbkpfjf.supabase.co" \
   SUPABASE_SERVICE_KEY="your-service-key" \
   KIE_API_KEY="your-kie-key" \
+  WAVESPEED_API_KEY="your-wavespeed-key" \
   ELEVENLABS_API_KEY="your-elevenlabs-key" \
   OPENAI_API_KEY="your-openai-key"
 ```
+
+Or sync from your local `env.saas`:
+
+```bash
+./scripts/sync_modal_secrets.sh env.saas
+```
+
+Optional UGC routing overrides (add to the same secret group):
+
+| Variable | Description |
+|----------|-------------|
+| `UGC_FORCE_WAVESPEED` | Set to `true` to route all UGC Veo jobs to WaveSpeed (skip Kie during outages) |
+| `UGC_REQUIRE_WAVESPEED` | Set to `true` to fail fast when `WAVESPEED_API_KEY` is missing |
 
 ### 3.3 — Deploy the Modal Worker
 
@@ -145,6 +159,8 @@ From the project root:
 ```bash
 modal deploy modal_worker.py
 ```
+
+> **Important:** `modal deploy` is required after **every** change to worker pipeline code (`core_engine.py`, `generate_scenes.py`, `scene_builder.py`, `ugc_worker/`). A git push alone does **not** update the Modal image — Python sources are bundled at deploy time via `add_local_python_source`.
 
 This will print a webhook URL like:
 ```
@@ -179,6 +195,16 @@ Once you've verified Modal is handling jobs correctly:
 - Check Modal dashboard for the function execution
 - Verify the finished video appears in the Activity page
 
+**Influencer-only UGC (no product):** Modal logs should show:
+
+```text
+[ROUTING] talking_head=True parallel_i2v=True
+[EXTEND] Talking-head parallel-i2v from influencer ref
+[PARALLEL-i2v] Animating N scene(s) from shared composite
+```
+
+If you instead see `Extend:` progress and Kie.ai **Veo → Extend** tasks, the worker image is stale — run `modal deploy modal_worker.py` again and confirm `WAVESPEED_API_KEY` is in `ugc-engine-secrets`.
+
 ---
 
 ## Environment Variable Reference
@@ -212,6 +238,29 @@ Once you've verified Modal is handling jobs correctly:
 
 Same as API Server variables, minus `CORS_ORIGINS`, `USE_MODAL_WORKER`, and `MODAL_WEBHOOK_URL`.
 
+### Railway — Creative OS (`services/creative-os`)
+
+The agent studio runs on a **separate** Railway service. Voiceover on existing videos (`add_voiceover`) calls ElevenLabs TTS here — **not** on Modal or ugc-api.
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `SUPABASE_URL` | ✅ | Supabase project URL |
+| `SUPABASE_SERVICE_KEY` | ✅ | Supabase service role key |
+| `ELEVENLABS_API_KEY` | ✅ | **Required for `add_voiceover`** (TTS on silent clips) |
+| `KIE_API_KEY` | ✅ | Image/video generation tools |
+| `CORE_API_URL` | ✅ | ugc-api backend URL |
+| `ANTHROPIC_API_KEY` | ✅ | Managed agent |
+
+> **Note:** 15s/30s UGC (`create_ugc_video`) uses Veo 3.1 native dialogue on Modal — it does **not** need ElevenLabs. Only post-production voiceover on existing footage uses ElevenLabs on Creative OS.
+
+After deploy, verify ElevenLabs (authenticated):
+
+```bash
+curl -H "Authorization: Bearer $JWT" https://your-creative-os.railway.app/creative-os/health/elevenlabs
+```
+
+Expect `{"ok": true, "status_code": 200}`.
+
 ### Modal — Serverless Worker
 
 All secrets are managed via the `ugc-engine-secrets` secret group in Modal's dashboard:
@@ -221,8 +270,11 @@ All secrets are managed via the `ugc-engine-secrets` secret group in Modal's das
 | `SUPABASE_URL` | ✅ | Supabase project URL |
 | `SUPABASE_SERVICE_KEY` | ✅ | Supabase service role key |
 | `KIE_API_KEY` | ✅ | Kie.ai API key |
+| `WAVESPEED_API_KEY` | ✅ | WaveSpeed Veo 3.1 API key (required for UGC routing) |
 | `ELEVENLABS_API_KEY` | ✅ | ElevenLabs API key |
 | `OPENAI_API_KEY` | ✅ | OpenAI API key |
+| `UGC_FORCE_WAVESPEED` | ❌ | Force all UGC Veo to WaveSpeed |
+| `UGC_REQUIRE_WAVESPEED` | ❌ | Fail UGC jobs if WaveSpeed key missing |
 
 ---
 
@@ -239,6 +291,9 @@ PYTHONPATH=. python -c "from ugc_worker.tasks import celery; print('✅ Celery O
 
 # 3. Verify Modal worker syntax
 python -c "import modal_worker; print('✅ Modal worker OK')"
+
+# 4. Verify ElevenLabs TTS (voiceover path — needs ELEVENLABS_API_KEY in env)
+PYTHONPATH=. python scripts/test_elevenlabs_voiceover.py
 ```
 
 ### Dispatch Fallback Chain Test
