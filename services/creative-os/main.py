@@ -35,6 +35,20 @@ load_env(Path(__file__))
 
 print(f"[Creative OS] CORE_API_URL = {os.getenv('CORE_API_URL', 'NOT SET')}")
 
+
+def _verify_elevenlabs_import() -> None:
+    try:
+        from services.managed_agent_client import _ensure_ugc_repo_on_path, _ugc_monorepo_root
+        root = _ensure_ugc_repo_on_path()
+        el_path = _ugc_monorepo_root() / "elevenlabs_client.py"
+        import elevenlabs_client  # noqa: F401
+        print(f"[startup] elevenlabs_client OK from {root} ({el_path})")
+    except Exception as e:
+        print(f"[startup] WARNING: elevenlabs_client not importable: {e}")
+
+
+_verify_elevenlabs_import()
+
 # ── App ─────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="Aitoma Studio Creative OS",

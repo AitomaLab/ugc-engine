@@ -39,31 +39,40 @@ if _repo_root and str(_repo_root) not in _sys.path:
     _sys.path.insert(0, str(_repo_root))
 
 
+def _monorepo_candidates() -> list[Path]:
+    """Build repo-root search paths without eagerly indexing ``parents[3]``."""
+    service_root = Path(__file__).resolve().parents[1]
+    candidates: list[Path] = [service_root, service_root.parent.parent]
+    if _repo_root:
+        candidates.append(Path(_repo_root))
+    here = Path(__file__).resolve()
+    if len(here.parents) > 3:
+        candidates.append(here.parents[3])
+    return candidates
+
+
 def _ugc_monorepo_root() -> Path:
     """Resolve repo root for `config`, `elevenlabs_client`, etc.
 
     Local dev:  .../ugc-engine/services/creative-os/services/this_file.py
     Railway:    /app/services/this_file.py  (service root = /app)
-
-    Using ``parents[3]`` breaks on Railway — it raises ``IndexError(3)`` when the
-  path is only two levels below filesystem root.
     """
-    service_root = Path(__file__).resolve().parents[1]
-    for candidate in (
-        service_root,
-        service_root.parent.parent,
-        Path(_repo_root) if _repo_root else None,
-        Path(__file__).resolve().parents[3],
-    ):
-        if candidate and (candidate / "elevenlabs_client.py").is_file():
+    for candidate in _monorepo_candidates():
+        if (candidate / "elevenlabs_client.py").is_file():
             return candidate
-    return service_root
+    return Path(__file__).resolve().parents[1]
 
 
 def _ensure_ugc_repo_on_path() -> str:
-    root = str(_ugc_monorepo_root())
+    root_path = _ugc_monorepo_root()
+    root = str(root_path)
     if root not in _sys.path:
         _sys.path.insert(0, root)
+    el = root_path / "elevenlabs_client.py"
+    print(
+        f"[voiceover] repo_root={root} "
+        f"elevenlabs_client={'found' if el.is_file() else 'MISSING'}"
+    )
     return root
 
 from core_api_client import CoreAPIClient
@@ -469,7 +478,7 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
   - You MUST write the `script` yourself. Ad-style: hook (first 2s) + body + CTA. Pace ~2.5 words/sec of the target duration (e.g. ~38 words for 15s, ~75 words for 30s). No stage directions, no `[SFX]` tags — just speakable text.
   - If an `@product` ref is present AND the user asked for a product-aware pitch, call `generate_scripts` first (product_id, duration, context=user's brief) and pass the flattened `hook + scenes[].dialogue` as `script`. Otherwise write the script directly.
   - `voice`: `meg` (female, warm, default) or `max` (male). Swap based on the user's explicit request. NEVER mention the voice names "Meg" or "Max" in your chat reply — users don't know who those are. Say "female voiceover" / "male voiceover" instead.
-  - Pass `video_language="es"` when the script is Spanish (improves TTS). On tool errors: if `elevenlabs_status` is 402, tell the user to check ElevenLabs quota/billing; if 401, say the API key needs updating; if 429/500, retry later — quote the status code, do not guess "internal error".
+  - Pass `video_language="es"` when the script is Spanish (improves TTS). On tool errors: if `error_type` is `import_failed`, say it is a server configuration issue on our side — do NOT claim ElevenLabs quota or billing. If `elevenlabs_status` is 402, tell the user to check ElevenLabs quota; if 401, API key needs updating; if 429/500, retry later. Never treat a bare digit like `3` as an ElevenLabs HTTP code.
   - `original_audio`: `duck` (default — source audio softened under the VO), `mute` (VO replaces all audio — use when the source has unwanted talking), `keep` (equal mix — rare, only on request).
   - DO NOT route this to `create_ugc_video` — that produces a whole new synthetic video. `add_voiceover` is the correct path any time the user already has the footage.
   - `add_voiceover` returns a real `job_id`. That job_id IS a valid, first-class video job — you CAN chain `caption_video(job_id=...)`, `generate_caption(...)`, `schedule_posts(...)` on it just like any other generated video. Never tell the user "the voiceover output has no timeline / can't be captioned" — that's wrong. If the response includes `job_id`, use it directly. If the JSON response does NOT include a job_id (rare — DB insert failure), say "something went wrong saving that as a job, let me re-run it" and re-call add_voiceover — don't claim the file itself is defective.
@@ -8333,9 +8342,15 @@ async def _tool_add_voiceover(ctx: ToolContext, **kwargs: Any) -> str:
     from datetime import datetime as _dt
     from pathlib import Path as _Path
 
-    def _voiceover_error(message: str, *, status: int | None = None, detail: str = "") -> str:
-        payload: dict[str, Any] = {"error": message}
-        if status is not None:
+    def _voiceover_error(
+        message: str,
+        *,
+        status: int | None = None,
+        detail: str = "",
+        error_type: str = "api_failed",
+    ) -> str:
+        payload: dict[str, Any] = {"error": message, "error_type": error_type}
+        if status is not None and status >= 100:
             payload["elevenlabs_status"] = status
         if detail:
             payload["detail"] = detail[:500]
@@ -8412,7 +8427,12 @@ async def _tool_add_voiceover(ctx: ToolContext, **kwargs: Any) -> str:
             _ensure_ugc_repo_on_path()
             import elevenlabs_client as _el  # type: ignore
         except Exception as e:
-            return json.dumps({"error": f"ElevenLabs import failed: {e}"})
+            print(f"[add_voiceover] ElevenLabs import failed: {e}")
+            return _voiceover_error(
+                "ElevenLabs module could not be loaded on the server",
+                error_type="import_failed",
+                detail=str(e),
+            )
 
         tts_filename = f"vo_{_dt.now().strftime('%Y%m%d_%H%M%S')}.mp3"
         try:
