@@ -23,7 +23,6 @@ const OnboardingModal = dynamic(
 import { thumbUrl, videoPosterCandidate } from "@/lib/media";
 import { useVideoThumbnails } from "@/hooks/useVideoThumbnails";
 import { HoverPlayVideo } from "@/components/ui/HoverPlayVideo";
-import { VeoOutageBanner } from "@/components/studio/VeoOutageBanner";
 
 /** Set true to show the Seedance 2.0 toggle on the dashboard composer. */
 const SHOW_DASHBOARD_SEEDANCE_TOGGLE = false;
@@ -770,7 +769,6 @@ export default function StudioPage() {
           onSkip={markOnboardingDone}
         />
       )}
-      <VeoOutageBanner />
       {/* ── HERO SECTION ─────────────────────────────────────────────── */}
       <div style={{
         flex: 1,
