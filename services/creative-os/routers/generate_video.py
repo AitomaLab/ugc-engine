@@ -3058,6 +3058,7 @@ async def _run_ugc_clip_pipeline(
                     duration=data.clip_length,
                     aspect_ratio=data.aspect_ratio or "9:16",
                     on_submitted=_video_job_id_recorder(token, job_id),
+                    ugc=True,
                 )
             else:
                 # Text-to-video (no reference image)
@@ -3069,6 +3070,7 @@ async def _run_ugc_clip_pipeline(
                     duration=data.clip_length,
                     aspect_ratio=data.aspect_ratio or "9:16",
                     on_submitted=_video_job_id_recorder(token, job_id),
+                    ugc=True,
                 )
             video_url = result["videoUrl"]
             print(f"[UGC Clip] Veo animation complete: {video_url[:80]}...")

@@ -413,6 +413,17 @@ def _wavespeed_primary_enabled() -> bool:
     return flag and bool(os.getenv("WAVESPEED_API_KEY"))
 
 
+def _ugc_wavespeed_primary_enabled(*, ugc: bool = False) -> bool:
+    """True when UGC Veo clips should prefer WaveSpeed over Kie."""
+    if not os.getenv("WAVESPEED_API_KEY"):
+        return False
+    if os.getenv("UGC_FORCE_WAVESPEED", "").strip().lower() == "true":
+        return True
+    if _wavespeed_primary_enabled():
+        return True
+    return bool(ugc)
+
+
 def _wavespeed_headers() -> dict:
     return {
         "Authorization": f"Bearer {os.getenv('WAVESPEED_API_KEY', '')}",
@@ -651,11 +662,12 @@ def generate_video_with_retry(
     reference_image_urls=None,
     reference_video_urls=None,
     on_submitted=None,
+    ugc: bool = False,
 ):
     """Try KIE (with short retries) then fall back to WaveSpeed for the same family.
 
-    When USE_WAVESPEED_PRIMARY=true, attempt WaveSpeed first for non-element
-    cases. Any exception falls through to the legacy KIE chain unchanged.
+    When USE_WAVESPEED_PRIMARY=true or ugc=True, attempt WaveSpeed first for
+    non-element cases. Any exception falls through to the legacy KIE chain unchanged.
     """
     family = _get_model_family(model_api or "")
 
@@ -665,7 +677,7 @@ def generate_video_with_retry(
     # Also skip for the seedance family: KIE (kie.ai) is the canonical provider
     # for Seedance 2.0 / 2.0 Fast. WaveSpeed remains the tail-end fallback.
     can_attempt_ws = (
-        _wavespeed_primary_enabled()
+        _ugc_wavespeed_primary_enabled(ugc=ugc)
         and family != "seedance"
         and (not kling_elements or element_ids)
     )
@@ -710,7 +722,9 @@ def generate_video_with_retry(
         except RuntimeError as e:
             last_error = e
             err = str(e).lower()
-            if any(p in err for p in SKIP_KIE_RETRY_PATTERNS):
+            if any(p in err for p in SKIP_KIE_RETRY_PATTERNS) or (
+                ugc and "generation failed" in err
+            ):
                 print(f"      [Router] KIE overloaded ({e}) — skipping retries, going to WaveSpeed")
                 break
             if not any(p in err for p in RETRIABLE_PATTERNS):

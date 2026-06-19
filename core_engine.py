@@ -40,6 +40,17 @@ def _upload_scene_preview(video_path):
         return None
 
 
+def _should_force_kie_digital(product, product_type: str) -> bool:
+    """Kie extend only for digital UGC with an actual product (phone UI continuity)."""
+    if product_type != "digital":
+        return False
+    if product is None:
+        return False
+    if not (product.get("id") or product.get("image_url")):
+        return False
+    return generate_scenes.kie_veo_reliable()
+
+
 def _composite_or_influencer_ref(scene, influencer, product, *, seed=None):
     """NanoBanana composite when product has an image; else influencer talking-head ref."""
     prod_img = (product or {}).get("image_url")
@@ -337,17 +348,27 @@ def run_generation_pipeline(
                 and config.PHYSICAL_EXTEND_STRATEGY == "parallel_i2v"
                 and scene_1.get("type") == "physical_product_scene"
             )
+            use_talking_head_parallel_i2v = (
+                product is None
+                and len(veo_scenes) >= 1
+                and all(s.get("type") == "veo" for s in veo_scenes)
+                and bool(veo_scenes[0].get("reference_image_url"))
+            )
+            use_parallel_i2v = use_physical_parallel_i2v or use_talking_head_parallel_i2v
 
-            if use_physical_parallel_i2v:
-                # One composite → parallel Veo i2v per scene (pins product identity).
+            if use_parallel_i2v:
                 extend_assembly_mode = "segment"
                 trim_segment_overlap = False
-                if status_callback:
-                    status_callback(f"Gen: Composite Image (1/{len(scenes)})")
-                print(f"      [EXTEND] Physical parallel-i2v: generating shared composite")
-                composite_url = _composite_or_influencer_ref(
-                    scene_1, influencer, product, seed=global_seed,
-                )
+                if use_physical_parallel_i2v:
+                    if status_callback:
+                        status_callback(f"Gen: Composite Image (1/{len(scenes)})")
+                    print(f"      [EXTEND] Physical parallel-i2v: generating shared composite")
+                    composite_url = _composite_or_influencer_ref(
+                        scene_1, influencer, product, seed=global_seed,
+                    )
+                else:
+                    composite_url = veo_scenes[0]["reference_image_url"]
+                    print(f"      [EXTEND] Talking-head parallel-i2v from influencer ref")
                 cached_composite_url = composite_url
                 print(f"      [EXTEND] Composite ready: {composite_url}")
                 if status_callback:
@@ -361,6 +382,7 @@ def run_generation_pipeline(
                     veo_scenes,
                     output_dir,
                     force_kie=False,
+                    ugc=True,
                 )
                 for idx, chunk_path in enumerate(extend_chunks):
                     if status_callback:
@@ -392,19 +414,21 @@ def run_generation_pipeline(
                             preview_url=composite_url,
                             preview_type="image",
                         )
-                    _force_kie_for_chain = (product_type == "digital")
+                    _force_kie_for_chain = _should_force_kie_digital(product, product_type)
                     result = generate_scenes.animate_image(
                         image_url=composite_url,
                         scene=scene_1,
                         force_kie=_force_kie_for_chain,
+                        ugc=True,
                     )
                     current_task_id = result["taskId"]
                     current_video_url = result["videoUrl"]
                 else:
-                    result = generate_scenes.generate_video(
+                    result = generate_scenes.generate_video_with_retry(
                         prompt=scene_1["prompt"],
                         reference_image_url=scene_1.get("reference_image_url"),
                         model_api="veo-3.1-fast",
+                        ugc=True,
                     )
                     current_task_id = result["taskId"]
                     current_video_url = result["videoUrl"]
@@ -424,16 +448,16 @@ def run_generation_pipeline(
                             preview_type="video",
                         )
 
-            # -- Step 2: Extend chain (Scenes 2..N) — skipped for physical parallel-i2v --
-            if not use_physical_parallel_i2v:
+            # -- Step 2: Extend chain (Scenes 2..N) — skipped for parallel i2v --
+            if not use_parallel_i2v:
                 for idx, ext_scene in enumerate(veo_scenes[1:], 2):
                     if status_callback:
                         status_callback(f"Extend: {ext_scene['name'].title()} ({idx}/{len(scenes)})")
                     print(f"      [EXTEND] Extending with Scene {idx}: {ext_scene['name']}")
 
                     extension_prompt = ext_scene.get("video_animation_prompt") or ext_scene.get("prompt", "")
-                    # Digital: Kie extend (stateful task_id). Physical legacy: WS video-extend.
-                    _force_kie = (product_type == "digital")
+                    # Digital with product: Kie extend when reliable. Talking-head uses parallel i2v.
+                    _force_kie = _should_force_kie_digital(product, product_type)
                     try:
                         result = generate_scenes.extend_video_with_retry(
                             task_id=current_task_id,
@@ -442,6 +466,7 @@ def run_generation_pipeline(
                             video_url=current_video_url,
                             force_kie=_force_kie,
                             max_retries=5,
+                            ugc=True,
                         )
                     except RuntimeError as _ext_e:
                         print(f"      [EXTEND] ⚠ Scene {idx} failed after retries: {_ext_e} — finalizing with {len(extend_chunks)} scene(s) we have")
@@ -652,10 +677,11 @@ def run_generation_pipeline(
                     generate_scenes.download_video(scene["video_url"], r_output_path)
                 else:
                     # Unexpected type in remaining — generate normally
-                    result = generate_scenes.generate_video(
+                    result = generate_scenes.generate_video_with_retry(
                         prompt=scene.get("prompt", ""),
                         reference_image_url=scene.get("reference_image_url"),
-                        model_api=model_api
+                        model_api=model_api,
+                        ugc=True,
                     )
                     generate_scenes.download_video(result["videoUrl"], r_output_path)
 
@@ -699,7 +725,8 @@ def run_generation_pipeline(
 
                     result = generate_scenes.animate_image(
                         image_url=composite_url,
-                        scene=scene
+                        scene=scene,
+                        ugc=True,
                     )
 
                     generate_scenes.download_video(result["videoUrl"], output_path)
@@ -836,10 +863,11 @@ def run_generation_pipeline(
                         fallback_ref = cached_composite_url or scene.get("reference_image_url")
                         if cached_composite_url:
                             print(f"      [FALLBACK] Reusing extend's composite as reference for scene {i}")
-                        result = generate_scenes.generate_video(
+                        result = generate_scenes.generate_video_with_retry(
                             prompt=scene["prompt"],
                             reference_image_url=fallback_ref,
-                            model_api=model_api
+                            model_api=model_api,
+                            ugc=True,
                         )
                         video_url = result["videoUrl"]
 

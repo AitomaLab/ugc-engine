@@ -538,6 +538,32 @@ class ProviderRouter:
 provider_router = ProviderRouter(probe_timeout=3.0, cache_ttl=60, window_seconds=600)
 
 
+def kie_veo_reliable() -> bool:
+    """False when Kie Veo is in a known outage or the circuit breaker tripped."""
+    if os.getenv("UGC_FORCE_WAVESPEED", "").strip().lower() == "true":
+        return False
+    rate, count = provider_router.get_success_rate("kie_veo")
+    if count >= 2 and rate < 0.5:
+        return False
+    return True
+
+
+def _ugc_wavespeed_primary_enabled(*, ugc: bool = False) -> bool:
+    """True when UGC Veo jobs should prefer WaveSpeed over Kie."""
+    if not os.getenv("WAVESPEED_API_KEY"):
+        return False
+    if os.getenv("UGC_FORCE_WAVESPEED", "").strip().lower() == "true":
+        return True
+    if not kie_veo_reliable():
+        return True
+    if ugc:
+        wavespeed_primary = (
+            os.getenv("USE_WAVESPEED_PRIMARY") or os.getenv("WAVESPEED_PRIMARY") or "true"
+        ).lower() == "true"
+        return wavespeed_primary
+    return False
+
+
 def generate_video_wavespeed(prompt, reference_image_url=None, duration=8, aspect_ratio="9:16", seed=None):
     """
     Generate video using WaveSpeed's Veo 3.1 API.
@@ -667,7 +693,7 @@ def generate_video_wavespeed(prompt, reference_image_url=None, duration=8, aspec
     raise RuntimeError("WaveSpeed Veo 3.1 generation timed out after 20 minutes")
 
 
-def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, first_frame_url=None, return_last_frame=False, duration=12, max_retries=3, kling_elements=None, multi_prompt=None, aspect_ratio=None, force_kie: bool = False, seed=None):
+def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, first_frame_url=None, return_last_frame=False, duration=12, max_retries=3, kling_elements=None, multi_prompt=None, aspect_ratio=None, force_kie: bool = False, seed=None, ugc: bool = False):
     """
     Smart video generation with pre-flight health routing.
 
@@ -704,7 +730,27 @@ def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, 
     # is mandatory — Wavespeed's stateless video-extend re-imagines the
     # character / phone screen on every scene because it loses access to the
     # original NanoBanana composite.
-    if force_kie:
+    effective_force_kie = force_kie
+    if ugc and _ugc_wavespeed_primary_enabled(ugc=True):
+        effective_force_kie = False
+
+    if ugc and family == "veo" and _ugc_wavespeed_primary_enabled(ugc=True):
+        try:
+            print("      [Router] UGC → trying WaveSpeed primary...")
+            result = generate_video_wavespeed(
+                prompt, reference_image_url, duration,
+                aspect_ratio=aspect_ratio or "9:16",
+                seed=seed,
+            )
+            provider_router.record("wavespeed_veo", True)
+            return result
+        except RuntimeError as ws_err:
+            provider_router.record("wavespeed_veo", False)
+            print(f"      [Router] UGC WaveSpeed primary failed: {ws_err}")
+            if force_kie and not kie_veo_reliable():
+                raise
+
+    if effective_force_kie:
         primary = "kie"
         secondary = "wavespeed"
         print(f"      [Router] force_kie=True → bypassing Wavespeed primary")
@@ -718,7 +764,7 @@ def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, 
     # Wavespeed for scene 1 — a Wavespeed taskId can't be extended by Kie, and
     # silently falling back poisons the whole chain (downstream extends 500).
     # Better to fail loudly so the caller retries Kie.
-    if has_wavespeed and not force_kie:
+    if has_wavespeed and not effective_force_kie:
         providers_to_try.append(secondary)
 
     last_error = None
@@ -728,7 +774,7 @@ def generate_video_with_retry(prompt, reference_image_url=None, model_api=None, 
                 # Fast-fail 3min on primary Kie when WS fallback exists.
                 # After WS (or primary) already failed, Kie is the only option —
                 # give it 10min so parallel_i2v scenes don't false-fail on slow queue.
-                if force_kie:
+                if effective_force_kie:
                     kie_timeout = 1200
                     label = "20-min full"
                 elif last_error is not None:
@@ -1137,7 +1183,7 @@ def _probe_extend_output_mode(
     return None
 
 
-def extend_video_with_retry(task_id, prompt, seed=None, model="veo-3.1-fast", max_retries=3, video_url: str = None, force_kie: bool = False):
+def extend_video_with_retry(task_id, prompt, seed=None, model="veo-3.1-fast", max_retries=3, video_url: str = None, force_kie: bool = False, ugc: bool = False):
     """
     Extend video with automatic retry on transient errors.
     Retries on: 500 errors, internal errors, timeouts, and unknown generation errors.
@@ -1165,11 +1211,15 @@ def extend_video_with_retry(task_id, prompt, seed=None, model="veo-3.1-fast", ma
     # video-extend is stateless — it re-imagines the character / phone screen
     # because it only sees the prior video file, not the original generation
     # state. See plan: kie-extend-for-digital.
+    effective_force_kie = force_kie
+    if ugc and _ugc_wavespeed_primary_enabled(ugc=True):
+        effective_force_kie = False
+
     wavespeed_primary = (
-        not force_kie
+        not effective_force_kie
         and (os.getenv("USE_WAVESPEED_PRIMARY") or os.getenv("WAVESPEED_PRIMARY") or "true").lower() == "true"
     )
-    if force_kie:
+    if effective_force_kie:
         print(f"      [Router] force_kie=True → extending via Kie (taskId={task_id[:8] if task_id else 'NONE'}...)")
     if wavespeed_primary and video_url:
         try:
@@ -1704,6 +1754,7 @@ def animate_scenes_from_composite_parallel(
     *,
     force_kie: bool = False,
     max_workers: int | None = None,
+    ugc: bool = False,
 ) -> list:
     """Animate multiple UGC scenes from one composite image in parallel.
 
@@ -1730,7 +1781,7 @@ def animate_scenes_from_composite_parallel(
         scene_name = scene.get("name", f"scene_{idx + 1}")
         out_path = out_dir / f"extended_chunk_{idx}.mp4"
         print(f"      [PARALLEL-i2v] Starting scene {idx + 1}: {scene_name}")
-        result = animate_image(composite_url, scene, force_kie=force_kie)
+        result = animate_image(composite_url, scene, force_kie=force_kie, ugc=ugc)
         download_video(result["videoUrl"], out_path)
         print(f"      [PARALLEL-i2v] Scene {idx + 1} ready: {out_path.name}")
         return idx, out_path
@@ -1758,7 +1809,7 @@ def animate_scenes_from_composite_parallel(
     return [ordered[i] for i in range(len(veo_scenes))]
 
 
-def animate_image(image_url: str, scene: dict, force_kie: bool = False) -> dict:
+def animate_image(image_url: str, scene: dict, force_kie: bool = False, ugc: bool = False) -> dict:
     """Calls Veo 3.1 to animate a composite image.
 
     `force_kie=True` routes scene 1 to Kie so the chain's downstream
@@ -1774,13 +1825,18 @@ def animate_image(image_url: str, scene: dict, force_kie: bool = False) -> dict:
     duration = int(scene.get("target_duration") or 8)
     seed = scene.get("seed")
 
+    effective_force_kie = force_kie
+    if ugc and _ugc_wavespeed_primary_enabled(ugc=True):
+        effective_force_kie = False
+
     result = generate_video_with_retry(
         prompt=prompt,
         reference_image_url=image_url,
         model_api="veo-3.1-fast",
-        force_kie=force_kie,
+        force_kie=effective_force_kie,
         duration=duration,
         seed=seed,
+        ugc=ugc,
     )
     return result
 
