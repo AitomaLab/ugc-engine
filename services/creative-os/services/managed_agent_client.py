@@ -38,6 +38,34 @@ import sys as _sys
 if _repo_root and str(_repo_root) not in _sys.path:
     _sys.path.insert(0, str(_repo_root))
 
+
+def _ugc_monorepo_root() -> Path:
+    """Resolve repo root for `config`, `elevenlabs_client`, etc.
+
+    Local dev:  .../ugc-engine/services/creative-os/services/this_file.py
+    Railway:    /app/services/this_file.py  (service root = /app)
+
+    Using ``parents[3]`` breaks on Railway — it raises ``IndexError(3)`` when the
+  path is only two levels below filesystem root.
+    """
+    service_root = Path(__file__).resolve().parents[1]
+    for candidate in (
+        service_root,
+        service_root.parent.parent,
+        Path(_repo_root) if _repo_root else None,
+        Path(__file__).resolve().parents[3],
+    ):
+        if candidate and (candidate / "elevenlabs_client.py").is_file():
+            return candidate
+    return service_root
+
+
+def _ensure_ugc_repo_on_path() -> str:
+    root = str(_ugc_monorepo_root())
+    if root not in _sys.path:
+        _sys.path.insert(0, root)
+    return root
+
 from core_api_client import CoreAPIClient
 from services.model_router import (
     DIRECTOR_STYLES,
@@ -7927,9 +7955,7 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
             # still guard: if the resolved module lacks it, load the repo-root
             # file by absolute path under a distinct sys.modules key (mirrors
             # routers/generate_video.py::_load_creative_os_generate_scenes).
-            repo_root = str(_Path(__file__).resolve().parents[3])
-            if repo_root not in _sys.path:
-                _sys.path.insert(0, repo_root)
+            repo_root = _ensure_ugc_repo_on_path()
             import generate_scenes as _gs  # type: ignore
             if not hasattr(_gs, "generate_music"):
                 import importlib.util as _ilu
@@ -8340,11 +8366,8 @@ async def _tool_add_voiceover(ctx: ToolContext, **kwargs: Any) -> str:
     voice_id = (kwargs.get("voice_id") or "").strip() or None
     voice_key = (kwargs.get("voice") or "meg").strip().lower()
     if not voice_id:
-        # Import config lazily — repo root must be on sys.path.
         try:
-            repo_root = str(_Path(__file__).resolve().parents[3])
-            if repo_root not in _sys.path:
-                _sys.path.insert(0, repo_root)
+            _ensure_ugc_repo_on_path()
             import config as _cfg  # type: ignore
             vmap = getattr(_cfg, "VOICE_MAP", {}) or {}
             if voice_key == "max":
@@ -8386,9 +8409,7 @@ async def _tool_add_voiceover(ctx: ToolContext, **kwargs: Any) -> str:
 
         # 3. Synthesize TTS via ElevenLabs.
         try:
-            repo_root = str(_Path(__file__).resolve().parents[3])
-            if repo_root not in _sys.path:
-                _sys.path.insert(0, repo_root)
+            _ensure_ugc_repo_on_path()
             import elevenlabs_client as _el  # type: ignore
         except Exception as e:
             return json.dumps({"error": f"ElevenLabs import failed: {e}"})

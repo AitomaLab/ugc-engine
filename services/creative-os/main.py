@@ -302,9 +302,8 @@ async def health_check():
 @app.get("/creative-os/health/elevenlabs")
 async def health_elevenlabs(user: dict = Depends(get_current_user)):  # noqa: ARG001
     """Ping ElevenLabs TTS (auth-gated). Returns ok + HTTP status without exposing the key."""
-    repo_root = Path(__file__).resolve().parents[2]
-    if str(repo_root) not in sys.path:
-        sys.path.insert(0, str(repo_root))
+    from services.managed_agent_client import _ensure_ugc_repo_on_path
+    _ensure_ugc_repo_on_path()
     try:
         import elevenlabs_client as el  # type: ignore
         result = el.ping_elevenlabs_tts()

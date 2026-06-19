@@ -16,6 +16,8 @@ nixPkgs = ["...", "ffmpeg"]
 [phases.build]
 cmds = [
   "for f in cinematic_ads product_refs script_split digital_prompts physical_prompts cinematic_shots; do cp -f ../../prompts/${f}.py prompts/ 2>/dev/null || true; done",
+  "cp -f ../../elevenlabs_client.py . 2>/dev/null || true",
+  "cp -f ../../config.py . 2>/dev/null || true",
 ]
 
 [start]
