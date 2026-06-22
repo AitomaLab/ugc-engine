@@ -551,6 +551,11 @@ def kie_veo_reliable() -> bool:
 def _ugc_wavespeed_primary_enabled(*, ugc: bool = False) -> bool:
     """True when UGC Veo jobs should prefer WaveSpeed over Kie."""
     if not os.getenv("WAVESPEED_API_KEY"):
+        if ugc:
+            msg = "[UGC] WAVESPEED_API_KEY missing — Veo will fall back to Kie.ai"
+            print(f"      ⚠️ {msg}")
+            if os.getenv("UGC_REQUIRE_WAVESPEED", "").strip().lower() == "true":
+                raise RuntimeError(msg)
         return False
     if os.getenv("UGC_FORCE_WAVESPEED", "").strip().lower() == "true":
         return True

@@ -176,10 +176,15 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=Non
     if length not in config.VALID_LENGTHS:
         length = "15s"
 
+    is_talking_head = False
     if product is None:
         product_type = "digital"
         app_clip = None
+        is_talking_head = True
         print("      [SCENE] talking-head mode (no product)")
+    elif not (product.get("image_url") or "").strip():
+        is_talking_head = True
+        print("      [SCENE] talking-head mode (product has no image)")
 
     durations = config.get_scene_durations(length)
 
@@ -232,7 +237,7 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=Non
         "language_accent": content_row.get("language_accent"),
     }
 
-    if product is None:
+    if is_talking_head:
         ctx["talking_head"] = True
 
     # Dynamic Influencer Variation: override setting if a variation_prompt was
@@ -305,12 +310,15 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=Non
         and length == "15s"
     ):
         print(f"      [SCENE] Using unified digital pipeline (15s) for product: {product.get('name')}")
-        return digital_prompts.build_digital_unified(
-            influencer=influencer,
-            product=product,
-            app_clip=app_clip,
-            duration=int(length.replace("s", "")),
-            ctx=ctx,
+        return _finalize_scenes(
+            digital_prompts.build_digital_unified(
+                influencer=influencer,
+                product=product,
+                app_clip=app_clip,
+                duration=int(length.replace("s", "")),
+                ctx=ctx,
+            ),
+            ctx,
         )
 
     # -----------------------------------------------------------------------
@@ -350,11 +358,11 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=Non
         )
 
         if not cinematic_scenes:
-            return influencer_scenes
+            return _finalize_scenes(influencer_scenes, ctx)
 
         if length == "30s":
             # 30s: all UGC scenes first (enables extend pipeline), cinematics appended
-            return influencer_scenes + cinematic_scenes
+            return _finalize_scenes(influencer_scenes + cinematic_scenes, ctx)
         else:
             # 15s: interleave for visual variety
             final_scenes = []
@@ -366,7 +374,7 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=Non
                 if cin_idx < len(cinematic_scenes):
                     final_scenes.append(cinematic_scenes[cin_idx])
                     cin_idx += 1
-            return final_scenes
+            return _finalize_scenes(final_scenes, ctx)
 
     # -----------------------------------------------------------------------
     # Digital Pipeline — 30s uses Extend-optimised build_30s,
@@ -374,9 +382,12 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=Non
     # -----------------------------------------------------------------------
     elif length == "30s":
         print(f"      [SCENE] Using 30s Extend pipeline (build_30s) — {len(config.get_scene_durations(length))} scene slots")
-        return digital_prompts.build_30s(durations, app_clip, ctx, product=product, influencer=influencer)
+        return _finalize_scenes(
+            digital_prompts.build_30s(durations, app_clip, ctx, product=product, influencer=influencer),
+            ctx,
+        )
     else:
-        return digital_prompts.build_15s(durations, app_clip, ctx)
+        return _finalize_scenes(digital_prompts.build_15s(durations, app_clip, ctx), ctx)
 
 
 # (Extracted prompt logic to prompts/digital_prompts.py and prompts/physical_prompts.py)
@@ -385,6 +396,14 @@ def build_scenes(content_row, influencer, app_clip, app_clip_2=None, product=Non
 # ---------------------------------------------------------------------------
 # Text helpers
 # ---------------------------------------------------------------------------
+
+def _finalize_scenes(scenes, ctx):
+    """Stamp talking_head on scenes when influencer-only (no product)."""
+    if ctx.get("talking_head"):
+        for scene in scenes:
+            scene["talking_head"] = True
+    return scenes
+
 
 def _get_reaction(assistant):
     reactions = {

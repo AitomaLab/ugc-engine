@@ -9,6 +9,7 @@ If this module fails, the existing SaaS continues to function normally.
 import os
 import re
 import uuid
+import shutil
 import tempfile
 import subprocess
 from pathlib import Path
@@ -898,16 +899,59 @@ def _generate_ass_subtitles(
     return header + "\n".join(events) + "\n"
 
 
+def _ffmpeg_binary() -> Optional[str]:
+    """System ffmpeg first, then imageio-ffmpeg bundled binary."""
+    binary = shutil.which("ffmpeg")
+    if binary:
+        return binary
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return None
+
+
+def _probe_video_dimensions(video_path: Path, ffmpeg_path: str) -> tuple[int, int]:
+    """Return (width, height), defaulting to 1080x1920."""
+    width, height = 1080, 1920
+    ffprobe = shutil.which("ffprobe")
+    if ffprobe:
+        try:
+            probe = subprocess.run(
+                [ffprobe, "-v", "error", "-select_streams", "v:0",
+                 "-show_entries", "stream=width,height",
+                 "-of", "csv=s=x:p=0", str(video_path)],
+                capture_output=True, text=True, timeout=10,
+            )
+            if probe.returncode == 0 and "x" in probe.stdout.strip():
+                dims = probe.stdout.strip().split("x")
+                width, height = int(dims[0]), int(dims[1])
+                return width, height
+        except Exception:
+            pass
+    try:
+        probe = subprocess.run(
+            [ffmpeg_path, "-hide_banner", "-i", str(video_path)],
+            capture_output=True, text=True, timeout=15,
+        )
+        match = re.search(r"(\d{2,5})x(\d{2,5})", probe.stderr or "")
+        if match:
+            width, height = int(match.group(1)), int(match.group(2))
+    except Exception:
+        pass
+    return width, height
+
+
 def _ffmpeg_burn_captions(
     video_url: str,
     captions: list[dict],
     style_props: dict,
     placement: str,
     job_id: str,
-) -> Optional[str]:
+) -> tuple[Optional[str], Optional[str]]:
     """Download video, render caption overlay PNGs with Pillow, burn with
     ffmpeg overlay filter. Works with any ffmpeg (no libass required).
-    Returns the new public video URL, or None on failure."""
+    Returns (public_url, error_message)."""
     import requests as req_lib
     from datetime import datetime as _dt
 
@@ -915,7 +959,12 @@ def _ffmpeg_burn_captions(
         from PIL import Image, ImageDraw, ImageFont
     except ImportError:
         print("[CAPTION BURN] Pillow not installed — skipping ffmpeg burn")
-        return None
+        return None, "Pillow not installed"
+
+    ffmpeg_path = _ffmpeg_binary()
+    if not ffmpeg_path:
+        print("[CAPTION BURN] ffmpeg not found — skipping ffmpeg burn")
+        return None, "ffmpeg not found (install ffmpeg or imageio-ffmpeg)"
 
     # ── Resolve bundled font directory ──
     _fonts_dir = Path(__file__).parent / "fonts"
@@ -937,19 +986,7 @@ def _ffmpeg_burn_captions(
             video_path.write_bytes(resp.content)
 
             # 2. Probe video dimensions
-            probe_width, probe_height = 1080, 1920
-            try:
-                probe = subprocess.run(
-                    ["ffprobe", "-v", "error", "-select_streams", "v:0",
-                     "-show_entries", "stream=width,height",
-                     "-of", "csv=s=x:p=0", str(video_path)],
-                    capture_output=True, text=True, timeout=10,
-                )
-                if probe.returncode == 0 and "x" in probe.stdout.strip():
-                    dims = probe.stdout.strip().split("x")
-                    probe_width, probe_height = int(dims[0]), int(dims[1])
-            except Exception:
-                pass
+            probe_width, probe_height = _probe_video_dimensions(video_path, ffmpeg_path)
 
             print(f"[CAPTION BURN] Video: {probe_width}x{probe_height}")
 
@@ -1100,7 +1137,7 @@ def _ffmpeg_burn_captions(
 
             if not overlay_segments:
                 print("[CAPTION BURN] No overlay segments generated")
-                return None
+                return None, "No caption overlay segments generated"
 
             print(f"[CAPTION BURN] Rendered {len(overlay_segments)} caption overlay frames")
 
@@ -1135,7 +1172,7 @@ def _ffmpeg_burn_captions(
 
             filter_graph = ";".join(filter_parts)
 
-            cmd = ["ffmpeg"] + inputs + [
+            cmd = [ffmpeg_path] + inputs + [
                 "-filter_complex", filter_graph,
                 "-map", prev_label,
                 "-map", "0:a?",
@@ -1146,8 +1183,9 @@ def _ffmpeg_burn_captions(
             print(f"[CAPTION BURN] Running ffmpeg ({len(overlay_segments)} overlays)...")
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
             if result.returncode != 0:
-                print(f"[CAPTION BURN] ffmpeg failed: {result.stderr[-800:]}")
-                return None
+                err_tail = (result.stderr or result.stdout or "")[-800:]
+                print(f"[CAPTION BURN] ffmpeg failed: {err_tail}")
+                return None, f"ffmpeg failed: {err_tail}"
 
             print(f"[CAPTION BURN] ffmpeg done, output {output_path.stat().st_size} bytes")
 
@@ -1163,16 +1201,16 @@ def _ffmpeg_burn_captions(
                     )
                 public_url = sb.storage.from_("generated-videos").get_public_url(storage_filename)
                 print(f"[CAPTION BURN] Uploaded: {public_url}")
-                return public_url
+                return public_url, None
             except Exception as upload_err:
                 print(f"[CAPTION BURN] Upload failed: {upload_err}")
-                return None
+                return None, f"Upload failed: {upload_err}"
 
         except Exception as e:
             print(f"[CAPTION BURN] Error: {e}")
             import traceback
             traceback.print_exc()
-            return None
+            return None, str(e)
 
 
 class CaptionVideoRequest(BaseModel):
@@ -1479,8 +1517,9 @@ def caption_video(job_id: str, body: CaptionVideoRequest = CaptionVideoRequest()
 
         # ── ffmpeg burn-in: produce a fast captioned video for Videos tab ──
         burned_url = None
+        burn_error = None
         try:
-            burned_url = _ffmpeg_burn_captions(
+            burned_url, burn_error = _ffmpeg_burn_captions(
                 video_url=video_url,
                 captions=captions,
                 style_props=style_props,
@@ -1501,8 +1540,9 @@ def caption_video(job_id: str, body: CaptionVideoRequest = CaptionVideoRequest()
                     update_job(job_id, {"final_video_url": burned_url})
                 print(f"[CAPTION] ffmpeg burn complete — final_video_url updated")
             else:
-                print(f"[CAPTION] ffmpeg burn failed — video URL not updated (editor captions still work)")
+                print(f"[CAPTION] ffmpeg burn failed — video URL not updated (editor captions still work): {burn_error}")
         except Exception as burn_err:
+            burn_error = str(burn_err)
             print(f"[CAPTION] ffmpeg burn error (non-fatal): {burn_err}")
 
         return {
@@ -1513,6 +1553,7 @@ def caption_video(job_id: str, body: CaptionVideoRequest = CaptionVideoRequest()
             "placement": placement,
             "stroke_mode": stroke_mode,
             "burned_video_url": burned_url,
+            "burn_error": burn_error,
         }
 
     except HTTPException:

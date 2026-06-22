@@ -95,6 +95,25 @@ def compute_engagement_rate(
     return 0.0
 
 
+def period_engagement_rate(
+    rows: list[dict],
+    follower_count: Optional[int] = None,
+) -> float:
+    """Period-scoped engagement rate for dashboard KPIs.
+
+    Primary: ``(total_engagement / total_views) × 100`` over the window.
+    Falls back to follower-based ``compute_engagement_rate`` when views are
+    unavailable.
+    """
+    if not rows:
+        return 0.0
+    total_eng = sum(post_engagement(r) for r in rows)
+    total_views = sum(int(r.get("views") or 0) for r in rows)
+    if total_views > 0:
+        return round(total_eng / total_views * 100.0, 2)
+    return compute_engagement_rate(rows, follower_count)
+
+
 def _post_activity_date(post: dict):
     """Best-effort calendar date for period filtering / sparklines."""
     ts = post.get("posted_at") or post.get("added_at") or post.get("scraped_at")
@@ -605,14 +624,9 @@ def stats_from_rows(
     if username and platform and platform != "all":
         acct = get_tracked_account_by_slug(user_id, platform=platform, username=username)
         fc = (acct or {}).get("follower_count") or (acct or {}).get("followers")
-        avg_rate = compute_engagement_rate(all_rows, fc)
+        avg_rate = period_engagement_rate(period_rows, fc)
     else:
-        accounts = list_tracked_accounts(user_id)
-        if platform and platform != "all":
-            accounts = [a for a in accounts if a.get("platform") == platform]
-        avg_rate = mean_engagement_rate_for_accounts(
-            user_id, accounts, source=source if source and source != "all" else None,
-        )
+        avg_rate = period_engagement_rate(period_rows)
     return {
         "total_views": total_views,
         "total_engagement": total_eng,
@@ -675,9 +689,14 @@ def stats_extras_from_rows(
     *,
     period_days: Optional[int] = None,
 ) -> dict:
-    """Sparkline arrays + period-over-period deltas from a pre-fetched post set."""
-    spark_len = max(int(period_days or 30), 1)
+    """Sparkline arrays + period-over-period deltas from a pre-fetched post set.
+
+    Sparklines span **2× the active window**: first half = previous period,
+    second half = current period (architecture-reference contract).
+    """
+    span = max(int(period_days or 30), 1)
     today = datetime.now(timezone.utc).date()
+    spark_len = 2 * span
     spark_index = {
         (today - timedelta(days=spark_len - 1 - i)).isoformat(): i
         for i in range(spark_len)
@@ -685,43 +704,52 @@ def stats_extras_from_rows(
     daily_views = [0] * spark_len
     daily_eng = [0] * spark_len
     daily_posts = [0] * spark_len
-    for r in period_rows:
+
+    prev_start = today - timedelta(days=2 * span - 1)
+    prev_end = today - timedelta(days=span)
+
+    for r in all_rows:
+        d = _post_activity_date(r)
+        if not d or d < prev_start or d > today:
+            continue
         bucket = _bucket_key(r)
         if not bucket or bucket not in spark_index:
             continue
         idx = spark_index[bucket]
         daily_views[idx] += int(r.get("views") or 0)
-        daily_eng[idx] += int(r.get("total_engagement") or 0)
+        daily_eng[idx] += post_engagement(r)
         daily_posts[idx] += 1
 
-    # Period-over-period deltas — only meaningful when a window is set.
+    daily_engagement_rate = [
+        round(e / v * 100.0, 2) if v > 0 else 0.0
+        for v, e in zip(daily_views, daily_eng)
+    ]
+
     delta_views = 0.0
     delta_eng = 0.0
     delta_posts = 0.0
     if period_days:
         total_views = sum(int(r.get("views") or 0) for r in period_rows)
-        total_eng = sum(int(r.get("total_engagement") or 0) for r in period_rows)
         posts_tracked = len(period_rows)
-        span = int(period_days)
-        prev_end = today - timedelta(days=span)
-        prev_start = today - timedelta(days=2 * span - 1)
         prev_rows = [
             p for p in all_rows
             if (d := _post_activity_date(p)) and prev_start <= d <= prev_end
         ]
         prev_views = sum(int(p.get("views") or 0) for p in prev_rows)
-        prev_eng = sum(int(p.get("total_engagement") or 0) for p in prev_rows)
         prev_posts = len(prev_rows)
         if prev_views:
             delta_views = round((total_views - prev_views) / prev_views * 100.0, 1)
-        if prev_eng:
-            delta_eng = round((total_eng - prev_eng) / prev_eng * 100.0, 1)
+        curr_rate = period_engagement_rate(period_rows)
+        prev_rate = period_engagement_rate(prev_rows)
+        if prev_rate:
+            delta_eng = round((curr_rate - prev_rate) / prev_rate * 100.0, 1)
         if prev_posts:
             delta_posts = round((posts_tracked - prev_posts) / prev_posts * 100.0, 1)
 
     return {
         "daily_views": daily_views,
         "daily_engagement": daily_eng,
+        "daily_engagement_rate": daily_engagement_rate,
         "daily_posts": daily_posts,
         "views_delta_pct": delta_views,
         "engagement_delta_pct": delta_eng,

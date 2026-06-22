@@ -293,16 +293,14 @@ class StatsResponse(BaseModel):
         default=0,
         description="All scraped posts for the account in library (ignores period window).",
     )
-    # Period-over-period change in raw values (delta vs. the previous window
-    # of the same length). 0 when there's no prior window to compare to.
+    # Period-over-period change vs. the previous window of the same length.
     views_delta_pct: float = 0.0
     engagement_delta_pct: float = 0.0
     posts_delta_pct: float = 0.0
-    # Sparkline payload — daily totals across the active window. Always sized
-    # to ``max(period_days, 1)`` and zero-filled so the FE can render without
-    # extra normalization.
+    # Sparkline payload — 2× period_days daily buckets (prev period + current).
     daily_views: List[int] = Field(default_factory=list)
     daily_engagement: List[int] = Field(default_factory=list)
+    daily_engagement_rate: List[float] = Field(default_factory=list)
     daily_posts: List[int] = Field(default_factory=list)
     # Distribution payloads — sorted descending by `value`.
     platform_distribution: List[DistributionEntry] = Field(default_factory=list)

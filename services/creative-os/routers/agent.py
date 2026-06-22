@@ -33,6 +33,7 @@ from services.managed_agent_client import (
     session_has_multi_video_intent,
     CAMPAIGN_INTENT_RE,
 )
+from core_api_client import CoreAPIClient
 
 router = APIRouter(prefix="/agent", tags=["managed-agent"])
 
@@ -306,7 +307,8 @@ async def agent_stream(
         "job_id. If the user named a style (hormozi, minimal, bold, karaoke), call `caption_video` directly; "
         "if they did not name a style, call `list_caption_styles()` first. NEVER interpret 'add captions' "
         "as confirmation to fire a pending `create_ugc_video`. NEVER pass `subtitles_enabled=true` to "
-        "`create_ugc_video` when a finished video already exists in this thread.]"
+        "`create_ugc_video` when a finished video already exists in this thread. "
+        "If get_job_status shows no final_video_url yet, tell the user to wait — do NOT call caption tools.]"
     )
     edit_reminder = (
         "[EDIT TURN REMINDER — do NOT respond with `AI_EDIT_OPS` text or any ops-JSON array as chat "
@@ -745,6 +747,73 @@ async def agent_stream(
                 "or duration yet — creator selection comes first.]"
             )
 
+    post_delivery_blocked_reminder: Optional[str] = None
+    _INFLIGHT_JOB_STATUSES = frozenset({
+        "pending", "processing", "started", "queued", "running", "in_progress",
+    })
+    if is_caption_intent or is_edit_intent:
+        has_finished_video_ref = any(
+            r.type == "video" and bool(r.video_url) for r in refs
+        ) or any(
+            any(
+                pr.get("type") == "video" and pr.get("video_url")
+                for pr in (turn.get("refs") or [])
+            )
+            for turn in _prior_turns_all
+            if turn.get("role") == "user"
+        )
+        if not has_finished_video_ref:
+            candidate_job_ids: list[str] = []
+            for r in refs:
+                if r.job_id and not r.video_url:
+                    candidate_job_ids.append(str(r.job_id))
+            for turn in _prior_turns_all:
+                for pr in turn.get("refs") or []:
+                    jid = pr.get("job_id")
+                    if jid and not pr.get("video_url"):
+                        candidate_job_ids.append(str(jid))
+            candidate_job_ids = list(dict.fromkeys(candidate_job_ids))
+            blocking_jid: Optional[str] = None
+            _core = CoreAPIClient(token=user_token, project_id=project_id)
+            for jid in candidate_job_ids:
+                try:
+                    st = await _core.get_job_status(jid)
+                except Exception:
+                    continue
+                if not (st.get("final_video_url") or st.get("video_url")):
+                    blocking_jid = jid
+                    break
+            if not blocking_jid:
+                try:
+                    jobs = await _core.list_jobs(limit=15)
+                    for j in jobs or []:
+                        jid = j.get("id")
+                        if not jid:
+                            continue
+                        if j.get("final_video_url") or j.get("video_url"):
+                            continue
+                        st = (j.get("status") or "").lower()
+                        if st in _INFLIGHT_JOB_STATUSES or st in ("", "processing"):
+                            blocking_jid = str(jid)
+                            break
+                except Exception:
+                    pass
+            if blocking_jid:
+                if _reminder_lang == "es":
+                    post_delivery_blocked_reminder = (
+                        "[VÍDEO EN RENDER — NO llames caption_video, list_caption_styles "
+                        "ni combine_videos todavía. El clip sigue generándose — dile al usuario "
+                        "que espere hasta que aparezca terminado en la pestaña Vídeos. NO ofrezcas "
+                        "captions ni música hasta entonces.]"
+                    )
+                else:
+                    post_delivery_blocked_reminder = (
+                        "[VIDEO STILL RENDERING — do NOT call caption_video, "
+                        "list_caption_styles, or combine_videos yet. Tell the user to wait "
+                        "until the clip appears finished in the Videos tab. Do NOT offer "
+                        "captions or music until then.]"
+                    )
+
     if not refs:
         prefix_lines = [engine_marker, quick_mode_marker]
         if dynamic_speaking_reminder:
@@ -753,6 +822,8 @@ async def agent_stream(
             prefix_lines.append(caption_reminder)
         if is_edit_intent:
             prefix_lines.append(edit_reminder)
+        if post_delivery_blocked_reminder:
+            prefix_lines.append(post_delivery_blocked_reminder)
         if asset_selection_reminder:
             prefix_lines.append(asset_selection_reminder)
         if bulk_reminder:
@@ -768,6 +839,8 @@ async def agent_stream(
             lines.append(caption_reminder)
         if is_edit_intent:
             lines.append(edit_reminder)
+        if post_delivery_blocked_reminder:
+            lines.append(post_delivery_blocked_reminder)
         if asset_selection_reminder:
             lines.append(asset_selection_reminder)
         if bulk_reminder:

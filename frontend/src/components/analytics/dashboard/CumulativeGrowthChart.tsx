@@ -12,18 +12,10 @@ interface Props {
 }
 
 /**
- * Cumulative growth area chart — pure SVG, no chart library.
+ * Daily trend area chart — pure SVG, no chart library.
  *
- * Why hand-rolled? Recharts is ~120 KB gzipped and we only need an area
- * curve with axes + a hover tooltip. The static-but-typed shape keeps the
- * component small and ensures the dashboard doesn't pay for a chart engine
- * we'd otherwise use only in this one place.
- *
- * Renders:
- *   • Y-axis with 4 grid lines + abbreviated tick labels
- *   • X-axis showing first/middle/last dates
- *   • Smooth gradient-filled area
- *   • Hover line + tooltip with the exact value/date
+ * Plots daily totals (or daily engagement rate % for the engagement series)
+ * for the selected period window.
  */
 export default function CumulativeGrowthChart({ points, height = 240, series = 'engagement' }: Props) {
     const [hover, setHover] = useState<{ x: number; pointIdx: number } | null>(null);
@@ -59,7 +51,7 @@ export default function CumulativeGrowthChart({ points, height = 240, series = '
                     fontWeight: 600,
                 }}
             >
-                No accumulated growth in this window yet.
+                No daily activity in this window yet.
             </div>
         );
     }
@@ -115,6 +107,11 @@ export default function CumulativeGrowthChart({ points, height = 240, series = '
         xLabels.push({ idx: 0, text: shortDate(points[0].date) });
     }
 
+    const isRateSeries = series === 'engagement';
+    const formatValue = (v: number) =>
+        isRateSeries ? `${v.toFixed(1)}%` : formatCount(v);
+    const seriesLabel = isRateSeries ? 'engagement rate' : series;
+
     return (
         <div style={{ position: 'relative' }}>
             <svg
@@ -124,7 +121,7 @@ export default function CumulativeGrowthChart({ points, height = 240, series = '
                 onPointerMove={handlePointer}
                 onPointerLeave={() => setHover(null)}
                 role="img"
-                aria-label={`Cumulative ${series} over time, peak ${formatCount(layout.max)}`}
+                aria-label={`Daily ${seriesLabel} over time, peak ${formatValue(layout.max)}`}
             >
                 <defs>
                     <linearGradient id={`grow-${series}`} x1="0" y1="0" x2="0" y2="1">
@@ -154,7 +151,7 @@ export default function CumulativeGrowthChart({ points, height = 240, series = '
                                 fontFamily="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif"
                                 fill="#94A3B8"
                             >
-                                {formatCount(tick)}
+                                {formatValue(tick)}
                             </text>
                         </g>
                     );
@@ -233,7 +230,7 @@ export default function CumulativeGrowthChart({ points, height = 240, series = '
                         {longDate(hoverPoint.date)}
                     </div>
                     <div style={{ color: accentColor, marginTop: 2 }}>
-                        {formatCount(hoverValue)} {series}
+                        {formatValue(hoverValue)} {isRateSeries ? '' : series}
                     </div>
                 </div>
             )}

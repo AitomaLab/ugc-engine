@@ -244,6 +244,18 @@ export function periodToApiParam(period: Period): string {
     return period === 'quarter' ? '90d' : period;
 }
 
+/** Rolling window length in days for dashboard period toggles. */
+export function periodToDays(period: Period): number {
+    switch (period) {
+        case '7d': return 7;
+        case '30d': return 30;
+        case '90d':
+        case 'quarter': return 90;
+        case 'all': return 30;
+        default: return 7;
+    }
+}
+
 export const DEFAULT_ANALYTICS_PERIOD: Period = '7d';
 
 export const DASHBOARD_PERIODS: Period[] = ['7d', '30d', 'quarter'];
@@ -292,6 +304,7 @@ export interface AnalyticsStats {
     posts_delta_pct: number;
     daily_views: number[];
     daily_engagement: number[];
+    daily_engagement_rate: number[];
     daily_posts: number[];
     platform_distribution: DistributionEntry[];
     content_type_distribution: DistributionEntry[];
@@ -637,10 +650,36 @@ function emptyStats(): AnalyticsStats {
         posts_delta_pct: 0,
         daily_views: [],
         daily_engagement: [],
+        daily_engagement_rate: [],
         daily_posts: [],
         platform_distribution: [],
         content_type_distribution: [],
     };
+}
+
+/** Build daily trend chart points from stats (current period slice only). */
+export function buildDailyTrendPoints(stats: AnalyticsStats, period: Period): CumulativePoint[] {
+    const span = periodToDays(period);
+    const views = stats.daily_views.slice(-span);
+    const posts = stats.daily_posts.slice(-span);
+    const rates = stats.daily_engagement_rate.slice(-span);
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    return views.map((v, i) => {
+        const d = new Date(today);
+        d.setUTCDate(d.getUTCDate() - (span - 1 - i));
+        const rate = rates[i] ?? 0;
+        const postCount = posts[i] ?? 0;
+        return {
+            date: d.toISOString().slice(0, 10),
+            views: v,
+            posts: postCount,
+            engagement: rate,
+            cumulative_views: v,
+            cumulative_engagement: rate,
+            cumulative_posts: postCount,
+        };
+    });
 }
 
 /** Cumulative growth — daily running totals fed to the growth chart.

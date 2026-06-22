@@ -417,10 +417,12 @@ You MUST do this check BEFORE starting any generation (except the 15s/30s full-U
   - **No script provided, but clear direction**: If the user gave a creative brief (e.g. "make a video about the health benefits") but no actual dialogue, call `generate_scripts(product_id, duration, influencer_id, context=<user's brief>)` FIRST to produce a script, then pass the generated hook + scene dialogues (newline-joined) as the `hook` argument.
   - **No script AND no clear direction**: If the user's request is vague about what the character should say (e.g. "make a 30s UGC video for this product"), you MUST ask before generating: "What should [influencer name] say in the video? Do you have a specific script, or should I write one based on the product?" End your turn and wait for the answer. Do NOT silently generate a random script — the user needs to guide the content.
   Then call create_ugc_video (gated). Wait for completion, then confirm in plain text.
-  - **Music + captions are post-delivery options, NOT defaults**: `create_ugc_video` produces the bare assembled video (no music, no captions) so the user sees the result fast (~5-7 min instead of ~10-15 min). After the tool returns successfully, surface the video with one short sentence describing what's in it, then end your turn with a follow-up offer in the user's language: "Want to add captions or background music?" If the user accepts:
+  - **Music + captions are post-delivery options, NOT defaults**: `create_ugc_video` produces the bare assembled video (no music, no captions) so the user sees the result fast (~5-7 min instead of ~10-15 min). **NEVER offer captions or background music when `create_ugc_video` returns `action=ugc_started` / `status=started`** — that means the job was *dispatched*, not *delivered*. On dispatch, acknowledge ETA + Videos tab only. **FORBIDDEN on dispatch or while rendering:** "Want captions/music?", "once it's done want me to add…", `list_caption_styles`, `caption_video`, or `combine_videos(music_prompt=…)`.
+  - **When to offer (completion only):** Offer captions/music ONLY after `get_job_status(job_id)` returns a playable `final_video_url`, the user @-mentions a finished `type=video` ref with `video_url`, OR the frontend completion upsell already asked. Then offer once: "Want to add captions or background music?" If the user accepts:
     • Captions only → `caption_video(job_id=<id>)`. If they didn't pick a style, call `list_caption_styles()` first per the captions section below.
     • Music only → `combine_videos(video_urls=[<final_video_url>], music_prompt="<short style description matching the brand/vibe>")`.
     • Both → call `caption_video` FIRST (so the burned captions live in the asset), then `combine_videos(video_urls=[<captioned_video_url>], music_prompt=...)` so the music is layered on top of the captioned cut.
+  - **User asks mid-render:** If the user says "add captions" / "add music" while the job is still processing (no `final_video_url` yet), do NOT call caption/music tools. Tell them to wait until the clip appears finished in the **Videos** tab (~N min left). Do NOT show caption style cards until the video is ready.
   Skip the follow-up offer entirely when the user explicitly opted out ("no music", "sin subtítulos") — and when they explicitly asked for music or captions UPFRONT (e.g. "create a UGC video with music and captions"), pass `music_enabled=true` and/or `subtitles_enabled=true` to `create_ugc_video` so they're baked into the first delivery and you don't need to offer a follow-up.
   - **CRITICAL — post-delivery caption requests**: When a finished video already exists in this thread (or Referenced assets includes a `type=video` ref with `job_id`) and the user asks to "add captions", "add hormozi subtitles", "burn captions at the top", etc., you MUST call `caption_video(job_id=...)` on that existing job. NEVER call `create_ugc_video` again. NEVER treat "add captions" / "let's add captions" as a green light to fire pending generation or as `confirmed=true` for a gated tool. NEVER say "firing the video now" for a caption request — captions take ~30 seconds, not ~6 minutes. "Add captions" AFTER delivery = `caption_video`; "create a video WITH captions" BEFORE any video exists = `create_ugc_video(subtitles_enabled=true)`.
 
@@ -438,8 +440,8 @@ You MUST do this check BEFORE starting any generation (except the 15s/30s full-U
 **Bulk campaign**: list_project_assets → create_bulk_campaign (gated). Returns immediately with job_ids; tell the user to watch the gallery or check back.
   - **Duration (MANDATORY before cost chip):** If the user has not chosen 8s, 15s, or 30s, ask in ONE short message ending with `[[UGC_DURATION_BUTTONS]]` on the last line (EN: "How long should each video be? [[UGC_DURATION_BUTTONS]]"). Wait for the choice. **NEVER use `[[DURATION_BUTTONS]]` in UGC bulk flows** — that marker is cinematic-only (5/10/15s).
   - **Music + captions are post-delivery options, NOT defaults** (same as single `create_ugc_video`): `create_bulk_campaign` produces bare assembled videos (no music, no captions) so each video finishes faster. Do NOT pass `subtitles_enabled=true` or `music_enabled=true` unless the user explicitly asked for baked-in captions/music upfront.
-  - After dispatch: tell the user the batch is running and to watch the gallery. Do NOT claim all videos are "Done" until every job in the batch has `status=success` with a `final_video_url` (use `list_jobs` / `get_job_status(job_id)` when the user checks back).
-  - When **all** jobs in the batch are complete, offer once in the user's language: "Want to add captions or background music to any of these?" If the user accepts, apply per video:
+  - After dispatch: tell the user the batch is running and to watch the gallery. Do NOT offer captions or music on dispatch. Do NOT claim all videos are "Done" until every job in the batch has `status=success` with a `final_video_url` (use `list_jobs` / `get_job_status(job_id)` when the user checks back).
+  - When **all** jobs in the batch have a playable `final_video_url`, offer once in the user's language: "Want to add captions or background music to any of these?" If the user accepts, apply per video:
     • Captions only → `caption_video(job_id=<id>)`. If they didn't pick a style, call `list_caption_styles()` first.
     • Music only → `combine_videos(video_urls=[<final_video_url>], music_prompt="<short style description>")`.
     • Both → `caption_video` FIRST, then `combine_videos` on the captioned URL.
@@ -516,7 +518,7 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
 2. Reference real product_ids / influencer_ids / job_ids returned by the list tools — never invent UUIDs.
 3. When a generation finishes, summarize what you produced and report the actual credits spent. NEVER paste raw asset URLs (Supabase storage links, http(s) URLs to images/videos) or markdown links to assets into your reply. The chat panel automatically renders a thumbnail under your message from the tool's artifact frame — the user already sees the asset visually. Refer to it by name only ("Your 8s clip is ready"). The only exception is short identifiers like job_ids when the user explicitly asks for them.
 4. Pick the simplest tool chain that fulfills the brief. Don't run extra tools "to be safe".
-5. Long-running tools: `create_ugc_video` and `create_clone_video` return immediately with `status: started` and a `job_id` — tell the user to watch the Videos tab; do NOT block or poll inline. After `ugc_started`, give the ETA from the tool result: **~6 minutes for 15s**, **~9 minutes for 30s**. After `clone_started`: **~8 minutes for 15s**, **~12 minutes for 30s**. After `generate_video` with `dynamic_speaking=true` (walk-and-talk Seedance): **~10–12 minutes for 15s**, **~12–15 minutes for 30s** — multi-beat complexity makes these slower than static clips. Never say "Done." or "ready" until the gallery shows the finished clip. `animate_image`, `render_edited_video`, and `caption_video` still block while polling — let them finish.
+5. Long-running tools: `create_ugc_video` and `create_clone_video` return immediately with `status: started` and a `job_id` — tell the user to watch the Videos tab; do NOT block or poll inline. After `ugc_started`, give the ETA from the tool result: **~6 minutes for 15s**, **~9 minutes for 30s**. After `clone_started`: **~8 minutes for 15s**, **~12 minutes for 30s**. After `generate_video` with `dynamic_speaking=true` (walk-and-talk Seedance): **~10–12 minutes for 15s**, **~12–15 minutes for 30s** — multi-beat complexity makes these slower than static clips. Never say "Done." or "ready" until the gallery shows the finished clip. **Never offer post-delivery captions or music on `ugc_started` / `clone_started` turns** — wait until `final_video_url` exists. `animate_image`, `render_edited_video`, and `caption_video` still block while polling — let them finish.
 5a. NEVER claim a video generation failed when the tool result has `status: started`, `still_processing`, `action: ugc_started`, or `action: clone_started`. If the SSE connection dropped or the user asks mid-run, say the job is still rendering, restate the approximate time remaining, and point them to the gallery (or call `get_job_status(job_id)`). Only report failure when the job status is `failed` with an `error_message`.
 6. NEVER manually construct or modify caption/transcription JSON inside editor_state. Always use the caption_video tool — it runs real Whisper transcription on the audio and produces accurate, properly timed captions.
 7. You may call multiple tools in a single turn. For independent tasks (e.g., "generate 3 images"), dispatch all of them in the same turn and report all results together. For dependent tasks (e.g., "generate an image then animate it"), chain the tools sequentially within the same turn — call the first tool, receive its result, then immediately call the next without waiting for user input. Never ask for permission between chained steps.
@@ -1738,9 +1740,19 @@ def _custom_tools_for_agent() -> list[dict]:
                 "'muéstrame los estilos de subtítulos', OR when they ask to add captions "
                 "without specifying a style. Do NOT describe the styles in text — the cards "
                 "ARE the answer. Never say you can't render previews; this tool IS that. "
-                "Free, instant."
+                "Free, instant. Do NOT call while the target video is still generating — "
+                "wait until get_job_status shows final_video_url."
             ),
-            "input_schema": {"type": "object", "properties": {}, "required": []},
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "job_id": {
+                        "type": "string",
+                        "description": "Optional video job id — blocks preview if that job is still rendering.",
+                    },
+                },
+                "required": [],
+            },
         },
         {
             "type": "custom",
@@ -1933,6 +1945,10 @@ def _custom_tools_for_agent() -> list[dict]:
                     "music_prompt": {
                         "type": "string",
                         "description": "Optional audio bed to generate and mix UNDER kept dialogue. Musical soundtrack: 'upbeat modern pop instrumental for a grocery app ad'. Ambient/SFX/room tone (bar crowd, glasses clinking, pub ambience): use field-recording phrasing with 'no melody, no instruments' — e.g. 'live bar field recording, crowd murmur, glasses clinking, warm pub atmosphere, no melody, no instruments, documentary foley'. Leave unset to keep source audio untouched.",
+                    },
+                    "job_id": {
+                        "type": "string",
+                        "description": "Optional source video job id — when set, blocks music mix if that job is still rendering.",
                     },
                 },
                 "required": ["video_urls"],
@@ -3127,6 +3143,16 @@ def _bulk_video_job_started_events(
             "eta_seconds": eta_seconds,
             "duration": duration,
         })
+    return out
+
+
+def _video_job_started_post_delivery_flags(parsed: dict) -> dict:
+    """Optional flags for frontend post-delivery upsell eligibility."""
+    out: dict = {}
+    if "subtitles_enabled" in parsed:
+        out["subtitles_enabled"] = bool(parsed["subtitles_enabled"])
+    if "music_enabled" in parsed:
+        out["music_enabled"] = bool(parsed["music_enabled"])
     return out
 
 
@@ -5515,11 +5541,14 @@ async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
         "credits_spent": credits,
         "eta_seconds": eta_seconds,
         "eta_minutes_approx": eta_min,
+        "subtitles_enabled": kwargs.get("subtitles_enabled", False),
+        "music_enabled": kwargs.get("music_enabled", False),
         "message": (
             f"UGC video job started ({duration}s, {credits} credits). "
             f"Estimated time remaining: ~{eta_min} minutes. "
             "Tell the user to watch the Videos tab progress card. "
-            "Do NOT say Done or ready until get_job_status returns success with final_video_url."
+            "Do NOT say Done or ready until get_job_status returns success with final_video_url. "
+            "Do NOT offer captions or background music until this job completes."
         ),
     })
 
@@ -7021,11 +7050,14 @@ async def _tool_create_clone_video(ctx: ToolContext, **kwargs: Any) -> str:
         "credits_spent": credits,
         "eta_seconds": eta_seconds,
         "eta_minutes_approx": eta_min,
+        "subtitles_enabled": kwargs.get("subtitles_enabled", True),
+        "music_enabled": kwargs.get("music_enabled", False),
         "message": (
             f"AI Clone video job started ({duration}s, {credits} credits). "
             f"Estimated time remaining: ~{eta_min} minutes. "
             "Tell the user to watch the Videos tab progress card. "
-            "Do NOT say Done or ready until the job completes in the gallery."
+            "Do NOT say Done or ready until the job completes in the gallery. "
+            "Do NOT offer captions or background music until this job completes."
         ),
     })
 
@@ -7755,7 +7787,39 @@ CAPTION_STYLE_PREVIEWS = [
 ]
 
 
-async def _tool_list_caption_styles(ctx: ToolContext, **_: Any) -> str:
+def _job_has_playable_video(job_status: dict) -> bool:
+    return bool(job_status.get("final_video_url") or job_status.get("video_url"))
+
+
+def _inflight_job_id_from_ctx(ctx: ToolContext) -> Optional[str]:
+    for r in ctx.refs or []:
+        jid = r.get("job_id")
+        if jid and not r.get("video_url"):
+            return str(jid)
+    return None
+
+
+async def _guard_job_ready_for_post_delivery(ctx: ToolContext, job_id: str) -> Optional[str]:
+    """Return a JSON error payload when the job is not ready for captions/music."""
+    try:
+        status = await ctx.core().get_job_status(job_id)
+    except Exception as e:
+        return json.dumps({"error": f"get_job_status failed: {e}", "job_id": job_id})
+    if _job_has_playable_video(status):
+        return None
+    st = (status.get("status") or "processing").lower()
+    return json.dumps({
+        "error": "video_still_generating",
+        "job_id": job_id,
+        "status": st,
+        "message": (
+            "Cannot add captions or music yet — wait until the video finishes "
+            "and appears in the Videos tab."
+        ),
+    })
+
+
+async def _tool_list_caption_styles(ctx: ToolContext, **kwargs: Any) -> str:
     """Return the 4 caption style previews and emit a visual artifact so the
     frontend can render styled preview cards in the chat. Free, instant.
 
@@ -7763,6 +7827,11 @@ async def _tool_list_caption_styles(ctx: ToolContext, **_: Any) -> str:
     are available?' or asks to add captions without specifying a style —
     the rendered cards show how each style looks visually.
     """
+    job_id = kwargs.get("job_id") or _inflight_job_id_from_ctx(ctx)
+    if job_id:
+        blocked = await _guard_job_ready_for_post_delivery(ctx, str(job_id))
+        if blocked:
+            return blocked
     _record_artifact(ctx, {
         "type": "caption_styles_preview",
         "styles": CAPTION_STYLE_PREVIEWS,
@@ -7789,6 +7858,9 @@ async def _tool_caption_video(ctx: ToolContext, **kwargs: Any) -> str:
     job_id = kwargs.get("job_id")
     if not job_id:
         return json.dumps({"error": "job_id is required"})
+    blocked = await _guard_job_ready_for_post_delivery(ctx, str(job_id))
+    if blocked:
+        return blocked
     style = kwargs.get("style", "hormozi")
     placement = kwargs.get("placement", "middle")
     extra = {
@@ -7821,7 +7893,9 @@ async def _tool_caption_video(ctx: ToolContext, **kwargs: Any) -> str:
         })
 
     # ── Fallback: Remotion render (only if ffmpeg burn failed) ─────────
-    print(f"[caption_video] ffmpeg burn not available — falling back to Remotion render")
+    burn_error = caption_result.get("burn_error")
+    print(f"[caption_video] ffmpeg burn not available — falling back to Remotion render"
+          + (f" ({burn_error})" if burn_error else ""))
     try:
         editor_state = await ctx.core().get_editor_state(job_id)
         print(f"[caption_video] Loaded editor_state ({len(json.dumps(editor_state))} bytes)")
@@ -8443,6 +8517,12 @@ async def _tool_combine_videos(ctx: ToolContext, **kwargs: Any) -> str:
     is_ambience_bed = False
     if music_prompt:
         music_prompt, is_ambience_bed = _shape_suno_prompt(music_prompt)
+
+    job_id = kwargs.get("job_id") or _inflight_job_id_from_ctx(ctx)
+    if job_id and music_prompt:
+        blocked = await _guard_job_ready_for_post_delivery(ctx, str(job_id))
+        if blocked:
+            return blocked
 
     # Kick off Suno generation in parallel with the video download/normalize
     # work — music generation typically takes 30s-2min and masking it behind
@@ -10790,6 +10870,7 @@ class ManagedAgentClient:
                         "tool_name": "create_ugc_video",
                         "eta_seconds": _eta_seconds,
                         "duration": _duration,
+                        **_video_job_started_post_delivery_flags(af_parsed),
                     }
                 yield {
                     "type": "agent_message",
@@ -10814,6 +10895,7 @@ class ManagedAgentClient:
                         "tool_name": "create_clone_video",
                         "eta_seconds": _eta_seconds,
                         "duration": _duration,
+                        **_video_job_started_post_delivery_flags(af_parsed),
                     }
                 yield {
                     "type": "agent_message",
@@ -11706,6 +11788,7 @@ class ManagedAgentClient:
                                         "tool_name": _id_to_name.get(tool_use_id) or "create_ugc_video",
                                         "eta_seconds": _ugc_eta,
                                         "duration": _ugc_dur,
+                                        **_video_job_started_post_delivery_flags(parsed),
                                     }
                                     yield {
                                         "type": "agent_message",
@@ -11724,6 +11807,7 @@ class ManagedAgentClient:
                                         "tool_name": _id_to_name.get(tool_use_id) or "create_clone_video",
                                         "eta_seconds": _clone_eta,
                                         "duration": _clone_dur,
+                                        **_video_job_started_post_delivery_flags(parsed),
                                     }
                                     yield {
                                         "type": "agent_message",

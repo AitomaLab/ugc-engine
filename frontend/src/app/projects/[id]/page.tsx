@@ -276,6 +276,9 @@ export default function ProjectContainerPage() {
     // Background video jobs (edit_video) finish minutes after tool_result — keep
     // polling these ids even if /full missed the initial processing row.
     const watchedVideoJobIdsRef = useRef<Set<string>>(new Set());
+    /** UGC/clone jobs dispatched without upfront captions/music — eligible for post-delivery upsell. */
+    const postDeliveryUpsellEligibleRef = useRef<Set<string>>(new Set());
+    const offeredPostDeliveryUpsellJobIdsRef = useRef<Set<string>>(new Set());
     const [watchPollTick, setWatchPollTick] = useState(0);
     // Sync agent panel state to power reactive header elements
     const [agentState, setAgentState] = useState<AgentPanelState>({ useSeedance: false, running: false, turnsCount: 0 });
@@ -341,10 +344,26 @@ export default function ProjectContainerPage() {
         setLoading(false);
     }, [fullData, applyFullPayload, projectId]);
 
-    const registerVideoJobWatch = useCallback((payload: { job_id: string; label?: string; eta_seconds?: number; duration?: number }) => {
-        const { job_id: jobId, label, eta_seconds, duration } = payload;
+    const registerVideoJobWatch = useCallback((payload: {
+        job_id: string;
+        label?: string;
+        eta_seconds?: number;
+        duration?: number;
+        tool_name?: string;
+        subtitles_enabled?: boolean;
+        music_enabled?: boolean;
+    }) => {
+        const { job_id: jobId, label, eta_seconds, duration, tool_name, subtitles_enabled, music_enabled } = payload;
         if (!jobId) return;
         watchedVideoJobIdsRef.current.add(jobId);
+        const postDeliveryTools = new Set(['create_ugc_video', 'create_clone_video']);
+        if (tool_name && postDeliveryTools.has(tool_name)) {
+            const subs = subtitles_enabled ?? (tool_name === 'create_clone_video');
+            const music = music_enabled ?? false;
+            if (!subs && !music) {
+                postDeliveryUpsellEligibleRef.current.add(jobId);
+            }
+        }
         setWatchPollTick((t) => t + 1);
         setVideos((prev) => {
             if (prev.some((v) => v.id === jobId)) return prev;
@@ -513,12 +532,23 @@ export default function ProjectContainerPage() {
 
             let anyVideoSuccess = false;
             let anyImageSuccess = false;
+            const completedUpsellJobIds: string[] = [];
             for (const v of (status.videos || [])) {
                 if (!polledVideoSet.has(v.id)) continue;
                 if (!isSuccessLikeStatus(v.status) || !(v.final_video_url || v.video_url)) continue;
                 const prev = videos.find((p) => p.id === v.id);
                 const hadPlayableUrl = !!(prev?.final_video_url || prev?.video_url);
-                if (!hadPlayableUrl) anyVideoSuccess = true;
+                if (!hadPlayableUrl) {
+                    anyVideoSuccess = true;
+                    const jid = String(v.id);
+                    if (
+                        postDeliveryUpsellEligibleRef.current.has(jid)
+                        && !offeredPostDeliveryUpsellJobIdsRef.current.has(jid)
+                    ) {
+                        offeredPostDeliveryUpsellJobIdsRef.current.add(jid);
+                        completedUpsellJobIds.push(jid);
+                    }
+                }
             }
             for (const im of (status.images || [])) {
                 const polled = polledImageSet.has(im.id);
@@ -550,6 +580,10 @@ export default function ProjectContainerPage() {
 
             if (anyVideoSuccess) clearOnePlaceholder('video');
             if (anyImageSuccess) clearOnePlaceholder('image');
+
+            for (const jid of completedUpsellJobIds) {
+                agentRef.current?.appendPostDeliveryUpsell(jid);
+            }
 
             const isVideoTerminal = (row: { status?: string; final_video_url?: string; video_url?: string }) => {
                 const st = (row.status || '').toLowerCase();
@@ -621,6 +655,8 @@ export default function ProjectContainerPage() {
         fullRefreshTimersRef.current = [];
         pollTickRef.current = 0;
         watchedVideoJobIdsRef.current.clear();
+        postDeliveryUpsellEligibleRef.current.clear();
+        offeredPostDeliveryUpsellJobIdsRef.current.clear();
         seenInPollRef.current.clear();
         reportedFailuresRef.current.clear();
         setFilterProduct('');
@@ -706,7 +742,7 @@ export default function ProjectContainerPage() {
         const SLOW_MS = 5000;
         const FAST_UNTIL = 20000;
         const TOTAL_MS = 120000;
-        const WATCHED_MAX_MS = 600000;
+        const WATCHED_MAX_MS = 1200000;
         const tick = () => {
             const elapsed = Date.now() - startedAt;
             const hasWatched = watchedVideoJobIdsRef.current.size > 0;

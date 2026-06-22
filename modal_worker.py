@@ -125,6 +125,15 @@ def process_video(job_id: str):
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
 
+    # Early validation: UGC Veo routing requires WaveSpeed on Modal
+    _required_keys = ["WAVESPEED_API_KEY", "ELEVENLABS_API_KEY", "SUPABASE_URL"]
+    _missing = [k for k in _required_keys if not os.getenv(k)]
+    if _missing:
+        raise RuntimeError(
+            f"Missing Modal secrets: {', '.join(_missing)}. "
+            f"Run: ./scripts/sync_modal_secrets.sh && modal deploy modal_worker.py"
+        )
+
     # Import the Celery task's core logic (not the Celery decorator)
     from ugc_worker.tasks import generate_ugc_video
 

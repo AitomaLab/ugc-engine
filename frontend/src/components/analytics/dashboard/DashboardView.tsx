@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from '@/lib/i18n';
 import type { AnalyticsPlatform } from '@/lib/types';
 import {
-    useAnalyticsCumulative,
+    buildDailyTrendPoints,
     useAnalyticsStats,
     useMetricsFreshness,
     timeAgo,
@@ -69,7 +69,7 @@ type DashboardSubview = 'overview' | 'videos' | 'accounts';
  *   • Title + period toggle
  *   • Subview toggle (Overview / By Video)
  *   • KPI cards (views, engagement rate, total posted)
- *   • Cumulative growth area chart with series toggle
+ *   • Daily trend area chart with series toggle
  *   • Platform + content-type distribution panels (side-by-side)
  *   • CTAs to connect / track external accounts
  *
@@ -77,8 +77,8 @@ type DashboardSubview = 'overview' | 'videos' | 'accounts';
  * so the user can see lifetime performance for each uploaded video across
  * every platform it was posted to.
  *
- * All aggregates are driven by `/api/analytics/stats`,
- * `/api/analytics/stats/cumulative`, and `/api/analytics/posts?source=internal`
+ * All aggregates are driven by `/api/analytics/stats` and
+ * `/api/analytics/posts?source=internal`
  * (the last only when the videos subview is active) — no per-component
  * fetching so the period toggle stays in lockstep across widgets.
  */
@@ -137,19 +137,17 @@ export default function DashboardView({
         accountFilter,
         refreshKey,
     );
-    const { data: cumulative, loading: cumulativeLoading, isRefreshing: cumulativeRefreshing } = useAnalyticsCumulative(
-        period,
-        platformFilter,
-        'all',
-        accountFilter,
-        refreshKey,
-    );
     const { lastRefreshedAt } = useMetricsFreshness(refreshKey);
 
+    const dailyTrendPoints = useMemo(
+        () => (stats ? buildDailyTrendPoints(stats, period) : []),
+        [stats, period],
+    );
+
     const showKpiSkeleton = statsLoading && !stats;
-    const showChartSkeleton = cumulativeLoading && !cumulative;
+    const showChartSkeleton = statsLoading && !stats;
     const showPanelSkeleton = statsLoading && !stats;
-    const isRefreshing = statsRefreshing || cumulativeRefreshing || accountsLoading;
+    const isRefreshing = statsRefreshing || accountsLoading;
 
     return (
         <div
@@ -315,9 +313,9 @@ export default function DashboardView({
                             {showChartSkeleton ? (
                                 <ChartSkeleton height={240} />
                             ) : (
-                                <div style={{ opacity: cumulativeLoading ? 0.65 : 1, transition: 'opacity 0.2s ease' }}>
+                                <div style={{ opacity: statsLoading ? 0.65 : 1, transition: 'opacity 0.2s ease' }}>
                                     <CumulativeGrowthChart
-                                        points={cumulative?.points || []}
+                                        points={dailyTrendPoints}
                                         series={growthSeries}
                                     />
                                 </div>

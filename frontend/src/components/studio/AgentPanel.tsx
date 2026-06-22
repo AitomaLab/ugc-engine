@@ -42,6 +42,8 @@ export interface AgentPanelHandle {
     reset: () => void;
     /** Inject a generation-failure message into chat (from gallery poll). */
     reportGenerationFailure: (message: string) => void;
+    /** Inject post-delivery captions/music upsell when a background job completes. */
+    appendPostDeliveryUpsell: (jobId?: string) => void;
     /** Reload persisted thread (picks up background failure messages). */
     refreshThread: () => Promise<boolean>;
 }
@@ -74,7 +76,15 @@ interface AgentPanelProps {
     /** Fires when the agent starts a generation job, so the parent can switch the gallery tab. */
     onJobStart?: (kind: 'image' | 'video') => void;
     /** Background video job (e.g. edit_video) — parent should watch this id until success/fail. */
-    onVideoJobStarted?: (payload: { job_id: string; label?: string; eta_seconds?: number; duration?: number }) => void;
+    onVideoJobStarted?: (payload: {
+        job_id: string;
+        label?: string;
+        eta_seconds?: number;
+        duration?: number;
+        tool_name?: string;
+        subtitles_enabled?: boolean;
+        music_enabled?: boolean;
+    }) => void;
     /** Fires when a long-running tool announces a pending artifact (right-panel placeholder). */
     onArtifactPending?: (pending: { pending_id: string; kind: 'image' | 'video'; label: string; stage?: string; tool_name?: string; eta_seconds?: number }) => void;
     /** Fires when a real artifact lands, so the parent can drop one matching placeholder. */
@@ -1423,7 +1433,15 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     break;
                 }
                 case 'video_job_started': {
-                    const vjs = e as { job_id?: string; label?: string; eta_seconds?: number; duration?: number };
+                    const vjs = e as {
+                        job_id?: string;
+                        label?: string;
+                        eta_seconds?: number;
+                        duration?: number;
+                        tool_name?: string;
+                        subtitles_enabled?: boolean;
+                        music_enabled?: boolean;
+                    };
                     if (vjs.job_id) {
                         reconnectRef.current.watchedJobIds.add(vjs.job_id);
                         onVideoJobStarted?.({
@@ -1431,6 +1449,9 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                             label: vjs.label,
                             eta_seconds: vjs.eta_seconds,
                             duration: vjs.duration,
+                            tool_name: vjs.tool_name,
+                            subtitles_enabled: vjs.subtitles_enabled,
+                            music_enabled: vjs.music_enabled,
                         });
                         onJobStart?.('video');
                     }
@@ -2040,6 +2061,28 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         });
     }, []);
 
+    const appendPostDeliveryUpsell = useCallback((jobId?: string) => {
+        const text = t('creativeOs.agent.postDeliveryUpsell');
+        setTurns(prev => {
+            const last = prev[prev.length - 1];
+            if (last?.role === 'agent' && last.text === text) return prev;
+            if (jobId && prev.some((turn) => turn.role === 'agent' && turn.text === text && turn.post_delivery_upsell_job_id === jobId)) {
+                return prev;
+            }
+            return [
+                ...prev,
+                {
+                    role: 'agent' as const,
+                    text,
+                    artifacts: [],
+                    tool_calls: [],
+                    post_delivery_upsell_job_id: jobId,
+                    ts: Date.now(),
+                },
+            ];
+        });
+    }, [t]);
+
     useImperativeHandle(ref, () => ({
         useSeedance,
         toggleSeedance: () => { if (!running) setUseSeedance(v => !v); },
@@ -2047,8 +2090,9 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
         turnsCount: turns.length,
         reset: handleReset,
         reportGenerationFailure,
+        appendPostDeliveryUpsell,
         refreshThread,
-    }), [useSeedance, running, turns.length, handleReset, reportGenerationFailure, refreshThread]);
+    }), [useSeedance, running, turns.length, handleReset, reportGenerationFailure, appendPostDeliveryUpsell, refreshThread]);
 
     // Shared inner content: used by both embedded (full-height) and floating (modal) modes.
     const panelContent = (

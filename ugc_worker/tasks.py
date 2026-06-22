@@ -132,6 +132,11 @@ def generate_ugc_video(self, job_id: str):
         if not influencer:
             raise RuntimeError(f"Influencer {job['influencer_id']} not found")
 
+        print(
+            f"      [ROUTING] job_id={job_id} product_id={job.get('product_id')} "
+            f"product_type={job.get('product_type', 'digital')} app_clip_id={job.get('app_clip_id')}"
+        )
+
         # Ensure Supabase client is available for clip/script lookups
         from ugc_db.db_manager import get_supabase
         sb = get_supabase()
@@ -228,6 +233,11 @@ def generate_ugc_video(self, job_id: str):
                 print(f"      ✅ Product found: {prod['name']}")
             else:
                  print(f"      ⚠️ Product ID {prod_id} not found!")
+
+        print(
+            f"      [ROUTING] product_loaded={product_dict is not None} "
+            f"has_product_image={bool((product_dict or {}).get('image_url'))}"
+        )
 
         print(f"      👤 Influencer Raw Data (ID: {influencer['id']})")
         print(f"         - Name: {influencer.get('name')}")

@@ -31,6 +31,9 @@ export default function KpiCards({ stats, loading }: Props) {
     const enRatePct = Math.min(100, Math.max(0, data.avg_engagement_rate));
     const hasPosts = (data.posts_total ?? data.posts_tracked) > 0;
     const showPostsTotal = (data.posts_total ?? 0) > data.posts_tracked;
+    const comparisonSplit = data.daily_views.length > 1
+        ? Math.floor(data.daily_views.length / 2)
+        : undefined;
 
     return (
         <div className="dash-kpi-grid">
@@ -38,7 +41,7 @@ export default function KpiCards({ stats, loading }: Props) {
                 <CardLabel icon={<EyeIcon />}>{t('analytics.dashboard.kpi.totalViews')}</CardLabel>
                 <CardValue>{formatCount(data.total_views)}</CardValue>
                 <DeltaPill delta={data.views_delta_pct} />
-                <CardSpark values={data.daily_views} />
+                <CardSpark values={data.daily_views} comparisonSplit={comparisonSplit} />
             </DashCard>
 
             <DashCard>
@@ -54,7 +57,10 @@ export default function KpiCards({ stats, loading }: Props) {
                     )}
                 </CardValue>
                 <DeltaPill delta={data.engagement_delta_pct} />
-                <CardSpark values={data.daily_engagement} />
+                <CardSpark
+                    values={data.daily_engagement_rate?.length ? data.daily_engagement_rate : data.daily_engagement}
+                    comparisonSplit={comparisonSplit}
+                />
             </DashCard>
 
             <DashCard accent>
@@ -66,7 +72,7 @@ export default function KpiCards({ stats, loading }: Props) {
                     </div>
                 )}
                 <DeltaPill delta={data.posts_delta_pct} />
-                <CardSpark values={data.daily_posts} />
+                <CardSpark values={data.daily_posts} comparisonSplit={comparisonSplit} />
             </DashCard>
         </div>
     );
@@ -77,10 +83,10 @@ export default function KpiCards({ stats, loading }: Props) {
  * the bottom edge (`marginTop: auto`) so all three cards share the same
  * footer rhythm regardless of the metric above it.
  */
-function CardSpark({ values }: { values: number[] }) {
+function CardSpark({ values, comparisonSplit }: { values: number[]; comparisonSplit?: number }) {
     return (
         <div style={{ marginTop: 'auto', paddingTop: 14 }}>
-            <Sparkline values={values} color="#337AFF" height={44} />
+            <Sparkline values={values} color="#337AFF" height={44} comparisonSplit={comparisonSplit} />
         </div>
     );
 }

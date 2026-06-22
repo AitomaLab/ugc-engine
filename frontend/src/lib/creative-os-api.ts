@@ -311,6 +311,8 @@ export interface AgentTurn {
     editorCta?: { jobId: string };
     /** Set when a background generation failed — surfaced as an error bubble in chat. */
     generation_failed?: boolean;
+    /** Tracks which job triggered an auto upsell (captions/music after render). */
+    post_delivery_upsell_job_id?: string;
     ts: number;
 }
 
@@ -326,7 +328,7 @@ export type AgentStreamEvent =
     | { type: 'tool_result'; tool_use_id: string; summary: string; is_error: boolean }
     | { type: 'artifact'; artifact: AgentArtifact }
     | { type: 'artifact_pending'; pending_id: string; kind: 'image' | 'video'; label: string; stage?: string; tool_name?: string; eta_seconds?: number }
-    | { type: 'video_job_started'; job_id: string; label?: string; tool_name?: string; eta_seconds?: number; duration?: number }
+    | { type: 'video_job_started'; job_id: string; label?: string; tool_name?: string; eta_seconds?: number; duration?: number; subtitles_enabled?: boolean; music_enabled?: boolean }
     | { type: 'confirmation_pending'; credits: number; summaries: string[] }
     | { type: 'done'; session_id: string }
     | { type: 'interrupted' }

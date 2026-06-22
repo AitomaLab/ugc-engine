@@ -51,6 +51,18 @@ def _should_force_kie_digital(product, product_type: str) -> bool:
     return generate_scenes.kie_veo_reliable()
 
 
+def _is_talking_head_ugc(product, scenes) -> bool:
+    """Influencer-only UGC — no product composite / no Kie extend chain."""
+    if any(s.get("talking_head") for s in (scenes or [])):
+        return True
+    if product is None:
+        return True
+    # Mis-set product_id without a usable image — still talking-head.
+    if not (product.get("image_url") or "").strip():
+        return True
+    return False
+
+
 def _composite_or_influencer_ref(scene, influencer, product, *, seed=None):
     """NanoBanana composite when product has an image; else influencer talking-head ref."""
     prod_img = (product or {}).get("image_url")
@@ -349,12 +361,17 @@ def run_generation_pipeline(
                 and scene_1.get("type") == "physical_product_scene"
             )
             use_talking_head_parallel_i2v = (
-                product is None
+                _is_talking_head_ugc(product, veo_scenes)
                 and len(veo_scenes) >= 1
                 and all(s.get("type") == "veo" for s in veo_scenes)
                 and bool(veo_scenes[0].get("reference_image_url"))
             )
             use_parallel_i2v = use_physical_parallel_i2v or use_talking_head_parallel_i2v
+            print(
+                f"      [ROUTING] talking_head={_is_talking_head_ugc(product, veo_scenes)} "
+                f"parallel_i2v={use_parallel_i2v} veo_scenes={len(veo_scenes)} "
+                f"product_id={product.get('id') if product else None}"
+            )
 
             if use_parallel_i2v:
                 extend_assembly_mode = "segment"
