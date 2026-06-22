@@ -3586,6 +3586,23 @@ def _credits_for_op(operation: str, params: dict) -> int:
     raise ValueError(f"unknown operation for credit estimate: {operation}")
 
 
+def _auto_fire_tool_name(operation: str | None, actual_tool_name: str | None) -> str | None:
+    """Map a confirmation payload to a TOOL_DISPATCH key for Confirm auto-fire.
+
+    Credit-gate operations use labels like ``cinematic_animate`` while the
+    dispatch table key is ``create_cinematic_ad``. Prefer the real tool name
+    from the tool_use block; fall back to operation only when it is a known
+    dispatch key, or map cinematic_* credit labels to create_cinematic_ad.
+    """
+    if actual_tool_name and actual_tool_name in TOOL_DISPATCH:
+        return actual_tool_name
+    if operation and operation in TOOL_DISPATCH:
+        return operation
+    if operation and str(operation).startswith("cinematic_"):
+        return "create_cinematic_ad"
+    return actual_tool_name or operation
+
+
 def _confirmation_payload(operation: str, credits: int, summary: str, echo: dict, **extra) -> str:
     """Standard payload returned when a generation tool is called without confirmed=true.
 
@@ -11630,9 +11647,9 @@ class ManagedAgentClient:
                                     # multiple in a batch we stash the first.
                                     if _stashed_pending is None:
                                         _stashed_pending = {
-                                            "tool_name": (
-                                                parsed.get("operation")
-                                                or _id_to_name.get(tool_use_id)
+                                            "tool_name": _auto_fire_tool_name(
+                                                parsed.get("operation"),
+                                                _id_to_name.get(tool_use_id),
                                             ),
                                             "next_call": parsed.get("next_call") or {},
                                             "credits": parsed.get("credits"),
