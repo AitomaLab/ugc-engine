@@ -10503,7 +10503,10 @@ class ManagedAgentClient:
             return
 
         if _is_confirm_click and _pending and session_id:
-            tool_name = _pending.get("tool_name")
+            tool_name = _auto_fire_tool_name(
+                _pending.get("tool_name"),
+                _pending.get("tool_name"),
+            )
             base_input = dict(_pending.get("next_call") or {})
             base_input["confirmed"] = True
             print(f"[ManagedAgent] auto-fire: re-invoking {tool_name!r} with confirmed=true (LLM bypass)")
