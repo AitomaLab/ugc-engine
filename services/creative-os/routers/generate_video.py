@@ -177,6 +177,14 @@ class VideoGenerateRequest(BaseModel):
     aspect_ratio: Optional[str] = None  # "9:16" (vertical) or "16:9" (horizontal). None = pipeline default (vertical).
     product_type: Optional[str] = None  # "physical" | "digital" — resolved from product row when omitted.
     app_clip_id: Optional[str] = None  # Picked app clip UUID — drives composite + B-roll concat.
+    # ── Dynamic-speaking Seedance route (additive; default off) ──
+    # When True (with mode="seedance_2_ugc"), render a single continuous
+    # walk-and-talk clip with dialogue distributed across time blocks. When
+    # target_duration==30, the server fans out two 15s legs in parallel and
+    # stitches them into one deliverable. Both default to safe no-ops so every
+    # existing caller/payload behaves exactly as before.
+    dynamic_speaking: bool = False
+    target_duration: Optional[int] = None  # 15 | 30 — only consulted when dynamic_speaking
 
 
 # ── Job record helpers (via core API — handles auth + RLS) ───────────
@@ -839,12 +847,18 @@ async def _generate_seedance_video(
 
     product_type = "physical" if data.product_id else "digital"
 
+    # Dynamic-speaking 30s renders as two stitched 15s legs — record the
+    # parent job's length as the final 30s so the gallery/credits reflect it.
+    _job_length = data.clip_length
+    if getattr(data, "dynamic_speaking", False) and getattr(data, "target_duration", None) == 30:
+        _job_length = 30
+
     try:
         job_payload = {
             "product_id": data.product_id,
             "product_type": product_type,
             "model_api": "seedance-2.0",
-            "length": data.clip_length,
+            "length": _job_length,
             "campaign_name": _derive_asset_name(data.prompt),
             "video_language": data.language,
             "language_accent": getattr(data, "language_accent", None),
@@ -956,6 +970,29 @@ async def _generate_seedance_video(
     # Cap at Seedance's 4-image ceiling.
     seen: set[str] = set()
     ref_images = [u for u in ref_images if not (u in seen or seen.add(u))][:4]
+
+    # ── Dynamic-speaking 30s: two 15s legs in PARALLEL, stitched to one video ──
+    # Only fires when the agent explicitly set dynamic_speaking + target_duration=30.
+    # Every other Seedance request keeps the exact single-clip path below.
+    if getattr(data, "dynamic_speaking", False) and getattr(data, "target_duration", None) == 30:
+        background_tasks.add_task(
+            _run_dynamic_speaking_seedance_longform,
+            job_id=job_id,
+            data=data,
+            token=user["token"],
+            project_id=data.project_id,
+            reference_image_urls=ref_images,
+            reference_video_urls=ref_videos,
+            user_id=user.get("id"),
+            credit_cost=credit_cost,
+        )
+        return {
+            "status": "generating",
+            "job_id": job_id,
+            "mode": data.mode,
+            "clip_length": 30,
+            "dynamic_speaking": True,
+        }
 
     background_tasks.add_task(
         _run_seedance_clip_pipeline,
@@ -1142,6 +1179,10 @@ async def _run_seedance_clip_pipeline(
         try:
             from services.prompt_enhancer import enhance_prompt
             enhance_context = {"duration": data.clip_length, "has_reference": bool(reference_image_urls or reference_video_urls)}
+            # Dynamic-speaking flag (additive): tells the enhancer to distribute
+            # the script across time blocks for a continuous walk-and-talk clip.
+            if getattr(data, "dynamic_speaking", False):
+                enhance_context["dynamic_speaking"] = True
             # Pass all reference images so the enhancer can map @image_1, @image_2, etc.
             if reference_image_urls:
                 enhance_context["image_urls"] = reference_image_urls
@@ -1165,6 +1206,15 @@ async def _run_seedance_clip_pipeline(
         if data.hook and data.hook.strip():
             import re
             user_dialogue = data.hook.strip()
+            # Dynamic-speaking: the script may arrive as a multi-part (|||) or
+            # multi-line block. Flatten it into one continuous spoken string so
+            # the full script lands in the Audio Dialogue verbatim; the enhancer's
+            # DYNAMIC SPEAKING MODE block distributes it across the time blocks.
+            # Gated by the flag so non-dynamic clips keep the exact current path.
+            if getattr(data, "dynamic_speaking", False):
+                user_dialogue = re.sub(r"\s*\|\|\|\s*", " ", user_dialogue)
+                user_dialogue = re.sub(r"\s+", " ", user_dialogue).strip()
+                print(f"[Seedance][dynamic] Continuous script ({len(user_dialogue.split())} words)")
             print(f"[Seedance] Injecting user's VERBATIM dialogue into prompt: {user_dialogue[:80]}...")
             # Replace the Dialogue line in the Audio section
             # Pattern: Dialogue: "..." or Dialogue: ...
@@ -1309,6 +1359,218 @@ async def _run_seedance_clip_pipeline(
             "error_message": f"Seedance generation failed [{summary}]: {str(e)[:400]}",
         })
         _refund_on_failure(user_id, credit_cost, job_id, "seedance_generation_failed")
+
+
+# ── Dynamic-speaking longform (30s = two parallel 15s legs) ───────────
+
+def _split_script_two_legs(script: str) -> tuple[str, str]:
+    """Split a 30s script into two ~15s halves.
+
+    Prefers the existing ``|||`` part boundaries (the script generator emits 4
+    parts for 30s). Falls back to sentence-based halving when no ``|||`` markers
+    are present, then to a word split. Brand/CTA naturally lands in the final
+    part -> leg B.
+    """
+    import re as _re
+    s = (script or "").strip()
+    if not s:
+        return "", ""
+    if "|||" in s:
+        parts = [p.strip() for p in s.split("|||") if p.strip()]
+        if len(parts) >= 2:
+            mid = (len(parts) + 1) // 2  # leg A gets the extra part when odd
+            return " ".join(parts[:mid]), " ".join(parts[mid:])
+    sentences = [x.strip() for x in _re.split(r"(?<=[.!?…])\s+", s) if x.strip()]
+    if len(sentences) >= 2:
+        mid = (len(sentences) + 1) // 2
+        return " ".join(sentences[:mid]), " ".join(sentences[mid:])
+    words = s.split()
+    mid = (len(words) + 1) // 2
+    return " ".join(words[:mid]), " ".join(words[mid:])
+
+
+async def _build_dynamic_leg_prompt(
+    data: "VideoGenerateRequest",
+    *,
+    leg_script: str,
+    reference_image_urls: list[str],
+    reference_video_urls: list[str],
+    continuity_note: str,
+) -> str:
+    """Build one continuous-speaking Seedance prompt for a single 15s leg.
+
+    Self-contained (does NOT touch ``_run_seedance_clip_pipeline``) so the
+    existing single-clip path is unaffected. Mirrors the same essential steps:
+    enhance with ``dynamic_speaking``, inject the leg's verbatim dialogue, add
+    @Image identity bindings, strip code fences.
+    """
+    import re as _re
+    structured_prompt = data.prompt
+    try:
+        from services.prompt_enhancer import enhance_prompt
+        enhance_context = {
+            "duration": 15,
+            "has_reference": bool(reference_image_urls or reference_video_urls),
+            "dynamic_speaking": True,
+        }
+        if reference_image_urls:
+            enhance_context["image_urls"] = reference_image_urls
+            enhance_context["image_url"] = reference_image_urls[0]
+        enhanced = await enhance_prompt(
+            user_prompt=f"{data.prompt}\n\n[Continuity: {continuity_note}]",
+            mode=data.mode,
+            language=data.language,
+            context=enhance_context,
+        )
+        if enhanced:
+            structured_prompt = enhanced[0].get("prompt") or data.prompt
+    except Exception as e:
+        print(f"[DynamicSpeaking] leg prompt enhance failed (using raw): {e}")
+
+    leg_dialogue = _re.sub(r"\s*\|\|\|\s*", " ", leg_script or "")
+    leg_dialogue = _re.sub(r"\s+", " ", leg_dialogue).strip()
+    if leg_dialogue:
+        replaced = _re.sub(r'(Dialogue:\s*)"[^"]*"', f'\\1"{leg_dialogue}"', structured_prompt)
+        structured_prompt = replaced if replaced != structured_prompt else (
+            structured_prompt + f'\nAudio: Dialogue: "{leg_dialogue}"'
+        )
+
+    if reference_image_urls and "@Image" not in structured_prompt:
+        binding_lines = [
+            f"@Image{idx} — preserve exact facial identity: features, skin tone, and hair of @Image{idx}."
+            for idx, _u in enumerate(reference_image_urls, 1)
+        ]
+        structured_prompt += "\n\nImage references provided:\n" + "\n".join(binding_lines)
+
+    structured_prompt = _re.sub(r"^```(?:markdown|text)?\s*\n", "", structured_prompt)
+    structured_prompt = _re.sub(r"\n```\s*$", "", structured_prompt)
+    return structured_prompt.strip()
+
+
+async def _run_dynamic_speaking_seedance_longform(
+    job_id: str,
+    data: "VideoGenerateRequest",
+    token: str,
+    project_id: str,
+    reference_image_urls: list[str],
+    reference_video_urls: list[str],
+    user_id: Optional[str] = None,
+    credit_cost: int = 0,
+):
+    """30s dynamic-speaking: render two 15s legs IN PARALLEL, stitch to one MP4.
+
+    Reuses the same Kie submit (``generate_video_with_retry``) and storage
+    helpers as the single-clip path; ``_run_seedance_clip_pipeline`` is left
+    completely untouched.
+    """
+    import asyncio
+    from datetime import datetime as _dt
+    generate_scenes = _load_creative_os_generate_scenes()
+    aspect = data.aspect_ratio or "9:16"
+
+    try:
+        leg_a_script, leg_b_script = _split_script_two_legs(data.hook or "")
+        print(
+            f"[DynamicSpeaking] 30s split: legA={len(leg_a_script.split())}w "
+            f"legB={len(leg_b_script.split())}w"
+        )
+
+        await _update_video_job_via_api(token, project_id, job_id, {
+            "status_message": "Writing both halves...",
+            "progress": 8,
+        })
+
+        prompt_a, prompt_b = await asyncio.gather(
+            _build_dynamic_leg_prompt(
+                data, leg_script=leg_a_script,
+                reference_image_urls=reference_image_urls,
+                reference_video_urls=reference_video_urls,
+                continuity_note=(
+                    "opening half; the character begins the continuous walk-and-talk in this setting"
+                ),
+            ),
+            _build_dynamic_leg_prompt(
+                data, leg_script=leg_b_script,
+                reference_image_urls=reference_image_urls,
+                reference_video_urls=reference_video_urls,
+                continuity_note=(
+                    "closing half; SAME character, SAME setting and wardrobe, continues mid-action "
+                    "from the opening half and ends with the brand name / website / CTA"
+                ),
+            ),
+        )
+
+        def _submit(prompt: str):
+            return generate_scenes.generate_video_with_retry(
+                prompt=prompt,
+                model_api="seedance-2.0",
+                duration=15,
+                reference_image_urls=reference_image_urls or None,
+                reference_video_urls=reference_video_urls or None,
+                aspect_ratio=aspect,
+            )
+
+        await _update_video_job_via_api(token, project_id, job_id, {
+            "status_message": "Rendering both halves in parallel...",
+            "progress": 15,
+        })
+
+        # Submit both legs CONCURRENTLY — wall-clock ~= a single 15s render.
+        print("[DynamicSpeaking] parallel leg 1/2 + 2/2 dispatched")
+        res_a, res_b = await asyncio.gather(
+            asyncio.to_thread(_submit, prompt_a),
+            asyncio.to_thread(_submit, prompt_b),
+        )
+        url_a = res_a.get("videoUrl")
+        url_b = res_b.get("videoUrl")
+        if not url_a or not url_b:
+            raise RuntimeError(
+                f"Seedance leg returned no videoUrl (a={bool(url_a)} b={bool(url_b)})"
+            )
+
+        await _update_video_job_via_api(token, project_id, job_id, {
+            "status_message": "Stitching final video...",
+            "progress": 88,
+        })
+
+        from utils.video_concat import concat_segments
+        stitched_path = await asyncio.to_thread(concat_segments, [url_a, url_b])
+
+        from pathlib import Path as _P
+        from utils.persist_media import _upload_bytes, GENERATED_VIDEOS_BUCKET
+        timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
+        storage_name = f"videos/seedance_dynamic_{job_id[:8]}_{timestamp}.mp4"
+        body = await asyncio.to_thread(_P(stitched_path).read_bytes)
+        final_url = await _upload_bytes(
+            body,
+            bucket=GENERATED_VIDEOS_BUCKET,
+            filename=storage_name,
+            content_type="video/mp4",
+        )
+
+        await _update_video_job_via_api(token, project_id, job_id, {
+            "status": "success",
+            "progress": 100,
+            "final_video_url": final_url,
+            "preview_url": None,
+            "preview_type": None,
+            "status_message": None,
+            "metadata": {
+                "mode": data.mode,
+                "engine": "seedance-2.0",
+                "dynamic_speaking": True,
+                "legs": 2,
+            },
+        })
+        print(f"[DynamicSpeaking] Job {job_id} complete (stitched 2x15s): {final_url[:80]}...")
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        print(f"[DynamicSpeaking] FAILED job={job_id} err={str(e)[:500]}", flush=True)
+        await _update_video_job_via_api(token, project_id, job_id, {
+            "status": "failed",
+            "error_message": f"Dynamic-speaking 30s generation failed: {str(e)[:400]}",
+        })
+        _refund_on_failure(user_id, credit_cost, job_id, "seedance_dynamic_longform_failed")
 
 
 # ── Kling 3.0 ────────────────────────────────────────────────────────
@@ -2292,7 +2554,34 @@ def _raw_product_upload_url(
         ):
             continue
         return url
+    # Fallback: upload routed to reference_image_url by _merge_turn_refs_into_video_kwargs
+    if data.reference_image_url and influencer:
+        candidate = data.reference_image_url
+        if candidate not in _view_urls_for_entity(
+            influencer, primary_key="image_url", views_key="character_views"
+        ):
+            return candidate
     return None
+
+
+def _resolve_ugc_clip_product_type(
+    data: VideoGenerateRequest,
+    *,
+    product: dict | None,
+    raw_product_upload: str | None,
+) -> str:
+    """Resolve physical vs digital for NanoBanana composite prompt selection."""
+    if data.product_type in ("physical", "digital"):
+        return data.product_type
+    if data.app_clip_id:
+        return "digital"
+    if data.product_id and product:
+        if product.get("type") == "digital" or product.get("website_url"):
+            return "digital"
+        return "physical"
+    if raw_product_upload or (product and not data.product_id):
+        return "physical"
+    return "digital"
 
 
 def needs_product_composite(
@@ -2676,6 +2965,7 @@ async def _run_ugc_clip_pipeline(
             product = {
                 "name": "uploaded product",
                 "image_url": raw_product_upload,
+                "type": "physical",
             }
 
         elif uploaded_influencer_for_composite:
@@ -2758,6 +3048,11 @@ async def _run_ugc_clip_pipeline(
                     "status_message": "Creating composite image...",
                     "progress": 20,
                 })
+
+                product_type = _resolve_ugc_clip_product_type(
+                    data, product=product, raw_product_upload=raw_product_upload,
+                )
+                print(f"[UGC Clip] Resolved product_type={product_type} for composite")
 
                 # Build context for prompt generation (per-shot description when @-mention overrides URL)
                 visual_desc_str = _resolve_product_visual_description(

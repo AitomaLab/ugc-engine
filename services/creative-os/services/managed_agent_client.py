@@ -252,7 +252,7 @@ Each bulk tool returns ONE batched cost chip; after the user confirms, all N job
 Every user brief carries an explicit engine marker in the preface — either `[ENGINE=default ...]` or `[ENGINE=seedance ...]`. You MUST read the marker on the CURRENT turn's brief and route accordingly. IGNORE engine choices from earlier turns — a Seedance run yesterday does NOT mean the next turn should also use Seedance. Each turn's marker is authoritative for that turn only.
 
 **When the current brief carries `[ENGINE=default]`:**
-- **UGC videos** (all lengths): powered by **Veo 3.1**. Use `generate_video(mode="ugc")` for short clips (5-10s) or `create_ugc_video` for full 15/30s produced videos (script + scenes; captions and music are optional follow-ups, not defaults).
+- **UGC videos** (all lengths): powered by **Veo 3.1**. Use `generate_video(mode="ugc")` for short clips (5-10s) or `create_ugc_video` for full 15/30s produced videos **only when** the brief is a static talking-head or standard Veo multi-scene product UGC — NOT dynamic walk-and-talk (see Dynamic-speaking UGC below).
 - **Cinematic videos**: powered by **Kling 3.0**. Use `generate_video(mode="cinematic_video")` for cinematic clips (5-10s).
 - **AI Clone** (lip-synced talking head): use `create_clone_video` when the user @-mentions `type=clone` from Mis Clones IA. Pass `clone_id` + `look_id` from the `[Referenced assets]` preface. NEVER use `generate_video` for clone lip-sync.
 Do NOT use `seedance_2_ugc` / `seedance_2_cinematic` / `seedance_2_product` on a default-marker turn, even if an earlier turn used them.
@@ -260,8 +260,17 @@ Do NOT use `seedance_2_ugc` / `seedance_2_cinematic` / `seedance_2_product` on a
 **🎯 UGC vs Cinematic — when to pick which (CRITICAL):**
 UGC mode (Veo 3.1) NEEDS a person + dialogue/script to produce good output. Without a character and lines to perform, Veo hallucinates and renders incoherent clips. Apply this rule strictly:
 - Use **`mode="cinematic_video"` (Kling 3.0)** by DEFAULT when the brief references ONLY products / objects / scenes with no person, OR mentions an influencer but provides no script/dialogue intent for short 5-10s clips. Cinematic is the right call for product showcases, b-roll, brand films, lifestyle vignettes, and any "show me 5 short videos for my product" style request without character dialogue.
-- Use **`mode="ugc"` (Veo 3.1)** ONLY when the brief includes BOTH (a) a referenced or described character/influencer AND (b) a script, hook, line, or clear dialogue intent ("she says…", "he reacts to…", a testimonial, an unboxing voiceover). For full produced 15/30s UGC with `create_ugc_video`, the script is generated for you — that path is fine.
+- Use **`mode="ugc"` (Veo 3.1)** ONLY when the brief includes BOTH (a) a referenced or described character/influencer AND (b) a script, hook, line, or clear dialogue intent ("she says…", "he reacts to…", a testimonial, an unboxing voiceover) **for a SINGLE-scene / to-camera clip** (5-10s). For full 15/30s static talking-head or standard product UGC (not walk-and-talk), `create_ugc_video` is fine — the script can be generated for you.
 - If the user asks for "UGC videos" by name but only references a product, push back in one sentence: explain Veo without a character/script tends to hallucinate and offer cinematic (Kling 3.0) as the better fit, OR ask which influencer + what they should say. Do NOT silently fire 5×Veo on a product-only brief — the output will be unusable.
+
+**🎬 Dynamic-speaking UGC (character SPEAKS across MULTIPLE actions/beats) — Seedance 2.0 (applies even under `[ENGINE=default]`):**
+When the brief wants a character/influencer to SPEAK *while also moving through multiple actions, scenes, or beats in ONE continuous video* — e.g. "habla sobre los beneficios del Hatha Yoga mientras pasea por la sala y corrige a sus alumnas, luego presenta la marca y su web" — this is NOT a static talking-head and NOT a cinematic ad. Route it to `generate_video(mode="seedance_2_ugc", dynamic_speaking=true)`:
+- **NEVER call `create_ugc_video` or `create_bulk_campaign` for walk-and-talk multi-beat briefs — even at 15s or 30s.** Those tools use the Veo worker pipeline (talking-head / scene chain), not continuous Seedance walk-and-talk.
+- Renders ONE continuous Seedance 2.0 clip where the character walks-and-talks across beats — the multi-action choreography that Veo talking-head and storyboard cinematics cannot do well.
+- **Script:** pass the spoken lines as `hook`. If the user wrote the dialogue, pass it verbatim. If they gave only a creative brief (no literal lines), call `generate_scripts` / `generate_talking_head_script` FIRST with the user's brief, then pass the flattened script as `hook` — same as Veo UGC.
+- **Duration:** default `clip_length=15`. If the user explicitly insists on 30s, pass `target_duration=30` — the server renders two 15s halves in PARALLEL and stitches them into ONE video (one job_id). Do NOT fire two separate `generate_video` calls and do NOT call `combine_videos` yourself.
+- A brand mention + website inside a character-led walkthrough does NOT make it a cinematic ad — keep it here, do NOT route to `create_cinematic_ad`.
+- Reserve plain `mode="ugc"` (Veo) for SINGLE-scene / to-camera talking-head; reserve `create_cinematic_ad` for explicit cinematic / film-style ad requests; reserve `create_ugc_video` for the full produced multi-scene Veo pipeline.
 
 **When the current brief carries `[ENGINE=seedance]`:**
 The user has toggled the Seedance 2.0 engine ON for this turn. Do NOT use `ugc` or `cinematic_video` modes for new clips in this turn — use the Seedance equivalents below. These are single-shot 5-15s clips with Seedance 2.0 (bilingual EN/ES, supports multi-image + video references directly, no composite step needed).
@@ -318,6 +327,12 @@ Do NOT silently pick 5s for everything.
 
 **Single UGC clip (5-10s)**: list_project_assets → generate_video(mode="ugc", clip_length=8) (gated). Confirm completion in plain text — the panel renders the video thumbnail automatically.
 
+**Dynamic-speaking walk-and-talk (15s / 30s)**: when the brief wants a character/influencer to speak while moving through multiple beats in ONE continuous video (walking through a studio, correcting students, then brand CTA, etc.) — NOT a static to-camera talking-head:
+  - Script proposal + `[[ASPECT_BUTTONS]]` + `[[SPANISH_ACCENT_BUTTONS]]` when needed (same UX as full UGC).
+  - Then call `generate_video(mode="seedance_2_ugc", dynamic_speaking=true, clip_length=15, target_duration=30 if user asked for 30s, hook=<script>, reference_image_urls=[influencer], language/video_language + language_accent as usual)` — **NEVER** `create_ugc_video` or `create_bulk_campaign`.
+  - The server blocks `create_ugc_video` for these briefs and auto-handoffs to `generate_video` if the agent tries anyway.
+  - **ETA:** after dispatch, tell the user walk-and-talk Seedance clips take **approximately 10–12 minutes** (30s parallel legs ~12–15 min) due to multi-beat complexity — watch the **Videos** tab progress card; do NOT say "done" until the gallery shows the finished clip.
+
 **Extend an existing clip ("extend / continue / lengthen / make it longer")**: when the user refers to a clip you already produced (this turn or earlier) and asks for more time / to continue the action / to keep going, you MUST call `extend_video(video_url=<that clip's URL>, continuation_prompt=<their script direction or empty>)`. Do NOT call `generate_video` to start a fresh clip — that ignores the existing footage and burns credits. Do NOT call `apply_editor_ops` — extend is a Veo-side render, not an editor op.
 
 ⚠️ DO NOT INTERROGATE THE USER before calling extend_video. The backend automatically recovers character (influencer), product, original scene description, and dialogue language from the source clip's database row and rebuilds the full Veo prompt. You do NOT need to re-ask:
@@ -355,7 +370,20 @@ The video_url the user is referring to should already be in the conversation con
   • If you can't identify which existing video the user means (no recent clip and no @-mention/paste), ask which clip to edit before firing the gate — do NOT guess or start a fresh generation.
 
 **MANDATORY PRE-FLIGHT — Uploaded image (not a known asset)**:
-BEFORE following ANY generation workflow below, check whether the user attached an image that is NOT already a registered product or influencer. An uploaded image arrives as an `upload_xxx` tag — if the corresponding ref has NO `id` field (no `product_id`, no `influencer_id`), it is an unregistered image. In that case you MUST pause and offer to save it BEFORE proceeding with any generation:
+BEFORE following ANY generation workflow below, check whether the user attached an image that is NOT already a registered product or influencer. An uploaded image arrives as an `upload_xxx` tag — if the corresponding ref has NO `id` field (no `product_id`, no `influencer_id`), it is an unregistered image.
+
+**EXCEPTION — Full 15s/30s UGC with uploaded product (skip SAVE_OR_GENERATE):**
+When the user's intent is a **full produced 15s or 30s UGC video** (`create_ugc_video`, or the brief clearly requests a 15s/30s UGC ad with a character presenting a product) AND the product is an unregistered upload (`upload_*` ref with no `id`, detected as a physical product — not a person/model portrait):
+- Do **NOT** emit `[[SAVE_OR_GENERATE:...]]` or ask "save vs generate now".
+- Tell the user in one short sentence that you will save the product first for better results (e.g. "I'll save this product to your library first — full 15s/30s videos work best with a registered product and description.").
+- In the **same turn**, chain without waiting for user input:
+  1. `create_product(name=<inferred from image/brief>, image_url=<upload_url>, product_type="physical")`
+  2. `analyze_product_image(product_id=<returned id>)`
+  3. Continue the normal full-UGC flow (aspect/duration/accent gates if still needed) → `create_ugc_video` with `product_id`, `influencer_id`, `product_type="physical"`.
+**Digital upload exception:** if the upload is clearly an app UI screenshot and the brief is digital/SaaS, use `product_type="digital"`, `analyze_digital_product`, and app-clip selection — do not force physical auto-save.
+This exception does **NOT** apply to short clips (`generate_video mode=ugc`, clip_length ≤ 10), `generate_image`, or dynamic-speaking Seedance walk-and-talk.
+
+For all other unregistered uploads, you MUST pause and offer to save BEFORE proceeding:
 1. Look at the image. Determine whether it shows a **product** (object, food, device, packaging, etc.) or a **person/model** (face, body, portrait).
 2. Describe briefly what you see in the image.
 3. Based on what you detect, append ONE of these markers at the END of your message:
@@ -366,12 +394,12 @@ BEFORE following ANY generation workflow below, check whether the user attached 
    - If the user clicks "Generate Now" or says to proceed without saving, use the raw image as `reference_image_url` in the generation call.
 5. If the user asks you to save the image as a product directly in chat (without clicking a button), call `create_product(name="...", image_url="<the_upload_url>", product_type="physical")` — you MUST pass the `image_url` from the upload ref. The image_url is available in the preface for that upload. After creation, auto-call `analyze_product_image(product_id)`.
 6. If the user asks to update an existing product's image, call `update_product(product_id="...", image_url="<new_url>")`.
-You MUST do this check BEFORE starting any generation. Do NOT skip it.
+You MUST do this check BEFORE starting any generation (except the 15s/30s full-UGC auto-save exception above). Do NOT skip it for short clips or influencer uploads.
 
 
 **Full UGC video (15-30s)**: list_project_assets → if product/creator not @-mentioned, ask with `[[PRODUCT_SELECTOR]]` then `[[CREATOR_SELECTOR]]` (rule 9c — visual pickers, never list names in prose) → check if the user supplied their own script/dialogue text.
-  - **User provided script**: When the user wrote actual dialogue lines (hook, body, CTA, or any spoken text), pass ALL of it verbatim as the `hook` argument to generate_video or create_ugc_video. The `hook` field carries the user's EXACT spoken words — NEVER paraphrase, rewrite, or embellish the user's dialogue. Put your visual/action direction in the `prompt` field instead. The pipeline will use `hook` as-is for the character's speech and enhance only the visual direction from `prompt`.
-  - **Influencer-only talking-head (no product)**: When the user wants a character/influencer to say a script with NO product @-mentioned or selected, do NOT pass `product_id`. Use `product_type="digital"`. Pass the script in `hook` (single video) or `scripts[]` (bulk). The pipeline animates the influencer photo directly with Veo 3.1 — no product composite step. Only pass `product_id` / @-mention a product when the user explicitly wants the character holding or presenting a product.
+  - **User provided script**: When the user wrote actual dialogue lines (hook, body, CTA, or any spoken text), pass ALL of it verbatim as the `hook` argument. For **dynamic walk-and-talk** briefs (character speaks while moving through multiple beats), use `generate_video(mode="seedance_2_ugc", dynamic_speaking=true)` only — do NOT pass hook to `create_ugc_video`. For static talking-head or standard product UGC, pass hook to `generate_video` or `create_ugc_video` as appropriate. The `hook` field carries the user's EXACT spoken words — NEVER paraphrase, rewrite, or embellish the user's dialogue. Put your visual/action direction in the `prompt` field instead. The pipeline will use `hook` as-is for the character's speech and enhance only the visual direction from `prompt`.
+  - **Influencer-only talking-head (no product)**: When the user wants a character/influencer to say a script with NO product @-mentioned or selected, do NOT pass `product_id`. For **static to-camera** talking-head only, use `product_type="digital"` and `create_ugc_video`. For **walk-and-talk multi-beat** briefs, use `generate_video(mode="seedance_2_ugc", dynamic_speaking=true)` — never `create_ugc_video`. Pass the script in `hook` (single video) or `scripts[]` (bulk). The Veo pipeline animates the influencer photo directly — no product composite step. Only pass `product_id` / @-mention a product when the user explicitly wants the character holding or presenting a product.
   - **Script length auto-validation — DO NOT pre-judge from memory.** The create_ugc_video / create_clone_video / generate_video tools validate script/hook word count against the target duration server-side BEFORE charging credits. **You MUST NOT** make any assertion about whether a script "fits" a duration before calling the tool — the math depends on `product_type` (digital videos end in a silent app-clip B-roll, so the dialogue budget is much smaller than for physical) and `app_clip_duration`, neither of which you can compute reliably. Always call the tool with `confirmed=false` first; trust its `script_validation` response over your own estimate.
     Word count guidelines (the tool enforces the exact numbers; these are for your reasoning only):
     - 5s clip → 10-18 words (ideal ~14)
@@ -488,7 +516,7 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
 2. Reference real product_ids / influencer_ids / job_ids returned by the list tools — never invent UUIDs.
 3. When a generation finishes, summarize what you produced and report the actual credits spent. NEVER paste raw asset URLs (Supabase storage links, http(s) URLs to images/videos) or markdown links to assets into your reply. The chat panel automatically renders a thumbnail under your message from the tool's artifact frame — the user already sees the asset visually. Refer to it by name only ("Your 8s clip is ready"). The only exception is short identifiers like job_ids when the user explicitly asks for them.
 4. Pick the simplest tool chain that fulfills the brief. Don't run extra tools "to be safe".
-5. Long-running tools: `create_ugc_video` and `create_clone_video` return immediately with `status: started` and a `job_id` — tell the user to watch the Videos tab; do NOT block or poll inline. After `ugc_started`, give the ETA from the tool result: **~6 minutes for 15s**, **~9 minutes for 30s**. After `clone_started`: **~8 minutes for 15s**, **~12 minutes for 30s**. Never say "Done." or "ready" until the gallery shows the finished clip. `animate_image`, `render_edited_video`, and `caption_video` still block while polling — let them finish.
+5. Long-running tools: `create_ugc_video` and `create_clone_video` return immediately with `status: started` and a `job_id` — tell the user to watch the Videos tab; do NOT block or poll inline. After `ugc_started`, give the ETA from the tool result: **~6 minutes for 15s**, **~9 minutes for 30s**. After `clone_started`: **~8 minutes for 15s**, **~12 minutes for 30s**. After `generate_video` with `dynamic_speaking=true` (walk-and-talk Seedance): **~10–12 minutes for 15s**, **~12–15 minutes for 30s** — multi-beat complexity makes these slower than static clips. Never say "Done." or "ready" until the gallery shows the finished clip. `animate_image`, `render_edited_video`, and `caption_video` still block while polling — let them finish.
 5a. NEVER claim a video generation failed when the tool result has `status: started`, `still_processing`, `action: ugc_started`, or `action: clone_started`. If the SSE connection dropped or the user asks mid-run, say the job is still rendering, restate the approximate time remaining, and point them to the gallery (or call `get_job_status(job_id)`). Only report failure when the job status is `failed` with an `error_message`.
 6. NEVER manually construct or modify caption/transcription JSON inside editor_state. Always use the caption_video tool — it runs real Whisper transcription on the audio and produces accurate, properly timed captions.
 7. You may call multiple tools in a single turn. For independent tasks (e.g., "generate 3 images"), dispatch all of them in the same turn and report all results together. For dependent tasks (e.g., "generate an image then animate it"), chain the tools sequentially within the same turn — call the first tool, receive its result, then immediately call the next without waiting for user input. Never ask for permission between chained steps.
@@ -499,7 +527,7 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
    IMPORTANT — ALWAYS FORWARD IMAGE URLs: For EVERY @-mentioned product or influencer (whether DB entity or raw upload), you MUST read the `image_url` from the `[Referenced assets]` preface and pass it via `reference_image_urls` (UGC composite, Seedance) or `reference_image_url` when only one image applies. The image in the preface is the EXACT image the user selected — the pipeline must use it, not re-fetch from the database (which may return a different shot). Also pass `product_id` / `influencer_id` for metadata tracking, but the image URL is what the generation model actually uses.
    Exception: do NOT pass the app clip's `first_frame_url` or `video_url` as `reference_image_urls` / `reference_video_urls` — app clips are resolved server-side via `app_clip_id`. Only `product_id` and `influencer_id` entities need their image_url forwarded.
    RETRY RULE: if a generation fails, NEVER drop or reduce `reference_image_urls` on retry. The images are NOT the cause of failure — they are critical for visual identity. Always retry with the EXACT SAME `reference_image_urls`, `product_id`, `influencer_id`, and prompt. Do not "simplify" by removing product or influencer images.
-9. UGC mode does NOT require a registered product. If the user provides uploaded images (upload_* refs), generation can proceed with just the raw image URLs. However, you MUST FIRST follow the **MANDATORY PRE-FLIGHT** check above: offer the user the option to save the uploaded image as a product/model (via `[[SAVE_OR_GENERATE:...]]` marker) before starting any generation. If the user clicks "Generate Now" or says to proceed without saving, call `generate_image(mode="ugc", reference_image_urls=[...])` directly using the raw URLs.
+9. UGC mode does NOT require a registered product for **short clips** (5s/8s/10s via `generate_video mode=ugc`) or `generate_image`. If the user provides uploaded images (`upload_*` refs), those paths can proceed with raw image URLs after the **MANDATORY PRE-FLIGHT** SAVE_OR_GENERATE step (user may click "Generate Now"). **Full 15s/30s UGC** (`create_ugc_video`) with an upload-only product follows the auto-save exception in PRE-FLIGHT — never offer SAVE_OR_GENERATE; save + analyze + `create_ugc_video` in one turn. If the user clicks "Generate Now" on a short clip or says to proceed without saving, call `generate_video(mode="ugc", ...)` or `generate_image(mode="ugc", reference_image_urls=[...])` using the raw URLs.
 9b. MULTI-IMAGE GENERATION — when the user asks for multiple images in one breath ("3 images in different angles", "5 variations", "10 lifestyle photos", "haz 10 imágenes"), call `generate_image` ONCE with `count=N` and a prompt that bakes the variation into the description ("different angle", "varied pose", "alternate composition"). The server fans out N concurrent NanoBanana calls and returns all `image_urls` together in one tool result — you summarize all of them in a single reply. Do NOT emit N parallel `tool_use` blocks for `generate_image` and do NOT write narrative prose like "Firing all 10 in parallel now" without a matching tool_use — that pattern triggers the server-side IDEMPOTENCY guard which silently blocks all but the first call, leaving the user with 1 image when they asked for N. The cost confirmation is bundled: the first (unconfirmed) call previews `per_image × count` credits, then the confirmed call dispatches all N in parallel. Range: count ≤ 10. **If the user asks for MORE than 10**: call `generate_image` ONCE with `count=10` and explicitly tell them in your reply "I can generate up to 10 per batch — confirm and I'll queue another batch for the remaining X right after this one completes." NEVER split into multiple parallel tool_use blocks to work around the cap.
 9c. ASSET SELECTION — MANDATORY when a product or creator is needed but not yet chosen. Before UGC ads, product showcases, or any generation that requires a specific product and/or influencer/clone, call `list_project_assets()` once if you haven't this session. If the user has NOT @-mentioned the needed asset:
   - Missing product: ask ONE short question only (e.g. "Which product should we feature?"), then append the literal marker `[[PRODUCT_SELECTOR]]` on the last line. The frontend renders a visual product picker with preview images — do NOT enumerate product names in prose.
@@ -508,7 +536,7 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
   **Product shots exception:** when the user asks for product shots (`generate_product_shots` — the 4-view professional sheet: hero, macro, functional, alternate angle), use `[[PRODUCT_SELECTOR]]` only if product is unknown. After the user picks a product, call `generate_product_shots` directly — do NOT ask for a creator or use `[[CREATOR_SELECTOR]]`.
   **Product-only cinematic ads exception:** when the user asks for a cinematic/commercial ad for a product with NO person, model, influencer, or presenter in the brief — use `[[PRODUCT_SELECTOR]]` only if product is unknown, then call `create_cinematic_ad stage='propose'` directly. Do NOT use `[[CREATOR_SELECTOR]]`. The propose stage returns product-only AND model-led directions A/B/C; the user picks at propose — you do not need a creator upfront.
   **Model-led ad images exception:** when the user asks for N commercial/ad images WITH a person or model (e.g. "5 commercial ad images", "ad images with a creator", "imágenes de anuncio con modelo"), that is NOT `generate_product_shots` — ask who should appear with `[[CREATOR_SELECTOR]]` (one message, one marker), then use `generate_image` with product + influencer refs. Only product-shot sheets skip the creator step.
-  **Product skip (influencer-only):** when the user clicks Skip on the product picker or says influencer-only / no product / solo influencer — do NOT use `[[PRODUCT_SELECTOR]]`. UGC talking-head → `create_ugc_video` / `create_bulk_campaign` with `influencer_id` only, no `product_id`, `product_type="digital"`. Commercial ad images → `generate_image` with influencer ref only, `count=N`. Model-led cinematic → `create_cinematic_ad stage='propose'` with `influencer_id`, no `product_id`. NEVER for `generate_product_shots` (product is mandatory; frontend hides Skip).
+  **Product skip (influencer-only):** when the user clicks Skip on the product picker or says influencer-only / no product / solo influencer — do NOT use `[[PRODUCT_SELECTOR]]`. Static UGC talking-head → `create_ugc_video` / `create_bulk_campaign` with `influencer_id` only, no `product_id`, `product_type="digital"`. **Walk-and-talk multi-beat briefs → `generate_video(mode=seedance_2_ugc, dynamic_speaking=true)` only — never create_ugc_video.** Commercial ad images → `generate_image` with influencer ref only, `count=N`. Model-led cinematic → `create_cinematic_ad stage='propose'` with `influencer_id`, no `product_id`. NEVER for `generate_product_shots` (product is mandatory; frontend hides Skip).
   **Creator skip (product-only):** when the user clicks Skip on the creator picker or says product-only / no model / sin influencer — do NOT use `[[CREATOR_SELECTOR]]`. Commercial ad images → `generate_image` with product ref only, `count=N`. Cinematic → `create_cinematic_ad stage='propose'` product-only. NEVER for UGC ads or bulk campaigns (presenter required; frontend hides Skip).
   Skip the selector when: the user already @-mentioned the asset; only one product (or one creator) exists in the project — use it directly; or the brief doesn't need that asset type.
   When the user picks from a selector, their reply includes structured refs with real `id=` values — treat exactly like an @mention (use those ids in tool calls, never call `create_product` / `create_influencer` to duplicate).
@@ -930,6 +958,26 @@ def _custom_tools_for_agent() -> list[dict]:
                             "UUID of the specific app clip to use as composite reference and B-roll. "
                             "REQUIRED when product_type='digital'. Read it from the [Referenced assets] "
                             "preface (app_clip_id=...). Never fetch manually via list_app_clips."
+                        ),
+                    },
+                    "dynamic_speaking": {
+                        "type": "boolean",
+                        "description": (
+                            "Set TRUE only with mode='seedance_2_ugc' for a character SPEAKING across "
+                            "MULTIPLE actions/beats in ONE continuous video (walk-and-talk, correcting "
+                            "students, then presenting a brand). Renders a single continuous Seedance 2.0 "
+                            "clip with dialogue distributed across time blocks. Do NOT set for static "
+                            "talking-head, product-only, or cinematic-ad briefs. Default false."
+                        ),
+                    },
+                    "target_duration": {
+                        "type": "integer",
+                        "enum": [15, 30],
+                        "description": (
+                            "Only used with dynamic_speaking=true. 15 = one continuous Seedance clip "
+                            "(default). 30 = server renders two 15s halves IN PARALLEL and stitches them "
+                            "into ONE video (one job_id). Pass 30 ONLY when the user explicitly insists on "
+                            "a 30s video. Never fire two generate_video calls for 30s — set this instead."
                         ),
                     },
                     "confirmed": {"type": "boolean", "description": confirmed_desc},
@@ -2003,6 +2051,12 @@ class ToolContext:
     artifacts: list[dict] = field(default_factory=list)
     new_artifacts: list[dict] = field(default_factory=list)
     session_id: Optional[str] = None
+    # Concatenated user turns in this project thread — used by routing guards so
+    # walk-and-talk intent from the original brief is visible even when the agent
+    # only passes dialogue-only hook text into create_ugc_video.
+    session_brief: str = ""
+    # Prior thread turns — used by routing helpers to include agent script/visual direction.
+    prior_turns: list[dict] | None = None
     user_lang: str = "en"  # "en" or "es" — detected from brief, used to localize chips + Haiku output
     # @-mention refs from the current agent turn (includes carry-forward on Confirm).
     # Authoritative image_url per product/influencer — overrides agent tool kwargs.
@@ -2075,6 +2129,8 @@ def _merge_turn_refs_into_video_kwargs(kwargs: dict, refs: list[dict]) -> dict:
         upload_is_influencer_shot = bool(inf_url and upload_url == inf_url)
         if has_influencer and not has_product and not upload_is_influencer_shot:
             out["reference_image_url"] = upload_url  # upload IS the product
+            prod_url = upload_url  # composite pipeline needs both URLs in reference_image_urls
+            out.setdefault("product_type", "physical")
             print("[generate_video] routed uploaded image -> reference_image_url (product slot)")
         elif has_product and not has_influencer:
             out["reference_image_url"] = upload_url  # upload IS the character
@@ -2163,6 +2219,32 @@ def _element_refs_from_turn_refs(refs: list[dict], kwargs: dict) -> list[dict]:
             "type": t,
             "image_url": url,
         })
+
+    has_influencer_ref = any(
+        (r.get("type") or "").lower() == "influencer" and r.get("image_url")
+        for r in refs
+    ) or bool(kwargs.get("influencer_id"))
+    has_product_ref = any(
+        (r.get("type") or "").lower() == "product" and r.get("image_url")
+        for r in refs
+    ) or bool(kwargs.get("product_id"))
+    if has_influencer_ref and not has_product_ref:
+        for r in refs:
+            if (r.get("type") or "").lower() != "image" or not r.get("image_url") or r.get("id"):
+                continue
+            upload_url = r["image_url"]
+            if any(
+                e.get("type") == "product" and e.get("image_url") == upload_url
+                for e in out
+            ):
+                break
+            out.append({
+                "name": r.get("tag") or "uploaded product",
+                "type": "product",
+                "image_url": upload_url,
+            })
+            break
+
     return out
 
 
@@ -2388,6 +2470,289 @@ def _is_umbrella_multi_scene_prompt(prompt: str, count: int) -> bool:
     return bool(_MULTI_SCENE_RE.search(prompt))
 
 
+# ── Dynamic-speaking UGC routing (Seedance 2.0 continuous walk-and-talk) ──
+# Detects briefs where a character SPEAKS across MULTIPLE actions/beats in ONE
+# continuous video (not a static talking-head to camera, not a cinematic ad).
+# When this fires we route to generate_video(mode="seedance_2_ugc",
+# dynamic_speaking=true). It is ADDITIVE: a True result only ENABLES the new
+# route; it never disables Veo talking-head, cinematic ads, or the
+# [ENGINE=seedance] toggle. The classifier is deliberately conservative —
+# any ambiguity returns False so callers fall through to today's routing.
+_DYN_SPEAK_WORDS = (
+    "hablando", "habla ", "hablar", "dice", "diciendo", "presenta", "presentando",
+    "promociona", "promocionando", "introduce", "narra", "cuenta",
+    "says", "saying", "speak", "speaking", "talks about", "talking about",
+    "promote", "promotes", "promoting", "voiceover", "voice over", "voice-over",
+    "script", "guion", "guión", "dialogue", "diálogo", "dialogo", "testimon",
+)
+_DYN_MULTI_ACTION_WORDS = (
+    # temporal / sequential connectors (EN/ES)
+    "mientras", "while", "then ", "luego", "después", "despues", "a la vez",
+    "de vez en cuando", "every now and then", "at the same time", "meanwhile",
+    "y luego", "y despues", "y después", "as she ", "as he ", "after that",
+    # movement / multi-beat action (EN/ES)
+    "paseando", "pasea", "caminando", "camina", "walking", "walks",
+    "moving around", "moves around", "recorre", "recorriendo",
+    "corrige", "corrigiendo", "correcting", "corrects",
+    "diferentes postura", "distintas postura", "varias postura",
+    "different pose", "different scene", "diferentes escena", "varias escena",
+    "different shot", "diferentes toma", "varias toma",
+)
+_DYN_CINEMATIC_NEG = (
+    "anuncio cinematográfico", "anuncio cinematografico", "anuncio cinemático",
+    "anuncio cinematico", "anuncio de cine", "cinematic ad", "cinematic advert",
+    "cinematic spot", "film-style", "movie-style", "hollywood", "storyboard",
+    "estilo cine", "estilo película", "estilo pelicula", "spot cinematográfico",
+    "spot cinematico", "spot cinemático",
+)
+
+
+def _has_dynamic_multi_beat_cue(p: str) -> bool:
+    """True when text signals multiple actions/beats in one continuous clip."""
+    if any(w in p for w in _DYN_MULTI_ACTION_WORDS):
+        return True
+    return bool(re.search(
+        r"\[[^\]]*(?:corrige|camina|pasea|walk|pose|postura)[^\]]*\]",
+        p,
+        re.IGNORECASE,
+    ))
+
+
+def _has_dynamic_speak_intent(p: str) -> bool:
+    """True when text signals scripted dialogue / speaking UGC."""
+    if any(w in p for w in _DYN_SPEAK_WORDS):
+        return True
+    if re.search(
+        r"\[[^\]]*(?:corrige|camina|pasea|walk|pose|postura)[^\]]*\]",
+        p,
+        re.IGNORECASE,
+    ):
+        return True
+    if "?" in p and _has_dynamic_multi_beat_cue(p):
+        return True
+    if any(w in p for w in ("alumna", "postura", "estudio")) and _has_dynamic_multi_beat_cue(p):
+        return True
+    return False
+
+
+def is_dynamic_speaking_ugc(prompt: str, *, has_character: bool) -> bool:
+    """Does this brief want a character SPEAKING across MULTIPLE actions/beats
+    in one continuous video?
+
+    Conservative by design: requires (a) a character present, (b) explicit
+    speaking/script intent, and (c) a multi-action / multi-beat cue, while
+    rejecting explicit cinematic-ad framing. Returns False on any ambiguity so
+    existing Veo / cinematic routing remains the fail-safe default.
+    """
+    if not prompt or not has_character:
+        return False
+    p = prompt.lower()
+    # Hard negative: explicit cinematic-ad framing stays on create_cinematic_ad.
+    if any(w in p for w in _DYN_CINEMATIC_NEG):
+        return False
+    if not _has_dynamic_speak_intent(p):
+        return False
+    if not _has_dynamic_multi_beat_cue(p):
+        return False
+    return True
+
+
+def _build_session_brief(brief: str, prior_turns: list[dict] | None) -> str:
+    """All user text in this thread — mirrors agent.py _session_user_text()."""
+    parts = [brief or ""]
+    for turn in prior_turns or []:
+        if turn.get("role") == "user":
+            parts.append(turn.get("text") or "")
+    return " ".join(p for p in parts if p).strip()
+
+
+_ROUTING_PRESENTER_INTENT_RE = re.compile(
+    r"\b(?:"
+    r"with\s+(?:a\s+)?(?:model|influencer|creator|person|presenter|host|spokesperson)|"
+    r"model[\s-]led|starring|featuring|who\s+should|"
+    r"con\s+(?:un\s+)?(?:modelo|influencer|creador|persona|presentador)|"
+    r"protagoniz|presentador|instructora|instructor|"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _recent_agent_turn_text(prior_turns: list[dict] | None, limit: int = 3) -> str:
+    """Last N agent turn texts (script proposals, visual direction)."""
+    texts: list[str] = []
+    for turn in prior_turns or []:
+        if turn.get("role") == "agent":
+            t = (turn.get("text") or "").strip()
+            if t:
+                texts.append(t)
+    return " ".join(texts[-limit:])
+
+
+def _session_text_for_routing(ctx: ToolContext, kwargs: dict) -> str:
+    """Expanded brief for walk-and-talk classifier (user + agent turns + tool args)."""
+    parts = [
+        ctx.session_brief or "",
+        kwargs.get("hook") or "",
+        kwargs.get("context") or "",
+        kwargs.get("prompt") or "",
+        _recent_agent_turn_text(ctx.prior_turns),
+    ]
+    return "\n".join(p for p in parts if p).strip()
+
+
+def has_routing_character_for_session(
+    session_text: str,
+    *,
+    influencer_id: str | None = None,
+    refs: list[dict] | None = None,
+) -> bool:
+    """True when a character/influencer is present or implied for routing."""
+    if influencer_id:
+        return True
+    for r in refs or []:
+        t = (r.get("type") or "").lower()
+        if t in ("influencer", "clone"):
+            return True
+    text = session_text or ""
+    if re.search(r"@\w+", text):
+        return True
+    if _ROUTING_PRESENTER_INTENT_RE.search(text):
+        return True
+    return False
+
+
+def _has_routing_character(
+    ctx: ToolContext,
+    kwargs: dict,
+    session_text: str | None = None,
+) -> bool:
+    return has_routing_character_for_session(
+        session_text or _session_text_for_routing(ctx, kwargs),
+        influencer_id=kwargs.get("influencer_id"),
+        refs=ctx.refs,
+    )
+
+
+def _merge_dynamic_speaking_params(
+    kwargs: dict,
+    ctx: ToolContext,
+    duration: int,
+) -> dict:
+    """Build generate_video kwargs for a walk-and-talk hijack from create_ugc_video."""
+    session_text = _session_text_for_routing(ctx, kwargs)
+    wants_30 = _wants_30s_dynamic_duration(session_text, duration)
+    params: dict[str, Any] = {
+        **{k: v for k, v in kwargs.items() if k != "confirmed"},
+        "mode": "seedance_2_ugc",
+        "dynamic_speaking": True,
+        "clip_length": 15,
+        "confirmed": bool(kwargs.get("confirmed")),
+    }
+    if wants_30:
+        params["target_duration"] = 30
+    if not params.get("prompt"):
+        params["prompt"] = (
+            kwargs.get("context")
+            or kwargs.get("hook")
+            or (ctx.session_brief[:800] if ctx.session_brief else None)
+            or "Walk-and-talk influencer video with continuous movement."
+        )
+    vlang = kwargs.get("video_language") or kwargs.get("language")
+    if vlang:
+        params["language"] = vlang
+    if kwargs.get("language_accent"):
+        params["language_accent"] = kwargs["language_accent"]
+    return params
+
+
+def _wants_30s_dynamic_duration(text: str, duration: int | None = None) -> bool:
+    """True when the user/session explicitly asked for a 30s walk-and-talk."""
+    if duration == 30:
+        return True
+    if not text:
+        return False
+    return bool(re.search(r"\b30\s*(s|seg(?:undos?)?)\b", text, re.IGNORECASE))
+
+
+def _dynamic_speaking_routing_hint_json(
+    brief: str,
+    *,
+    duration: int | None = None,
+    has_character: bool = True,
+) -> str | None:
+    """Return a routing_hint JSON payload when brief matches walk-and-talk UGC."""
+    if not is_dynamic_speaking_ugc(brief, has_character=has_character):
+        return None
+    wants_30 = _wants_30s_dynamic_duration(brief, duration)
+    hint_echo: dict[str, Any] = {
+        "mode": "seedance_2_ugc",
+        "dynamic_speaking": True,
+        "clip_length": 15,
+    }
+    if wants_30:
+        hint_echo["target_duration"] = 30
+    return json.dumps({
+        "routing_hint": "dynamic_speaking_ugc",
+        "message": (
+            "This brief has a character speaking across multiple actions/beats in one "
+            "continuous video. Re-route to generate_video(mode='seedance_2_ugc', "
+            "dynamic_speaking=true, clip_length=15"
+            + (", target_duration=30" if wants_30 else "")
+            + ") for a continuous walk-and-talk Seedance clip instead of create_ugc_video "
+            "or Veo UGC. Pass the script as hook (generate it first if the user only "
+            "gave a brief). Include reference_image_urls for the influencer."
+        ),
+        "suggested_tool": "generate_video",
+        "suggested_params": hint_echo,
+    })
+
+
+def _dynamic_speaking_routing_block_json(
+    brief: str,
+    *,
+    duration: int | None = None,
+    has_character: bool = True,
+    tool_kwargs: dict | None = None,
+) -> str | None:
+    """Hard block for create_ugc_video — returns routing_required, not confirmation."""
+    if not is_dynamic_speaking_ugc(brief, has_character=has_character):
+        return None
+    wants_30 = _wants_30s_dynamic_duration(brief, duration)
+    suggested_params: dict[str, Any] = {
+        "mode": "seedance_2_ugc",
+        "dynamic_speaking": True,
+        "clip_length": 15,
+    }
+    if wants_30:
+        suggested_params["target_duration"] = 30
+    tk = tool_kwargs or {}
+    for key in (
+        "hook", "influencer_id", "product_id", "video_language", "language_accent",
+        "aspect_ratio", "prompt", "context",
+    ):
+        if tk.get(key) is not None:
+            suggested_params[key] = tk[key]
+    if tk.get("context") and not suggested_params.get("prompt"):
+        suggested_params["prompt"] = tk["context"]
+    if not suggested_params.get("prompt") and brief:
+        suggested_params["prompt"] = brief[:800]
+    if tk.get("video_language"):
+        suggested_params["language"] = tk["video_language"]
+    return json.dumps({
+        "action": "routing_required",
+        "routing_hint": "dynamic_speaking_ugc",
+        "error": "wrong_pipeline",
+        "message": (
+            "Walk-and-talk multi-beat brief — create_ugc_video is blocked. Use "
+            "generate_video(mode='seedance_2_ugc', dynamic_speaking=true, clip_length=15"
+            + (", target_duration=30" if wants_30 else "")
+            + ") with the script as hook and reference_image_urls for the influencer."
+        ),
+        "suggested_tool": "generate_video",
+        "suggested_params": suggested_params,
+    })
+
+
 _GRID_SUPPRESSION_SUFFIX = (
     "\n\nONE single full-frame scene only — NO grid, NO collage, NO contact sheet, "
     "NO multi-panel layout, NO split-screen. Render as a single uncropped photograph "
@@ -2565,6 +2930,40 @@ def _compute_tool_fingerprint(tool_name: str, tool_input: dict) -> str:
 def _clip_eta_seconds(clip_length: int) -> int:
     """Expected wall-clock seconds for short generate_video / animate_image clips."""
     return {5: 240, 7: 270, 8: 300, 10: 360, 15: 420}.get(clip_length, 300)
+
+
+def _dynamic_speaking_eta_seconds(target_duration: int | None) -> int:
+    """Wall-clock ETA for walk-and-talk Seedance (observed ~12 min on Kie)."""
+    if target_duration == 30:
+        return 900   # ~15 min — parallel 2×15s legs, wall clock ≈ longest leg
+    return 720       # ~12 min for 15s walk-and-talk
+
+
+def _dynamic_speaking_eta_minutes_approx(target_duration: int | None) -> int:
+    return _dynamic_speaking_eta_seconds(target_duration) // 60
+
+
+def _generate_video_eta_seconds(kwargs: dict) -> int:
+    if (
+        bool(kwargs.get("dynamic_speaking"))
+        and (kwargs.get("mode") or "").lower() == "seedance_2_ugc"
+    ):
+        td = kwargs.get("target_duration")
+        return _dynamic_speaking_eta_seconds(int(td) if td else 15)
+    return _clip_eta_seconds(int(kwargs.get("clip_length") or 5))
+
+
+def _dynamic_speaking_user_hint(*, target_duration: int | None, lang: str = "en") -> str:
+    eta_lo, eta_hi = (12, 15) if target_duration == 30 else (10, 12)
+    if lang == "es":
+        return (
+            f"Los vídeos walk-and-talk tardan aproximadamente {eta_lo}–{eta_hi} minutos "
+            f"por la complejidad de la escena. Sigue la tarjeta de progreso en la pestaña **Vídeos**."
+        )
+    return (
+        f"Walk-and-talk videos take approximately {eta_lo}–{eta_hi} minutes due to scene "
+        f"complexity. Watch the progress card in the **Videos** tab."
+    )
 
 
 def _clip_job_label(kwargs: dict) -> str:
@@ -3551,6 +3950,38 @@ async def _tool_generate_video(ctx: ToolContext, **kwargs: Any) -> str:
 
     clip_length = int(kwargs.get("clip_length", 5))
 
+    mode = kwargs.get("mode")
+    dynamic_speaking = bool(kwargs.get("dynamic_speaking", False))
+
+    # ── Dynamic-speaking Seedance route ───────────────────────────────
+    # The continuous walk-and-talk clip is always rendered at 15s per leg; a
+    # 30s request fans out two 15s legs in parallel (handled downstream via
+    # target_duration). Normalize clip_length so the single-clip path is 15s.
+    if dynamic_speaking:
+        if mode != "seedance_2_ugc":
+            return json.dumps({
+                "error": "dynamic_speaking is only valid with mode='seedance_2_ugc'.",
+                "error_type": "invalid_mode",
+            })
+        clip_length = 15
+        kwargs["clip_length"] = 15
+
+    # ── Routing guard (hint only, never a silent hijack) ──────────────
+    # If the agent tried to send a multi-action speaking brief to Veo UGC,
+    # surface a hint on the pre-charge pass so it can re-route to the Seedance
+    # dynamic-speaking path. Only fires on confirmed=false so we never disrupt
+    # an already-approved generation or charge for a different pipeline.
+    if mode == "ugc" and not kwargs.get("confirmed"):
+        _brief = f"{kwargs.get('prompt') or ''}\n{kwargs.get('hook') or ''}"
+        _has_character = bool(kwargs.get("influencer_id") or kwargs.get("reference_image_url"))
+        _hint = _dynamic_speaking_routing_hint_json(
+            _brief,
+            duration=int(kwargs.get("target_duration") or 0) or None,
+            has_character=_has_character,
+        )
+        if _hint:
+            return _hint
+
     # ── Script validation for clips (before credit gate) ──────────────
     user_hook = (kwargs.get("hook") or "").strip()
     if user_hook and not kwargs.get("confirmed") and kwargs.get("mode") == "ugc":
@@ -3587,17 +4018,29 @@ async def _tool_generate_video(ctx: ToolContext, **kwargs: Any) -> str:
 
     # Cost confirmation gate
     if not kwargs.get("confirmed"):
-        credits = _credits_for_op("generate_video", {
-            "mode": kwargs.get("mode", "ugc"),
-            "clip_length": clip_length,
-        })
+        is_dyn_30 = dynamic_speaking and int(kwargs.get("target_duration") or 15) == 30
+        if is_dyn_30:
+            # 30s walk-and-talk = two parallel 15s legs, billed as one 30s video
+            # to match the backend /jobs deduction (get_video_credit_cost(.., 30)).
+            credits = _credits_for_op("create_ugc_video", {
+                "product_type": kwargs.get("product_type")
+                or ("physical" if kwargs.get("product_id") else "digital"),
+                "duration": 30,
+            })
+            summary = (
+                f"Generate 30s walk-and-talk video (2×15s rendered in parallel, "
+                f"mode={kwargs.get('mode')})"
+            )
+        else:
+            credits = _credits_for_op("generate_video", {
+                "mode": kwargs.get("mode", "ugc"),
+                "clip_length": clip_length,
+            })
+            summary = f"Generate {clip_length}s video clip (mode={kwargs.get('mode')})"
         return _confirmation_payload(
             operation="generate_video",
             credits=credits,
-            summary=(
-                f"Generate {clip_length}s video clip "
-                f"(mode={kwargs.get('mode')})"
-            ),
+            summary=summary,
             echo={k: v for k, v in kwargs.items() if k != "confirmed"},
         )
 
@@ -3621,6 +4064,8 @@ async def _tool_generate_video(ctx: ToolContext, **kwargs: Any) -> str:
         aspect_ratio=kwargs.get("aspect_ratio") or None,
         product_type=kwargs.get("product_type") or None,
         app_clip_id=kwargs.get("app_clip_id") or None,
+        dynamic_speaking=bool(kwargs.get("dynamic_speaking", False)),
+        target_duration=kwargs.get("target_duration") or None,
         element_refs=element_refs,
     )
     user = {"token": ctx.user_token, "id": "agent"}
@@ -3634,13 +4079,18 @@ async def _tool_generate_video(ctx: ToolContext, **kwargs: Any) -> str:
     # and queues the actual rendering on `bg`. Queue video_job_started so the
     # gallery can poll jobs-status while we drain bg inline below.
     job_id = result.get("job_id") if isinstance(result, dict) else None
+    _is_dyn_speak = (
+        bool(kwargs.get("dynamic_speaking"))
+        and (kwargs.get("mode") or "").lower() == "seedance_2_ugc"
+    )
+    _target_dur = int(kwargs.get("target_duration") or 15) if _is_dyn_speak else None
     if job_id:
         _queue_video_job_started(
             ctx,
             job_id,
             label=_clip_job_label(kwargs),
             duration=clip_length,
-            eta_seconds=_clip_eta_seconds(clip_length),
+            eta_seconds=_generate_video_eta_seconds(kwargs),
             tool_name="generate_video",
         )
 
@@ -3697,11 +4147,18 @@ async def _tool_generate_video(ctx: ToolContext, **kwargs: Any) -> str:
             "error": final_status.get("error_message") or "video generation failed",
             "job_id": job_id,
         })
-    return json.dumps({
+    _still: dict = {
         "job_id": job_id,
         "status": "still_processing",
         "warning": "Video pipeline did not reach a terminal state. Check the gallery shortly.",
-    })
+    }
+    if _is_dyn_speak:
+        _still["eta_minutes_approx"] = _dynamic_speaking_eta_minutes_approx(_target_dur)
+        _still["user_message_hint"] = _dynamic_speaking_user_hint(
+            target_duration=_target_dur,
+            lang=ctx.user_lang or "en",
+        )
+    return json.dumps(_still)
 
 
 # ── Polling helper for long-running jobs ──────────────────────────────
@@ -4807,6 +5264,26 @@ async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
                 ),
             })
 
+    # ── Dynamic-speaking hijack (v3) — before Veo script validation / credit gate ──
+    _session_text = _session_text_for_routing(ctx, kwargs)
+    _has_char = _has_routing_character(ctx, kwargs, _session_text)
+    _brief_match = is_dynamic_speaking_ugc(_session_text, has_character=_has_char)
+    print(
+        f"[DynamicSpeaking] create_ugc_video brief_match={_brief_match} "
+        f"confirmed={bool(kwargs.get('confirmed'))} "
+        f"influencer_id={kwargs.get('influencer_id')!r} "
+        f"product_id={kwargs.get('product_id')!r} "
+        f"session_brief_len={len(ctx.session_brief or '')}"
+    )
+    if _brief_match:
+        _params = _merge_dynamic_speaking_params(kwargs, ctx, duration)
+        _td = _params.get("target_duration", 15)
+        print(
+            f"[DynamicSpeaking] hijacked → generate_video "
+            f"mode=seedance_2_ugc target_duration={_td}"
+        )
+        return await _tool_generate_video(ctx, **_params)
+
     # ── Script validation (before credit gate) ────────────────────────
     # When the user provides a script via hook, validate it against the
     # target duration BEFORE asking them to confirm credits. This way
@@ -4883,10 +5360,11 @@ async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
             extra_info["script_status"] = "validated"
             extra_info["script_word_count"] = validation["word_count"]
             extra_info["script_notes"] = validation["suggestions"] if validation["suggestions"] else ["Script length is good for this duration."]
+        product_label = f"{product_type} product" if product_id else "influencer-only"
         return _confirmation_payload(
             operation="create_ugc_video",
             credits=credits,
-            summary=f"Generate full {duration}s UGC video ({product_type} product)",
+            summary=f"Generate full {duration}s UGC video ({product_label})",
             echo={k: v for k, v in kwargs.items() if k != "confirmed"},
             **extra_info,
         )
@@ -10026,6 +10504,8 @@ class ManagedAgentClient:
                 project_id=project_id,
                 session_id=session_id,
                 refs=list(turn_refs or []),
+                session_brief=_build_session_brief(brief, prior_turns),
+                prior_turns=list(prior_turns or []),
             )
             # Record the auto-fire in _recent_tool_fires so the LLM idempotency
             # guard catches a follow-up LLM re-fire of the same stage (e.g. user
@@ -10448,6 +10928,8 @@ class ManagedAgentClient:
             project_id=project_id,
             session_id=session_id,
             refs=list(turn_refs or []),
+            session_brief=_build_session_brief(brief, prior_turns),
+            prior_turns=list(prior_turns or []),
         )
         tool_calls_made = 0
 
@@ -10993,6 +11475,7 @@ class ManagedAgentClient:
                             # when an active cinematic-ad flow is in progress.
                             _meta_tool_name = name
                             _meta_tool_input = tool_input
+                            # Dynamic-speaking hijack now happens inside _tool_create_ugc_video (v3).
                             if name == "create_influencer":
                                 try:
                                     _inf_parsed = json.loads(result_text)
@@ -11147,7 +11630,10 @@ class ManagedAgentClient:
                                     # multiple in a batch we stash the first.
                                     if _stashed_pending is None:
                                         _stashed_pending = {
-                                            "tool_name": _id_to_name.get(tool_use_id),
+                                            "tool_name": (
+                                                parsed.get("operation")
+                                                or _id_to_name.get(tool_use_id)
+                                            ),
                                             "next_call": parsed.get("next_call") or {},
                                             "credits": parsed.get("credits"),
                                             "summary": parsed.get("summary"),
