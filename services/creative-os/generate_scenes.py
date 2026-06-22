@@ -389,6 +389,21 @@ WAVESPEED_NANOBANANA_ENDPOINT = os.getenv(
     "WAVESPEED_NANOBANANA_ENDPOINT", f"{WAVESPEED_API_URL}/google/nano-banana-pro/edit"
 )
 
+# KIE poll limits (seconds) — passed to generate_video(max_poll_seconds=...).
+# Poll interval is 10s; iterations = max_poll_seconds // 10.
+KIE_POLL_VEO_SECONDS = 300       # 5 min — fast-fail
+KIE_POLL_KLING_SECONDS = 600     # 10 min
+KIE_POLL_SEEDANCE_SECONDS = 1200  # 20 min — walk-and-talk can take 12+ min on Kie
+
+
+def _kie_max_poll_seconds(family: str) -> int:
+    if family == "veo":
+        return KIE_POLL_VEO_SECONDS
+    if family == "seedance":
+        return KIE_POLL_SEEDANCE_SECONDS
+    return KIE_POLL_KLING_SECONDS
+
+
 # KIE overloaded — skip remaining retries and go straight to WaveSpeed.
 SKIP_KIE_RETRY_PATTERNS = (
     "internal error", "high demand", "too many requests", "rate limit",
@@ -702,8 +717,7 @@ def generate_video_with_retry(
             # Fall through to the unchanged legacy chain below.
 
     # ── Legacy KIE-then-WS-secondary chain (unchanged) ─────────────────
-    # Veo: 5-min fast-fail. Kling/Seedance: 10 min (they're inherently slower).
-    kie_max_poll = 300 if family == "veo" else 600
+    kie_max_poll = _kie_max_poll_seconds(family)
     last_error: Exception | None = None
 
     for attempt in range(max_retries):
@@ -722,6 +736,10 @@ def generate_video_with_retry(
         except RuntimeError as e:
             last_error = e
             err = str(e).lower()
+            # Poll timeout on Seedance — original Kie task may still be running;
+            # never submit a duplicate task (recoverable via provider_job_id).
+            if family == "seedance" and "timed out" in err:
+                raise
             if any(p in err for p in SKIP_KIE_RETRY_PATTERNS) or (
                 ugc and "generation failed" in err
             ):

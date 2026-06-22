@@ -27,6 +27,9 @@ from services.agent_threads import get_thread, reset_thread, upsert_thread
 from services.managed_agent_client import (
     get_managed_agent_client,
     _detect_input_language,
+    is_dynamic_speaking_ugc,
+    has_routing_character_for_session,
+    _recent_agent_turn_text,
     session_has_multi_video_intent,
     CAMPAIGN_INTENT_RE,
 )
@@ -221,6 +224,11 @@ async def agent_stream(
         "[ENGINE=default — use Veo 3.1 for `ugc` and Kling 3.0 for `cinematic_video` this turn. "
         "Do NOT use seedance_2_ugc / seedance_2_cinematic / seedance_2_product, regardless of "
         "what was used in earlier turns.]"
+    )
+    dynamic_speaking_engine_marker = (
+        "[ENGINE=dynamic_speaking — walk-and-talk UGC. Use generate_video(mode=seedance_2_ugc, "
+        "dynamic_speaking=true). This OVERRIDES the normal ENGINE=default ban on seedance_2_ugc for "
+        "this brief only. Do NOT use create_ugc_video or create_bulk_campaign.]"
     )
     engine_marker = seedance_marker if data.use_seedance else default_marker
     quick_mode_marker = (
@@ -535,6 +543,14 @@ async def agent_stream(
                 parts.append(_past.get("text") or "")
         return " ".join(parts)
 
+    def _session_routing_text() -> str:
+        """User turns plus recent agent script/visual-direction for routing."""
+        parts = [_session_user_text()]
+        _agent_tail = _recent_agent_turn_text(_prior_turns_all)
+        if _agent_tail:
+            parts.append(_agent_tail)
+        return " ".join(p for p in parts if p).strip()
+
     def _session_skipped_product() -> bool:
         return bool(_product_skip_re.search(_session_user_text()))
 
@@ -560,6 +576,30 @@ async def agent_stream(
                 ):
                     return True
         return False
+
+    _routing_text = _session_routing_text()
+    _refs_as_dicts = [{"type": r.type} for r in refs]
+    _has_routing_character = has_routing_character_for_session(
+        _routing_text,
+        refs=_refs_as_dicts,
+    )
+    _is_dynamic_speaking = is_dynamic_speaking_ugc(
+        _routing_text,
+        has_character=_has_routing_character,
+    )
+    dynamic_speaking_reminder: Optional[str] = None
+    if _is_dynamic_speaking:
+        dynamic_speaking_reminder = (
+            "[DYNAMIC_SPEAKING_UGC — do NOT use create_ugc_video or create_bulk_campaign. "
+            "Use generate_video(mode=seedance_2_ugc, dynamic_speaking=true, clip_length=15). "
+            "For 30s insistence pass target_duration=30. Pass hook with the script. "
+            "After dispatch tell user ~10–12 min ETA (walk-and-talk complexity); watch Videos tab.]"
+        )
+        engine_marker = dynamic_speaking_engine_marker
+    elif data.use_seedance:
+        engine_marker = seedance_marker
+    else:
+        engine_marker = default_marker
 
     def _session_is_product_only_cinematic() -> bool:
         text = _session_user_text()
@@ -597,6 +637,7 @@ async def agent_stream(
         and _session_skipped_product()
         and not _has_creator_ref
         and not _is_product_shots_session
+        and not _is_dynamic_speaking
     ):
         if _reminder_lang == "es":
             asset_selection_reminder = (
@@ -612,7 +653,7 @@ async def agent_stream(
                 "UGC → create_ugc_video / create_bulk_campaign with influencer_id only, no product_id. "
                 "Images → generate_image with influencer ref only.]"
             )
-    elif _has_creator_ref and not _has_product_ref and _session_skipped_product():
+    elif _has_creator_ref and not _has_product_ref and _session_skipped_product() and not _is_dynamic_speaking:
         if _reminder_lang == "es":
             asset_selection_reminder = (
                 "[SOLO INFLUENCER — creador elegido, usuario omitió producto. Continúa sin product_id. "
@@ -706,6 +747,8 @@ async def agent_stream(
 
     if not refs:
         prefix_lines = [engine_marker, quick_mode_marker]
+        if dynamic_speaking_reminder:
+            prefix_lines.append(dynamic_speaking_reminder)
         if is_caption_intent:
             prefix_lines.append(caption_reminder)
         if is_edit_intent:
@@ -719,6 +762,8 @@ async def agent_stream(
         augmented_brief = "\n\n".join(prefix_lines + [augmented_brief])
     if refs:
         lines = [engine_marker, quick_mode_marker]
+        if dynamic_speaking_reminder:
+            lines.append(dynamic_speaking_reminder)
         if is_caption_intent:
             lines.append(caption_reminder)
         if is_edit_intent:

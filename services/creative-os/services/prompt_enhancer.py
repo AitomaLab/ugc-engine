@@ -125,6 +125,30 @@ def _build_user_message(user_prompt: str, language: str = "en", context: dict | 
                 "Do NOT describe the element content in the prompt — only reference them by tag name."
             )
 
+    # ── Dynamic-speaking mode (ADDITIVE, flag-gated) ──────────────────
+    # Only appended when the dynamic-speaking Seedance route fires. When the
+    # flag is absent the message above is byte-for-byte identical to today, so
+    # seedance_2_cinematic / seedance_2_product and every other mode are
+    # unaffected. The shared seedance_director.txt is never modified.
+    if is_seedance and context and context.get("dynamic_speaking"):
+        parts.append(
+            "\n[DYNAMIC SPEAKING MODE]\n"
+            "This is a continuous walk-and-talk UGC clip: ONE character speaking "
+            "while moving through MULTIPLE actions/beats in a single uninterrupted "
+            "take (e.g. walking through a space, interacting with people/objects, "
+            "then addressing the camera or presenting a brand).\n"
+            "- Override the 'maximum one short line' dialogue limit: DISTRIBUTE the "
+            "spoken script across the time blocks so the character is talking "
+            "throughout, naturally integrated with the action in each block "
+            "(e.g. '[0-4s] walks across the room and says: \"...\"').\n"
+            "- Keep ONE continuous scene — no hard cuts, no separate shots; the "
+            "camera follows the character through the beats.\n"
+            "- Put the FULL spoken script verbatim in the Audio section as Dialogue, "
+            "AND weave the matching lines into the relevant time blocks.\n"
+            "- Preserve any brand name, website, or CTA exactly as given, in the "
+            "final block."
+        )
+
     parts.append(f"\nUser request: {user_prompt}")
     return "\n".join(parts)
 

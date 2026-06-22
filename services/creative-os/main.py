@@ -313,6 +313,15 @@ async def health_check():
     }
 
 
+@app.get("/creative-os/routing-version")
+def routing_version():
+    """Probe that the running process has dynamic-speaking v3 routing loaded."""
+    return {
+        "dynamic_speaking_v3": True,
+        "label": "influencer-only-when-no-product",
+    }
+
+
 @app.get("/creative-os/health/elevenlabs")
 async def health_elevenlabs(user: dict = Depends(get_current_user)):  # noqa: ARG001
     """Ping ElevenLabs TTS (auth-gated). Returns ok + HTTP status without exposing the key."""
