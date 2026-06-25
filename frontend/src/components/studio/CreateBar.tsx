@@ -6,6 +6,7 @@ import { creativeFetch } from '@/lib/creative-os-api';
 import type { PromptOption, EnhanceResponse } from '@/lib/creative-os-api';
 import { useApp } from '@/providers/AppProvider';
 import { useTranslation } from '@/lib/i18n';
+import { useCreditCosts, costForImage, costForUgc, costForVideoClip } from '@/lib/credit-costs';
 
 type BarState = 'idle' | 'enhancing' | 'generating' | 'complete';
 
@@ -38,6 +39,7 @@ const LANGUAGES = ['EN', 'ES'];
 export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onPreloadConsumed }: CreateBarProps) {
     const { session } = useApp();
     const { t } = useTranslation();
+    const { costs: creditCosts } = useCreditCosts();
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const barRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -567,7 +569,18 @@ export function CreateBar({ activeTab, projectId, onGenerated, preloadImage, onP
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleGenerate(); }
     };
 
-    const estimatedCost = fullVideo ? (videoLength === 15 ? 156 : 245) : (activeTab === 'images' ? 12 : 35);
+    const productType = (selectedProduct?.product_type === 'physical' ? 'physical' : 'digital') as 'digital' | 'physical';
+    const isSeedance = String(mode).startsWith('seedance');
+    const estimatedCost = fullVideo
+        ? costForUgc(creditCosts, productType, videoLength as 15 | 30, isSeedance)
+        : activeTab === 'images'
+            ? costForImage(creditCosts)
+            : costForVideoClip(
+                creditCosts,
+                mode,
+                fullVideo ? videoLength : clipLength,
+                Boolean(selectedProduct || selectedInfluencer || selectedImage || customUpload),
+            );
 
     let btnLabel = t('creativeOs.createBar.generateBtn');
     if (activeTab === 'videos') btnLabel = fullVideo ? t('creativeOs.createBar.generateVideoBtn') : t('creativeOs.createBar.animateBtn');

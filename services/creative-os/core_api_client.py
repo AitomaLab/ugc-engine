@@ -291,6 +291,16 @@ class CoreAPIClient:
     async def get_credit_costs(self) -> dict:
         return await self._request("GET", "/api/credits/costs")
 
+    async def deduct_credits(self, amount: int, metadata: dict | None = None) -> dict:
+        return await self._request(
+            "POST",
+            "/api/credits/deduct",
+            json={"amount": amount, "metadata": metadata or {}},
+        )
+
+    async def refund_job_credits(self, job_id: str) -> dict:
+        return await self._request("POST", f"/jobs/{job_id}/refund")
+
     # ── Script Generation ─────────────────────────────────────────────
     async def generate_script(
         self,

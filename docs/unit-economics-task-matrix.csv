@@ -1,0 +1,60 @@
+task_id,user_trigger,credits_current,credits_model_b,api_cogs_usd,compute_cogs_usd,total_cogs_usd,revenue_003,gross_margin_pct,margin_xl_topup_pct,deduction_path,enforcement,frontend_display
+ugc.digital.15s.veo,create_ugc_video / POST /jobs,67,223,0.57,0.02,0.59,2.01,70.7,54.3,POST /jobs,OK,CreateBar stale 156
+ugc.digital.30s.veo,create_ugc_video / POST /jobs,134,446,1.14,0.02,1.16,4.02,71.1,54.5,POST /jobs,OK,CreateBar stale 245
+ugc.physical.15s.veo,create_ugc_video / POST /jobs,101,336,0.87,0.02,0.89,3.03,70.6,54.2,POST /jobs,OK,CreateBar stale 156
+ugc.physical.30s.veo,create_ugc_video / POST /jobs,202,672,1.74,0.02,1.76,6.06,70.9,54.4,POST /jobs,OK,CreateBar stale 245
+ugc.digital.15s.seedance,create_ugc_video model_api=seedance,145,483,1.64,0.02,1.66,4.35,61.8,48.0,POST /jobs,OK,Agent toggle
+ugc.digital.30s.seedance,create_ugc_video model_api=seedance,290,966,3.32,0.02,3.34,8.70,61.6,47.9,POST /jobs,OK,Agent toggle
+ugc.physical.15s.seedance,create_ugc_video model_api=seedance,288,960,2.59,0.02,2.61,8.64,69.8,53.6,POST /jobs,OK,Agent toggle
+ugc.physical.30s.seedance,create_ugc_video model_api=seedance,576,1920,4.83,0.02,4.85,17.28,71.9,54.7,POST /jobs,OK,Agent toggle
+clip.ugc.5s.veo,generate_video mode=ugc,34,113,0.30,0.01,0.31,1.02,69.6,53.1,POST /jobs,GAP 0 charged,Agent quotes 34
+clip.ugc.8s.veo,generate_video mode=ugc,34,113,0.30,0.01,0.31,1.02,69.6,53.1,POST /jobs,GAP 0 charged,Agent quotes 34
+clip.ugc.10s.veo,generate_video mode=ugc,34,113,0.30,0.01,0.31,1.02,69.6,53.1,POST /jobs,GAP 0 charged,Agent quotes 34
+clip.cinematic.5s.kling,generate_video cinematic_video,60,200,0.50,0.01,0.51,1.80,71.7,54.4,POST /jobs,GAP 0 charged,CreateBar 35
+clip.cinematic.8s.kling,generate_video cinematic_video,96,320,0.80,0.01,0.81,2.88,71.9,54.5,POST /jobs,GAP 0 charged,CreateBar 35
+clip.cinematic.10s.kling,generate_video cinematic_video,120,400,1.00,0.01,1.01,3.60,71.9,54.5,POST /jobs,GAP 0 charged,CreateBar 35
+clip.seedance.i2v.5s,generate_video seedance_2_*,70,233,0.625,0.01,0.635,2.10,69.8,53.5,POST /jobs,GAP 0 charged,Agent quotes
+clip.seedance.t2v.5s,generate_video seedance_2_* no ref,115,383,1.025,0.01,1.035,3.45,70.0,53.6,POST /jobs,GAP 0 charged,Agent quotes
+clip.dynamic.15s.seedance,generate_video dynamic_speaking,145,483,1.64,0.02,1.66,4.35,61.8,48.0,POST /jobs,GAP partial,Agent quotes bundle
+clip.dynamic.30s.seedance,generate_video dynamic_speaking,290,966,3.32,0.02,3.34,8.70,61.6,47.9,POST /jobs,GAP partial,Agent quotes bundle
+clip.extend.veo,extend_video,34,113,0.30,0.01,0.31,1.02,69.6,53.1,POST /api/credits/deduct,OK,Agent gated
+image.creative_os,generate_image,10,33,0.09,0.01,0.10,0.30,66.7,52.0,POST /api/credits/deduct,OK,imageModal stale 12
+image.influencer,generate_influencer,10,33,0.09,0.01,0.10,0.30,66.7,52.0,POST /api/credits/deduct,OK,Agent
+image.identity.4view,generate_identity,10,33,0.36,0.01,0.37,0.30,-23.3,LOSS,POST /api/credits/deduct,GAP underpriced,Agent
+image.product.4view,generate_product_shots,10,33,0.36,0.01,0.37,0.30,-23.3,LOSS,POST /api/credits/deduct,GAP underpriced,Agent
+image.alt_versions,generate_image_alt_versions,20,67,0.18,0.01,0.19,0.60,68.3,53.0,none,GAP preview only,Agent quotes 20
+image.cinematic.1k,cinematic_image_1k,10,33,0.09,0.01,0.10,0.30,66.7,52.0,POST /api/credits/deduct,OK if wired,Library 13 stale
+image.cinematic.2k,cinematic_image_2k,10,33,0.09,0.01,0.10,0.30,66.7,52.0,POST /api/credits/deduct,OK if wired,Library 13 stale
+image.cinematic.4k,cinematic_image_4k,14,47,0.12,0.01,0.13,0.42,69.0,53.5,POST /api/credits/deduct,OK if wired,Library 13 stale
+animate.kling.5s,animate_image,56,187,0.50,0.01,0.51,1.68,69.6,53.1,POST /api/credits/deduct,OK,Agent
+animate.kling.10s,animate_image duration=10,112,373,1.00,0.01,1.01,3.36,69.9,53.4,POST /api/credits/deduct,OK,Agent
+edit.gemini.720p,edit_video,134,446,1.20,0.01,1.21,4.02,69.9,53.4,POST /api/credits/deduct,OK,Agent
+edit.gemini.4k,edit_video resolution=4k,200,666,1.80,0.01,1.81,6.00,69.8,53.3,POST /api/credits/deduct,OK,Agent
+edit.gemini.multi_pass,edit_video >10s,268,892,2.40,0.02,2.42,8.04,69.9,53.4,POST /api/credits/deduct,OK,Agent 2×720p
+render.remotion,render_edited_video,2,7,0.01,0.01,0.02,0.06,66.7,52.0,POST /api/credits/deduct,OK,Editor
+cinematic.propose,create_cinematic_ad propose,0,0,0.15,0.00,0.15,0.00,n/a,n/a,none,FREE LLM only,Agent
+cinematic.storyboard,create_cinematic_ad storyboard,20,67,0.18,0.01,0.19,0.60,68.3,53.0,POST /api/credits/deduct,OK,Agent
+cinematic.animate.5s,create_cinematic_ad animate,170,566,0.625,0.01,0.635,5.10,87.5,63.2,POST /api/credits/deduct,OK priced on Fal,Agent
+cinematic.animate.10s,create_cinematic_ad animate,340,1132,1.25,0.01,1.26,10.20,87.6,63.3,POST /api/credits/deduct,OK priced on Fal,Agent
+cinematic.animate.15s,create_cinematic_ad animate,510,1698,1.875,0.01,1.885,15.30,87.7,63.3,POST /api/credits/deduct,OK priced on Fal,cinematic page 51 stale
+cinematic.broll.5s,create_cinematic_ad broll,170,566,0.625,0.01,0.635,5.10,87.5,63.2,POST /api/credits/deduct,OK,Agent
+cinematic.macro.5s,create_cinematic_ad product_macro,170,566,0.625,0.01,0.635,5.10,87.5,63.2,POST /api/credits/deduct,OK,Agent
+cinematic.bulk.k,create_cinematic_ad bulk,170×K,566×K,0.625×K,0.01,0.635×K,5.10×K,87.5,63.2,POST /api/credits/deduct,OK,Agent
+cinematic.full.15s,storyboard+hero+broll+macro,890,2964,3.105,0.04,3.145,26.70,88.2,63.8,POST /api/credits/deduct,OK bundle math,Agent estimate
+clone.15s,create_clone_video / clone-jobs,53,177,0.47,0.02,0.49,1.59,69.2,53.0,POST /api/clone-jobs,OK,Agent
+clone.30s,create_clone_video / clone-jobs,106,353,0.94,0.02,0.96,3.18,69.8,53.5,POST /api/clone-jobs,OK,Agent
+bulk.ugc.n,create_bulk_campaign,67×N,223×N,0.59×N,0.02×N,0.61×N,2.01×N,70.7,54.3,POST /jobs/bulk,GAP no deduct,P0 leak
+bulk.clone.n,create_bulk_clone,53×N,177×N,0.49×N,0.02×N,0.51×N,1.59×N,69.2,53.0,POST /api/credits/deduct,OK if wired,Agent
+onboarding.5s.seedance,OnboardingModal first video,0,0,0.635,0.01,0.645,0.00,n/a,n/a,POST /jobs + refund,FREE after refund,OnboardingModal
+script.generate,generate_scripts / generate_ai_script,0,0,0.018,0.00,0.018,0.00,n/a,n/a,none,FREE,Agent
+caption.burn,caption_video,0,0,0.06,0.01,0.07,0.00,n/a,n/a,none,FREE,Agent
+combine.ffmpeg,combine_videos,0,0,0.01,0.01,0.02,0.00,n/a,n/a,none,FREE,Agent
+music.suno,music via combine_videos,0,0,0.05,0.00,0.05,0.00,n/a,n/a,none,FREE,Agent
+plan.campaign,plan_campaign / campaign tools,0,0,0.05,0.00,0.05,0.00,n/a,n/a,none,FREE,Agent
+discovery.agent,list_* / get_* turns,0,0,0.02,0.00,0.02,0.00,n/a,n/a,none,FREE,Agent
+legacy.shot.image,POST /api/products/.../shots,0,0,0.09,0.01,0.10,0.00,n/a,n/a,none,GAP COGS no credits,Products page
+legacy.shot.animate,POST /api/shots/{id}/animate,0,0,0.30,0.01,0.31,0.00,n/a,n/a,none,GAP COGS no credits,Products page
+legacy.shot.video8s,cinematic_video_8s key,44,147,0.30,0.01,0.31,1.32,76.5,57.8,undefined,Partial key only,Library 51 stale
+agent.session.ugc,embedded in bundle,13,43,0.10,0.00,0.10,0.39,74.4,58.5,embedded,OK bundled,Agent
+agent.session.cinematic,embedded in funnel,20,67,0.20,0.00,0.20,0.60,66.7,52.0,embedded,OK bundled,Agent
+kling.element.register,Kling element API,2,7,0.01,0.00,0.01,0.06,83.3,60.0,none,Not exposed,Code comment only

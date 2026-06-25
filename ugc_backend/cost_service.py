@@ -78,11 +78,9 @@ class CostService:
             # Digital flow: Single video generation call (Seedance/Kling)
             cost_video = self.calculate_video_cost(duration, model)
 
-        # Voice cost handling
-        if product_type == "physical":
-             # Veo is silent, so we always need voiceover
-             cost_voice = self.calculate_voice_cost(len(script_text))
-        elif self.is_silent_model(model):
+        # Voice cost — only silent models (e.g. Kling) need post-gen ElevenLabs.
+        # Veo and Seedance include native audio for both digital and physical paths.
+        if self.is_silent_model(model):
             cost_voice = self.calculate_voice_cost(len(script_text))
         else:
             cost_voice = 0.0

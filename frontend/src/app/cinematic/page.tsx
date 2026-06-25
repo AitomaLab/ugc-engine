@@ -9,6 +9,7 @@ import MediaPreviewModal from '@/components/ui/MediaPreviewModal';
 import { launchCreativeOsProject } from '@/lib/launchCreativeOsProject';
 import type { AgentRef } from '@/lib/creative-os-api';
 import { useTranslation } from '@/lib/i18n';
+import { useCreditCosts, costForCinematicShotImage, costForCinematicShotVideo } from '@/lib/credit-costs';
 
 const SHOT_STYLES = [
   { key: 'hero', label: 'Hero', icon: <svg viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" /><polyline points="10 17 15 12 10 7" /><line x1="15" y1="12" x2="3" y2="12" /></svg> },
@@ -25,6 +26,7 @@ function CinematicContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { t } = useTranslation();
+  const { costs: creditCosts } = useCreditCosts();
   const [products, setProducts] = useState<any[]>([]);
   const [selectedProductId, setSelectedProductId] = useState<string>('');
   const [selectedStyles, setSelectedStyles] = useState<Set<string>>(new Set(['hero']));
@@ -318,7 +320,7 @@ function CinematicContent() {
         >
           <svg style={{ width: 16, height: 16, stroke: 'white', fill: 'none', strokeWidth: 2 }} viewBox="0 0 24 24"><polygon points="13,2 3,14 12,14 11,22 21,10 12,10" /></svg>
           {generating ? 'Generating...' : `Generate ${selectedStyles.size} Shot${selectedStyles.size !== 1 ? 's' : ''}`}
-          <span className="credit-cost">{selectedStyles.size * 13} <img src="/star-white.png" alt="credits" style={{ height: 12, width: 12, verticalAlign: 'middle', marginLeft: 2, display: 'inline' }} /></span>
+          <span className="credit-cost">{selectedStyles.size * costForCinematicShotImage(creditCosts)} <img src="/star-white.png" alt="credits" style={{ height: 12, width: 12, verticalAlign: 'middle', marginLeft: 2, display: 'inline' }} /></span>
         </button>
       </div>
 
@@ -408,7 +410,7 @@ function CinematicContent() {
                             >
                               <svg viewBox="0 0 24 24" style={{ width: '12px', height: '12px', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }}><polygon points="5 3 19 12 5 21 5 3" /></svg>
                               {animatingIds.has(shot.id) ? 'Queuing...' : 'Animate'}
-                              <span style={{ marginLeft: '4px', fontSize: '10px', opacity: 0.85, display: 'inline-flex', alignItems: 'center', gap: '2px' }}>51 <img src="/star-white.png" alt="credits" style={{ height: 10, width: 10 }} /></span>
+                              <span style={{ marginLeft: '4px', fontSize: '10px', opacity: 0.85, display: 'inline-flex', alignItems: 'center', gap: '2px' }}>{costForCinematicShotVideo(creditCosts)} <img src="/star-white.png" alt="credits" style={{ height: 10, width: 10 }} /></span>
                             </button>
                           )}
                         </div>

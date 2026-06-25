@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { creativeFetch } from '@/lib/creative-os-api';
 import { apiFetch } from '@/lib/utils';
 import { useTranslation } from '@/lib/i18n';
+import { useCreditCosts, costForImage } from '@/lib/credit-costs';
 import { MODAL_HEIGHT, MODAL_WIDTH } from '@/lib/modal-sizing';
 import { SharePopover } from './SharePopover';
 import SchedulePostModal from '@/components/modals/SchedulePostModal';
@@ -139,6 +140,7 @@ const QUICK_ACTIONS = [
 
 export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnimated, onCreateVideo }: ImageEditModalProps) {
     const { t } = useTranslation();
+    const { costs: creditCosts } = useCreditCosts();
     const router = useRouter();
     const [scheduleOpen, setScheduleOpen] = useState(false);
     const [checkingSchedule, setCheckingSchedule] = useState(false);
@@ -670,7 +672,7 @@ export function ImageEditModal({ asset, projectId, onClose, onGenerated, onAnima
                             })()} highlight />
                             <InfoRow label={t('creativeOs.imageModal.labelQuality')} value={(asset.analysis_json?.quality as string || '4k').toUpperCase()} />
                             <InfoRow label={t('creativeOs.imageModal.labelAspect')} value={(asset.analysis_json?.aspect_ratio as string) || '9:16'} />
-                            <InfoRow label={t('creativeOs.imageModal.labelCost')} value={t('creativeOs.imageModal.costCredits')} />
+                            <InfoRow label={t('creativeOs.imageModal.labelCost')} value={t('creativeOs.imageModal.costCredits').replace('{n}', String(costForImage(creditCosts)))} />
                             {createdAgo && <InfoRow label={t('creativeOs.imageModal.labelCreated')} value={createdAgo} />}
                         </div>
                     </div>

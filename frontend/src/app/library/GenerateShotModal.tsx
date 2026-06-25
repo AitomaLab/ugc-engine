@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { apiFetch } from '@/lib/utils';
+import { useCreditCosts, costForCinematicShotImage, costForCinematicShotVideo } from '@/lib/credit-costs';
 
 const SHOT_TYPES = [
     { value: 'hero', label: 'Hero', desc: 'Classic, centered, well-lit product shot' },
@@ -39,6 +40,9 @@ export default function GenerateShotModal({
     const [costs, setCosts] = useState<ShotCosts | null>(null);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState('');
+    const { costs: creditCosts } = useCreditCosts();
+    const imageCredit = costForCinematicShotImage(creditCosts);
+    const videoCredit = costForCinematicShotVideo(creditCosts);
 
     useEffect(() => {
         apiFetch<ShotCosts>('/api/shots/costs')
@@ -140,10 +144,10 @@ export default function GenerateShotModal({
                     <div className="bg-white/80 rounded-xl p-3 border border-[#E8ECF4]">
                         <div className="flex justify-between items-center">
                             <span className="text-xs text-[#4A5568]">Credit cost</span>
-                            <span className="text-sm font-mono text-blue-600 font-bold">{variations * 13} credits</span>
+                            <span className="text-sm font-mono text-blue-600 font-bold">{variations * imageCredit} credits</span>
                         </div>
                         <p className="text-[10px] text-[#94A3B8] mt-1">
-                            {variations} image{variations > 1 ? 's' : ''} × 13 credits/image (2K). Animation billed separately (51 cr).
+                            {variations} image{variations > 1 ? 's' : ''} × {imageCredit} credits/image (2K). Animation billed separately ({videoCredit} cr).
                         </p>
                     </div>
 

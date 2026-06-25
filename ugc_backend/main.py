@@ -30,7 +30,14 @@ import stripe
 
 from ugc_backend.cost_service import cost_service
 from ugc_backend.auth import get_current_user, get_optional_user
-from ugc_backend.credit_cost_service import get_video_credit_cost, get_shot_credit_cost
+from ugc_backend.credit_cost_service import (
+    credits_deducted_for_job_row,
+    export_credit_cost_table,
+    get_clone_video_credit_cost,
+    get_video_credit_cost,
+    get_shot_credit_cost,
+    resolve_job_credit_cost,
+)
 
 from ugc_db.db_manager import (
     get_supabase,
@@ -1227,9 +1234,20 @@ def api_create_job(
     """
     try:
         # 0. Credit Gate (only for authenticated users)
+        credit_cost = None
         if user:
             try:
-                credit_cost = get_video_credit_cost(data.product_type, data.length)
+                has_ref = bool(
+                    data.reference_image_url
+                    or data.product_image_url
+                    or data.product_id
+                )
+                credit_cost = resolve_job_credit_cost(
+                    data.product_type,
+                    data.length,
+                    model_api=data.model_api,
+                    has_reference=has_ref,
+                )
                 wallet = get_wallet(user["id"])
                 if not wallet:
                     raise HTTPException(status_code=402, detail="Credit wallet not found. Please contact support.")
@@ -1240,11 +1258,8 @@ def api_create_job(
                     )
             except HTTPException:
                 raise
-            except Exception as e:
-                print(f"      [Credit] Warning: credit check failed ({e}), proceeding anyway")
-                credit_cost = None
-        else:
-            credit_cost = None
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
 
         # 1. Validate Influencer (optional — Seedance product-only modes skip this)
         inf = None
@@ -1335,7 +1350,9 @@ def api_create_job(
 
         # Store metadata if the column exists, otherwise just log it
         if "metadata" in db_columns:
-            metadata = {}
+            metadata = job_data.get("metadata") or {}
+            if not isinstance(metadata, dict):
+                metadata = {}
             if auto_trans:
                 metadata["auto_transition_type"] = auto_trans
             if job_data.get("cinematic_shot_ids"):
@@ -1346,6 +1363,9 @@ def api_create_job(
                 metadata["reference_image_url"] = data.reference_image_url
             if data.product_image_url:
                 metadata["product_image_url"] = data.product_image_url
+            if credit_cost is not None:
+                metadata["credits_deducted"] = credit_cost
+                metadata["credit_operation"] = "create_job"
             if metadata:
                 job_data["metadata"] = metadata
 
@@ -1374,6 +1394,7 @@ def api_create_job(
                 deduction_result = deduct_credits(user["id"], credit_cost, {
                     "product_type": data.product_type,
                     "length": data.length,
+                    "model_api": data.model_api,
                 })
                 print(f"      [Credit] Deducted {credit_cost} credits. New balance: {deduction_result['balance']}")
             except ValueError as e:
@@ -1459,10 +1480,26 @@ def _dispatch_shot_task(task_func, shot_id: str, task_name: str):
 
 
 @app.post("/api/products/{product_id}/shots")
-def api_generate_shot_image(product_id: str, data: ShotGenerateRequest):
+def api_generate_shot_image(
+    product_id: str,
+    data: ShotGenerateRequest,
+    user: dict = Depends(get_current_user),
+):
     """Creates records and dispatches tasks to generate still images."""
     from ugc_worker.tasks import generate_product_shot_image
     try:
+        credit_cost = get_shot_credit_cost("image") * max(1, int(data.variations))
+        wallet = get_wallet(user["id"])
+        if not wallet or wallet["balance"] < credit_cost:
+            raise HTTPException(
+                status_code=402,
+                detail=f"Insufficient credits. Required: {credit_cost}.",
+            )
+        deduct_credits(user["id"], credit_cost, {
+            "operation": "legacy_product_shot_image",
+            "product_id": product_id,
+            "variations": data.variations,
+        })
         created_shots = []
         for _ in range(data.variations):
             shot_data = {
@@ -1477,7 +1514,9 @@ def api_generate_shot_image(product_id: str, data: ShotGenerateRequest):
             shot = create_product_shot(shot_data)
             _dispatch_shot_task(generate_product_shot_image, shot["id"], "generate_product_shot_image")
             created_shots.append(shot)
-        return created_shots
+        return {"shots": created_shots, "credits_deducted": credit_cost}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1491,7 +1530,7 @@ def api_get_product_shots(product_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/shots/{shot_id}/animate")
-def api_animate_shot(shot_id: str):
+def api_animate_shot(shot_id: str, user: dict = Depends(get_current_user)):
     """Dispatches a task to animate a still image into a video."""
     from ugc_worker.tasks import animate_product_shot_video
     try:
@@ -1500,8 +1539,19 @@ def api_animate_shot(shot_id: str):
             raise HTTPException(status_code=404, detail="Product shot not found")
         if not shot.get("image_url"):
             raise HTTPException(status_code=400, detail="Shot has no image yet")
+        credit_cost = get_shot_credit_cost("video")
+        wallet = get_wallet(user["id"])
+        if not wallet or wallet["balance"] < credit_cost:
+            raise HTTPException(
+                status_code=402,
+                detail=f"Insufficient credits. Required: {credit_cost}.",
+            )
+        deduct_credits(user["id"], credit_cost, {
+            "operation": "legacy_product_shot_animate",
+            "shot_id": shot_id,
+        })
         _dispatch_shot_task(animate_product_shot_video, shot_id, "animate_product_shot_video")
-        return {"status": "animation_queued", "shot_id": shot_id}
+        return {"status": "animation_queued", "shot_id": shot_id, "credits_deducted": credit_cost}
     except HTTPException:
         raise
     except Exception as e:
@@ -2136,6 +2186,46 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
         # videos (one per script). Otherwise fall back to count with per-video
         # auto-generation. scripts[] always wins over count.
         effective_count = len(data.scripts) if data.scripts else data.count
+
+        per_video_credit = None
+        bulk_deduction = None
+        if user and effective_count > 0:
+            has_ref = bool(
+                data.product_id
+                or data.reference_image_url
+                or data.product_image_url
+            )
+            try:
+                per_video_credit = resolve_job_credit_cost(
+                    data.product_type,
+                    data.duration,
+                    model_api=data.model_api,
+                    has_reference=has_ref,
+                )
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            total_credits = per_video_credit * effective_count
+            wallet = get_wallet(user["id"])
+            if not wallet:
+                raise HTTPException(status_code=402, detail="Credit wallet not found.")
+            if wallet["balance"] < total_credits:
+                raise HTTPException(
+                    status_code=402,
+                    detail=f"Insufficient credits. Balance: {wallet['balance']}. Required: {total_credits}.",
+                )
+            try:
+                bulk_deduction = deduct_credits(user["id"], total_credits, {
+                    "operation": "bulk_campaign",
+                    "count": effective_count,
+                    "per_video": per_video_credit,
+                    "product_type": data.product_type,
+                    "duration": data.duration,
+                    "model_api": data.model_api,
+                })
+                print(f"      [Credit] Bulk deducted {total_credits} credits ({effective_count}×{per_video_credit})")
+            except ValueError as e:
+                raise HTTPException(status_code=402, detail=str(e))
+
         for i in range(effective_count):
             # ----- Clip selection: round-robin for digital, none for physical -----
             # Physical products composite the influencer with the product image
@@ -2304,12 +2394,13 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
                     metadata["hook"] = script_text
                 elif data.hook:
                     metadata["hook"] = data.hook
-                # @-mention overrides: force the user-selected influencer face +
-                # product image into every campaign video (worker honors these).
                 if data.reference_image_url:
                     metadata["reference_image_url"] = data.reference_image_url
                 if data.product_image_url:
                     metadata["product_image_url"] = data.product_image_url
+                if per_video_credit is not None:
+                    metadata["credits_deducted"] = per_video_credit
+                    metadata["credit_operation"] = "bulk_campaign"
                 if metadata:
                     job_data["metadata"] = metadata
 
@@ -2330,7 +2421,23 @@ def api_create_bulk_jobs(data: BulkJobCreate, request: Request, user: dict = Dep
             _dispatch_worker(job["id"])
             created_jobs.append(job["id"])
 
-        return {"status": "dispatched", "count": len(created_jobs), "job_ids": created_jobs}
+        if bulk_deduction and user and per_video_credit is not None:
+            failed_count = effective_count - len(created_jobs)
+            if failed_count > 0:
+                refund_amount = failed_count * per_video_credit
+                refund_credits(user["id"], refund_amount, {
+                    "reason": "bulk_job_creation_partial_failure",
+                    "requested": effective_count,
+                    "created": len(created_jobs),
+                })
+                print(f"      [Credit] Bulk partial refund {refund_amount} credits ({failed_count} failed)")
+
+        return {
+            "status": "dispatched",
+            "count": len(created_jobs),
+            "job_ids": created_jobs,
+            "credits_deducted": (per_video_credit or 0) * len(created_jobs),
+        }
 
     except HTTPException:
         raise
@@ -2481,7 +2588,9 @@ def api_get_cost_stats(request: Request, user: dict = Depends(get_optional_user)
     """Aggregate spend stats for the Activity page — scoped per user and project."""
     sb = get_supabase()
     # Build query — scope by user if authenticated
-    q = sb.table("video_jobs").select("total_cost,created_at,status,product_type").not_.is_("total_cost", "null")
+    q = sb.table("video_jobs").select(
+        "total_cost,created_at,status,product_type,length,model_api,metadata"
+    ).not_.is_("total_cost", "null")
     if user:
         q = q.eq("user_id", user["id"])
         pid = _resolve_project_id(request, user)
@@ -2492,16 +2601,11 @@ def api_get_cost_stats(request: Request, user: dict = Depends(get_optional_user)
 
     total_credits = 0
     for r in rows:
-        if r.get("status") == "success":
-            cost = float(r.get("total_cost", 0) or 0)
-            ptype = r.get("product_type")
-            is_digital = ptype != "physical"
-            is_30s = cost > 0.75
-            
-            if is_digital:
-                total_credits += (77 if is_30s else 39)
-            else:
-                total_credits += (199 if is_30s else 100)
+        if r.get("status") != "success":
+            continue
+        resolved = credits_deducted_for_job_row(r)
+        if resolved is not None:
+            total_credits += resolved
 
     return {
         "total_spend_all": total_credits,
@@ -2733,16 +2837,23 @@ def api_get_notifications(limit: int = Query(default=20, le=50), user: dict = De
 @app.get("/api/credits/costs")
 def api_get_credit_costs():
     """Return the full credit cost table for frontend display."""
-    return {
-        "digital_15s": 95,
-        "digital_30s": 190,
-        "physical_15s": 100,
-        "physical_30s": 199,
-        "cinematic_image_1k": 13,
-        "cinematic_image_2k": 13,
-        "cinematic_image_4k": 16,
-        "cinematic_video_8s": 51,
-    }
+    return export_credit_cost_table()
+
+
+class CreditDeductRequest(BaseModel):
+    amount: int
+    metadata: dict = {}
+
+
+@app.post("/api/credits/deduct")
+def api_deduct_credits(body: CreditDeductRequest, user: dict = Depends(get_current_user)):
+    """Deduct credits for a Creative OS agent operation (non-/jobs flows)."""
+    if body.amount <= 0:
+        raise HTTPException(status_code=400, detail="amount must be positive")
+    try:
+        return deduct_credits(user["id"], body.amount, body.metadata or {})
+    except ValueError as e:
+        raise HTTPException(status_code=402, detail=str(e))
 
 
 # ---------------------------------------------------------------------------
@@ -2752,7 +2863,7 @@ def api_get_credit_costs():
 # Top-up package definitions (server-side source of truth)
 TOPUP_PACKAGES = {
     "small":  {"credits": 250,  "stripe_price_id": os.getenv("STRIPE_TOPUP_SMALL_PRICE_ID", "")},
-    "medium": {"credits": 750,  "stripe_price_id": os.getenv("STRIPE_TOPUP_MEDIUM_PRICE_ID", "")},
+    "medium": {"credits": 700,  "stripe_price_id": os.getenv("STRIPE_TOPUP_MEDIUM_PRICE_ID", "")},
     "large":  {"credits": 2000, "stripe_price_id": os.getenv("STRIPE_TOPUP_LARGE_PRICE_ID", "")},
     "xl":     {"credits": 5000, "stripe_price_id": os.getenv("STRIPE_TOPUP_XL_PRICE_ID", "")},
 }
@@ -3046,6 +3157,24 @@ def create_clone_job(data: CloneJobCreate, request: Request, user: dict = Depend
     if not clone_check.data:
         raise HTTPException(status_code=404, detail="Clone not found")
 
+    try:
+        credit_cost = get_clone_video_credit_cost(data.duration)
+        wallet = get_wallet(user["id"])
+        if not wallet or wallet["balance"] < credit_cost:
+            raise HTTPException(
+                status_code=402,
+                detail=f"Insufficient credits. Required: {credit_cost}.",
+            )
+        deduct_credits(user["id"], credit_cost, {
+            "operation": "create_clone_video",
+            "duration": data.duration,
+            "clone_id": data.clone_id,
+        })
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=402, detail=str(e))
+
     # Create the job record
     # Resolve project_id from request header or payload
     pid = data.project_id or _resolve_project_id(request, user)
@@ -3150,13 +3279,8 @@ def api_refund_job(job_id: str, user: dict = Depends(get_current_user)):
     if job.get("status") not in ("failed",):
         raise HTTPException(status_code=400, detail="Can only refund failed jobs")
 
-    # Determine the credit cost to refund
-    try:
-        credit_cost = get_video_credit_cost(
-            job.get("product_type", "digital"),
-            job.get("length", 15)
-        )
-    except ValueError:
+    credit_cost = credits_deducted_for_job_row(job)
+    if credit_cost is None:
         raise HTTPException(status_code=400, detail="Cannot determine credit cost for this job type")
 
     try:

@@ -10,8 +10,8 @@ import { useSearchParams } from 'next/navigation';
 
 const CREDIT_PACKAGES = [
   { name: 'Small Top-Up',  credits: 250,  price: 9,   perCredit: '3.6¢' },
-  { name: 'Medium Top-Up', credits: 750,  price: 24,  perCredit: '3.2¢', popular: true },
-  { name: 'Large Top-Up',  credits: 2000, price: 59,  perCredit: '2.9¢' },
+  { name: 'Medium Top-Up', credits: 700,  price: 24,  perCredit: '3.4¢', popular: true },
+  { name: 'Large Top-Up',  credits: 2000, price: 59,  perCredit: '3.0¢' },
   { name: 'XL Top-Up',     credits: 5000, price: 139, perCredit: '2.8¢' },
 ];
 

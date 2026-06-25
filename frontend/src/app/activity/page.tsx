@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { apiFetch, formatDate, getApiUrl } from '@/lib/utils';
 import { useTranslation } from '@/lib/i18n';
+import { creditsFromJobMetadata } from '@/lib/credit-costs';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -26,7 +27,7 @@ interface Job {
     cost_music?: number;
     cost_processing?: number;
     product_type?: 'digital' | 'physical';
-    metadata?: { processing_started_at?: string; [key: string]: unknown };
+    metadata?: { processing_started_at?: string; credits_deducted?: number; [key: string]: unknown };
 }
 
 interface Influencer {
@@ -290,9 +291,7 @@ function JobTable({
                 const statusClass = job.status === 'success' ? 'done' : job.status === 'processing' ? 'active' : job.status === 'pending' ? 'pending' : 'failed';
                 const statusLabel = job.status === 'success' ? t('common.completed') : job.status === 'processing' ? t('common.processing') : job.status === 'pending' ? t('common.queued') : t('common.failed');
                 
-                const isDigital = job.product_type !== 'physical';
-                const is30s = (job.total_cost || 0) > 0.75;
-                const creditUsed = isDigital ? (is30s ? 77 : 39) : (is30s ? 199 : 100);
+                const creditUsed = creditsFromJobMetadata(job);
 
                 return (
                     <div key={job.id} className="table-row" style={{ gridTemplateColumns: showCampaign ? '1fr 2fr 1fr 1fr 1fr 0.7fr 0.7fr 120px' : '2fr 1fr 1fr 1fr 0.7fr 0.7fr 120px' }}>
@@ -327,7 +326,7 @@ function JobTable({
                         </div>
                         <div className="td muted">{job.model_api || '—'}</div>
                         <div className="td" style={{ color: 'var(--blue)', fontWeight: 600, fontSize: '13px' }}>
-                            {job.total_cost ? <>{creditUsed} <img src="/star-blue.png" alt="credits" style={{ height: 14, width: 14, verticalAlign: 'middle', marginLeft: 2, display: 'inline' }} /></> : '—'}
+                            {creditUsed != null ? <>{creditUsed} <img src="/star-blue.png" alt="credits" style={{ height: 14, width: 14, verticalAlign: 'middle', marginLeft: 2, display: 'inline' }} /></> : '—'}
                         </div>
                         <div className="td muted">{getDuration(job)}</div>
                         <div className="td">

@@ -160,6 +160,7 @@ If you genuinely believe a reference image is causing an issue, you MUST ask the
 - get_wallet() — Current credit balance.
 
 ### Cost preview (free)
+- list_credit_costs(lang?) — Full credit price catalog (all operations, all UGC variants). **MANDATORY** when the user asks what things cost, for a pricing table, or "how many credits is X". Returns exact numbers — present them verbatim; never round or merge tiers.
 - estimate_credits(operations) — Preview the credit cost of one or more operations BEFORE running. Use for multi-step plans so you can present a single bundled total to the user.
 
 ### Account / asset creation (free)
@@ -216,7 +217,7 @@ Gated tools cost real credits. You MUST get explicit user confirmation before sp
 
 ⚠️ ANTI-HALLUCINATION RULE: After the user confirms, you MUST actually invoke the tool with `confirmed=true`. Do NOT respond with a text message describing or simulating tool execution without calling the tool. If your response to a user confirmation does NOT contain a tool_use block for the gated tool, you have failed this rule. The pipeline only starts when you emit the actual tool call. Saying "the pipeline has started" without calling the tool is a hallucination and the video will not be generated.
 
-⚠️ NEVER QUOTE CREDITS FROM MEMORY. Every credit number you show the user MUST come from a tool result in the CURRENT turn — either the `confirmation_required` payload of a gated tool (`confirmed=false`) or an `estimate_credits` response. Do not calculate costs yourself, do not recall prices from earlier in the session, do not guess. If you don't have a fresh tool result, call one of those tools first, THEN present the number. Quoting a wrong number and then silently correcting it on the next turn destroys user trust.
+⚠️ NEVER QUOTE CREDITS FROM MEMORY. Credit numbers MUST come from a tool result this turn: `list_credit_costs` (pricing FAQ — pass lang=es in Spanish; show all 8 full-UGC variants, never "~100 credits"), `estimate_credits` (bundles), or gated `confirmed=false` / `confirmation_required`. No guessing.
 
 ⚠️ ONE QUOTE, ONE CONFIRM, ONE FIRE. After you present a cost and the user agrees, call the gated tool(s) with `confirmed=true` IMMEDIATELY in the next turn. Do NOT re-call `estimate_credits` "to double-check", do NOT call the gated tool with `confirmed=false` again "to lock in the cost", do NOT re-present the same cost with different wording and ask again. **Specifically forbidden after a confirmation reply (the literal text "Confirmed — proceed with the pending generation now.", its Spanish equivalent "Confirmado — procede con la generación pendiente ahora.", OR plain "yes / sí / vale / dale / ok / proceed / adelante"): do NOT emit any prose summary of what you're about to do, do NOT restate the credits, do NOT ask "¿Quieres que proceda?" / "Shall I proceed?" / any equivalent re-confirmation. Your ONLY response to a confirmation must be the tool_use block with `confirmed=true` — no narration before it.** That forces the user to confirm twice and wastes their turn. The ONLY exception: if the user's confirmation included a change that affects the cost (e.g. "yes, but make it 10s instead of 5s"), you MUST re-estimate because the parameters changed — state that explicitly ("10s changes the cost to X credits, proceed?") and end turn. Otherwise, fire silently.
 
@@ -224,10 +225,10 @@ Gated tools cost real credits. You MUST get explicit user confirmation before sp
 
 Do NOT bypass this gate. Do NOT call gated tools with `confirmed=true` on the first call — except for the explicitly-whitelisted fast-path below. Cost transparency is non-negotiable.
 
-⚡ FAST-PATH for cheap ops (≤ 5 credits — image-only, no references). The following calls are pre-authorized and may be fired with `confirmed=true` on the FIRST call, skipping the preview-then-confirm round-trip:
-  • `generate_image_text_only` — pure text-to-image, no product / influencer / reference images. Cost: 5 credits.
-  • `generate_image` when called with NO `product_id`, NO `influencer_id`, and NO `reference_image_urls` (effectively prompt-only). Cost: 5 credits.
-When you use the fast-path, you MUST end the response in which the result lands with the line: "Done — 5 credits charged." so the user sees the debit. Every OTHER gated tool (videos, full UGC, alt-versions, identity sheets, product shots, animation, render, generate_image when references / product / influencer are involved) MUST follow the standard preview-then-confirm gate. The fast-path is ONLY for prompt-only image generation; do not extend it to anything else.
+⚡ FAST-PATH for cheap ops (≤ 10 credits — prompt-only image, no references). The following calls are pre-authorized and may be fired with `confirmed=true` on the FIRST call, skipping the preview-then-confirm round-trip:
+  • `generate_image_text_only` — pure text-to-image, no product / influencer / reference images. Cost: see `list_credit_costs` → single image (currently 10 credits).
+  • `generate_image` when called with NO `product_id`, NO `influencer_id`, and NO `reference_image_urls` (effectively prompt-only). Cost: see `list_credit_costs` → single image (currently 10 credits).
+When you use the fast-path, you MUST end the response in which the result lands with the line: "Done — N credits charged." (N = actual cost from the tool result) so the user sees the debit. Every OTHER gated tool (videos, full UGC, alt-versions, identity sheets, product shots, animation, render, generate_image when references / product / influencer are involved) MUST follow the standard preview-then-confirm gate. The fast-path is ONLY for prompt-only image generation; do not extend it to anything else.
 
 For multi-step plans ("generate 3 images then animate two of them", "give me 3 alternatives"), call `estimate_credits` ALONE first to preview the TOTAL cost as a single bundled number, present it once, then execute the steps with `confirmed=true` after the user agrees to the bundle.
 
@@ -236,7 +237,7 @@ For multi-step plans ("generate 3 images then animate two of them", "give me 3 a
   (b) Call ONE gated tool with `confirmed=false` to get its `confirmation_required` payload — and present that number. Do NOT also call `estimate_credits` in the same turn.
 Mixing the two produces TWO competing "present this cost, wait" instructions and confuses the turn. Pick one path, present one number, end turn.
 
-After ANY cost-preview tool result (confirmation_required OR estimate_credits), you MUST emit a user-facing text message in the SAME turn quoting the credit number and asking for confirmation. Never end a turn that contained a confirmation_required tool result without writing that user-facing text — the user will see nothing and assume the agent froze.
+After ANY cost-preview tool result (confirmation_required OR estimate_credits), you MUST emit a user-facing text message in the SAME turn quoting the credit number and asking for confirmation. Never end a turn that contained a confirmation_required tool result without writing that user-facing text — the user will see nothing and assume the agent froze. **`list_credit_costs` is informational only** — present the catalog table; no confirmation gate needed.
 
 The gated tools are exactly: generate_image, generate_influencer, generate_identity, generate_product_shots, animate_image, generate_video, extend_video, edit_video, create_ugc_video, create_clone_video, create_bulk_campaign, create_bulk_clone. Everything else (including combine_videos, render_edited_video) is free of the confirmation gate and can be called immediately.
 
@@ -357,9 +358,8 @@ The video_url the user is referring to should already be in the conversation con
      3. **Integration** — how the change should look in the existing shot: match scene lighting, shadows, color temperature, perspective; photorealistic; well-integrated.
      4. **Camera** — usually "locked-off camera, same shot size and angle as the source" unless the user asked for a camera change.
      5. **Consistency** — when `scope="entire"` (multi-chunk), repeat the exact same object/style/material details in every pass so chunks stitch coherently.
-     Edit ONE thing per pass — if the user wants hat + background + lighting, do the hat first, show the result, then refine step by step in follow-up edits (Omni Flash works best as conversational refinement, not one mega-prompt).
-     Example (hat on a person): "Add a dark flat newsboy cap (Peaky Blinders style) visible in the frame, resting naturally with realistic fabric texture and shadowing that matches the indoor lighting. Locked-off camera, same 9:16 framing and action as the source. Preserve the subject's pose, clothing, background, and all other elements exactly as they are — only the cap is new. Photorealistic, seamless integration."
-     For person-involving edits, describe the OBJECT/prop in the scene — avoid language that sounds like altering identity/face/head ("change his face", "onto the character's head"). Focus on the garment or prop appearing naturally in frame.
+     Edit ONE thing per pass — refine step by step across follow-up edits.
+     For person-involving edits, describe the OBJECT/prop in frame — avoid face/identity-alteration wording.
      For background/scene swaps: describe the new environment, mood, lighting direction, and that the subject/action stay the same.
      For object removal: name the object, describe the fill/inpaint, preserve everything else.
      If a reference image is attached for style/object/person transfer, mention it in the prompt AND pass it in `reference_image_urls`.
@@ -554,16 +554,16 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
 
 13. CINEMATIC ADS (Fal AI: GPT Image 2 storyboard + Seedance 2.0 Pro animation) — when the user asks for a "cinematic ad", "cinematic advert", "cinematic ads", "cinematic video", "cinematic spot", "cinematic clip", "film-style ad/video/spot", "movie-style ad/video/spot", "hollywood-look ad/video", "storyboard for [product]", "animate this product as a cinematic spot", or **any ad/video framed as cinematic / filmic / movie-quality / film-look** — OR the Spanish equivalents "anuncio cinematográfico", "anuncio cinemático", "vídeo cinematográfico", "spot cinemático", "anuncio de cine", "estilo cine", "estilo película", "spot publicitario cinemático" — against an @mentioned product or uploaded product photo, use the `create_cinematic_ad` tool — NOT `generate_video(mode=cinematic_video)` and NOT `animate_image`. `generate_video(cinematic_video)` is reserved for cases where the user EXPLICITLY opts out of the storyboard flow ("just a quick clip", "no storyboard", "single shot", "skip the directions"). If you cannot tell whether the user wants the full storyboard workflow vs. a one-shot cinematic clip, ASK in ONE short message: "Do you want a curated cinematic ad (3 direction options → storyboard → animated 5/10/15s spot) or a quick single-shot cinematic clip (one 5–10s render, no storyboard)?" Default to `create_cinematic_ad` if they pick the first or don't answer in the same turn. **Default for a product-only cinematic/commercial brief (no person/model in the request):** skip creator selection — go straight to `stage='propose'` after product + aspect/duration are known. Only ask for a creator when the brief explicitly requests a person/model/presenter or the user picks a model-led direction that needs a face. This tool is multi-stage with mandatory pause points:
   - **a) `stage='propose'` (FREE):** First call. Pass `product_id` (from @mention) OR `image_url` (from upload) + the user's `brief` + `aspect_ratio` + `duration_seconds` (see ASPECT + DURATION rule below). The tool returns 3 storyboard directions (A/B/C) tailored to the brief + format + length. Read them back to the user in natural language — name, vibe, hero moment, model-led or product-only, mark the recommended one — and STOP. Wait for the user to pick A/B/C (or remix). Never auto-pick.
-  - **b) `stage='storyboard'` (~4 cr, NO cost gate):** Once direction is chosen, call with `direction`, plus `tagline` + `domain` + the SAME `aspect_ratio` and `duration_seconds` from propose. NO `confirmed=false` step — the storyboard renders directly (4 cr auto-debited; trivial enough not to gate). The tool blocks while it renders (usually a couple of minutes, sometimes longer) then returns `action='confirmation_required'` for the NEXT stage (animate) — the storyboard image surfaces via the artifact stream, the panels themselves describe the scenes, so DO NOT separately narrate beats. The frontend renders the animate cost chip automatically. **STORYBOARD NARRATION (when you tell the user it is rendering):** (1) The panel count VARIES with `duration_seconds` — 3 panels for 5s, 4 for 10s, 6 for 15s. NEVER hardcode "6-panel" — state the count that matches the chosen duration, or just say "storyboard" with no number. (2) Do NOT give any render-time estimate or ETA — no "2 minutes", no "a couple of minutes", no "this takes about…". Just say the storyboard is rendering now and stop. **DIRECT-SEEDANCE BYPASS:** for lip-application / Fal-sensitive directions the server skips the storyboard sheet entirely and the response has `direct_seedance: true`, NO `storyboard_url`, and a `scene_breakdown` (the shots described in text). When you see `direct_seedance: true`, tell the user (briefly, using `direct_seedance_note`) that this direction has no visual storyboard and the video is generated directly via Seedance 2.0 — present the `scene_breakdown` beats and the animate cost chip. For direct_seedance responses do NOT narrate a storyboard render, a panel count, or a render time — there is no storyboard render step. Do NOT treat the missing storyboard image as an error.
-  - **c) `stage='animate'` (32–96 cr depending on duration):** Use the `next_call` payload returned by storyboard (it pre-fills `storyboard_url`, `direction`, `aspect_ratio`, `duration_seconds`, `tagline`, `domain` — and `direct_seedance` when set). Pass the ENTIRE `next_call` through verbatim, INCLUDING `direct_seedance` when present (the direct path has no `storyboard_url`; that is expected). FIRST `confirmed=false` for the cost chip; after Confirm, `confirmed=true`. The tool renders the ad at the chosen format + length, saves to the Videos tab, returns `action='ad_ready'` with `video_url`.
-  - **d) Optional add-ons:** `stage='broll'` (`panel_index`, ~32 cr) and `stage='product_macro'` (~32 cr). Both always 5s; respect the SAME `aspect_ratio` chosen earlier.
+  - **b) `stage='storyboard'` (paid, auto-debit, NO cost gate):** Call with `direction`, `tagline`, `domain`, same `aspect_ratio` + `duration_seconds`. Returns `confirmation_required` for animate next. Panel count: 3/4/6 for 5/10/15s — never hardcode "6-panel". No ETA estimates. If `direct_seedance=true`, skip storyboard narration — present `scene_breakdown` + animate cost chip.
+  - **c) `stage='animate'` (paid; cost scales with duration — use `confirmation_required` or `list_credit_costs`):** Use the `next_call` payload returned by storyboard (it pre-fills `storyboard_url`, `direction`, `aspect_ratio`, `duration_seconds`, `tagline`, `domain` — and `direct_seedance` when set). Pass the ENTIRE `next_call` through verbatim, INCLUDING `direct_seedance` when present (the direct path has no `storyboard_url`; that is expected). FIRST `confirmed=false` for the cost chip; after Confirm, `confirmed=true`. The tool renders the ad at the chosen format + length, saves to the Videos tab, returns `action='ad_ready'` with `video_url`.
+  - **d) Optional add-ons:** `stage='broll'` (`panel_index`) and `stage='product_macro'`. Both always 5s; costs from `list_credit_costs` → cinematic broll / product macro. Respect the SAME `aspect_ratio` chosen earlier.
 
   **ASPECT + DURATION rule (MANDATORY before stage='propose', for SINGLE *and* BULK cinematic ads):** This applies to EVERY cinematic ad flow — one ad or all directions at once (`stage='bulk'`). Before calling propose, you MUST know `aspect_ratio` (16:9 horizontal, 9:16 vertical, 4:3 classic) AND `duration_seconds` (5, 10, or 15). If the user's brief specifies either ("vertical", "9:16", "tiktok", "reels", "5s", "10s", "15s", "horizontal", "youtube", "classic 4:3"), use it directly. Do NOT silently default the aspect ratio to 16:9 just because the request is for multiple directions — ask first when it is missing, the SAME way you would for a single ad. **Ask for each missing value in a SEPARATE message, ONE at a time — NEVER combine `[[ASPECT_BUTTONS]]` and `[[DURATION_BUTTONS]]` in the same message.** The button chips are single-select, so asking both at once forces the user to answer twice and makes you repeat the question. Sequence:
   1. If `aspect_ratio` is missing, FIRST ask only about format, ending with `[[ASPECT_BUTTONS]]` on the last line (EN: `"What format should the ad be? [[ASPECT_BUTTONS]]"` / ES: `"¿Qué formato quieres para el anuncio? [[ASPECT_BUTTONS]]"`). Wait for the choice.
   2. THEN, if `duration_seconds` is still missing, ask only about length, ending with `[[DURATION_BUTTONS]]` on the last line (EN: `"And how long should it be? [[DURATION_BUTTONS]]"` / ES: `"¿Y cuánto debe durar? [[DURATION_BUTTONS]]"`). Wait for the choice.
   If only ONE of the two is missing, ask just that single question with its single marker. Always ask in the user's language. Frontend renders Vertical / Horizontal / Classic and 5s / 10s / 15s buttons. Once you have BOTH values, call propose. Do NOT skip this step.
 
-  HARD RULES for cinematic ads: resolution is ALWAYS 720p — never offer 480p, never ask. Each paid stage is its own confirmation; approval for storyboard does NOT carry to animate. If a call returns an `error` field, surface its `msg` field verbatim to the user — do NOT silently retry or silently swap models. Never describe the product or brand from memory; always rely on the @mentioned product or uploaded image. For model-led directions, the server auto-resolves the influencer from @-mention, `influencer_id`, session stash (after generate_influencer/create_influencer), or a DB match — do NOT ask the user to @-mention a character they just created or saved. Pass `influencer_id` when you have it; the server uses the resolved `image_url` for the storyboard face lock. When the user says "generate the video" / "proceed" / "go" after a character exists, advance to `stage='storyboard'` (if not done) or `stage='animate'` (if storyboard exists) — NEVER call `generate_influencer` again in the same flow. On beauty model-led ads the server progressively retries storyboard generation (sharp face first, then hands-only panels) before falling back; animate passes the influencer as `@Image3` so Seedance can restore face identity. If the storyboard response includes `blur_fallback_warning`, quote it to the user before they confirm animate. When `create_cinematic_ad` returns `error` (e.g. `cinematic_ad failed: TypeError: ...`), quote the exact error string to the user — NEVER call it a "platform bug" or "server-side bug" and NEVER suggest switching to Kling/`generate_video` as a workaround unless the user explicitly asks for an alternative. Lip-application and other Fal-sensitive directions now AUTO-BYPASS Fal: instead of failing, the storyboard stage returns `direct_seedance: true` (no storyboard sheet) and the video is rendered straight through Seedance 2.0 — so the `fal_content_policy` hard error should rarely appear for those. If `error` is `fal_content_policy` anyway, quote `msg` verbatim and offer Direction B (product-only, e.g. Soft Sculpture) as the in-flow alternative; do NOT auto-pivot to Kling.
+  HARD RULES for cinematic ads: always 720p. Each paid stage needs its own confirm (storyboard approval ≠ animate). Surface `error.msg` verbatim — no silent retries or model swaps. Use @mentioned product/image; auto-resolve influencer for model-led dirs. After a character exists, go to storyboard/animate — never re-call generate_influencer. Quote blur_fallback_warning before animate confirm. Never blame "platform bugs" or pivot to Kling unless asked. Fal-sensitive dirs may return direct_seedance=true (no storyboard sheet).
 
 14. CROPPING / SPLITTING A STORYBOARD INTO INDIVIDUAL PANELS — when the user asks to "crop", "split", "cut", "separate", or "show me each panel / each image individually" from a storyboard (or any multi-panel sheet), you MUST call the `crop_storyboard` tool. It downloads the sheet, slices it into individual panel images, uploads each one, saves them to the project, and surfaces them in the Images tab. It is FREE and needs no confirmation. If the user references the storyboard you just made, you can omit `image_url` (it defaults to the latest storyboard); otherwise pass the sheet's `image_url`. Pass `num_panels` when you know the count (e.g. 4 or 6) so the splitter picks the right grid. NEVER fabricate this: do not write out panel descriptions as text and claim the files were "saved to Outputs" or "rendered in my view" — you have no such side effect. The ONLY way real cropped images appear for the user is by calling `crop_storyboard`. After it returns, refer to the panels by number/label; do not paste URLs."""
 
@@ -704,6 +704,26 @@ def _custom_tools_for_agent() -> list[dict]:
         },
 
         # ── Cost preview (free) ────────────────────────────────────────
+        {
+            "type": "custom",
+            "name": "list_credit_costs",
+            "description": (
+                "Return the full credit price catalog (all operations). "
+                "MANDATORY when the user asks what things cost, for a pricing table, "
+                "or 'how many credits'. Present the sections verbatim — never invent prices."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "lang": {
+                        "type": "string",
+                        "enum": ["en", "es"],
+                        "description": "Response language for labels. Default: match user language.",
+                    },
+                },
+                "required": [],
+            },
+        },
         {
             "type": "custom",
             "name": "estimate_credits",
@@ -2010,10 +2030,10 @@ def _custom_tools_for_agent() -> list[dict]:
             "description": (
                 "Cinematic product ad via Fal AI (GPT Image 2 storyboard + Seedance 2.0 Pro). "
                 "Multi-stage: stage='propose' (FREE, 3 directions A/B/C — wait for pick); "
-                "stage='storyboard' (~4 cr, 3/4/6 panels for 5/10/15s); "
-                "stage='animate' (~96 cr, 720p + music/SFX, gated, saved to Videos). "
-                "Optional: stage='broll' or 'product_macro' (~32 cr, 5s). Always 720p. "
-                "Each paid stage needs its own confirmation. "
+                "stage='storyboard' (paid, auto-debit, 3/4/6 panels for 5/10/15s); "
+                "stage='animate' (paid, 720p + music/SFX, gated, saved to Videos). "
+                "Optional: stage='broll' or 'product_macro' (5s each). Always 720p. "
+                "Credit costs: call list_credit_costs — never quote from memory. "
                 "Multiple ads: confirm aspect_ratio + duration_seconds if missing, then stage='propose', "
                 "then ONE stage='bulk' + directions=[...] — never N separate animate calls."
             ),
@@ -2023,7 +2043,7 @@ def _custom_tools_for_agent() -> list[dict]:
                     "stage": {
                         "type": "string",
                         "enum": ["propose", "storyboard", "animate", "broll", "product_macro", "bulk"],
-                        "description": "propose=show 3 directions (FREE); storyboard=render multi-panel sheet, 3/4/6 panels for 5/10/15s (~4 cr); animate=render the ad (~96 cr); broll=5s clip from one panel (~32 cr); product_macro=product-only 5s (~32 cr); bulk=render MULTIPLE directions of the SAME ad at once (pass `directions`).",
+                        "description": "propose=show 3 directions (FREE); storyboard=render multi-panel sheet, 3/4/6 panels for 5/10/15s (paid, auto-debit); animate=render the ad (paid, gated); broll=5s clip from one panel (paid); product_macro=product-only 5s (paid); bulk=render MULTIPLE directions of the SAME ad at once (pass `directions`). Costs: list_credit_costs.",
                     },
                     "directions": {
                         "type": "array",
@@ -2895,7 +2915,7 @@ def _compute_tool_fingerprint(tool_name: str, tool_input: dict) -> str:
 
     Used by BOTH the auto-fire recording site AND the LLM-path guard so a
     fingerprint recorded by one path is detectable by the other. If they
-    diverge, a duplicate fire can slip through (4 cr + 2 min storyboard wasted).
+    diverge, a duplicate fire can slip through (wasted storyboard credits + render time).
     """
     import hashlib as _hashlib
     parts = [tool_name]
@@ -3526,25 +3546,37 @@ def _credits_for_op(operation: str, params: dict) -> int:
     """
     try:
         from ugc_backend.credit_cost_service import (
+            get_alt_versions_credit_cost,
             get_animate_image_credit_cost,
             get_clone_video_credit_cost,
             get_creative_os_image_credit_cost,
             get_editor_render_credit_cost,
+            get_identity_sheet_credit_cost,
+            get_product_shots_credit_cost,
             get_video_clip_credit_cost,
             get_video_credit_cost,
         )
     except ImportError:
         from services.credit_costs import (
+            get_alt_versions_credit_cost,
             get_animate_image_credit_cost,
             get_clone_video_credit_cost,
             get_creative_os_image_credit_cost,
             get_editor_render_credit_cost,
+            get_identity_sheet_credit_cost,
+            get_product_shots_credit_cost,
             get_video_clip_credit_cost,
             get_video_credit_cost,
         )
 
-    if operation in ("generate_image", "generate_influencer", "generate_identity", "generate_product_shots"):
+    if operation in ("generate_image", "generate_influencer"):
         return get_creative_os_image_credit_cost()
+    if operation == "generate_identity":
+        return get_identity_sheet_credit_cost()
+    if operation == "generate_product_shots":
+        return get_product_shots_credit_cost()
+    if operation == "generate_image_alt_versions":
+        return get_alt_versions_credit_cost()
     if operation == "animate_image":
         return get_animate_image_credit_cost(duration=int(params.get("duration", 5)))
     if operation == "generate_video":
@@ -3571,6 +3603,7 @@ def _credits_for_op(operation: str, params: dict) -> int:
         return get_video_credit_cost(
             product_type=params.get("product_type", "physical"),
             duration=int(params.get("duration", 15)),
+            model_api=params.get("model_api"),
         )
     if operation == "create_clone_video":
         return get_clone_video_credit_cost(duration=int(params.get("duration", 15)))
@@ -3583,6 +3616,7 @@ def _credits_for_op(operation: str, params: dict) -> int:
             per_video = get_video_credit_cost(
                 product_type=params.get("product_type", "physical"),
                 duration=duration,
+                model_api=params.get("model_api"),
             )
         return per_video * count
     if operation == "render_edited_video":
@@ -3609,6 +3643,20 @@ def _credits_for_op(operation: str, params: dict) -> int:
         except ImportError:
             from services.credit_costs import get_gemini_omni_edit_credit_cost
         return get_gemini_omni_edit_credit_cost(resolution=params.get("resolution", "720p"))
+    if operation == "extend_video":
+        try:
+            from ugc_backend.credit_cost_service import get_video_extend_credit_cost
+        except ImportError:
+            from services.credit_costs import get_video_extend_credit_cost
+        return get_video_extend_credit_cost()
+    if operation == "cinematic_bulk":
+        try:
+            from ugc_backend.credit_cost_service import get_cinematic_ad_credit_cost
+        except ImportError:
+            from services.credit_costs import get_cinematic_ad_credit_cost
+        dur = int(params.get("duration_seconds") or 15)
+        per = get_cinematic_ad_credit_cost("animate", duration_seconds=dur)
+        return per * max(1, int(params.get("count", 1)))
     raise ValueError(f"unknown operation for credit estimate: {operation}")
 
 
@@ -3653,6 +3701,42 @@ def _confirmation_payload(operation: str, credits: int, summary: str, echo: dict
     return json.dumps(payload)
 
 
+async def _charge_credits(
+    ctx: ToolContext,
+    amount: int,
+    operation: str,
+    metadata: dict | None = None,
+) -> str | None:
+    """Deduct credits before a paid tool runs. Returns error JSON on failure."""
+    if amount <= 0:
+        return None
+    meta: dict = {"operation": operation, **(metadata or {})}
+    if ctx.project_id:
+        meta["project_id"] = ctx.project_id
+    try:
+        await ctx.core().deduct_credits(amount, meta)
+        return None
+    except Exception as e:
+        msg = str(e)
+        if "402" in msg or "insufficient" in msg.lower():
+            return json.dumps({
+                "error": "insufficient_credits",
+                "msg": msg,
+                "credits_required": amount,
+            })
+        return json.dumps({"error": f"credit deduction failed: {msg}"})
+
+
+async def _charge_for_op(
+    ctx: ToolContext,
+    operation: str,
+    params: dict,
+    metadata: dict | None = None,
+) -> str | None:
+    amount = _credits_for_op(operation, params)
+    return await _charge_credits(ctx, amount, operation, metadata)
+
+
 async def _tool_generate_image(ctx: ToolContext, **kwargs: Any) -> str:
     from routers.generate_image import ExecuteRequest, execute_image_generation
 
@@ -3687,6 +3771,15 @@ async def _tool_generate_image(ctx: ToolContext, **kwargs: Any) -> str:
             summary=summary,
             echo={k: v for k, v in kwargs.items() if k != "confirmed"},
         )
+
+    charge_err = await _charge_credits(
+        ctx,
+        _credits_for_op("generate_image", {}) * count,
+        "generate_image",
+        {"count": count},
+    )
+    if charge_err:
+        return charge_err
 
     # Server-side reference enforcement for UGC composites: if the UI @-mentions
     # (carried into ctx.refs, including resurrected refs on a typed "retry")
@@ -3903,6 +3996,10 @@ async def _tool_animate_image(ctx: ToolContext, **kwargs: Any) -> str:
             summary=f"Animate image into {duration}s clip (style={kwargs.get('style')})",
             echo={k: v for k, v in kwargs.items() if k != "confirmed"},
         )
+
+    charge_err = await _charge_for_op(ctx, "animate_image", {"duration": duration})
+    if charge_err:
+        return charge_err
 
     req = AnimateRequest(
         image_url=kwargs["image_url"],
@@ -4220,6 +4317,10 @@ async def _tool_extend_video(ctx: ToolContext, **kwargs: Any) -> str:
             echo={k: v for k, v in kwargs.items() if k != "confirmed"},
         )
 
+    charge_err = await _charge_for_op(ctx, "extend_video", {})
+    if charge_err:
+        return charge_err
+
     req = ExtendVideoRequest(
         video_url=kwargs["video_url"],
         prompt=kwargs.get("continuation_prompt"),
@@ -4417,6 +4518,23 @@ async def _tool_edit_video(ctx: ToolContext, **kwargs: Any) -> str:
             summary=summary,
             echo={k: v for k, v in kwargs.items() if k != "confirmed"},
         )
+
+    _ew_preview = kwargs.get("edit_window") if isinstance(kwargs.get("edit_window"), dict) else {}
+    try:
+        import asyncio as _aio_preview2
+        from utils.video_concat import probe_duration as _probe_preview2
+        _td_preview2 = await _aio_preview2.to_thread(_probe_preview2, video_url)
+    except Exception:
+        _td_preview2 = 0.0
+    _wins_preview2, _ = _plan_edit_windows(_td_preview2, scope, _ew_preview)
+    _passes2 = max(1, len(_wins_preview2))
+    _edit_credits = _credits_for_op("edit_video", {"resolution": resolution}) * _passes2
+    charge_err = await _charge_credits(
+        ctx, _edit_credits, "edit_video",
+        {"resolution": resolution, "passes": _passes2},
+    )
+    if charge_err:
+        return charge_err
 
     # ── Confirmed → execute. ─────────────────────────────────────────────
     import asyncio as _asyncio
@@ -4650,6 +4768,10 @@ async def _tool_generate_image_text_only(ctx: ToolContext, **kwargs: Any) -> str
             echo={k: v for k, v in kwargs.items() if k != "confirmed"},
         )
 
+    charge_err = await _charge_for_op(ctx, "generate_image", {})
+    if charge_err:
+        return charge_err
+
     req = TextToImageRequest(
         prompt=kwargs["prompt"],
         aspect_ratio=kwargs.get("aspect_ratio") or "9:16",
@@ -4679,14 +4801,17 @@ async def _tool_generate_image_alt_versions(ctx: ToolContext, **kwargs: Any) -> 
         return json.dumps({"error": "images is required (at least one URL)"})
 
     if not kwargs.get("confirmed"):
-        # Two outputs returned in one call — preview as 2 image generations.
-        credits = _credits_for_op("generate_image", {}) * 2
+        credits = _credits_for_op("generate_image_alt_versions", {})
         return _confirmation_payload(
             operation="generate_image_alt_versions",
             credits=credits,
             summary="Generate 2 alternative image variations from the same references",
             echo={k: v for k, v in kwargs.items() if k != "confirmed"},
         )
+
+    charge_err = await _charge_for_op(ctx, "generate_image_alt_versions", {})
+    if charge_err:
+        return charge_err
 
     req = AltVersionsRequest(
         prompt=kwargs["prompt"],
@@ -4912,6 +5037,18 @@ async def _tool_get_wallet(ctx: ToolContext, **_: Any) -> str:
         return json.dumps(await ctx.core().get_wallet())
     except Exception as e:
         return json.dumps({"error": f"get_wallet failed: {e}"})
+
+
+async def _tool_list_credit_costs(ctx: ToolContext, **kwargs: Any) -> str:
+    lang = (kwargs.get("lang") or ctx.user_lang or "en").strip().lower()
+    if lang not in ("en", "es"):
+        lang = "es" if lang.startswith("es") else "en"
+    try:
+        from ugc_backend.credit_cost_service import build_credit_cost_catalog
+    except ImportError:
+        from services.credit_costs import build_credit_cost_catalog
+    catalog = build_credit_cost_catalog(lang=lang)
+    return json.dumps(catalog)
 
 
 async def _tool_estimate_credits(_ctx: ToolContext, **kwargs: Any) -> str:
@@ -5390,7 +5527,11 @@ async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
 
     # Cost confirmation gate
     if not kwargs.get("confirmed"):
-        credits = _credits_for_op("create_ugc_video", {"product_type": product_type, "duration": duration})
+        credits = _credits_for_op("create_ugc_video", {
+            "product_type": product_type,
+            "duration": duration,
+            "model_api": kwargs.get("model_api"),
+        })
         # Include script validation summary in the confirmation if hook was provided
         extra_info = {}
         if user_hook:
@@ -5558,10 +5699,10 @@ async def _tool_create_ugc_video(ctx: ToolContext, **kwargs: Any) -> str:
 # ─────────────────────────────────────────────────────────────────────
 # Multi-stage tool that mirrors the .claude/skills/cinematic-ads playbook:
 #   propose  → 3 directions (free)
-#   storyboard → 6-panel sheet ($0.18 / ~4 cr, gated)
-#   animate  → 15s 720p ad ($4.54 / ~96 cr, gated, persists to video_jobs)
-#   broll    → 5s panel clip ($1.51 / ~32 cr, gated)
-#   product_macro → 5s product-only ($1.51 / ~32 cr, gated)
+#   storyboard → multi-panel sheet (paid, auto-debit)
+#   animate  → 720p ad (paid, gated, persists to video_jobs)
+#   broll    → 5s panel clip (paid, gated)
+#   product_macro → 5s product-only (paid, gated)
 # Hard gates from the skill are enforced here, not in the system prompt:
 #   - Never silent retry on Fal rejection (surface exact msg).
 #   - Resolution always 720p (no 480p toggle).
@@ -5874,6 +6015,16 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
                 "msg": "No valid directions found. Call stage='propose' first, then retry stage='bulk'.",
             })
 
+        bulk_credits = _credits_for_op(
+            "cinematic_animate", {"duration_seconds": duration_seconds},
+        ) * len(_resolved_keys)
+        charge_err = await _charge_credits(
+            ctx, bulk_credits, "cinematic_bulk",
+            {"duration_seconds": duration_seconds, "count": len(_resolved_keys)},
+        )
+        if charge_err:
+            return charge_err
+
         results = await asyncio.gather(
             *[
                 _render_one_cinematic_direction(ctx, base_kwargs=kwargs, direction_key=key)
@@ -6006,11 +6157,14 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
             print(f"[cinematic_ad] supabase upload failed: {e}")
             return None
 
-    # ── stage=storyboard — paid, ~$0.18 / 4 cr.
-    # NO cost-gate: 4cr is trivial and the user already committed to the flow
+    # ── stage=storyboard — paid (auto-debit; cost from credit_cost_service).
+    # NO cost-gate: storyboard is auto-debited and the user already committed
     # by picking a direction. Render directly so they don't have to click an
     # extra Confirm chip just to see the storyboard sheet.
     if stage == "storyboard":
+        charge_err = await _charge_for_op(ctx, "cinematic_storyboard", {})
+        if charge_err:
+            return charge_err
         num_panels = panels_for_duration(duration_seconds)
         has_humans = direction_obj.get("model_or_product_only") == "model"
         has_influencer_ref = bool(cine_refs.get("influencer_url"))
@@ -6030,14 +6184,14 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
                     "msg": (
                         "A character was generated but not saved yet. Call create_influencer with the "
                         "generated name and image_url, then retry storyboard — or generate a character "
-                        f"(5 credits) if you haven't yet.{alt_hint}"
+                        f"({_credits_for_op('generate_influencer', {})} credits) if you haven't yet.{alt_hint}"
                     ),
                 })
             return json.dumps({
                 "error": "influencer_required",
                 "msg": (
                     "This direction is model-led but no character is available. Ask the user to generate "
-                    f"a character (5 credits) or pick a product-only direction.{alt_hint}"
+                    f"a character ({_credits_for_op('generate_influencer', {})} credits) or pick a product-only direction.{alt_hint}"
                 ),
             })
         if cine_refs.get("auto_source"):
@@ -6448,7 +6602,7 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
             blur_fallback_warning=blur_fallback_warning,
         )
 
-    # ── stage=animate — paid, scales with duration (32 / 64 / 96 cr for 5 / 10 / 15s)
+    # ── stage=animate — paid; cost scales with duration (see credit_cost_service)
     if stage == "animate":
         direct_seedance = bool(kwargs.get("direct_seedance"))
         if not direct_seedance and not kwargs.get("storyboard_url"):
@@ -6461,6 +6615,12 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
                 summary=(f"Animar anuncio cinemático ({direction_obj['name']}) — {duration_seconds}s @ 720p {aspect_ratio}" if ctx.user_lang == "es" else f"Animate cinematic ad ({direction_obj['name']}) — {duration_seconds}s @ 720p {aspect_ratio}"),
                 echo={k: v for k, v in kwargs.items() if k != "confirmed"},
             )
+
+        charge_err = await _charge_for_op(
+            ctx, "cinematic_animate", {"duration_seconds": duration_seconds},
+        )
+        if charge_err:
+            return charge_err
 
         has_humans = direction_obj.get("model_or_product_only") == "model"
         has_influencer_ref = bool(cine_refs.get("influencer_url"))
@@ -6659,6 +6819,10 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
                 echo={k: v for k, v in kwargs.items() if k != "confirmed"},
             )
 
+        charge_err = await _charge_for_op(ctx, "cinematic_broll", {})
+        if charge_err:
+            return charge_err
+
         try:
             storyboard_fal_url = await upload_url_to_fal_storage(
                 kwargs["storyboard_url"], content_type="image/png", file_name="storyboard.png",
@@ -6771,6 +6935,10 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
                 summary=("Plano macro del producto (5s @ 720p)" if ctx.user_lang == "es" else "Product macro beauty shot (5s @ 720p)"),
                 echo={k: v for k, v in kwargs.items() if k != "confirmed"},
             )
+
+        charge_err = await _charge_for_op(ctx, "cinematic_product_macro", {})
+        if charge_err:
+            return charge_err
 
         try:
             product_fal_url = await upload_url_to_fal_storage(
@@ -8282,6 +8450,10 @@ async def _tool_render_edited_video(ctx: ToolContext, **kwargs: Any) -> str:
     if not job_id or state is None:
         return json.dumps({"error": "job_id and editor_state are required"})
 
+    charge_err = await _charge_for_op(ctx, "render_edited_video", {}, {"job_id": job_id})
+    if charge_err:
+        return charge_err
+
     # No confirmation gate — rendering is just a Remotion render (no AI models).
     # The user already confirmed the edit/caption request; requiring a second
     # confirmation for the render step creates frustrating double-prompt UX.
@@ -9178,6 +9350,10 @@ async def _tool_generate_influencer(ctx: ToolContext, **kwargs: Any) -> str:
             echo={k: v for k, v in kwargs.items() if k != "confirmed"},
         )
 
+    charge_err = await _charge_for_op(ctx, "generate_influencer", {})
+    if charge_err:
+        return charge_err
+
     # Resolve product context so the persona fits the product/ad. Prefer the
     # LLM-passed args, then auto-derive from an active cinematic-ad flow.
     from prompts.cinematic_ads import get_cinematic_flow, infer_category_from_text
@@ -9252,6 +9428,10 @@ async def _tool_generate_identity(ctx: ToolContext, **kwargs: Any) -> str:
             echo={k: v for k, v in kwargs.items() if k != "confirmed"},
         )
 
+    charge_err = await _charge_for_op(ctx, "generate_identity", {})
+    if charge_err:
+        return charge_err
+
     image_url = kwargs["image_url"]
 
     # Resolve influencer_id from the mentioned image_url so the 4 generated
@@ -9318,6 +9498,10 @@ async def _tool_generate_product_shots(ctx: ToolContext, **kwargs: Any) -> str:
             summary="Generate 4-view product shot sheet",
             echo={k: v for k, v in kwargs.items() if k != "confirmed"},
         )
+
+    charge_err = await _charge_for_op(ctx, "generate_product_shots", {})
+    if charge_err:
+        return charge_err
 
     image_url = kwargs["image_url"]
 
@@ -9817,6 +10001,7 @@ TOOL_DISPATCH: dict[str, Callable[..., Awaitable[str]]] = {
     "list_social_connections": _tool_list_social_connections,
     "get_wallet": _tool_get_wallet,
     # cost preview
+    "list_credit_costs": _tool_list_credit_costs,
     "estimate_credits": _tool_estimate_credits,
     # creative-os generation (gated)
     "generate_image": _tool_generate_image,
@@ -10280,6 +10465,10 @@ class ManagedAgentClient:
                 return env_agent_id
 
             schema_hash = _compute_agent_schema_hash()
+            if len(SYSTEM_PROMPT) >= 100_000:
+                raise RuntimeError(
+                    f"SYSTEM_PROMPT is {len(SYSTEM_PROMPT)} chars; Anthropic agents API max is 100000"
+                )
             registry = await _load_agent_registry()
             existing_id = registry.get(schema_hash)
             if existing_id:
