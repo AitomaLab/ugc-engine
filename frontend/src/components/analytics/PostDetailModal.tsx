@@ -19,6 +19,9 @@ import {
 } from './analytics-types';
 import { exportPostAnalysisPdf } from './exportPostAnalysisPdf';
 import { launchCreativeOsProject } from '@/lib/launchCreativeOsProject';
+import type { AgentRef } from '@/lib/creative-os-api';
+import { buildVideoTemplateBrief } from './buildVideoTemplateBrief';
+import TemplateCreatorPicker from './TemplateCreatorPicker';
 
 const PLATFORM_COLORS: Record<string, string> = {
     instagram: '#E1306C',
@@ -85,6 +88,9 @@ export default function PostDetailModal({ postId, onClose }: Props) {
      */
     const [derivedDuration, setDerivedDuration] = useState<number | undefined>(undefined);
     const [exportingPdf, setExportingPdf] = useState(false);
+    const [showTemplatePicker, setShowTemplatePicker] = useState(false);
+    const [templateLaunching, setTemplateLaunching] = useState(false);
+    const [templateError, setTemplateError] = useState<string | null>(null);
     const persistedDurationRef = useRef<boolean>(false);
     const autoStudioBreakdownRef = useRef(false);
 
@@ -437,50 +443,38 @@ export default function PostDetailModal({ postId, onClose }: Props) {
         }
     }, [post, breakdown, derivedDuration, exportingPdf, t]);
 
-    /**
-     * Route the user to the Create flow with the analyzed post's content
-     * surfaced as a starting point. We forward:
-     *   • caption — pre-fills the custom-script textarea
-     *   • hook    — passed separately so future iterations can use it as
-     *               a script-generation seed
-     *   • platform / source — for analytics attribution on the new draft
-     *   • templatePostId — server-side hook for richer prefill (we only
-     *                      consume `customScript` today, but keeping the
-     *                      ID around lets us upgrade without changing
-     *                      callers later).
-     *
-     * The caption alone is rarely enough to pre-fill a script, so we also
-     * concatenate the AI hook + summary + takeaways when present — gives
-     * the user a richer brief to riff off in the Create wizard.
-     */
-    const handleUseAsTemplate = useCallback(async () => {
-        if (!post) return;
-        const sections: string[] = [];
-        if (breakdown?.hook?.on_screen_text) {
-            sections.push(`Hook:\n${breakdown.hook.on_screen_text}`);
-        } else if (breakdown?.hook?.visual) {
-            sections.push(`Hook:\n${breakdown.hook.visual}`);
-        }
-        if (post.caption) {
-            sections.push(`Caption:\n${post.caption}`);
-        }
-        if (breakdown?.summary) {
-            sections.push(`Summary:\n${breakdown.summary}`);
-        }
-        if (breakdown?.takeaways?.length) {
-            sections.push(`Takeaways:\n${breakdown.takeaways.map((t) => `• ${t}`).join('\n')}`);
-        }
-        const customScript = sections.join('\n\n').trim();
-        const brief = customScript
-            ? `create a video inspired by this template:\n\n${customScript}`.slice(0, 4000)
-            : 'create a video inspired by this analytics post template';
+    const templateReady = breakdown?.status === 'completed';
+
+    const handleOpenTemplatePicker = useCallback(() => {
+        if (!post || !templateReady || templateLaunching) return;
+        setTemplateError(null);
+        setShowTemplatePicker(true);
+    }, [post, templateReady, templateLaunching]);
+
+    const handleTemplateConfirm = useCallback(async (selectedCreator: AgentRef | null) => {
+        if (!post || !breakdown) return;
+        setTemplateLaunching(true);
+        setTemplateError(null);
         try {
-            await launchCreativeOsProject(router, { brief });
-            onClose();
+            const durationSec = derivedDuration ?? post.duration_seconds;
+            const { brief, refs } = buildVideoTemplateBrief(
+                post,
+                breakdown,
+                durationSec,
+                selectedCreator,
+            );
+            const projectId = await launchCreativeOsProject(router, { brief, refs });
+            if (!projectId) {
+                throw new Error(t('analytics.detail.template.error'));
+            }
+            // Hard navigation in progress — do not close modals or touch /schedule router.
+            return;
         } catch (e) {
-            console.error(e);
+            const msg = e instanceof Error ? e.message : t('analytics.detail.template.error');
+            setTemplateError(msg);
+            setTemplateLaunching(false);
         }
-    }, [post, breakdown, router, onClose]);
+    }, [post, breakdown, derivedDuration, router, t]);
 
     return (
         <div
@@ -550,8 +544,11 @@ export default function PostDetailModal({ postId, onClose }: Props) {
                         {post && !loading && (
                             <button
                                 type="button"
-                                onClick={handleUseAsTemplate}
-                                title={t('analytics.detail.template.hint')}
+                                onClick={handleOpenTemplatePicker}
+                                disabled={!templateReady || templateLaunching}
+                                title={templateReady
+                                    ? t('analytics.detail.template.hint')
+                                    : t('analytics.detail.template.needsAnalysis')}
                                 style={{
                                     fontSize: '12px',
                                     fontWeight: 700,
@@ -559,11 +556,14 @@ export default function PostDetailModal({ postId, onClose }: Props) {
                                     padding: '6px 12px',
                                     borderRadius: '8px',
                                     border: '1px solid #34D399',
-                                    background: 'linear-gradient(135deg, #34D399 0%, #2DD4BF 100%)',
-                                    cursor: 'pointer',
+                                    background: templateReady && !templateLaunching
+                                        ? 'linear-gradient(135deg, #34D399 0%, #2DD4BF 100%)'
+                                        : 'rgba(138,147,176,0.45)',
+                                    cursor: templateReady && !templateLaunching ? 'pointer' : 'not-allowed',
                                     display: 'flex',
                                     alignItems: 'center',
                                     gap: '6px',
+                                    opacity: templateReady ? 1 : 0.85,
                                 }}
                             >
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} aria-hidden>
@@ -1039,6 +1039,17 @@ export default function PostDetailModal({ postId, onClose }: Props) {
                     }
                 }
             `}</style>
+
+            {showTemplatePicker && (
+                <TemplateCreatorPicker
+                    onClose={() => {
+                        if (!templateLaunching) setShowTemplatePicker(false);
+                    }}
+                    onConfirm={handleTemplateConfirm}
+                    launching={templateLaunching}
+                    error={templateError}
+                />
+            )}
         </div>
     );
 }

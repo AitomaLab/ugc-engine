@@ -131,6 +131,25 @@ def _build_user_message(user_prompt: str, language: str = "en", context: dict | 
     # seedance_2_cinematic / seedance_2_product and every other mode are
     # unaffected. The shared seedance_director.txt is never modified.
     if is_seedance and context and context.get("dynamic_speaking"):
+        leg_index = context.get("leg_index")
+        leg_total = context.get("leg_total") or 2
+        leg_rules = ""
+        if leg_index in (1, 2):
+            if leg_index == 1:
+                leg_rules = (
+                    f"\n- THIS IS LEG 1 OF {leg_total} for a 30s video: include ONLY the "
+                    "OPENING visual beats (approximately the first half of the beat table). "
+                    "Do NOT start from the middle or include the brand CTA — that belongs in leg 2.\n"
+                    "- Time blocks must fit within 0–15s only.\n"
+                )
+            else:
+                leg_rules = (
+                    f"\n- THIS IS LEG 2 OF {leg_total} for a 30s video: include ONLY the "
+                    "CLOSING visual beats (approximately the second half of the beat table). "
+                    "Do NOT repeat the opening apartment/intro beats — the character continues "
+                    "mid-action from leg 1.\n"
+                    "- Time blocks must fit within 0–15s only; end with brand name / website / CTA.\n"
+                )
         parts.append(
             "\n[DYNAMIC SPEAKING MODE]\n"
             "This is a continuous walk-and-talk UGC clip: ONE character speaking "
@@ -147,6 +166,7 @@ def _build_user_message(user_prompt: str, language: str = "en", context: dict | 
             "AND weave the matching lines into the relevant time blocks.\n"
             "- Preserve any brand name, website, or CTA exactly as given, in the "
             "final block."
+            + leg_rules
         )
 
     parts.append(f"\nUser request: {user_prompt}")

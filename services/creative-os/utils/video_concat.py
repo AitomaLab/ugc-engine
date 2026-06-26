@@ -74,9 +74,9 @@ def probe_orientation(url: str) -> str:
 
 
 def _download(url: str, dest: Path) -> Path:
-    import urllib.request
-    urllib.request.urlretrieve(url, str(dest))
-    return dest
+    from utils.persist_media import download_url_to_file
+
+    return download_url_to_file(url, dest)
 
 
 def probe_duration(path_or_url: str) -> float:

@@ -100,6 +100,42 @@ async def _download_bytes(url: str, *, timeout: float = 300.0) -> bytes:
     raise PersistMediaError(f"download failed ({url[:96]}): {last_err}")
 
 
+def download_url_to_file(
+    url: str,
+    dest: "Path | str",
+    *,
+    timeout: float = 300.0,
+    max_retries: int = _INLINE_RETRIES,
+) -> "Path":
+    """Sync download for ffmpeg/concat paths (httpx, Kie CDN SSL bypass, retries)."""
+    import time
+    from pathlib import Path
+
+    import httpx
+
+    out = Path(dest)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    last_err: Exception | None = None
+    for attempt in range(max_retries):
+        try:
+            with httpx.Client(
+                timeout=timeout,
+                follow_redirects=True,
+                verify=_httpx_verify(url),
+            ) as client:
+                resp = client.get(url)
+                resp.raise_for_status()
+                if not resp.content:
+                    raise PersistMediaError(f"empty response body from {url[:96]}")
+                out.write_bytes(resp.content)
+                return out
+        except Exception as e:
+            last_err = e
+            if attempt < max_retries - 1:
+                time.sleep(2.0 * (attempt + 1))
+    raise PersistMediaError(f"download failed ({url[:96]}): {last_err}")
+
+
 async def _upload_bytes(
     body: bytes,
     *,

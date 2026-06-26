@@ -3252,6 +3252,11 @@ def _user_id_from_jwt(token: str) -> Optional[str]:
         return None
 
 
+def _user_dict_from_ctx(ctx: ToolContext) -> dict:
+    """User dict for generation routers — real Supabase UUID for billing/refunds."""
+    return {"token": ctx.user_token, "id": _user_id_from_jwt(ctx.user_token)}
+
+
 async def _insert_agent_product_shot(
     ctx: ToolContext,
     *,
@@ -3801,7 +3806,7 @@ async def _tool_generate_image(ctx: ToolContext, **kwargs: Any) -> str:
         base_exec_kwargs["aspect_ratio"] = kwargs["aspect_ratio"]
     if kwargs.get("quality"):
         base_exec_kwargs["quality"] = kwargs["quality"]
-    user = {"token": ctx.user_token, "id": "agent"}
+    user = _user_dict_from_ctx(ctx)
 
     async def _run_single(prompt_override: Optional[str] = None) -> dict:
         try:
@@ -4007,7 +4012,7 @@ async def _tool_animate_image(ctx: ToolContext, **kwargs: Any) -> str:
         duration=duration,
         project_id=ctx.project_id,
     )
-    user = {"token": ctx.user_token, "id": "agent"}
+    user = _user_dict_from_ctx(ctx)
     bg = BackgroundTasks()
     try:
         result = await animate_image(req, background_tasks=bg, user=user)  # type: ignore[arg-type]
@@ -4208,7 +4213,7 @@ async def _tool_generate_video(ctx: ToolContext, **kwargs: Any) -> str:
         target_duration=kwargs.get("target_duration") or None,
         element_refs=element_refs,
     )
-    user = {"token": ctx.user_token, "id": "agent"}
+    user = _user_dict_from_ctx(ctx)
     bg = BackgroundTasks()
     try:
         result = await generate_video(req, bg, user=user)  # type: ignore[arg-type]
@@ -4327,7 +4332,7 @@ async def _tool_extend_video(ctx: ToolContext, **kwargs: Any) -> str:
         resolution=kwargs.get("resolution") or "1080p",
         project_id=ctx.project_id,
     )
-    user = {"token": ctx.user_token, "id": "agent"}
+    user = _user_dict_from_ctx(ctx)
     try:
         result = await extend_video(req, user=user)  # type: ignore[arg-type]
     except Exception as e:
@@ -4778,7 +4783,7 @@ async def _tool_generate_image_text_only(ctx: ToolContext, **kwargs: Any) -> str
         quality=kwargs.get("quality") or "2k",
         project_id=ctx.project_id,
     )
-    user = {"token": ctx.user_token, "id": "agent"}
+    user = _user_dict_from_ctx(ctx)
     try:
         result = await text_to_image(req, user=user)  # type: ignore[arg-type]
     except Exception as e:
@@ -4819,7 +4824,7 @@ async def _tool_generate_image_alt_versions(ctx: ToolContext, **kwargs: Any) -> 
         aspect_ratio=kwargs.get("aspect_ratio") or "3:2",
         project_id=ctx.project_id,
     )
-    user = {"token": ctx.user_token, "id": "agent"}
+    user = _user_dict_from_ctx(ctx)
     try:
         result = await alt_versions(req, user=user)  # type: ignore[arg-type]
     except Exception as e:
@@ -7085,7 +7090,7 @@ async def _auto_generate_clone_script(
                     full_video_mode=True,
                     context=kwargs.get("context"),
                 ),
-                user={"token": ctx.user_token, "id": "agent"},
+                user=_user_dict_from_ctx(ctx),
             )
             script = ((result or {}).get("script") or "").strip()
             if script:
@@ -9383,7 +9388,7 @@ async def _tool_generate_influencer(ctx: ToolContext, **kwargs: Any) -> str:
     if not category and brief:
         category = infer_category_from_text(brief) or None
 
-    user = {"token": ctx.user_token, "id": "agent"}
+    user = _user_dict_from_ctx(ctx)
     try:
         result = await generate_influencer(
             data=GenerateInfluencerRequest(
@@ -9452,7 +9457,7 @@ async def _tool_generate_identity(ctx: ToolContext, **kwargs: Any) -> str:
         except Exception as e:
             print(f"[tool_generate_identity] influencer_id lookup failed: {e}")
 
-    user = {"token": ctx.user_token, "id": "agent"}
+    user = _user_dict_from_ctx(ctx)
     try:
         result = await generate_identity(
             data=GenerateIdentityRequest(
@@ -9523,7 +9528,7 @@ async def _tool_generate_product_shots(ctx: ToolContext, **kwargs: Any) -> str:
         except Exception as e:
             print(f"[tool_generate_product_shots] product_id lookup failed: {e}")
 
-    user = {"token": ctx.user_token, "id": "agent"}
+    user = _user_dict_from_ctx(ctx)
     try:
         result = await generate_product_shots(
             data=GenerateProductShotsRequest(
@@ -9843,7 +9848,7 @@ async def _tool_generate_ai_script(ctx: ToolContext, **kwargs: Any) -> str:
     if not ctx.project_id:
         return json.dumps({"error": "project_id is required to generate scripts"})
 
-    user = {"token": ctx.user_token, "id": "agent"}
+    user = _user_dict_from_ctx(ctx)
     try:
         result = await generate_ai_script(
             data=AIScriptRequest(

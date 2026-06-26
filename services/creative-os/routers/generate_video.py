@@ -74,14 +74,28 @@ def _load_creative_os_generate_scenes():
     return mod
 
 
+def _resolve_billing_user_id(user: dict) -> Optional[str]:
+    """Return a Supabase user UUID for billing/refunds, or None if unavailable."""
+    uid = user.get("id") if user else None
+    if not uid or uid == "agent":
+        return None
+    try:
+        import uuid as _uuid
+        _uuid.UUID(str(uid))
+        return str(uid)
+    except ValueError:
+        return None
+
+
 def _refund_on_failure(user_id: Optional[str], credit_cost: Optional[int], job_id: str, reason: str) -> None:
     """Best-effort refund for a failed generation. Swallows all errors."""
-    if not user_id or not credit_cost or credit_cost <= 0:
+    billing_uid = _resolve_billing_user_id({"id": user_id})
+    if not billing_uid or not credit_cost or credit_cost <= 0:
         return
     try:
         from ugc_db.db_manager import refund_credits
-        refund_credits(user_id, credit_cost, {"reason": reason, "job_id": job_id})
-        print(f"[Refund] {credit_cost} credits refunded to {user_id} for job {job_id} ({reason})")
+        refund_credits(billing_uid, credit_cost, {"reason": reason, "job_id": job_id})
+        print(f"[Refund] {credit_cost} credits refunded to {billing_uid} for job {job_id} ({reason})")
     except Exception as e:
         print(f"[Refund] FAILED to refund {credit_cost} credits for job {job_id}: {e}")
 
@@ -887,14 +901,15 @@ async def _generate_seedance_video(
     # ── Onboarding free video: refund credits for the user's first video ──
     # Check if this is the first-ever job in this project. If so, it's the
     # onboarding welcome video and should be free.
-    if credit_cost > 0 and data.project_id and user.get("id"):
+    if credit_cost > 0 and data.project_id and _resolve_billing_user_id(user):
         try:
             existing_jobs = await client.list_jobs()
             # Only the job we just created should exist
             if len(existing_jobs or []) <= 1:
                 from ugc_db.db_manager import refund_credits
-                refund_credits(user["id"], credit_cost, {"reason": "onboarding_free_video", "job_id": job_id})
-                print(f"[Seedance] Onboarding free video — refunded {credit_cost} credits to {user['id']}")
+                billing_uid = _resolve_billing_user_id(user)
+                refund_credits(billing_uid, credit_cost, {"reason": "onboarding_free_video", "job_id": job_id})
+                print(f"[Seedance] Onboarding free video — refunded {credit_cost} credits to {billing_uid}")
                 credit_cost = 0
         except Exception as e:
             print(f"[Seedance] WARNING: onboarding refund check failed: {e}")
@@ -983,7 +998,7 @@ async def _generate_seedance_video(
             project_id=data.project_id,
             reference_image_urls=ref_images,
             reference_video_urls=ref_videos,
-            user_id=user.get("id"),
+            user_id=_resolve_billing_user_id(user),
             credit_cost=credit_cost,
         )
         return {
@@ -1002,7 +1017,7 @@ async def _generate_seedance_video(
         project_id=data.project_id,
         reference_image_urls=ref_images,
         reference_video_urls=ref_videos,
-        user_id=user.get("id"),
+        user_id=_resolve_billing_user_id(user),
         credit_cost=credit_cost,
     )
 
@@ -1389,10 +1404,51 @@ def _split_script_two_legs(script: str) -> tuple[str, str]:
     return " ".join(words[:mid]), " ".join(words[mid:])
 
 
+def _split_visual_direction_two_legs(prompt: str) -> tuple[str, str]:
+    """Split a beat/scene table into opening vs closing halves for 2×15s legs."""
+    import re as _re
+    s = (prompt or "").strip()
+    if not s:
+        return "", ""
+
+    beat_starts = list(
+        _re.finditer(
+            r"(?m)^(?:Beat\s+\d+|Scene\s+\d+|\|\s*\d+\s*\|)",
+            s,
+            _re.IGNORECASE,
+        )
+    )
+    if len(beat_starts) >= 2:
+        beats: list[str] = []
+        for i, match in enumerate(beat_starts):
+            start = match.start()
+            end = beat_starts[i + 1].start() if i + 1 < len(beat_starts) else len(s)
+            beats.append(s[start:end].strip())
+        mid = (len(beats) + 1) // 2
+        preamble = s[: beat_starts[0].start()].strip()
+        leg_a_parts = ([preamble] if preamble else []) + beats[:mid]
+        leg_a = "\n\n".join(p for p in leg_a_parts if p)
+        leg_b = (
+            "Continuation from the opening half — SAME character, wardrobe, and setting.\n\n"
+            + "\n\n".join(beats[mid:])
+        )
+        return leg_a.strip(), leg_b.strip()
+
+    paras = [p.strip() for p in _re.split(r"\n\s*\n", s) if p.strip()]
+    if len(paras) >= 2:
+        mid = (len(paras) + 1) // 2
+        return "\n\n".join(paras[:mid]), "\n\n".join(paras[mid:])
+
+    mid = len(s) // 2
+    return s[:mid].strip(), s[mid:].strip()
+
+
 async def _build_dynamic_leg_prompt(
     data: "VideoGenerateRequest",
     *,
     leg_script: str,
+    leg_index: int,
+    leg_visual_prompt: str,
     reference_image_urls: list[str],
     reference_video_urls: list[str],
     continuity_note: str,
@@ -1405,25 +1461,36 @@ async def _build_dynamic_leg_prompt(
     @Image identity bindings, strip code fences.
     """
     import re as _re
-    structured_prompt = data.prompt
+    structured_prompt = leg_visual_prompt or data.prompt
     try:
         from services.prompt_enhancer import enhance_prompt
         enhance_context = {
             "duration": 15,
             "has_reference": bool(reference_image_urls or reference_video_urls),
             "dynamic_speaking": True,
+            "leg_index": leg_index,
+            "leg_total": 2,
         }
         if reference_image_urls:
             enhance_context["image_urls"] = reference_image_urls
             enhance_context["image_url"] = reference_image_urls[0]
+        leg_scope = (
+            "OPENING half only (beats 1 through midpoint) — start the walk-and-talk here"
+            if leg_index == 1
+            else "CLOSING half only (beats midpoint+1 through end) — continue mid-action, end with brand/CTA"
+        )
         enhanced = await enhance_prompt(
-            user_prompt=f"{data.prompt}\n\n[Continuity: {continuity_note}]",
+            user_prompt=(
+                f"{leg_visual_prompt or data.prompt}\n\n"
+                f"[Leg {leg_index}/2 — {leg_scope}]\n"
+                f"[Continuity: {continuity_note}]"
+            ),
             mode=data.mode,
             language=data.language,
             context=enhance_context,
         )
         if enhanced:
-            structured_prompt = enhanced[0].get("prompt") or data.prompt
+            structured_prompt = enhanced[0].get("prompt") or structured_prompt
     except Exception as e:
         print(f"[DynamicSpeaking] leg prompt enhance failed (using raw): {e}")
 
@@ -1480,9 +1547,12 @@ async def _run_dynamic_speaking_seedance_longform(
             "progress": 8,
         })
 
+        leg_a_visual, leg_b_visual = _split_visual_direction_two_legs(data.prompt or "")
+
         prompt_a, prompt_b = await asyncio.gather(
             _build_dynamic_leg_prompt(
-                data, leg_script=leg_a_script,
+                data, leg_script=leg_a_script, leg_index=1,
+                leg_visual_prompt=leg_a_visual,
                 reference_image_urls=reference_image_urls,
                 reference_video_urls=reference_video_urls,
                 continuity_note=(
@@ -1490,7 +1560,8 @@ async def _run_dynamic_speaking_seedance_longform(
                 ),
             ),
             _build_dynamic_leg_prompt(
-                data, leg_script=leg_b_script,
+                data, leg_script=leg_b_script, leg_index=2,
+                leg_visual_prompt=leg_b_visual,
                 reference_image_urls=reference_image_urls,
                 reference_video_urls=reference_video_urls,
                 continuity_note=(
@@ -1500,33 +1571,43 @@ async def _run_dynamic_speaking_seedance_longform(
             ),
         )
 
-        def _submit(prompt: str):
-            return generate_scenes.generate_video_with_retry(
-                prompt=prompt,
-                model_api="seedance-2.0",
-                duration=15,
-                reference_image_urls=reference_image_urls or None,
-                reference_video_urls=reference_video_urls or None,
-                aspect_ratio=aspect,
-            )
+        async def _submit_and_download_leg(prompt: str, leg_label: str) -> str:
+            """Submit one Kie leg and download immediately while the URL is fresh."""
+            import tempfile
+            from pathlib import Path as _Path
+            from utils.persist_media import download_url_to_file
+
+            def _work() -> str:
+                res = generate_scenes.generate_video_with_retry(
+                    prompt=prompt,
+                    model_api="seedance-2.0",
+                    duration=15,
+                    reference_image_urls=reference_image_urls or None,
+                    reference_video_urls=reference_video_urls or None,
+                    aspect_ratio=aspect,
+                )
+                video_url = res.get("videoUrl")
+                if not video_url:
+                    raise RuntimeError(f"Seedance leg {leg_label} returned no videoUrl")
+                work = _Path(tempfile.mkdtemp(prefix=f"dyn_leg_{leg_label}_"))
+                local_path = work / "leg.mp4"
+                download_url_to_file(video_url, local_path)
+                print(f"[DynamicSpeaking] leg {leg_label} persisted locally ({local_path})")
+                return str(local_path)
+
+            return await asyncio.to_thread(_work)
 
         await _update_video_job_via_api(token, project_id, job_id, {
             "status_message": "Rendering both halves in parallel...",
             "progress": 15,
         })
 
-        # Submit both legs CONCURRENTLY — wall-clock ~= a single 15s render.
+        # Submit both legs CONCURRENTLY — each leg downloads as soon as its Kie poll completes.
         print("[DynamicSpeaking] parallel leg 1/2 + 2/2 dispatched")
-        res_a, res_b = await asyncio.gather(
-            asyncio.to_thread(_submit, prompt_a),
-            asyncio.to_thread(_submit, prompt_b),
+        path_a, path_b = await asyncio.gather(
+            _submit_and_download_leg(prompt_a, "a"),
+            _submit_and_download_leg(prompt_b, "b"),
         )
-        url_a = res_a.get("videoUrl")
-        url_b = res_b.get("videoUrl")
-        if not url_a or not url_b:
-            raise RuntimeError(
-                f"Seedance leg returned no videoUrl (a={bool(url_a)} b={bool(url_b)})"
-            )
 
         await _update_video_job_via_api(token, project_id, job_id, {
             "status_message": "Stitching final video...",
@@ -1534,7 +1615,7 @@ async def _run_dynamic_speaking_seedance_longform(
         })
 
         from utils.video_concat import concat_segments
-        stitched_path = await asyncio.to_thread(concat_segments, [url_a, url_b])
+        stitched_path = await asyncio.to_thread(concat_segments, [path_a, path_b])
 
         from pathlib import Path as _P
         from utils.persist_media import _upload_bytes, GENERATED_VIDEOS_BUCKET
@@ -1649,7 +1730,7 @@ async def _generate_kling_video(
         influencer_id=influencer_id,
         product_image_url=product_image_url,
         influencer_image_url=influencer_image_url,
-        user_id=user.get("id"),
+        user_id=_resolve_billing_user_id(user),
         credit_cost=credit_cost,
     )
 
@@ -2432,7 +2513,7 @@ async def _generate_ugc_clip(
         project_id=data.project_id,
         influencer_id=influencer_id,
         user_selected_influencer=user_selected_influencer,
-        user_id=user.get("id"),
+        user_id=_resolve_billing_user_id(user),
         credit_cost=credit_cost,
     )
 

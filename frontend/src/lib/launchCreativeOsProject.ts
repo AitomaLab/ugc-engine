@@ -1,4 +1,5 @@
 import type { AppRouterInstance } from 'next/dist/shared/lib/app-router-context.shared-runtime';
+import { storeAgentLaunchDraft } from '@/lib/agentLaunchDraft';
 import { creativeFetch, type AgentRef } from '@/lib/creative-os-api';
 
 export interface LaunchCreativeOsProjectOptions {
@@ -9,10 +10,10 @@ export interface LaunchCreativeOsProjectOptions {
 
 /**
  * Create a Creative OS project and navigate with prefilled agent brief + @mention refs.
- * Mirrors the home dashboard submit flow in app/page.tsx.
+ * Large briefs are stored in sessionStorage — the URL only carries `?launch=1`.
  */
 export async function launchCreativeOsProject(
-    router: AppRouterInstance,
+    _router: AppRouterInstance,
     { brief, refs = [], seedance = false }: LaunchCreativeOsProjectOptions,
 ): Promise<string | null> {
     const trimmed = brief.trim();
@@ -31,12 +32,22 @@ export async function launchCreativeOsProject(
 
     const mentionRefs = refs.filter((r) => trimmed.includes(`@${r.tag}`));
     const refsArray = mentionRefs.length > 0 ? mentionRefs : refs;
-    const refsParam = refsArray.length > 0
-        ? `&refs=${encodeURIComponent(JSON.stringify(refsArray))}`
-        : '';
-    const seedanceParam = seedance ? '&seedance=1' : '';
-    router.push(
-        `/projects/${newProject.id}?brief=${encodeURIComponent(trimmed)}${refsParam}${seedanceParam}`,
-    );
+
+    storeAgentLaunchDraft(newProject.id, {
+        brief: trimmed,
+        refs: refsArray,
+        seedance,
+    });
+
+    try {
+        localStorage.setItem('activeProjectId', newProject.id);
+    } catch {
+        // ignore
+    }
+
+    const target = `/projects/${newProject.id}?launch=1`;
+    // Hard navigation — soft router.push from Analytics modals is cancelled
+    // when PostDetailModal's onClose triggers router.replace on /schedule.
+    window.location.assign(target);
     return newProject.id;
 }

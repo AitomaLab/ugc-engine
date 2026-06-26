@@ -10,6 +10,7 @@ import {
 } from '@/lib/creative-os-api';
 import { projectFullFetcher, projectFullKey } from '@/lib/swr';
 import { waitForFreshSession } from '@/lib/auth';
+import { consumeAgentLaunchDraft } from '@/lib/agentLaunchDraft';
 import { fetchJobsStatus } from '@/lib/jobs-status-poll';
 import { useTranslation } from '@/lib/i18n';
 import { AssetGallery } from '@/components/studio/AssetGallery';
@@ -200,16 +201,27 @@ export default function ProjectContainerPage() {
     // message send.
     const initialParamsRef = useRef<{ brief: string | null; refs: any; seedance: boolean } | null>(null);
     if (initialParamsRef.current === null) {
-        const refsParamRaw = searchParams.get('refs');
-        let parsedRefs: any = undefined;
-        if (refsParamRaw) {
-            try { parsedRefs = JSON.parse(refsParamRaw); } catch { parsedRefs = undefined; }
+        if (searchParams.get('launch') === '1') {
+            const draft = consumeAgentLaunchDraft(projectId);
+            initialParamsRef.current = draft
+                ? {
+                    brief: draft.brief,
+                    refs: draft.refs?.length ? draft.refs : undefined,
+                    seedance: draft.seedance,
+                }
+                : { brief: null, refs: undefined, seedance: false };
+        } else {
+            const refsParamRaw = searchParams.get('refs');
+            let parsedRefs: any = undefined;
+            if (refsParamRaw) {
+                try { parsedRefs = JSON.parse(refsParamRaw); } catch { parsedRefs = undefined; }
+            }
+            initialParamsRef.current = {
+                brief: searchParams.get('brief'),
+                refs: parsedRefs,
+                seedance: searchParams.get('seedance') === '1',
+            };
         }
-        initialParamsRef.current = {
-            brief: searchParams.get('brief'),
-            refs: parsedRefs,
-            seedance: searchParams.get('seedance') === '1',
-        };
     }
     const initialBrief = initialParamsRef.current.brief;
     const initialRefs = initialParamsRef.current.refs;
@@ -218,7 +230,10 @@ export default function ProjectContainerPage() {
     useEffect(() => {
         if (!pathname) return;
         const hasAutoSubmitParams =
-            searchParams.get('brief') || searchParams.get('refs') || searchParams.get('seedance');
+            searchParams.get('brief')
+            || searchParams.get('refs')
+            || searchParams.get('seedance')
+            || searchParams.get('launch');
         if (hasAutoSubmitParams) {
             router.replace(pathname, { scroll: false });
         }
