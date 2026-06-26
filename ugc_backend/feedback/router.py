@@ -22,6 +22,7 @@ router = APIRouter(tags=["feedback"])
 _FEEDBACK_BUCKET = "feedback-images"
 _MAX_IMAGE_BYTES = 10 * 1024 * 1024
 _VALID_STATUSES = frozenset({"open", "complete", "archived"})
+_VALID_TYPES = frozenset({"feedback", "feature"})
 
 
 def _require_admin(user: dict) -> None:
@@ -56,11 +57,15 @@ class FeedbackStatusUpdate(BaseModel):
 async def submit_feedback(
     name: str = Form(...),
     message: str = Form(...),
+    type: str = Form("feedback"),
     image: UploadFile | None = File(None),
     user: dict | None = Depends(get_optional_user),
 ) -> dict:
     name_clean = (name or "").strip()
     message_clean = (message or "").strip()
+    entry_type = (type or "feedback").strip().lower()
+    if entry_type not in _VALID_TYPES:
+        raise HTTPException(status_code=400, detail="Invalid submission type.")
     if not name_clean or not message_clean:
         raise HTTPException(status_code=400, detail="Name and message are required.")
 
@@ -97,6 +102,7 @@ async def submit_feedback(
         row = {
             "name": name_clean,
             "message": message_clean,
+            "type": entry_type,
             "image_url": image_url,
         }
         if user:
@@ -117,13 +123,17 @@ async def submit_feedback(
 @router.get("/list")
 def list_feedback(
     status: Optional[str] = None,
+    type: Optional[str] = None,
     user: dict = Depends(get_current_user),
 ) -> list:
     _require_admin(user)
     sb = get_supabase()
     status_filter = (status or "").strip().lower()
+    type_filter = (type or "").strip().lower()
     if status_filter and status_filter not in _VALID_STATUSES:
         raise HTTPException(status_code=400, detail="Invalid status filter.")
+    if type_filter and type_filter not in _VALID_TYPES:
+        raise HTTPException(status_code=400, detail="Invalid type filter.")
 
     out: list = []
     page = 1000
@@ -132,6 +142,8 @@ def list_feedback(
         q = sb.table("feedback").select("*").order("created_at", desc=True)
         if status_filter:
             q = q.eq("status", status_filter)
+        if type_filter:
+            q = q.eq("type", type_filter)
         rows = q.range(start, start + page - 1).execute().data or []
         out.extend(rows)
         if len(rows) < page:
