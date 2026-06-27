@@ -518,11 +518,16 @@ export async function pollRefreshStatus(
     throw new Error('Refresh timed out — metrics may still be updating in the background.');
 }
 
-export function useMetricsFreshness(refreshKey = 0) {
+export function useMetricsFreshness(
+    refreshKey = 0,
+    options?: { enabled?: boolean },
+) {
+    const enabled = options?.enabled ?? true;
     const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
     const [refreshing, setRefreshing] = useState(false);
 
     useEffect(() => {
+        if (!enabled) return;
         let cancelled = false;
         (async () => {
             try {
@@ -538,9 +543,30 @@ export function useMetricsFreshness(refreshKey = 0) {
             }
         })();
         return () => { cancelled = true; };
-    }, [refreshKey]);
+    }, [refreshKey, enabled]);
 
     return { lastRefreshedAt, refreshing };
+}
+
+const STATS_CACHE_PREFIX = 'analytics_stats_v1:';
+
+function readStatsCache(scopeKey: string): AnalyticsStats | null {
+    if (typeof sessionStorage === 'undefined') return null;
+    try {
+        const raw = sessionStorage.getItem(`${STATS_CACHE_PREFIX}${scopeKey}`);
+        return raw ? (JSON.parse(raw) as AnalyticsStats) : null;
+    } catch {
+        return null;
+    }
+}
+
+function writeStatsCache(scopeKey: string, data: AnalyticsStats) {
+    if (typeof sessionStorage === 'undefined') return;
+    try {
+        sessionStorage.setItem(`${STATS_CACHE_PREFIX}${scopeKey}`, JSON.stringify(data));
+    } catch {
+        /* quota — ignore */
+    }
 }
 
 export function useAnalyticsStats(
@@ -549,9 +575,11 @@ export function useAnalyticsStats(
     source: SourceFilter,
     account?: AccountFilter,
     refreshKey = 0,
+    options?: { enabled?: boolean },
 ) {
+    const enabled = options?.enabled ?? true;
     const [data, setData] = useState<AnalyticsStats | null>(null);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(enabled);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const requestGen = useRef(0);
     const prevAccountKey = useRef('');
@@ -561,14 +589,27 @@ export function useAnalyticsStats(
     const scopeKey = `${periodToApiParam(period)}|${platform}|${source}|${accountKey}|${refreshKey}`;
 
     useEffect(() => {
+        if (!enabled) {
+            setLoading(true);
+            return;
+        }
+
         let cancelled = false;
         const gen = ++requestGen.current;
-        if (prevAccountKey.current !== accountKey) {
+        if (prevAccountKey.current && prevAccountKey.current !== accountKey) {
             setData(null);
             dataRef.current = null;
-            prevAccountKey.current = accountKey;
         }
-        if (!dataRef.current) setLoading(true);
+        prevAccountKey.current = accountKey;
+
+        const cached = readStatsCache(scopeKey);
+        if (cached && !dataRef.current) {
+            setData(cached);
+            dataRef.current = cached;
+            setLoading(false);
+        } else if (!dataRef.current) {
+            setLoading(true);
+        }
         setIsRefreshing(true);
 
         const effectivePlatform = account ? account.platform : platform;
@@ -588,9 +629,10 @@ export function useAnalyticsStats(
                 if (!cancelled && gen === requestGen.current) {
                     setData(res);
                     dataRef.current = res;
+                    writeStatsCache(scopeKey, res);
                 }
             } catch {
-                if (!cancelled && gen === requestGen.current) {
+                if (!cancelled && gen === requestGen.current && !dataRef.current) {
                     const empty = emptyStats();
                     setData(empty);
                     dataRef.current = empty;
@@ -606,9 +648,10 @@ export function useAnalyticsStats(
         return () => { cancelled = true; };
     // scopeKey encodes period, platform, source, accountKey, refreshKey
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [scopeKey]);
+    }, [scopeKey, enabled]);
 
     const reload = useCallback(async () => {
+        if (!enabled) return;
         if (!dataRef.current) setLoading(true);
         setIsRefreshing(true);
         const effectivePlatform = account ? account.platform : platform;
@@ -625,6 +668,8 @@ export function useAnalyticsStats(
             );
             setData(res);
             dataRef.current = res;
+            const sk = `${periodToApiParam(period)}|${account ? account.platform : platform}|${source}|${accountKey}|${refreshKey}`;
+            writeStatsCache(sk, res);
         } catch {
             const empty = emptyStats();
             setData(empty);
@@ -633,7 +678,7 @@ export function useAnalyticsStats(
             setLoading(false);
             setIsRefreshing(false);
         }
-    }, [period, platform, source, accountKey, refreshKey, account]);
+    }, [period, platform, source, accountKey, refreshKey, account, enabled]);
 
     return { data, loading, isRefreshing, reload };
 }
@@ -830,17 +875,22 @@ export interface AccountAggregatesResponse {
  * as the Posts view so the dashboard tells a consistent story when the user
  * switches between the two tabs.
  */
-export function useAccountAggregates(period: Period) {
+export function useAccountAggregates(
+    period: Period,
+    options?: { enabled?: boolean },
+) {
+    const enabled = options?.enabled ?? true;
     const emptyAggregates = (): AccountAggregatesResponse => ({
         accounts: [], total_accounts: 0, total_scraped_posts: 0, avg_health_score: null,
     });
     const [data, setData] = useState<AccountAggregatesResponse | null>(null);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(enabled);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const dataRef = useRef<AccountAggregatesResponse | null>(null);
 
     const reload = useCallback(async () => {
+        if (!enabled) return;
         if (!dataRef.current) setLoading(true);
         setIsRefreshing(true);
         setError(null);
@@ -860,13 +910,29 @@ export function useAccountAggregates(period: Period) {
             setLoading(false);
             setIsRefreshing(false);
         }
-    }, [period]);
+    }, [period, enabled]);
 
     useEffect(() => {
+        if (!enabled) {
+            setLoading(false);
+            return;
+        }
         reload();
-    }, [reload]);
+    }, [reload, enabled]);
 
     return { data, loading, isRefreshing, error, reload };
+}
+
+/** Minimal aggregate row for overview tabs before /accounts loads. */
+export function trackedAccountToAggregateStub(acct: TrackedAccount): TrackedAccountAggregate {
+    return {
+        ...acct,
+        total_views: 0,
+        total_engagement: 0,
+        avg_engagement_rate: 0,
+        posts_in_period: 0,
+        health_label: 'unknown',
+    };
 }
 
 export interface AccountTrendResponse {
@@ -1119,9 +1185,10 @@ export function useConnections() {
     const reload = useCallback(async () => {
         setLoading(true);
         try {
-            const res = await analyticsFetch<ConnectionsResponse>('/api/connections', {
-                skipProjectScope: true,
-            });
+            const res = await analyticsFetch<ConnectionsResponse>(
+                '/api/connections?cached=true',
+                { skipProjectScope: true },
+            );
             setConnections(res?.socials || []);
         } catch {
             setConnections([]);

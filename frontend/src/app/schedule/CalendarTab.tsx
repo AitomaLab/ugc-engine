@@ -45,13 +45,15 @@ export default function CalendarTab() {
     const [posts, setPosts] = useState<SocialPost[]>([]);
     const [connectedCount, setConnectedCount] = useState(0);
     const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
-    const [initialLoading, setInitialLoading] = useState(true);
+    const [scheduleLoading, setScheduleLoading] = useState(true);
+    const [connectionsLoading, setConnectionsLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const postsRef = useRef<SocialPost[]>([]);
     const [cancellingId, setCancellingId] = useState<string | null>(null);
     const [cancelError, setCancelError] = useState<string | null>(null);
 
     const loadConnectedCount = useCallback(async () => {
+        setConnectionsLoading(true);
         try {
             const d = await apiFetch<{ socials: SocialConnection[] }>(
                 '/api/connections?cached=true',
@@ -59,6 +61,8 @@ export default function CalendarTab() {
             setConnectedCount((d.socials || []).length);
         } catch {
             /* keep prior count */
+        } finally {
+            setConnectionsLoading(false);
         }
     }, []);
 
@@ -68,7 +72,7 @@ export default function CalendarTab() {
 
     const loadPosts = useCallback(async () => {
         const hasCached = postsRef.current.length > 0;
-        if (!hasCached) setInitialLoading(true);
+        if (!hasCached) setScheduleLoading(true);
         setIsRefreshing(true);
         const start = new Date(year, month, 1).toISOString();
         const end = new Date(year, month + 1, 0, 23, 59, 59).toISOString();
@@ -85,7 +89,7 @@ export default function CalendarTab() {
                 postsRef.current = [];
             }
         } finally {
-            setInitialLoading(false);
+            setScheduleLoading(false);
             setIsRefreshing(false);
         }
     }, [year, month]);
@@ -154,6 +158,10 @@ export default function CalendarTab() {
     const today = new Date();
     const isToday = (day: number | null) => day !== null && year === today.getFullYear() && month === today.getMonth() && day === today.getDate();
 
+    const statValue = (n: number) => (
+        scheduleLoading && posts.length === 0 ? '—' : String(n)
+    );
+
     const DAY_NAMES = t('schedule.dayNames').split(',');
 
     return (
@@ -207,7 +215,7 @@ export default function CalendarTab() {
                         </svg>
                     </div>
                     <div>
-                        <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-1)', lineHeight: 1.1 }}>{stats.total}</div>
+                        <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-1)', lineHeight: 1.1 }}>{statValue(stats.total)}</div>
                         <div style={{ fontSize: '12px', color: 'var(--text-3)', fontWeight: 500, marginTop: '2px' }}>{t('schedule.totalThisMonth')}</div>
                     </div>
                 </div>
@@ -228,7 +236,7 @@ export default function CalendarTab() {
                         </svg>
                     </div>
                     <div>
-                        <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-1)', lineHeight: 1.1 }}>{stats.posted}</div>
+                        <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-1)', lineHeight: 1.1 }}>{statValue(stats.posted)}</div>
                         <div style={{ fontSize: '12px', color: 'var(--text-3)', fontWeight: 500, marginTop: '2px' }}>{t('schedule.postsPublished')}</div>
                     </div>
                 </div>
@@ -249,7 +257,7 @@ export default function CalendarTab() {
                         </svg>
                     </div>
                     <div>
-                        <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-1)', lineHeight: 1.1 }}>{stats.upcoming}</div>
+                        <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-1)', lineHeight: 1.1 }}>{statValue(stats.upcoming)}</div>
                         <div style={{ fontSize: '12px', color: 'var(--text-3)', fontWeight: 500, marginTop: '2px' }}>{t('schedule.upcoming')}</div>
                     </div>
                 </div>
@@ -270,7 +278,9 @@ export default function CalendarTab() {
                         </svg>
                     </div>
                     <div>
-                        <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-1)', lineHeight: 1.1 }}>{connectedCount}</div>
+                        <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-1)', lineHeight: 1.1 }}>
+                            {connectionsLoading ? '—' : connectedCount}
+                        </div>
                         <div style={{ fontSize: '12px', color: 'var(--text-3)', fontWeight: 500, marginTop: '2px' }}>{t('schedule.connectedPlatforms')}</div>
                     </div>
                 </div>
@@ -278,7 +288,7 @@ export default function CalendarTab() {
 
             {/* Main layout: calendar + sidebar */}
             <div style={{ display: 'flex', gap: '24px', position: 'relative' }}>
-                {isRefreshing && !initialLoading && (
+                {isRefreshing && !scheduleLoading && (
                     <div
                         aria-hidden
                         style={{
@@ -299,7 +309,7 @@ export default function CalendarTab() {
                 <div style={{
                     flex: 1,
                     minWidth: 0,
-                    opacity: isRefreshing && !initialLoading ? 0.65 : 1,
+                    opacity: isRefreshing && !scheduleLoading ? 0.65 : 1,
                     transition: 'opacity 0.2s ease',
                 }}>
                     {/* Month navigator */}
@@ -418,7 +428,7 @@ export default function CalendarTab() {
                                 {cancelError}
                             </div>
                         )}
-                        {initialLoading && posts.length === 0 ? (
+                        {scheduleLoading && posts.length === 0 ? (
                             <div style={{ color: 'var(--text-3)', fontSize: '13px' }}>{t('common.loading')}</div>
                         ) : upcoming.length === 0 ? (
                             <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--text-3)' }}>

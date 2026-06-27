@@ -1061,6 +1061,8 @@ def api_stats(
     the legacy `stats()` contract while still letting the FE pull
     everything in one round-trip.
     """
+    import time as _time
+    _t0 = _time.perf_counter()
     days = _period_days(period)
     period_rows, all_rows = analytics_db._fetch_dashboard_posts(
         user["id"],
@@ -1082,6 +1084,13 @@ def api_stats(
         period_rows, all_rows, period_days=days,
     )
     dist = analytics_db.stats_distribution_from_rows(period_rows)
+    _elapsed_ms = (_time.perf_counter() - _t0) * 1000
+    if _elapsed_ms > 1500:
+        print(
+            f"[analytics perf] GET /stats user={str(user['id'])[:8]} "
+            f"ms={_elapsed_ms:.0f} period_rows={len(period_rows)} all_rows={len(all_rows)}",
+            flush=True,
+        )
     return StatsResponse(
         **base,
         **extras,
@@ -1183,6 +1192,8 @@ def api_list_accounts_with_aggregates(
     period: Optional[str] = Query(default=DEFAULT_ANALYTICS_PERIOD),
     user: dict = Depends(get_current_user),
 ):
+    import time as _time
+    _t0 = _time.perf_counter()
     background_tasks.add_task(_background_stale_metrics_refresh, user["id"])
     period_days = _period_days(period)
     accounts = analytics_db.list_tracked_accounts(user["id"])
@@ -1221,6 +1232,13 @@ def api_list_accounts_with_aggregates(
         ))
 
     avg_health = round(sum(health_scores) / len(health_scores), 1) if health_scores else None
+    _elapsed_ms = (_time.perf_counter() - _t0) * 1000
+    if _elapsed_ms > 1500:
+        print(
+            f"[analytics perf] GET /accounts user={str(user['id'])[:8]} "
+            f"ms={_elapsed_ms:.0f} accounts={len(accounts)} posts={len(all_posts)}",
+            flush=True,
+        )
     return AccountAggregatesResponse(
         accounts=aggregates,
         total_accounts=len(accounts),

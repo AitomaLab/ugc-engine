@@ -17,10 +17,11 @@ load_dotenv(".env")
 load_dotenv("env")
 
 # ---------------------------------------------------------------------------
-# Supabase Client Singleton
+# Supabase Client — one instance per worker thread (avoids SSL churn)
 # ---------------------------------------------------------------------------
 
-_client = None
+_thread_local = threading.local()
+
 
 def create_supabase_client():
     """Create a new Supabase client instance."""
@@ -36,14 +37,12 @@ def create_supabase_client():
     return create_client(url, key, options=ClientOptions(postgrest_client_timeout=20))
 
 def get_supabase():
-    """Get a fresh Supabase client (no singleton) to avoid thread/connection issues.
-    This creates a new SSL connection for each logic block, which is safer for
-    threaded environments + httpx/http2 stability."""
-    # global _client
-    # if _client is None:
-    #     _client = create_supabase_client()
-    # return _client
-    return create_supabase_client()
+    """Return a thread-local Supabase client (reused within the same worker thread)."""
+    client = getattr(_thread_local, "client", None)
+    if client is None:
+        client = create_supabase_client()
+        _thread_local.client = client
+    return client
 
 
 # ---------------------------------------------------------------------------

@@ -5,7 +5,7 @@
  * Auto-attaches Supabase JWT and project ID, same pattern as utils.ts apiFetch.
  */
 
-import { getValidAccessToken, fetchWithAuth, waitForFreshSession } from '@/lib/auth';
+import { getValidAccessToken, fetchWithAuth } from '@/lib/auth';
 
 const CREATIVE_OS_URL = process.env.NEXT_PUBLIC_CREATIVE_OS_URL || 'http://localhost:8001';
 
@@ -83,10 +83,11 @@ async function creativeFetchOnce<T = unknown>(
     }, timeoutMs);
 
     try {
-        await waitForFreshSession();
+        const accessToken = await getValidAccessToken();
 
         const result = await fetchWithAuth<T>(`${CREATIVE_OS_URL}${path}`, {
             ...options,
+            accessToken,
             headers: { ...headers, ...options?.headers },
             signal: controller.signal,
             skipReauth: true,

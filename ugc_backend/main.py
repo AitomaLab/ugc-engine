@@ -3628,6 +3628,8 @@ async def api_get_connections(
     user: dict = Depends(get_current_user),
 ):
     """Return the user's connected social media accounts."""
+    import time as _time
+    _t0 = _time.perf_counter()
     sb = get_supabase()
     profile_row = _select_ayrshare_profile(sb, user["id"])
 
@@ -3653,6 +3655,13 @@ async def api_get_connections(
             background_tasks.add_task(
                 analytics_studio_service.sync_studio_connections_for_user,
                 user["id"],
+            )
+        _elapsed_ms = (_time.perf_counter() - _t0) * 1000
+        if _elapsed_ms > 500:
+            print(
+                f"[analytics perf] GET /connections cached=true user={str(user['id'])[:8]} "
+                f"ms={_elapsed_ms:.0f}",
+                flush=True,
             )
         return {"socials": socials}
 
@@ -3700,6 +3709,13 @@ async def api_get_connections(
             background_tasks.add_task(
                 analytics_studio_service.sync_studio_connections_for_user,
                 user["id"],
+            )
+        _elapsed_ms = (_time.perf_counter() - _t0) * 1000
+        if _elapsed_ms > 1500:
+            print(
+                f"[analytics perf] GET /connections cached=false user={str(user['id'])[:8]} "
+                f"ms={_elapsed_ms:.0f}",
+                flush=True,
             )
         return {"socials": socials}
     except ayrshare_client.InvalidProfileKey as e:
@@ -3925,6 +3941,8 @@ def api_get_schedule(
     user: dict = Depends(get_current_user),
 ):
     """Return all social posts for the user within the given date range."""
+    import time as _time
+    _t0 = _time.perf_counter()
     sb = get_supabase()
     user_id = user["id"]
     rows = (
@@ -3971,6 +3989,13 @@ def api_get_schedule(
         if thumb:
             row["thumbnail_url"] = thumb
         enriched.append(row)
+    _elapsed_ms = (_time.perf_counter() - _t0) * 1000
+    if _elapsed_ms > 1500:
+        print(
+            f"[schedule perf] GET /schedule user={str(user['id'])[:8]} "
+            f"ms={_elapsed_ms:.0f} posts={len(enriched)}",
+            flush=True,
+        )
     return enriched
 
 

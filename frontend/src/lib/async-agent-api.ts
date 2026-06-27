@@ -6,14 +6,15 @@
  * affect this path. Uses the same Supabase session token and the same
  * NEXT_PUBLIC_CREATIVE_OS_URL env var.
  */
-import { fetchWithAuth, waitForFreshSession } from '@/lib/auth';
+import { fetchWithAuth, getValidAccessToken } from '@/lib/auth';
 
 const CREATIVE_OS_URL = process.env.NEXT_PUBLIC_CREATIVE_OS_URL || 'http://localhost:8001';
 
 async function asyncFetch<T = unknown>(path: string, init?: RequestInit): Promise<T> {
-	await waitForFreshSession();
+	const accessToken = await getValidAccessToken();
 	const result = await fetchWithAuth<T>(`${CREATIVE_OS_URL}${path}`, {
 		...init,
+		accessToken,
 		headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
 	});
 	if (!result.ok) {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import AccountDetailModal from '@/components/analytics/AccountDetailModal';
 import AddAccountModal from '@/components/analytics/AddAccountModal';
@@ -11,11 +11,13 @@ import {
     ANALYTICS_STUDIO_SYNCED_EVENT,
     DEFAULT_ANALYTICS_PERIOD,
     deleteTrackedAccount,
+    trackedAccountToAggregateStub,
     useAccountAggregates,
     useConnections,
     useTrackedAccounts,
     type AccountOwnership,
     type Period,
+    type TrackedAccountAggregate,
 } from '@/components/analytics/analytics-types';
 
 /**
@@ -50,23 +52,24 @@ export default function AnalyticsTab() {
     const [metricsEpoch, setMetricsEpoch] = useState(0);
     const [accountOwnership, setAccountOwnership] = useState<AccountOwnership>('all');
     const [overviewAccountId, setOverviewAccountId] = useState<string | null>(null);
+    const [aggregatesEnabled, setAggregatesEnabled] = useState(false);
 
     const bumpMetrics = useCallback(() => {
         setMetricsEpoch((n) => n + 1);
     }, []);
 
     // ── Data hooks the dashboard surface needs ─────────────────────────
-    // (Stats / cumulative / distributions are owned by `DashboardView`
-    //  itself; here we own account-level aggregates so the Accounts subview
-    //  has data, the modal can resolve a row by id, and the delete handler
-    //  can drop optimistically.)
-    const { accounts: trackedRaw, reload: reloadAccounts } = useTrackedAccounts();
+    const { accounts: trackedRaw, loading: trackedLoading, reload: reloadAccounts } = useTrackedAccounts();
     const {
         data: aggData,
         loading: aggLoading,
         reload: reloadAggregates,
-    } = useAccountAggregates(period);
+    } = useAccountAggregates(period, { enabled: aggregatesEnabled });
     const aggregateAccounts = aggData?.accounts ?? [];
+    const displayAccounts: TrackedAccountAggregate[] = useMemo(() => {
+        if (aggregateAccounts.length > 0) return aggregateAccounts;
+        return trackedRaw.map(trackedAccountToAggregateStub);
+    }, [aggregateAccounts, trackedRaw]);
     const totalAccounts = aggData?.total_accounts ?? trackedRaw.length;
     const totalScrapedPosts = aggData?.total_scraped_posts ?? 0;
     const avgHealth = aggData?.avg_health_score ?? null;
@@ -74,15 +77,24 @@ export default function AnalyticsTab() {
     const { isStudio, profilePicFor, reload: reloadConnections } = useConnections();
 
     const reloadAllMetrics = useCallback(() => {
+        setAggregatesEnabled(true);
         reloadConnections();
         reloadAccounts();
         reloadAggregates();
         bumpMetrics();
     }, [reloadConnections, reloadAccounts, reloadAggregates, bumpMetrics]);
 
+    const handleStatsReady = useCallback(() => {
+        setAggregatesEnabled(true);
+    }, []);
+
+    const handleSubviewChange = useCallback((subview: 'overview' | 'videos' | 'accounts') => {
+        if (subview === 'accounts') setAggregatesEnabled(true);
+    }, []);
+
     // ── Account detail modal + delete plumbing ─────────────────────────
     const activeAccount = activeAccountId
-        ? aggregateAccounts.find((a) => a.id === activeAccountId) || null
+        ? displayAccounts.find((a) => a.id === activeAccountId) || null
         : null;
 
     const openAccount = useCallback((id: string) => setActiveAccountId(id), []);
@@ -99,12 +111,8 @@ export default function AnalyticsTab() {
         [activeAccountId, overviewAccountId, reloadAllMetrics],
     );
 
-    // ── Initial load — show cached DB aggregates immediately. Studio sync
-    // runs debounced in the background via GET /api/connections (see main.py).
-    useEffect(() => {
-        reloadAllMetrics();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only bootstrap
-    }, [reloadAllMetrics]);
+    // Hooks bootstrap their own fetch on mount — no duplicate reloadAllMetrics() here.
+    // Studio sync still runs debounced via GET /api/connections?cached=true.
 
     // Refresh when sync completes elsewhere (connections, schedule, login)
     // OR when the page-level "Refresh data" button fires.
@@ -159,9 +167,11 @@ export default function AnalyticsTab() {
                 refreshKey={metricsEpoch}
                 onAddExternal={() => setAddOpen(true)}
                 onOpenPost={openPost}
-                /* Accounts subview wiring */
-                accounts={aggregateAccounts}
-                accountsLoading={aggLoading}
+                onStatsReady={handleStatsReady}
+                onSubviewChange={handleSubviewChange}
+                accounts={displayAccounts}
+                accountsLoading={aggregatesEnabled && aggLoading}
+                trackedAccountsLoading={trackedLoading}
                 totalAccounts={totalAccounts}
                 totalScrapedPosts={totalScrapedPosts}
                 avgHealth={avgHealth}

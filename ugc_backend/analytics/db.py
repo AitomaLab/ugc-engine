@@ -159,6 +159,7 @@ def _fetch_dashboard_posts(
     ``added_at`` (which clusters to the scrape timestamp).
     """
     cap = min(max(int(limit or 500), 1), 500)
+    tracked_slugs: set[tuple[str, str]] | None = None
     if username and platform and platform != "all":
         all_rows = list_account_posts(
             user_id,
@@ -168,6 +169,7 @@ def _fetch_dashboard_posts(
             limit=cap,
         )
     else:
+        tracked_slugs = active_tracked_slugs(user_id)
         all_rows = list_posts(
             user_id,
             platform=platform,
@@ -175,6 +177,7 @@ def _fetch_dashboard_posts(
             username=username,
             limit=cap,
             tracked_only=True,
+            tracked_slugs=tracked_slugs,
         )
     period_rows = _filter_posts_by_period(all_rows, period_days)
     return period_rows, all_rows
@@ -313,9 +316,14 @@ def active_tracked_slugs(user_id: str) -> set[tuple[str, str]]:
     return out
 
 
-def _scope_rows_to_tracked_accounts(user_id: str, rows: list[dict]) -> list[dict]:
-    slugs = active_tracked_slugs(user_id)
-    if not slugs:
+def _scope_rows_to_tracked_accounts(
+    user_id: str,
+    rows: list[dict],
+    *,
+    slugs: set[tuple[str, str]] | None = None,
+) -> list[dict]:
+    tracked = slugs if slugs is not None else active_tracked_slugs(user_id)
+    if not tracked:
         return []
     kept: list[dict] = []
     for row in rows:
@@ -323,7 +331,7 @@ def _scope_rows_to_tracked_accounts(user_id: str, rows: list[dict]) -> list[dict
             str(row.get("platform") or ""),
             str(row.get("username") or ""),
         )
-        if (plat, nick) in slugs:
+        if (plat, nick) in tracked:
             kept.append(row)
     return kept
 
@@ -392,6 +400,7 @@ def list_posts(
     limit: int = 50,
     cursor: Optional[str] = None,
     tracked_only: bool = True,
+    tracked_slugs: set[tuple[str, str]] | None = None,
 ) -> list[dict]:
     sb = get_supabase()
     qry = sb.table("analytics_posts").select("*").eq("user_id", user_id)
@@ -430,7 +439,7 @@ def list_posts(
     if period_days:
         rows = _filter_posts_by_period(rows, period_days)
     if tracked_only and not username:
-        rows = _scope_rows_to_tracked_accounts(user_id, rows)
+        rows = _scope_rows_to_tracked_accounts(user_id, rows, slugs=tracked_slugs)
     return rows
 
 

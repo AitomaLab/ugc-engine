@@ -31,6 +31,10 @@ interface Props {
     onAddExternal: () => void;
     /** Open the post detail modal in the parent (drives ?post=<id>). */
     onOpenPost?: (postId: string) => void;
+    /** Fired once stats have loaded — parent can defer heavy secondary fetches. */
+    onStatsReady?: () => void;
+    /** Fired when the user switches Overview / Videos / Accounts. */
+    onSubviewChange?: (subview: DashboardSubview) => void;
     /** Selected account for the Overview subview (per-account metrics). */
     overviewAccountId: string | null;
     onOverviewAccountChange: (accountId: string) => void;
@@ -39,6 +43,8 @@ interface Props {
     /** Aggregated tracked accounts for the Accounts subview. */
     accounts: TrackedAccountAggregate[];
     accountsLoading: boolean;
+    /** True while the tracked-accounts list is still loading (gates stats fetch). */
+    trackedAccountsLoading: boolean;
     totalAccounts: number;
     totalScrapedPosts: number;
     avgHealth: number | null;
@@ -88,8 +94,11 @@ export default function DashboardView({
     refreshKey = 0,
     onAddExternal,
     onOpenPost,
+    onStatsReady,
+    onSubviewChange,
     accounts,
     accountsLoading,
+    trackedAccountsLoading,
     totalAccounts,
     totalScrapedPosts,
     avgHealth,
@@ -136,8 +145,18 @@ export default function DashboardView({
         'all',
         accountFilter,
         refreshKey,
+        { enabled: !trackedAccountsLoading },
     );
-    const { lastRefreshedAt } = useMetricsFreshness(refreshKey);
+    const statsReady = Boolean(stats) && !statsLoading;
+    const { lastRefreshedAt } = useMetricsFreshness(refreshKey, { enabled: statsReady });
+
+    useEffect(() => {
+        if (statsReady) onStatsReady?.();
+    }, [statsReady, onStatsReady]);
+
+    useEffect(() => {
+        onSubviewChange?.(subview);
+    }, [subview, onSubviewChange]);
 
     const dailyTrendPoints = useMemo(
         () => (stats ? buildDailyTrendPoints(stats, period) : []),
