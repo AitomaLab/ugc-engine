@@ -185,6 +185,32 @@ function HoverEditableCard({ imageUrl, onEdit, title }: { imageUrl: string | nul
 
 /* ── Component ────────────────────────────────────────────────── */
 
+function StepSkipLink({ onSkip }: { onSkip: () => void }) {
+    const { t } = useTranslation();
+    return (
+        <button
+            type="button"
+            onClick={onSkip}
+            style={{
+                display: 'block',
+                width: '100%',
+                marginTop: 12,
+                padding: 0,
+                border: 'none',
+                background: 'transparent',
+                fontSize: 13,
+                color: '#8A93B0',
+                cursor: 'pointer',
+                textDecoration: 'underline',
+                textAlign: 'center',
+                fontFamily: 'inherit',
+            }}
+        >
+            {t('onboarding.icp.skip')}
+        </button>
+    );
+}
+
 interface OnboardingModalProps {
     onComplete: (params: {
         productId: string;
@@ -314,6 +340,7 @@ export function OnboardingModal({ onComplete, onSkip }: OnboardingModalProps) {
                                 {t('onboarding.getStarted')}
                             </button>
                         </div>
+                        <StepSkipLink onSkip={onSkip} />
                     </div>
                 );
 
@@ -336,6 +363,7 @@ export function OnboardingModal({ onComplete, onSkip }: OnboardingModalProps) {
                             <button onClick={() => setStep(0)} style={secondaryBtnStyle}>{t('onboarding.back')}</button>
                             <button onClick={() => setStep(2)} style={primaryBtnStyle}>{t('onboarding.next')}</button>
                         </div>
+                        <StepSkipLink onSkip={onSkip} />
                     </div>
                 );
 
@@ -383,6 +411,7 @@ export function OnboardingModal({ onComplete, onSkip }: OnboardingModalProps) {
                             <button onClick={() => setStep(1)} style={secondaryBtnStyle}>{t('onboarding.back')}</button>
                             <button onClick={() => setStep(3)} style={primaryBtnStyle}>{t('onboarding.next')}</button>
                         </div>
+                        <StepSkipLink onSkip={onSkip} />
                     </div>
                 );
 
@@ -544,6 +573,7 @@ export function OnboardingModal({ onComplete, onSkip }: OnboardingModalProps) {
                                 </button>
                             </div>
                         </div>
+                        <StepSkipLink onSkip={onSkip} />
                     </div>
                 );
 

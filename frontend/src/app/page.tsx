@@ -20,6 +20,10 @@ const OnboardingModal = dynamic(
   () => import("@/components/studio/OnboardingModal").then(m => m.OnboardingModal),
   { ssr: false },
 );
+const OnboardingICP = dynamic(
+  () => import("@/components/studio/OnboardingICP").then(m => m.OnboardingICP),
+  { ssr: false },
+);
 import { thumbUrl, videoPosterCandidate } from "@/lib/media";
 import { useVideoThumbnails } from "@/hooks/useVideoThumbnails";
 import { HoverPlayVideo } from "@/components/ui/HoverPlayVideo";
@@ -188,6 +192,13 @@ export default function StudioPage() {
   const userId = session?.user?.id;
   const onboardingKey = userId ? `aitoma_onboarding_done_${userId}` : '';
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [icpDone, setIcpDone] = useState(false);
+
+  useEffect(() => {
+    if (!userId) return;
+    const existing = localStorage.getItem(`aitoma_icp_${userId}`);
+    if (existing) setIcpDone(true);
+  }, [userId]);
 
   const hasExistingActivity = useMemo(() => {
     if (projects.some((p) => (p.asset_counts?.images ?? 0) + (p.asset_counts?.videos ?? 0) > 0)) return true;
@@ -738,8 +749,20 @@ export default function StudioPage() {
       backgroundAttachment: 'fixed'
     }}>
 
-      {/* Onboarding modal for first-time users */}
-      {showOnboarding && (
+      {/* ICP qualification then onboarding modal for first-time users */}
+      {showOnboarding && !icpDone && userId && (
+        <OnboardingICP
+          userId={userId}
+          onComplete={(answers) => {
+            localStorage.setItem(
+              `aitoma_icp_${userId}`,
+              JSON.stringify({ ...answers, completed_at: new Date().toISOString() }),
+            );
+            setIcpDone(true);
+          }}
+        />
+      )}
+      {showOnboarding && icpDone && (
         <OnboardingModal
           onComplete={async ({ productId, productName, productImageUrl, influencerId, influencerName, influencerImageUrl, prompt: selectedPrompt }) => {
             try {
