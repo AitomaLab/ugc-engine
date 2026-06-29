@@ -53,7 +53,7 @@ export default function UpgradePage() {
     try {
       setCheckoutLoading(plan.id);
       const { checkout_url } = await apiFetch<{ checkout_url: string }>(
-        '/api/stripe/checkout/subscription',
+        '/api/billing/checkout/subscription',
         {
           method: 'POST',
           body: JSON.stringify({ plan_id: plan.id, billing_interval: billingInterval }),
@@ -151,7 +151,7 @@ export default function UpgradePage() {
             onClick={async () => {
               try {
                 const { portal_url } = await apiFetch<{ portal_url: string }>(
-                  '/api/stripe/portal',
+                  '/api/billing/portal',
                   { method: 'POST' },
                 );
                 window.location.href = portal_url;

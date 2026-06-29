@@ -62,7 +62,7 @@ function ManagePage() {
     try {
       setPortalLoading(true);
       const { portal_url } = await apiFetch<{ portal_url: string }>(
-        '/api/stripe/portal',
+        '/api/billing/portal',
         { method: 'POST' },
       );
       window.location.href = portal_url;
@@ -265,7 +265,7 @@ function ManagePage() {
                         setTopUpLoading(pkg.name);
                         const packageKey = pkg.name.split(' ')[0].toLowerCase(); // "Small Top-Up" -> "small"
                         const { checkout_url } = await apiFetch<{ checkout_url: string }>(
-                          '/api/stripe/checkout/topup',
+                          '/api/billing/checkout/topup',
                           { method: 'POST', body: JSON.stringify({ package: packageKey }) }
                         );
                         window.location.href = checkout_url;
