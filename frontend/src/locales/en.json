@@ -1192,6 +1192,8 @@
   "onboarding.skip": "Skip for now →",
   "onboarding.step": "Step {current} of {total}",
   "onboarding.back": "← Back",
+  "onboarding.icp.progress": "{current} of {total}",
+  "onboarding.icp.skip": "Skip onboarding →",
   "creativeOs.dashboard.chipSpanish": "Make a Spanish-language ad",
   "creativeOs.dashboard.chipClone": "Create an AI clone video",
   "schedule.cancelScheduled": "Cancel scheduled",

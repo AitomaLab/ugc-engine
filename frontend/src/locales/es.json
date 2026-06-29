@@ -1192,6 +1192,8 @@
   "onboarding.skip": "Saltar por ahora →",
   "onboarding.step": "Paso {current} de {total}",
   "onboarding.back": "← Atrás",
+  "onboarding.icp.progress": "{current} de {total}",
+  "onboarding.icp.skip": "Saltar incorporación →",
   "creativeOs.dashboard.chipSpanish": "Crear un anuncio en inglés",
   "creativeOs.dashboard.chipClone": "Crear un video de clon de IA",
   "schedule.cancelScheduled": "Cancelar programación",
