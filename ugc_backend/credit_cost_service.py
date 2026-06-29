@@ -64,13 +64,13 @@ CREDIT_COSTS = {
     ("clone", 30): 106,
     # Editor render
     "editor_render": 2,
-    # Cinematic Ads (Fal AI: GPT Image 2 + Seedance 2.0 Pro, always 720p)
+    # Cinematic Ads — storyboard via Fal GPT Image 2; Seedance 2.0 video via Kie @ \.125/s
     "cinematic_storyboard": 20,
-    "cinematic_animate_720p_5s": 170,
-    "cinematic_animate_720p_10s": 340,
-    "cinematic_animate_720p_15s": 510,
-    "cinematic_broll_720p_5s": 170,
-    "cinematic_product_macro_720p_5s": 170,
+    "cinematic_animate_720p_5s": 70,
+    "cinematic_animate_720p_10s": 140,
+    "cinematic_animate_720p_15s": 210,
+    "cinematic_broll_720p_5s": 70,
+    "cinematic_product_macro_720p_5s": 70,
     # Gemini Omni Video edit (flat per generation)
     "gemini_omni_edit_720p": 134,
     "gemini_omni_edit_4k": 200,

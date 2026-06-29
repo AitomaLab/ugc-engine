@@ -641,9 +641,14 @@ def save_stripe_customer_id(user_id: str, stripe_customer_id: str):
 
 
 def get_plan_by_stripe_price_id(stripe_price_id: str):
-    """Look up a subscription_plan by its Stripe Price ID."""
+    """Look up a subscription_plan by monthly or yearly Stripe Price ID."""
     sb = get_supabase()
-    result = sb.table("subscription_plans").select("*").eq("stripe_price_id", stripe_price_id).execute()
+    result = (
+        sb.table("subscription_plans")
+        .select("*")
+        .or_(f"stripe_price_id.eq.{stripe_price_id},stripe_price_id_yearly.eq.{stripe_price_id}")
+        .execute()
+    )
     return result.data[0] if result.data else None
 
 
