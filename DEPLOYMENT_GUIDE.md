@@ -115,6 +115,17 @@ Your existing `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` remain unchanged. No cod
 - Try creating a video job — it should be picked up by the Railway Celery worker
 - Monitor Railway logs for `[OK] Job ... dispatched to Celery worker`
 
+### 2.5 — Coordinated deploy (frontend + backend)
+
+When shipping admin or API changes that span both surfaces (e.g. Brevo waitlist admin), deploy **both** in the same release window:
+
+1. **Confirm `main` is pushed** — Vercel (`frontend/`) and Railway (repo root) auto-deploy from `main` when GitHub is connected.
+2. **Railway first (or simultaneously)** — ensure `BREVO_API_KEY` and `ADMIN_EMAIL` are set on the API service, then redeploy.
+3. **Vercel second** — redeploy so `/admin` sends `list_id` query params the new backend expects.
+4. **Verify** — log in as admin → `/admin` → Invites → switch Waitlist (3) / Beta Testers (10) → pull and sync each list.
+
+> Avoid a long gap where only the frontend or only the backend is on the new version. If Railway lags Vercel, list 10 actions fall back to list 3 on the old API.
+
 ---
 
 ## Phase 3: Serverless Video Worker
@@ -231,6 +242,7 @@ If you instead see `Extend:` progress and Kie.ai **Veo → Extend** tasks, the w
 | `CELERY_RESULT_BACKEND` | ✅ | Upstash Redis URL (same) |
 | `CORS_ORIGINS` | ✅ | Comma-separated allowed frontend URLs |
 | `ADMIN_EMAIL` | ✅ | Admin user email |
+| `BREVO_API_KEY` | ✅ | Brevo API key for admin invite pull/sync (`/api/admin/invites/*`) |
 | `USE_MODAL_WORKER` | ❌ | Set to `true` to use Modal (default: `false`) |
 | `MODAL_WEBHOOK_URL` | ❌ | Modal trigger_job webhook URL |
 
