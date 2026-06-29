@@ -45,7 +45,7 @@ function SignupForm() {
       metadata.invite_code = inviteCode.trim();
     }
 
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: { data: metadata },
@@ -66,6 +66,8 @@ function SignupForm() {
         setError({ text: raw });
       }
       setLoading(false);
+    } else if (data.session) {
+      window.location.href = '/';
     } else {
       await supabase.auth.signOut();
       setSuccess(true);
