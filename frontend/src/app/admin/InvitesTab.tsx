@@ -287,9 +287,7 @@ function CodeTablePanel({ invites, listId, loading, onReload }: { invites: Invit
         [invites, syncLabel],
     );
 
-    const filteredCodes = invites.filter((c) =>
-        listId === 3 ? c.label === 'Brevo Waitlist' : c.label === 'Beta Testers',
-    );
+    const filteredCodes = invites.filter((c) => c.label === labelForList(listId));
 
     const copyLink = async (code: string, id: string) => {
         const base =
@@ -347,8 +345,8 @@ function CodeTablePanel({ invites, listId, loading, onReload }: { invites: Invit
                         {loading && (
                             <tr><td colSpan={7} style={{ padding: 20, color: '#94A3B8' }}>Loading…</td></tr>
                         )}
-                        {!loading && invites.length === 0 && (
-                            <tr><td colSpan={7} style={{ padding: 20, color: '#94A3B8' }}>No codes yet. Pull the waitlist or generate some above.</td></tr>
+                        {!loading && filteredCodes.length === 0 && (
+                            <tr><td colSpan={7} style={{ padding: 20, color: '#94A3B8' }}>No codes for this list yet. Pull from Brevo or generate above.</td></tr>
                         )}
                         {filteredCodes.map((inv) => (
                             <tr key={inv.id} style={{ borderBottom: '1px solid #F1F5F9', color: '#0F172A' }}>
