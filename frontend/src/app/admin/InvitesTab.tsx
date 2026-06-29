@@ -14,9 +14,22 @@ interface Invite {
     used_at?: string | null;
 }
 
+function labelForList(listId: number): string {
+    if (listId === 3) return 'Brevo Waitlist';
+    if (listId === 10) return 'Beta Testers';
+    return `Brevo List ${listId}`;
+}
+
+function listDisplayName(listId: number): string {
+    if (listId === 3) return 'Waitlist';
+    if (listId === 10) return 'Beta Testers';
+    return `List ${listId}`;
+}
+
 export default function InvitesTab() {
     const [invites, setInvites] = useState<Invite[]>([]);
     const [loadingInvites, setLoadingInvites] = useState(false);
+    const [selectedListId, setSelectedListId] = useState(3);
 
     const loadInvites = useCallback(async () => {
         setLoadingInvites(true);
@@ -36,9 +49,45 @@ export default function InvitesTab() {
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-            <BrevoImportPanel onDone={loadInvites} />
+            <ListSegmentControl selectedListId={selectedListId} onChange={setSelectedListId} />
+            <BrevoImportPanel listId={selectedListId} onDone={loadInvites} />
             <ManualGeneratePanel onDone={loadInvites} />
-            <CodeTablePanel invites={invites} loading={loadingInvites} onReload={loadInvites} />
+            <CodeTablePanel invites={invites} listId={selectedListId} loading={loadingInvites} onReload={loadInvites} />
+        </div>
+    );
+}
+
+function ListSegmentControl({ selectedListId, onChange }: { selectedListId: number; onChange: (id: number) => void }) {
+    const options = [
+        { id: 3, label: 'Waitlist (List 3)' },
+        { id: 10, label: 'Beta Testers (List 10)' },
+    ] as const;
+
+    return (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {options.map((opt) => {
+                const active = selectedListId === opt.id;
+                return (
+                    <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => onChange(opt.id)}
+                        style={{
+                            padding: '8px 16px',
+                            borderRadius: 999,
+                            border: active ? 'none' : `1px solid ${ADMIN_PRIMARY}`,
+                            background: active ? ADMIN_PRIMARY : '#FFFFFF',
+                            color: active ? '#FFFFFF' : ADMIN_PRIMARY,
+                            fontSize: 13,
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            transition: 'background 0.15s ease, color 0.15s ease',
+                        }}
+                    >
+                        {opt.label}
+                    </button>
+                );
+            })}
         </div>
     );
 }
@@ -112,16 +161,19 @@ function StatusNote({ tone, children }: { tone: 'ok' | 'err' | 'info'; children:
     );
 }
 
-function BrevoImportPanel({ onDone }: { onDone: () => void }) {
+function BrevoImportPanel({ listId, onDone }: { listId: number; onDone: () => void }) {
     const [busy, setBusy] = useState(false);
     const [note, setNote] = useState<{ tone: 'ok' | 'err' | 'info'; text: string } | null>(null);
 
+    const listName = listDisplayName(listId);
+    const pullLabel = `Pull ${listName} (List ${listId})`;
+
     const pull = async () => {
         setBusy(true);
-        setNote({ tone: 'info', text: 'Pulling contacts from Brevo… this can take a moment for large lists.' });
+        setNote({ tone: 'info', text: `Pulling ${listName} contacts from Brevo… this can take a moment for large lists.` });
         try {
             const res = await adminFetch<{ imported: number; skipped: number }>(
-                '/api/admin/invites/pull-brevo',
+                `/api/admin/invites/pull-brevo?list_id=${listId}`,
                 { method: 'POST' },
             );
             setNote({ tone: 'ok', text: `Imported ${res.imported} new contacts · ${res.skipped} already present.` });
@@ -135,9 +187,9 @@ function BrevoImportPanel({ onDone }: { onDone: () => void }) {
 
     return (
         <Panel
-            title="Pull Waitlist from Brevo"
-            subtitle="Fetch every Brevo contact and generate a BETA- code for each new email."
-            action={<PrimaryButton onClick={pull} disabled={busy}>{busy && <Spinner />}{busy ? 'Pulling…' : 'Pull Waitlist from Brevo'}</PrimaryButton>}
+            title={`Pull ${listName} from Brevo`}
+            subtitle={`Fetch contacts from Brevo list ${listId} and generate a BETA- code for each new email.`}
+            action={<PrimaryButton onClick={pull} disabled={busy}>{busy && <Spinner />}{busy ? 'Pulling…' : pullLabel}</PrimaryButton>}
         >
             {note && <StatusNote tone={note.tone}>{note.text}</StatusNote>}
         </Panel>
@@ -223,12 +275,21 @@ function ManualGeneratePanel({ onDone }: { onDone: () => void }) {
     );
 }
 
-function CodeTablePanel({ invites, loading, onReload }: { invites: Invite[]; loading: boolean; onReload: () => void }) {
+function CodeTablePanel({ invites, listId, loading, onReload }: { invites: Invite[]; listId: number; loading: boolean; onReload: () => void }) {
     const [syncing, setSyncing] = useState(false);
     const [copiedId, setCopiedId] = useState<string | null>(null);
     const [note, setNote] = useState<{ tone: 'ok' | 'err' | 'info'; text: string } | null>(null);
 
-    const unsyncedCount = useMemo(() => invites.filter((i) => !i.brevo_synced && i.email).length, [invites]);
+    const syncLabel = labelForList(listId);
+    const listName = listDisplayName(listId);
+    const unsyncedCount = useMemo(
+        () => invites.filter((i) => !i.brevo_synced && i.email && i.label === syncLabel).length,
+        [invites, syncLabel],
+    );
+
+    const filteredCodes = invites.filter((c) =>
+        listId === 3 ? c.label === 'Brevo Waitlist' : c.label === 'Beta Testers',
+    );
 
     const copyLink = async (code: string, id: string) => {
         const base =
@@ -246,10 +307,10 @@ function CodeTablePanel({ invites, loading, onReload }: { invites: Invite[]; loa
 
     const syncAll = async () => {
         setSyncing(true);
-        setNote({ tone: 'info', text: `Syncing ${unsyncedCount.toLocaleString()} unsynced contacts to Brevo…` });
+        setNote({ tone: 'info', text: `Syncing ${unsyncedCount.toLocaleString()} unsynced ${listName} contacts to Brevo…` });
         try {
             const res = await adminFetch<{ synced: number; failed: number }>(
-                '/api/admin/invites/sync-brevo',
+                `/api/admin/invites/sync-brevo?list_id=${listId}`,
                 { method: 'POST' },
             );
             setNote({ tone: res.failed ? 'err' : 'ok', text: `Synced ${res.synced} · failed ${res.failed}.` });
@@ -264,11 +325,11 @@ function CodeTablePanel({ invites, loading, onReload }: { invites: Invite[]; loa
     return (
         <Panel
             title="Code Management"
-            subtitle={`${invites.length.toLocaleString()} codes · ${unsyncedCount.toLocaleString()} not yet synced to Brevo`}
+            subtitle={`${filteredCodes.length.toLocaleString()} codes · ${unsyncedCount.toLocaleString()} ${listName} not yet synced to Brevo`}
             action={
                 <PrimaryButton onClick={syncAll} disabled={syncing || unsyncedCount === 0}>
                     {syncing && <Spinner />}
-                    {syncing ? `Syncing ${unsyncedCount.toLocaleString()}…` : `Sync All Unsynced to Brevo (${unsyncedCount.toLocaleString()})`}
+                    {syncing ? `Syncing ${unsyncedCount.toLocaleString()}…` : `Sync ${listName} to Brevo (${unsyncedCount.toLocaleString()})`}
                 </PrimaryButton>
             }
         >
@@ -289,7 +350,7 @@ function CodeTablePanel({ invites, loading, onReload }: { invites: Invite[]; loa
                         {!loading && invites.length === 0 && (
                             <tr><td colSpan={7} style={{ padding: 20, color: '#94A3B8' }}>No codes yet. Pull the waitlist or generate some above.</td></tr>
                         )}
-                        {invites.map((inv) => (
+                        {filteredCodes.map((inv) => (
                             <tr key={inv.id} style={{ borderBottom: '1px solid #F1F5F9', color: '#0F172A' }}>
                                 <td style={{ padding: '10px 10px', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inv.email || '—'}</td>
                                 <td style={{ padding: '10px 10px', fontFamily: 'ui-monospace, monospace', fontWeight: 700 }}>{inv.code}</td>

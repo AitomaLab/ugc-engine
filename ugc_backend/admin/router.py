@@ -131,6 +131,14 @@ def _load_existing(sb) -> tuple[set[str], set[str]]:
     return emails, codes
 
 
+def _label_for_list(list_id: int) -> str:
+    if list_id == 3:
+        return "Brevo Waitlist"
+    if list_id == 10:
+        return "Beta Testers"
+    return f"Brevo List {list_id}"
+
+
 def _insert_in_chunks(sb, rows: List[dict], chunk: int = 500) -> int:
     """Insert rows, skipping any that collide on the unique email constraint.
 
@@ -163,12 +171,13 @@ class GenerateRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 @router.post("/invites/pull-brevo")
-def pull_brevo(user: dict = Depends(get_current_user)) -> dict:
-    """Import every Brevo contact as a new invite code (skipping known emails)."""
+def pull_brevo(list_id: int = 3, user: dict = Depends(get_current_user)) -> dict:
+    """Import Brevo contacts from a list as new invite codes (skipping known emails)."""
     _require_admin(user)
     sb = get_supabase()
 
     existing_emails, existing_codes = _load_existing(sb)
+    pull_label = _label_for_list(list_id)
 
     imported = 0
     skipped = 0
@@ -181,7 +190,7 @@ def pull_brevo(user: dict = Depends(get_current_user)) -> dict:
             resp = client.get(
                 f"{_BREVO_BASE}/contacts",
                 headers=headers,
-                params={"limit": _BREVO_PAGE_SIZE, "offset": offset},
+                params={"limit": _BREVO_PAGE_SIZE, "offset": offset, "listIds": list_id},
             )
             if resp.status_code >= 400:
                 raise HTTPException(
@@ -199,7 +208,7 @@ def pull_brevo(user: dict = Depends(get_current_user)) -> dict:
                     {
                         "email": email,
                         "code": _gen_unique_code(existing_codes),
-                        "label": "Brevo Waitlist",
+                        "label": pull_label,
                     }
                 )
                 imported += 1
@@ -289,10 +298,11 @@ def list_invites(user: dict = Depends(get_current_user)) -> list:
 
 
 @router.post("/invites/sync-brevo")
-def sync_brevo(user: dict = Depends(get_current_user)) -> dict:
+def sync_brevo(list_id: int = 3, user: dict = Depends(get_current_user)) -> dict:
     """Write each unsynced code into its Brevo contact's INVITE_CODE attribute."""
     _require_admin(user)
     sb = get_supabase()
+    sync_label = _label_for_list(list_id)
 
     # Read the full unsynced backlog up front (paginated) so we have a stable
     # snapshot before we start flipping brevo_synced; PostgREST caps at 1000.
@@ -306,7 +316,7 @@ def sync_brevo(user: dict = Depends(get_current_user)) -> dict:
             sb.table("invite_codes")
             .select("id, email, code")
             .eq("brevo_synced", False)
-            .eq("label", "Brevo Waitlist")
+            .eq("label", sync_label)
             .order("created_at", desc=False)
             .range(start, start + page - 1)
             .execute()
