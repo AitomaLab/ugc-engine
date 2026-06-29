@@ -541,6 +541,14 @@ stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 
 
+def _require_stripe_configured() -> None:
+    if not stripe.api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Billing is not configured. STRIPE_SECRET_KEY is missing on the server.",
+        )
+
+
 def _resolve_project_id(request: Request, user: dict | None) -> str | None:
     """Read X-Project-Id header sent by the frontend.
     Falls back to the user's default project if the header is missing.
@@ -2907,6 +2915,7 @@ def api_stripe_checkout_subscription(
     user: dict = Depends(get_current_user),
 ):
     """Create a Stripe Checkout Session for a subscription plan."""
+    _require_stripe_configured()
     plan = get_plan_by_id(body.plan_id)
     if not plan:
         raise HTTPException(status_code=400, detail="Invalid plan")
@@ -2961,6 +2970,7 @@ def api_stripe_checkout_topup(
     user: dict = Depends(get_current_user),
 ):
     """Create a Stripe Checkout Session for a one-time credit top-up."""
+    _require_stripe_configured()
     pkg = TOPUP_PACKAGES.get(body.package)
     if not pkg or not pkg["stripe_price_id"]:
         raise HTTPException(status_code=400, detail="Invalid top-up package")
@@ -2999,6 +3009,7 @@ def api_stripe_portal(
     user: dict = Depends(get_current_user),
 ):
     """Create a Stripe Customer Portal session for self-service billing management."""
+    _require_stripe_configured()
     customer_id = get_stripe_customer_id(user["id"])
     if not customer_id:
         customer = stripe.Customer.create(
