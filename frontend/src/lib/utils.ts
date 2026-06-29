@@ -8,6 +8,14 @@ import { fetchWithAuth, getValidAccessToken } from '@/lib/auth';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
+/** Same-origin billing routes (Next.js proxy) — not blocked by ad blockers targeting /stripe/. */
+function resolveApiUrl(path: string): string {
+    if (path.startsWith('/api/billing')) {
+        return path;
+    }
+    return `${API_URL}${path}`;
+}
+
 /** Shared with i18n.tsx — persisted UI language for API + AI locale. */
 export const UI_LANGUAGE_STORAGE_KEY = 'aitoma_ui_language';
 
@@ -95,7 +103,7 @@ export async function apiFetch<T = unknown>(
 
     const accessToken = await getValidAccessToken();
 
-    const result = await fetchWithAuth<T>(`${API_URL}${path}`, {
+    const result = await fetchWithAuth<T>(resolveApiUrl(path), {
         ...options,
         accessToken,
         headers: { ...headers, ...options?.headers },
@@ -103,7 +111,7 @@ export async function apiFetch<T = unknown>(
     if (!result.ok) {
         throw new Error(result.unauthorized
             ? 'Session expired. Please sign in again.'
-            : `API error: ${result.status}`);
+            : result.detail || `API error: ${result.status}`);
     }
     return result.data;
 }

@@ -215,8 +215,8 @@ export async function forceReauth(reason = 'session_expired'): Promise<void> {
 }
 
 export type FetchWithAuthResult<T> =
-    | { ok: true; data: T; status: number }
-    | { ok: false; status: number; unauthorized: boolean; data: null };
+    | { ok: true; data: T; status: number; detail: string }
+    | { ok: false; status: number; unauthorized: boolean; data: null; detail: string };
 
 /**
  * Fetch with Bearer token. On 401, attempts one refresh + retry.
@@ -232,7 +232,7 @@ export async function fetchWithAuth<T = unknown>(
     let token = providedToken ?? await getValidAccessToken();
     if (!token) {
         if (!skipReauth) await forceReauth();
-        return { ok: false, status: 401, unauthorized: true, data: null };
+        return { ok: false, status: 401, unauthorized: true, data: null, detail: '' };
     }
 
     const doFetch = async (tok: string): Promise<Response> => {
@@ -262,15 +262,26 @@ export async function fetchWithAuth<T = unknown>(
         if (!skipReauth) {
             await forceReauth();
         }
-        return { ok: false, status: 401, unauthorized: true, data: null };
+        return { ok: false, status: 401, unauthorized: true, data: null, detail: '' };
     }
 
     resetAuthFailures();
 
     if (!res.ok) {
-        return { ok: false, status: res.status, unauthorized: false, data: null };
+        let detail = '';
+        try {
+            const errBody = await res.clone().json() as { detail?: string | { msg?: string }[] };
+            if (typeof errBody.detail === 'string') {
+                detail = errBody.detail;
+            } else if (Array.isArray(errBody.detail) && errBody.detail[0]?.msg) {
+                detail = errBody.detail[0].msg;
+            }
+        } catch {
+            // ignore non-JSON bodies
+        }
+        return { ok: false, status: res.status, unauthorized: false, data: null, detail };
     }
 
     const data = await res.json() as T;
-    return { ok: true, data, status: res.status };
+    return { ok: true, data, status: res.status, detail: '' };
 }

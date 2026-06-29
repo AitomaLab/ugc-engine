@@ -6801,14 +6801,14 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
             "message": (
                 "Show the video to the user. Mention it's saved to the Videos tab. "
                 "Offer two optional add-ons: (1) a b-roll clip from one of the storyboard "
-                "panels (~$1.51 / 32 cr each — name the strongest 2 panels), and "
-                "(2) a product-only macro beauty shot (~$1.51 / 32 cr). Only call them "
+                "panels (70 cr each — name the strongest 2 panels), and "
+                "(2) a product-only macro beauty shot (70 cr). Only call them "
                 "if the user explicitly asks."
             ),
             "credits_spent": _credits_for_op("cinematic_animate", {"duration_seconds": duration_seconds}),
         })
 
-    # ── stage=broll — paid, ~$1.51 / 32 cr per panel
+    # ── stage=broll — paid, 70 cr per panel
     if stage == "broll":
         panel_index = kwargs.get("panel_index")
         if not isinstance(panel_index, int) or panel_index < 1 or panel_index > 6:
@@ -6930,7 +6930,7 @@ async def _tool_create_cinematic_ad_impl(ctx: ToolContext, **kwargs: Any) -> str
             "credits_spent": _credits_for_op("cinematic_broll", {}),
         })
 
-    # ── stage=product_macro — paid, ~$1.51 / 32 cr, product-only
+    # ── stage=product_macro — paid, 70 cr, product-only
     if stage == "product_macro":
         if not kwargs.get("confirmed"):
             credits = _credits_for_op("cinematic_product_macro", {})

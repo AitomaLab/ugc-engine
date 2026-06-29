@@ -15,6 +15,10 @@ const CREDIT_PACKAGES = [
   { name: 'XL Top-Up',     credits: 5000, price: 139, perCredit: '2.8¢' },
 ];
 
+const BILLING_PORTAL_URL =
+  process.env.NEXT_PUBLIC_STRIPE_BILLING_PORTAL_URL ||
+  'https://checkout.aitoma.studio/p/login/9B628r9LS1xa0o63hv0Ny00';
+
 export default function ManagePageWrapper() {
   return (
     <Suspense fallback={<div className="content-area"><p>Loading...</p></div>}>
@@ -28,6 +32,7 @@ function ManagePage() {
   const { t } = useTranslation();
   const [topUpOpen, setTopUpOpen] = useState(false);
   const [topUpLoading, setTopUpLoading] = useState<string | null>(null);
+  const [portalLoading, setPortalLoading] = useState(false);
   const searchParams = useSearchParams();
 
   // Auto-open modal when arriving from profile dropdown (?topup=1)
@@ -52,6 +57,21 @@ function ManagePage() {
   };
 
   const pct = monthlyCredits > 0 ? Math.min(100, (balance / monthlyCredits) * 100) : 0;
+
+  const handleOpenBillingPortal = async () => {
+    try {
+      setPortalLoading(true);
+      const { portal_url } = await apiFetch<{ portal_url: string }>(
+        '/api/billing/portal',
+        { method: 'POST' },
+      );
+      window.location.href = portal_url;
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : t('manage.billingPortalError');
+      alert(message);
+      setPortalLoading(false);
+    }
+  };
 
   return (
     <div className="content-area" style={{ display: 'block' }}>
@@ -94,27 +114,30 @@ function ManagePage() {
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
                 <Link href="/upgrade" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '5px 14px', fontSize: '12px', color: 'var(--blue)', fontWeight: 600, textDecoration: 'none', border: '1px solid rgba(51,122,255,0.2)', borderRadius: '6px', transition: 'all 0.15s', whiteSpace: 'nowrap' }}>{t('manage.changePlan')}</Link>
-                {planName !== 'Free' && (
-                  <button
-                    onClick={async () => {
-                      try {
-                        const { portal_url } = await apiFetch<{ portal_url: string }>(
-                          '/api/stripe/portal',
-                          { method: 'POST' }
-                        );
-                        window.location.href = portal_url;
-                      } catch (err: any) {
-                        alert(err.message || 'Failed to open billing portal');
-                      }
-                    }}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '5px 14px', fontSize: '12px', color: 'var(--text-2)', fontWeight: 600, background: 'none', border: '1px solid var(--border)', borderRadius: '6px', cursor: 'pointer', transition: 'all 0.15s', whiteSpace: 'nowrap' }}
-                  >{t('manage.manageBilling')}</button>
-                )}
+                <button
+                  type="button"
+                  onClick={handleOpenBillingPortal}
+                  disabled={portalLoading}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '5px 14px', fontSize: '12px', color: 'var(--text-2)', fontWeight: 600, background: 'none', border: '1px solid var(--border)', borderRadius: '6px', cursor: portalLoading ? 'wait' : 'pointer', transition: 'all 0.15s', whiteSpace: 'nowrap', opacity: portalLoading ? 0.7 : 1 }}
+                >
+                  {portalLoading ? t('manage.billingPortalLoading') : t('manage.manageBilling')}
+                </button>
               </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', padding: '10px 0' }}>
+            <div style={{ display: 'flex', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid var(--border-soft)' }}>
               <span style={{ fontSize: '13px', color: 'var(--text-3)', width: '140px', flexShrink: 0, fontWeight: 500 }}>{t('manage.billingPeriodEnds')}</span>
               <span style={{ fontSize: '13px', color: 'var(--text-1)', fontWeight: 600 }}>{periodEnd}</span>
+            </div>
+            <div style={{ padding: '12px 0 0' }}>
+              <p style={{ fontSize: '12px', color: 'var(--text-3)', margin: '0 0 8px', lineHeight: 1.5 }}>{t('manage.billingPortalDesc')}</p>
+              <a
+                href={BILLING_PORTAL_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ fontSize: '12px', color: 'var(--blue)', fontWeight: 600, textDecoration: 'none' }}
+              >
+                {t('manage.billingPortalLink')} ↗
+              </a>
             </div>
           </div>
 
@@ -139,7 +162,7 @@ function ManagePage() {
         {/* Right column — Credits widget */}
         <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '20px', boxShadow: 'var(--shadow)' }}>
           <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-1)', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <svg viewBox="0 0 24 24" style={{ width: 16, height: 16, stroke: '#22c55e', fill: 'none', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
+            <img src="/studio-star-blue.svg" alt="" aria-hidden="true" style={{ width: 16, height: 16, flexShrink: 0 }} />
             {t('manage.credits')}
           </div>
           <div style={{ textAlign: 'center', padding: '8px 0 16px' }}>
@@ -242,7 +265,7 @@ function ManagePage() {
                         setTopUpLoading(pkg.name);
                         const packageKey = pkg.name.split(' ')[0].toLowerCase(); // "Small Top-Up" -> "small"
                         const { checkout_url } = await apiFetch<{ checkout_url: string }>(
-                          '/api/stripe/checkout/topup',
+                          '/api/billing/checkout/topup',
                           { method: 'POST', body: JSON.stringify({ package: packageKey }) }
                         );
                         window.location.href = checkout_url;

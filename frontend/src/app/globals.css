@@ -3495,3 +3495,428 @@ select.input-field {
 .editor-page {
   overscroll-behavior-x: none;
 }
+
+/* ─── UPGRADE / PRICING PAGE ─────────────────────────────────── */
+.upgrade-page { max-width: 1024px; margin: 0 auto; }
+.upgrade-header { text-align: center; margin-bottom: 40px; }
+.upgrade-header h1 {
+  font-size: 2rem;
+  font-weight: 800;
+  color: var(--text-1);
+  margin-bottom: 8px;
+  letter-spacing: -0.02em;
+}
+.upgrade-header p {
+  font-size: 15px;
+  color: var(--text-3);
+  max-width: 36rem;
+  margin: 0 auto 20px;
+}
+.upgrade-loading {
+  text-align: center;
+  padding: 4rem;
+  color: var(--text-3);
+  font-size: 14px;
+}
+.upgrade-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+}
+.upgrade-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+  width: 100%;
+  align-items: stretch;
+}
+.upgrade-footnote {
+  margin: 20px 0 0;
+  width: 100%;
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.5;
+  text-align: center;
+}
+.upgrade-manage-wrap { text-align: center; margin-top: 1.5rem; }
+.upgrade-manage-btn { max-width: 300px; margin: 0 auto; }
+.upgrade-back-wrap { text-align: center; margin-top: 2rem; }
+.upgrade-back {
+  color: var(--text-3);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: color 0.15s;
+}
+.upgrade-back:hover { color: var(--blue); }
+
+/* Billing toggle */
+.upgrade-billing-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 8px 18px;
+  box-shadow: var(--shadow);
+}
+.upgrade-billing-toggle--disabled { opacity: 0.6; }
+.upgrade-billing-label { font-size: 13px; font-weight: 600; color: var(--text-3); }
+.upgrade-billing-label--active { color: var(--text-1); }
+.upgrade-billing-switch {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.upgrade-billing-track {
+  display: block;
+  width: 44px;
+  height: 24px;
+  background: #d1d5db;
+  border-radius: 999px;
+  position: relative;
+  transition: background 0.2s;
+}
+.upgrade-billing-track--on { background: var(--blue); }
+.upgrade-billing-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  background: white;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+  transition: transform 0.2s;
+}
+.upgrade-billing-thumb--on { transform: translateX(20px); }
+.upgrade-billing-save {
+  background: linear-gradient(135deg, var(--blue), #7c3aed);
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 999px;
+  letter-spacing: 0.03em;
+}
+
+/* Cards */
+.upgrade-card {
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: 20px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.2s, box-shadow 0.2s;
+  box-shadow: var(--shadow);
+}
+.upgrade-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(51, 122, 255, 0.1);
+}
+.upgrade-card--popular {
+  border: 2.5px solid var(--blue);
+  box-shadow:
+    0 0 0 4px rgba(51, 122, 255, 0.14),
+    0 10px 44px rgba(51, 122, 255, 0.24),
+    0 4px 18px rgba(51, 122, 255, 0.12);
+  z-index: 1;
+}
+.upgrade-card--popular:hover {
+  transform: translateY(-4px);
+  box-shadow:
+    0 0 0 5px rgba(51, 122, 255, 0.18),
+    0 16px 52px rgba(51, 122, 255, 0.3),
+    0 6px 22px rgba(51, 122, 255, 0.14);
+}
+.upgrade-card--current { border-color: #22c55e; }
+.upgrade-badge {
+  position: absolute;
+  top: -13px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: linear-gradient(135deg, var(--blue), #a78bfa);
+  color: white;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 5px 16px;
+  border-radius: 20px;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  box-shadow: 0 4px 16px rgba(51, 122, 255, 0.4);
+}
+.upgrade-card-body {
+  padding: 28px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+.upgrade-plan-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.upgrade-card--popular .upgrade-plan-label { color: var(--blue); }
+.upgrade-price-block { margin: 6px 0 4px; }
+.upgrade-price-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.upgrade-price-strike {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #a78bfa;
+  text-decoration: line-through;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  margin-bottom: 2px;
+}
+.upgrade-price {
+  font-size: 2.25rem;
+  font-weight: 800;
+  color: var(--text-1);
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+.upgrade-price-period { font-size: 14px; color: var(--text-3); margin-bottom: 4px; }
+.upgrade-price-billed {
+  font-size: 12px;
+  color: var(--text-3);
+  margin: 4px 0 0;
+  line-height: 1.4;
+}
+.upgrade-price-unavailable { font-size: 14px; color: var(--text-3); font-weight: 600; }
+.upgrade-tagline {
+  font-size: 13px;
+  color: var(--text-3);
+  line-height: 1.5;
+  margin: 0 0 16px;
+  min-height: 40px;
+}
+.upgrade-credit-pill {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: var(--blue-light);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 8px;
+}
+.upgrade-credit-icon {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  display: block;
+}
+.upgrade-credit-main { font-size: 17px; font-weight: 800; color: var(--text-1); }
+.upgrade-card--popular .upgrade-credit-pill {
+  background: linear-gradient(135deg, rgba(51, 122, 255, 0.1), rgba(167, 139, 250, 0.08));
+  border: 1px solid rgba(51, 122, 255, 0.2);
+}
+.upgrade-card--popular .upgrade-credit-main { color: var(--blue); }
+.upgrade-credit-sub { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+.upgrade-estimates { margin-bottom: 12px; }
+.upgrade-estimate-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-3);
+  padding: 2px 0;
+}
+.upgrade-estimate-row strong { color: var(--text-2); font-weight: 700; }
+.upgrade-estimate-tip {
+  font-size: 12px;
+  color: var(--text-3);
+  cursor: help;
+}
+.upgrade-feature-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin: 10px 0 6px;
+}
+.upgrade-features {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 20px;
+  flex: 1;
+}
+.upgrade-features li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-2);
+  padding: 5px 0;
+  line-height: 1.4;
+}
+.upgrade-feature-muted { color: var(--text-3) !important; font-size: 12px !important; }
+.upgrade-features svg {
+  width: 15px;
+  height: 15px;
+  stroke: var(--blue);
+  fill: none;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.upgrade-feature-muted svg { stroke: #d1d5db; }
+.upgrade-card-footer { margin-top: auto; }
+.upgrade-topup-note {
+  font-size: 12px;
+  color: var(--text-3);
+  text-align: center;
+  margin: 10px 0 0;
+}
+
+/* Buttons */
+.upgrade-btn {
+  width: 100%;
+  padding: 13px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+  font-family: inherit;
+}
+.upgrade-btn-primary {
+  background: linear-gradient(135deg, var(--blue), #667eea);
+  color: white;
+  box-shadow: 0 4px 14px rgba(51, 122, 255, 0.3);
+}
+.upgrade-btn-primary:hover:not(:disabled) {
+  box-shadow: 0 6px 20px rgba(51, 122, 255, 0.4);
+  transform: translateY(-1px);
+}
+.upgrade-btn-outline {
+  background: transparent;
+  color: var(--text-1);
+  border: 1.5px solid var(--border);
+}
+.upgrade-btn-outline:hover:not(:disabled) {
+  border-color: var(--blue);
+  color: var(--blue);
+  background: rgba(51, 122, 255, 0.04);
+}
+.upgrade-btn-current {
+  background: #f0fdf4;
+  color: #22c55e;
+  border: 1.5px solid #bbf7d0;
+  cursor: default;
+}
+.upgrade-btn:disabled { opacity: 0.65; cursor: not-allowed; }
+
+/* Breakdown */
+.upgrade-breakdown {
+  width: 100%;
+  margin-top: 24px;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: 16px;
+  padding: 16px 20px;
+}
+.upgrade-breakdown-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-2);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.upgrade-breakdown-summary-text { flex: 1; }
+.upgrade-breakdown-chevron {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  stroke: var(--text-3);
+  fill: none;
+  stroke-width: 2.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 0.2s ease, stroke 0.15s;
+}
+.upgrade-breakdown-summary:hover .upgrade-breakdown-chevron { stroke: var(--blue); }
+.upgrade-breakdown[open] .upgrade-breakdown-chevron { transform: rotate(180deg); }
+.upgrade-breakdown-summary::-webkit-details-marker { display: none; }
+.upgrade-breakdown-summary::marker { content: ''; }
+.upgrade-breakdown-table-wrap { margin-top: 16px; overflow-x: auto; }
+.upgrade-breakdown-table {
+  width: 100%;
+  font-size: 13px;
+  border-collapse: collapse;
+  text-align: left;
+}
+.upgrade-breakdown-table th {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+  padding: 0 12px 8px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.upgrade-breakdown-table td {
+  padding: 8px 12px 8px 0;
+  color: var(--text-2);
+  border-bottom: 1px solid var(--border-soft);
+}
+.upgrade-breakdown-table tr:last-child td { border-bottom: none; }
+
+/* Agency bar */
+.upgrade-agency-bar {
+  width: 100%;
+  margin-top: 32px;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: 16px;
+  padding: 18px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.upgrade-agency-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-1);
+  margin: 0;
+}
+.upgrade-agency-subtitle {
+  font-size: 13px;
+  color: var(--text-3);
+  margin: 4px 0 0;
+}
+.upgrade-agency-cta {
+  width: auto;
+  min-width: 140px;
+  padding: 12px 24px;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .upgrade-grid { grid-template-columns: 1fr; max-width: 420px; margin: 0 auto; }
+}
+@media (max-width: 640px) {
+  .upgrade-agency-bar { flex-direction: column; align-items: stretch; text-align: center; }
+  .upgrade-agency-cta { width: 100%; }
+}

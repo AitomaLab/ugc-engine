@@ -73,7 +73,7 @@
         "cost_per_video": 0.01
     },
     "fal": {
-        "_note": "Fal AI pricing for the cinematic-ads agent flow (GPT Image 2 storyboard + Seedance 2.0 Pro animation). All animation runs are 720p (per product spec — no 480p toggle).",
+        "_note": "Fal AI pricing for cinematic-ad storyboards (GPT Image 2). Seedance 2.0 video generation runs on Kie.ai — credit costs use WaveSpeed/Kie $0.125/s (720p i2v), not Fal $0.30/s.",
         "gpt_image_2": {
             "storyboard_high_2560x1792_per_image": 0.18
         },
