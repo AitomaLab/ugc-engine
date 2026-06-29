@@ -160,6 +160,8 @@ export interface AnalyticsPost {
     platform: AnalyticsPlatform | string;
     username: string;
     post_url: string;
+    /** Public IG/TikTok URL when post_url is studio:// (from Ayrshare raw_payload). */
+    permalink?: string;
     external_post_id?: string;
     caption?: string;
     hashtags?: string[];
@@ -215,6 +217,12 @@ export interface AnalyticsBreakdown {
     error_message?: string;
     created_at?: string;
     completed_at?: string;
+    /** Language of the text fields in this response (en | es). */
+    content_locale?: string;
+    /** True when a background translation to the requested locale is in flight. */
+    locale_pending?: boolean;
+    /** Set when sync translation failed (e.g. missing OPENAI_API_KEY). */
+    locale_error?: string | null;
 }
 
 export interface TrackedAccount {

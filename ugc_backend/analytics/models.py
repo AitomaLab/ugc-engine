@@ -25,6 +25,10 @@ class AnalyticsPostOut(BaseModel):
     platform: str
     username: str
     post_url: str
+    permalink: Optional[str] = Field(
+        default=None,
+        description="Public platform URL when post_url is an internal studio:// key.",
+    )
     external_post_id: Optional[str] = None
     caption: Optional[str] = None
     hashtags: Optional[List[str]] = None
@@ -157,11 +161,10 @@ class AnalyzeVideoRequest(BaseModel):
     video_job_id: Optional[str] = None
 
     @model_validator(mode="after")
-    def _exactly_one(self) -> "AnalyzeVideoRequest":
-        provided = [v for v in (self.analytics_post_id, self.video_job_id) if v]
-        if len(provided) != 1:
+    def _at_least_one(self) -> "AnalyzeVideoRequest":
+        if not self.analytics_post_id and not self.video_job_id:
             raise ValueError(
-                "Provide exactly one of analytics_post_id or video_job_id"
+                "Provide at least one of analytics_post_id or video_job_id"
             )
         return self
 
@@ -212,6 +215,9 @@ class BreakdownOut(BaseModel):
     error_message: Optional[str] = None
     created_at: Optional[str] = None
     completed_at: Optional[str] = None
+    content_locale: Optional[str] = None
+    locale_pending: bool = False
+    locale_error: Optional[str] = None
 
 
 class AnalyzeVideoResponse(BaseModel):
@@ -261,10 +267,12 @@ class TrackedAccountWithJob(BaseModel):
 
 VideoPrepStatus = Literal[
     "ready",        # storage_video_url is populated, frontend can play it
+    "idle",         # no in-memory task — client should POST to start prep
     "queued",       # task just started, no real work done yet
     "scraping",     # doing a per-post BrightData scrape to get the video URL
     "downloading",  # streaming the video from CDN into Supabase Storage
     "failed",       # terminal — error_message is set
+    "skipped",      # non-video post — AI breakdown not applicable
 ]
 
 

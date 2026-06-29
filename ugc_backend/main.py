@@ -13,7 +13,7 @@ if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
 
 from fastapi import FastAPI, HTTPException, Query, Depends, Request, BackgroundTasks
 from pydantic import BaseModel, model_validator
-from typing import List, Optional
+from typing import List, Literal, Optional
 from fastapi.middleware.cors import CORSMiddleware
 import os
 from dotenv import load_dotenv
@@ -33,6 +33,7 @@ from ugc_backend.auth import get_current_user, get_optional_user
 from ugc_backend.credit_cost_service import (
     credits_deducted_for_job_row,
     export_credit_cost_table,
+    build_credit_cost_catalog,
     get_clone_video_credit_cost,
     get_video_credit_cost,
     get_shot_credit_cost,
@@ -2820,6 +2821,23 @@ def api_get_transactions(user: dict = Depends(get_current_user), limit: int = Qu
     return list_transactions(user["id"], limit)
 
 
+class UserPreferencesPatch(BaseModel):
+    ui_language: Optional[str] = None
+
+
+@app.patch("/api/me/preferences")
+def api_patch_user_preferences(
+    body: UserPreferencesPatch,
+    user: dict = Depends(get_current_user),
+):
+    """Persist UI language so background analytics jobs use the correct locale."""
+    from ugc_backend.analytics import locale_content
+
+    if body.ui_language is not None:
+        locale_content.set_profile_ui_language(user["id"], body.ui_language)
+    return {"ui_language": locale_content.get_profile_ui_language(user["id"])}
+
+
 # ---------------------------------------------------------------------------
 # Notifications
 # ---------------------------------------------------------------------------
@@ -2838,6 +2856,12 @@ def api_get_notifications(limit: int = Query(default=20, le=50), user: dict = De
 def api_get_credit_costs():
     """Return the full credit cost table for frontend display."""
     return export_credit_cost_table()
+
+
+@app.get("/api/credits/catalog")
+def api_get_credit_catalog(lang: str = Query(default="en")):
+    """Human-readable credit catalog for pricing UI and support."""
+    return build_credit_cost_catalog(lang=lang)
 
 
 class CreditDeductRequest(BaseModel):
@@ -2870,6 +2894,7 @@ TOPUP_PACKAGES = {
 
 class CheckoutSubscriptionRequest(BaseModel):
     plan_id: str
+    billing_interval: Literal["monthly", "yearly"] = "monthly"
 
 class CheckoutTopUpRequest(BaseModel):
     package: str  # "small", "medium", "large", "xl"
@@ -2883,8 +2908,18 @@ def api_stripe_checkout_subscription(
 ):
     """Create a Stripe Checkout Session for a subscription plan."""
     plan = get_plan_by_id(body.plan_id)
-    if not plan or not plan.get("stripe_price_id"):
-        raise HTTPException(status_code=400, detail="Invalid plan or plan not configured for Stripe")
+    if not plan:
+        raise HTTPException(status_code=400, detail="Invalid plan")
+
+    interval = body.billing_interval or "monthly"
+    if interval == "yearly":
+        stripe_price_id = plan.get("stripe_price_id_yearly")
+        if not stripe_price_id:
+            raise HTTPException(status_code=400, detail="Yearly billing not configured for this plan")
+    else:
+        stripe_price_id = plan.get("stripe_price_id")
+        if not stripe_price_id:
+            raise HTTPException(status_code=400, detail="Invalid plan or plan not configured for Stripe")
 
     # Get or lazily create Stripe Customer
     customer_id = get_stripe_customer_id(user["id"])
@@ -2901,7 +2936,7 @@ def api_stripe_checkout_subscription(
     session = stripe.checkout.Session.create(
         customer=customer_id,
         mode="subscription",
-        line_items=[{"price": plan["stripe_price_id"], "quantity": 1}],
+        line_items=[{"price": stripe_price_id, "quantity": 1}],
         success_url=f"{origin}/checkout/success?session_id={{CHECKOUT_SESSION_ID}}",
         cancel_url=f"{origin}/upgrade",
         metadata={
@@ -3060,19 +3095,34 @@ async def api_stripe_webhook(request: Request):
                         period_end=period_end,
                     )
 
+                    interval = "month"
+                    items = sub.get("items", {}).get("data", [])
+                    if items:
+                        interval = items[0].get("price", {}).get("recurring", {}).get("interval", "month")
+                    credit_multiplier = 12 if interval == "year" else 1
+                    credit_amount = plan["credits_monthly"] * credit_multiplier
+                    if interval == "year":
+                        desc = (
+                            f"{plan['name']} annual plan: {credit_amount} credits "
+                            f"({plan['credits_monthly']}/mo × 12)"
+                        )
+                    else:
+                        desc = f"{plan['name']} plan: {plan['credits_monthly']} monthly credits"
+
                     add_credits(
                         user_id=user_id,
-                        amount=plan["credits_monthly"],
+                        amount=credit_amount,
                         tx_type="monthly_allotment",
-                        description=f"{plan['name']} plan: {plan['credits_monthly']} monthly credits",
+                        description=desc,
                         metadata={
                             "stripe_invoice_id": data.get("id"),
                             "stripe_subscription_id": subscription_id,
                             "period_start": period_start,
                             "period_end": period_end,
+                            "billing_interval": interval,
                         },
                     )
-                    print(f"[Stripe] Replenished {plan['credits_monthly']} credits for user {user_id} ({plan['name']})")
+                    print(f"[Stripe] Replenished {credit_amount} credits for user {user_id} ({plan['name']}, {interval})")
 
     # ── customer.subscription.updated ──────────────────────────────────
     elif event_type == "customer.subscription.updated":
@@ -3896,6 +3946,12 @@ async def api_schedule_bulk(
                         "ayrshare_post_id": ayrshare_post_id,
                     }).eq("id", social_post_id).execute()
 
+                post_ids = ayrshare_resp.get("postIds") or []
+                if social_post_id and post_ids:
+                    analytics_studio_service.apply_ayrshare_platform_urls(
+                        user_id, social_post_id, post_ids, platform,
+                    )
+
                 results.append({
                     **({"video_job_id": video_jid} if video_jid else {}),
                     **({"product_shot_id": shot_id} if shot_id else {}),
@@ -4156,6 +4212,11 @@ async def api_ayrshare_webhook(request: Request):
             if "status" in update_data:
                 try:
                     _update_social_post_row(sb, update_data, ayrshare_post_id=ayrshare_id)
+                    if status == "success":
+                        from ugc_backend.analytics import studio_service as analytics_studio_service
+                        analytics_studio_service.handle_ayrshare_webhook_post(
+                            ayrshare_id, payload,
+                        )
                 except Exception as exc:
                     print(f"[Ayrshare] webhook social_posts update failed: {exc}")
 

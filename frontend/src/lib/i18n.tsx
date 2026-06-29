@@ -4,6 +4,7 @@ import React, { createContext, useContext, useState, useCallback, useEffect, Rea
 
 import en from '@/locales/en.json';
 import es from '@/locales/es.json';
+import { UI_LANGUAGE_STORAGE_KEY, apiFetch } from '@/lib/utils';
 
 // ──────────────────────────────────────────────────────────────
 // Supported Languages
@@ -29,7 +30,17 @@ interface I18nContextType {
 
 const I18nContext = createContext<I18nContextType | undefined>(undefined);
 
-const STORAGE_KEY = 'aitoma_ui_language';
+async function syncUiLanguageToProfile(lang: SupportedLang): Promise<void> {
+  try {
+    await apiFetch('/api/me/preferences', {
+      method: 'PATCH',
+      body: JSON.stringify({ ui_language: lang }),
+      skipProjectScope: true,
+    });
+  } catch {
+    /* Not logged in or backend unavailable — localStorage still drives UI. */
+  }
+}
 
 // ──────────────────────────────────────────────────────────────
 // Provider
@@ -40,9 +51,10 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   // Load from localStorage on mount
   useEffect(() => {
     try {
-      const stored = localStorage.getItem(STORAGE_KEY) as SupportedLang | null;
+      const stored = localStorage.getItem(UI_LANGUAGE_STORAGE_KEY) as SupportedLang | null;
       if (stored && (stored === 'en' || stored === 'es')) {
         setLangState(stored);
+        syncUiLanguageToProfile(stored);
       }
     } catch {
       // SSR or localStorage unavailable — keep default
@@ -52,10 +64,11 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   const setLang = useCallback((newLang: SupportedLang) => {
     setLangState(newLang);
     try {
-      localStorage.setItem(STORAGE_KEY, newLang);
+      localStorage.setItem(UI_LANGUAGE_STORAGE_KEY, newLang);
     } catch {
       // Ignore storage errors
     }
+    syncUiLanguageToProfile(newLang);
   }, []);
 
   const t = useCallback(

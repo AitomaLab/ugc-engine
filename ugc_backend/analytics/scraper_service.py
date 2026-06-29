@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -35,6 +36,8 @@ import httpx
 
 from . import db as analytics_db
 from .url_parser import ParsedInput, detect
+
+logger = logging.getLogger(__name__)
 
 BRIGHTDATA_BASE = "https://api.brightdata.com"
 BRIGHTDATA_TRIGGER_PATH = "/datasets/v3/trigger"
@@ -569,16 +572,150 @@ def _normalize_record(raw: dict, parsed: ParsedInput) -> Optional[dict]:
 # ── Storage mirror (BrightData CDN → Supabase Storage) ─────────────────────
 
 def _first_media_video_url(post: dict) -> Optional[str]:
+    """Return the first explicit video URL — never treat thumbnails as video."""
     media = post.get("media_urls") or []
     if not isinstance(media, list):
         return None
     for entry in media:
-        if isinstance(entry, dict) and (entry.get("type") in ("video", None)):
+        if isinstance(entry, dict) and entry.get("type") == "video":
             url = entry.get("url")
             if isinstance(url, str) and url:
                 return url
-        elif isinstance(entry, str) and entry:
-            return entry
+    return None
+
+
+def _post_is_video(post: dict) -> bool:
+    """True when the row represents video content eligible for AI breakdown."""
+    mt = (post.get("media_type") or "").lower()
+    if mt in ("video", "reel", "reels", "clip", "short"):
+        return True
+    if post.get("video_job_id"):
+        return True
+    if post.get("storage_video_url"):
+        return True
+    if _first_media_video_url(post):
+        return True
+    return False
+
+
+_CDN_HOST_RE = re.compile(
+    r"cdninstagram|fbcdn|tiktokcdn|fbsbx|googleusercontent",
+    re.IGNORECASE,
+)
+_IG_SHORTCODE_RE = re.compile(r"^[A-Za-z0-9_-]{5,30}$")
+
+
+def is_instagram_shortcode(value: str) -> bool:
+    """True for IG public shortcodes — rejects numeric media PKs (e.g. 17895784422499112)."""
+    s = str(value or "").strip()
+    if not s or not _IG_SHORTCODE_RE.match(s):
+        return False
+    if s.isdigit():
+        return False
+    if not re.search(r"[A-Za-z]", s):
+        return False
+    return True
+
+
+def _parse_post_scrape_url(value: str) -> Optional[str]:
+    """Return a BrightData-safe post permalink, or None if `value` is invalid."""
+    if not value or not str(value).strip():
+        return None
+    s = str(value).strip()
+    if s.startswith("studio://"):
+        return None
+    if _CDN_HOST_RE.search(s):
+        return None
+    try:
+        parsed = detect(s)
+    except ValueError:
+        return None
+    if parsed.kind != "post" or not parsed.normalized_url:
+        return None
+    if parsed.platform == "instagram" and parsed.post_id:
+        if not is_instagram_shortcode(parsed.post_id):
+            return None
+    return parsed.normalized_url
+
+
+def _synthesize_post_url(post: dict) -> Optional[str]:
+    """Build a permalink from platform + external_post_id when the row lacks one."""
+    platform = (post.get("platform") or "").lower()
+    ext_id = str(post.get("external_post_id") or "").strip()
+    if not ext_id or not platform:
+        return None
+    if platform == "instagram":
+        if not is_instagram_shortcode(ext_id):
+            return None
+        media_type = (post.get("media_type") or "").lower()
+        prefer_reel = media_type in ("video", "reel", "reels") or bool(
+            post.get("duration_seconds")
+        )
+        paths = (
+            (f"https://www.instagram.com/reel/{ext_id}/", f"https://www.instagram.com/p/{ext_id}/")
+            if prefer_reel
+            else (f"https://www.instagram.com/p/{ext_id}/", f"https://www.instagram.com/reel/{ext_id}/")
+        )
+        for candidate in paths:
+            url = _parse_post_scrape_url(candidate)
+            if url:
+                return url
+        return None
+    if platform == "tiktok":
+        username = (post.get("username") or "").lstrip("@").strip()
+        if username:
+            return _parse_post_scrape_url(
+                f"https://www.tiktok.com/@{username}/video/{ext_id}"
+            )
+    return None
+
+
+def permalink_from_post(post: dict) -> Optional[str]:
+    """Best-effort public permalink for embeds and display (not the studio:// key)."""
+    raw = post.get("raw_payload")
+    if isinstance(raw, dict):
+        for key in ("permalink", "postUrl", "post_url"):
+            val = raw.get(key)
+            if isinstance(val, str) and val.strip() and not val.strip().startswith("studio://"):
+                url = _parse_post_scrape_url(val.strip())
+                if url:
+                    return url
+    stored = post.get("post_url")
+    if isinstance(stored, str) and stored.strip() and not stored.strip().startswith("studio://"):
+        url = _parse_post_scrape_url(stored.strip())
+        if url:
+            return url
+    if isinstance(post.get("permalink"), str) and post["permalink"].strip():
+        url = _parse_post_scrape_url(post["permalink"].strip())
+        if url:
+            return url
+    return _synthesize_post_url(post)
+
+
+def _resolve_post_url(post: dict) -> Optional[str]:
+    """Best-effort post URL for per-post BrightData scrape.
+
+    Validates stored ``post_url`` via ``detect()`` — bare @handles, profile
+    URLs, numeric IG media PKs, and CDN links are rejected.
+    """
+    candidates: list[str] = []
+    permalink = permalink_from_post(post)
+    if permalink:
+        candidates.append(permalink)
+    raw = post.get("post_url")
+    if isinstance(raw, str) and raw.strip() and not raw.strip().startswith("studio://"):
+        candidates.append(raw.strip())
+    synthesized = _synthesize_post_url(post)
+    if synthesized:
+        candidates.append(synthesized)
+    seen: set[str] = set()
+    for c in candidates:
+        if c in seen:
+            continue
+        seen.add(c)
+        url = _parse_post_scrape_url(c)
+        if url:
+            return url
     return None
 
 
@@ -1250,7 +1387,31 @@ _VIDEO_PREP_LOCK = threading.Lock()
 # Status values returned to the frontend. Anything in _IN_PROGRESS_STATES
 # means the frontend should keep polling.
 _IN_PROGRESS_STATES = {"queued", "scraping", "downloading"}
-_PREP_STALE_SEC = float(os.getenv("ANALYTICS_PREP_STALE_SEC", "360"))
+_PREP_STALE_SEC = float(os.getenv("ANALYTICS_PREP_STALE_SEC", "90"))
+_PREP_STUCK_SEC = float(os.getenv("ANALYTICS_PREP_STUCK_SEC", "45"))
+
+
+def _prep_task_is_stale(existing: dict, *, force: bool = False) -> bool:
+    """True when an in-flight prep task should be discarded and restarted."""
+    if force:
+        return True
+    if existing.get("status") not in _IN_PROGRESS_STATES:
+        return False
+    now = time.time()
+    updated_at = existing.get("updated_at") or 0
+    started_at = existing.get("started_at") or updated_at
+    age = now - updated_at
+    started_age = now - started_at
+    if age >= _PREP_STALE_SEC:
+        return True
+    progress = existing.get("progress_pct") or 0
+    if (
+        existing.get("status") == "queued"
+        and progress <= 5
+        and (age >= _PREP_STUCK_SEC or started_age >= _PREP_STUCK_SEC)
+    ):
+        return True
+    return False
 
 
 def _set_prep_state(
@@ -1261,11 +1422,13 @@ def _set_prep_state(
     error_message: Optional[str] = None,
 ) -> None:
     with _VIDEO_PREP_LOCK:
+        prev = _VIDEO_PREP_TASKS.get(post_id, {})
         _VIDEO_PREP_TASKS[post_id] = {
             "status": status,
             "progress_pct": progress_pct,
             "error_message": error_message,
             "updated_at": time.time(),
+            "started_at": prev.get("started_at") or time.time(),
         }
 
 
@@ -1275,7 +1438,37 @@ def get_video_prep_status(post_id: str) -> dict:
         return dict(_VIDEO_PREP_TASKS.get(post_id, {}))
 
 
-def start_video_prep(user_id: str, post: dict) -> dict:
+def video_prep_snapshot(user_id: str, post: dict) -> dict:
+    """Read-only prep status for GET polling (does not start jobs)."""
+    post_id = str(post.get("id") or "")
+    if post.get("storage_video_url"):
+        return {
+            "status": "ready",
+            "progress_pct": 100,
+            "error_message": None,
+        }
+    state = get_video_prep_status(post_id)
+    if state:
+        return {
+            "status": state["status"],
+            "progress_pct": state.get("progress_pct", 0),
+            "error_message": state.get("error_message"),
+        }
+    fresh = analytics_db.get_post(user_id, post_id) if post_id else None
+    if fresh and fresh.get("storage_video_url"):
+        return {
+            "status": "ready",
+            "progress_pct": 100,
+            "error_message": None,
+        }
+    return {
+        "status": "idle",
+        "progress_pct": 0,
+        "error_message": None,
+    }
+
+
+def start_video_prep(user_id: str, post: dict, *, force: bool = False) -> dict:
     """Kick off (or return the existing) prep job for `post`.
 
     Re-entrant + idempotent: concurrent callers see the same task. Returns the
@@ -1292,42 +1485,96 @@ def start_video_prep(user_id: str, post: dict) -> dict:
         _set_prep_state(post_id, "ready", progress_pct=100)
         return get_video_prep_status(post_id)
 
+    if not _post_is_video(post):
+        skipped = {
+            "status": "skipped",
+            "progress_pct": 0,
+            "error_message": "AI hook analysis is available for video posts only.",
+        }
+        with _VIDEO_PREP_LOCK:
+            _VIDEO_PREP_TASKS[post_id] = {**skipped, "updated_at": time.time()}
+        return skipped
+
     with _VIDEO_PREP_LOCK:
         existing = _VIDEO_PREP_TASKS.get(post_id)
         if existing and existing["status"] in _IN_PROGRESS_STATES:
-            updated_at = existing.get("updated_at") or 0
-            if time.time() - updated_at < _PREP_STALE_SEC:
+            if not _prep_task_is_stale(existing, force=force):
                 return dict(existing)
-            # Stale in-progress task — prior thread likely died; restart.
+            logger.warning(
+                "[analytics] restarting stale video prep post=%s status=%s age=%.0fs force=%s",
+                post_id[:8],
+                existing.get("status"),
+                time.time() - (existing.get("updated_at") or 0),
+                force,
+            )
+            _VIDEO_PREP_TASKS.pop(post_id, None)
+        elif force and existing:
+            logger.info(
+                "[analytics] force-restarting video prep post=%s prior_status=%s",
+                post_id[:8],
+                existing.get("status"),
+            )
             _VIDEO_PREP_TASKS.pop(post_id, None)
         # Seed the state synchronously so the very first poll already sees
         # "queued" rather than an empty object.
+        now = time.time()
         _VIDEO_PREP_TASKS[post_id] = {
             "status": "queued",
             "progress_pct": 5,
             "error_message": None,
-            "updated_at": time.time(),
+            "updated_at": now,
+            "started_at": now,
         }
 
     def _runner() -> None:
         try:
+            _set_prep_state(post_id, "scraping", progress_pct=10)
             fresh = analytics_db.get_post(user_id, post_id) or post
             if fresh.get("storage_video_url"):
                 _set_prep_state(post_id, "ready", progress_pct=100)
                 return
 
+            # Studio-published videos: use video_jobs.final_video_url — skip BrightData.
+            if (fresh.get("source") or "") == "internal" and fresh.get("video_job_id"):
+                from . import studio_service
+                internal_url = studio_service.resolve_internal_video_url(user_id, fresh)
+                if internal_url:
+                    try:
+                        analytics_db.set_post_storage_video_url(post_id, internal_url)
+                        fresh["storage_video_url"] = internal_url
+                    except Exception:
+                        pass
+                    _set_prep_state(post_id, "ready", progress_pct=100)
+                    return
+
             video_url = _first_media_video_url(fresh)
+            scrape_url = _resolve_post_url(fresh)
+            # Never overwrite studio:// keys — external rows only.
+            if (
+                scrape_url
+                and (fresh.get("source") or "") != "internal"
+                and _parse_post_scrape_url((fresh.get("post_url") or "").strip()) != scrape_url
+            ):
+                try:
+                    analytics_db.set_post_url(post_id, scrape_url)
+                    fresh["post_url"] = scrape_url
+                except Exception:
+                    logger.debug(
+                        "[analytics] failed to patch post_url post=%s",
+                        post_id[:8],
+                        exc_info=True,
+                    )
 
             # If the row was created by an account-scrape it usually only has
             # the thumbnail — escalate to a per-post BrightData scrape so we
             # get the real video URL. Cheap (1 credit) and targeted.
-            if not video_url and fresh.get("post_url"):
+            if not video_url and scrape_url:
                 _set_prep_state(post_id, "scraping", progress_pct=20)
                 try:
                     loop = asyncio.new_event_loop()
                     try:
                         result = loop.run_until_complete(scrape(
-                            input_value=fresh["post_url"],
+                            input_value=scrape_url,
                             user_id=user_id,
                             kind_override="post",
                             platform_override=fresh.get("platform"),
@@ -1376,8 +1623,10 @@ def start_video_prep(user_id: str, post: dict) -> dict:
                             video_url = _first_media_video_url(fresh)
 
             if not video_url:
-                _set_prep_state(post_id, "failed",
-                                error_message="No downloadable video URL could be obtained for this post.")
+                detail = "No downloadable video URL could be obtained for this post."
+                if not scrape_url:
+                    detail += " Missing post URL — re-scrape the account or add the post by link."
+                _set_prep_state(post_id, "failed", error_message=detail)
                 return
 
             _set_prep_state(post_id, "downloading", progress_pct=55)
@@ -1400,6 +1649,7 @@ def start_video_prep(user_id: str, post: dict) -> dict:
                 _set_prep_state(post_id, "failed",
                                 error_message="Video download or upload to storage failed.")
         except Exception as e:
+            logger.warning("[analytics] video prep failed post=%s: %s", post_id[:8], e)
             _set_prep_state(post_id, "failed", error_message=str(e)[:200])
 
     threading.Thread(

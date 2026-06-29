@@ -356,16 +356,40 @@ export interface AnalyzeVideoResponse {
 }
 
 /**
- * Lazy-mirror status returned by `POST /api/analytics/posts/{id}/prepare-video`.
+ * Lazy-mirror status returned by prepare-video endpoints.
+ * POST kicks off (or force-restarts) prep; GET …/status is read-only poll.
  * Anything except `ready` / `failed` is in-progress and the modal should poll.
  */
-export type VideoPrepStatus = 'ready' | 'queued' | 'scraping' | 'downloading' | 'failed';
+export type VideoPrepStatus = 'ready' | 'idle' | 'queued' | 'scraping' | 'downloading' | 'failed' | 'skipped';
 
 export interface VideoPrepResponse {
     status: VideoPrepStatus;
     progress_pct: number;
     storage_video_url?: string | null;
     error_message?: string | null;
+}
+
+/** True when a post can receive video prep + AI hook breakdown. */
+export function isVideoAnalyticsPost(post: Pick<
+    AnalyticsPost,
+    'media_type' | 'video_job_id' | 'storage_video_url' | 'media_urls'
+> | null | undefined): boolean {
+    if (!post) return false;
+    if (post.storage_video_url) return true;
+    if (post.video_job_id) return true;
+    const mt = (post.media_type || '').toLowerCase();
+    if (mt === 'video' || mt === 'reel' || mt === 'reels' || mt === 'clip' || mt === 'short') {
+        return true;
+    }
+    const media = post.media_urls;
+    if (Array.isArray(media)) {
+        for (const entry of media) {
+            if (entry && typeof entry === 'object' && 'type' in entry && (entry as { type?: string }).type === 'video') {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 /* ── Hooks ────────────────────────────────────────────────────────────── */
@@ -1101,20 +1125,34 @@ export interface AccountStrategyReportResponse {
 /** Latest AI "Do More / Do Less" strategy report for the account detail modal.
  *  A null `report` means it hasn't been generated yet (produced async after a
  *  refresh) — callers should treat that as a pending state. */
-export function useAccountStrategyReport(accountId: string | null, refreshKey = 0) {
+export function useAccountStrategyReport(
+    accountId: string | null,
+    refreshKey = 0,
+    lang: 'en' | 'es' = 'en',
+) {
     const [data, setData] = useState<AccountStrategyReportResponse | null>(null);
     const [loading, setLoading] = useState(false);
+    const skipSyncRef = useRef(true);
+
+    useEffect(() => {
+        skipSyncRef.current = true;
+    }, [accountId]);
 
     useEffect(() => {
         if (!accountId) {
             setData(null);
             return;
         }
+        const syncLocale = !skipSyncRef.current;
+        skipSyncRef.current = false;
         let cancelled = false;
         setLoading(true);
         analyticsFetch<AccountStrategyReportResponse>(
             `/api/analytics/tracked-accounts/${accountId}/strategy-report`,
-            { skipProjectScope: true },
+            {
+                skipProjectScope: true,
+                headers: syncLocale ? { 'X-Ui-Language-Sync': '1' } : undefined,
+            },
         )
             .then((res) => {
                 if (!cancelled) setData(res);
@@ -1128,7 +1166,7 @@ export function useAccountStrategyReport(accountId: string | null, refreshKey = 
                 if (!cancelled) setLoading(false);
             });
         return () => { cancelled = true; };
-    }, [accountId, refreshKey]);
+    }, [accountId, refreshKey, lang]);
 
     return { data, loading };
 }

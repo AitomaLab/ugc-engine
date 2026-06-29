@@ -34,17 +34,26 @@ def run_breakdown_in_background(
     user_id: str,
     video_url: str,
     metrics: Optional[dict] = None,
+    locale: str = "en",
 ) -> None:
     """Spawn a daemon thread that runs the two-pass vision pipeline and
     persists the result. Idempotent at the DB layer — re-running on the same
     breakdown_id overwrites the row.
     """
+    from . import locale_content
+
+    output_locale = locale_content.normalize_locale(locale)
 
     def _runner():
         try:
             analytics_db.update_breakdown(breakdown_id, {"status": "running"})
-            result = vision_service.analyze_video(video_url=video_url, metrics=metrics or {})
+            result = vision_service.analyze_video(
+                video_url=video_url,
+                metrics=metrics or {},
+                locale=output_locale,
+            )
             updates = result.as_db_updates()
+            updates["output_locale"] = output_locale
             if result.error_message and not result.summary:
                 updates.update({"status": "failed", "completed_at": _iso_now()})
             else:

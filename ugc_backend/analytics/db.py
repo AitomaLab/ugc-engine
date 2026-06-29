@@ -9,11 +9,19 @@ the second line of defense.
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
 
 from ugc_db.db_manager import get_supabase
+
+logger = logging.getLogger(__name__)
+
+_LOCALE_BREAKDOWN_COLUMNS = frozenset({"output_locale", "locale_variants"})
+_OPTIONAL_BREAKDOWN_COLUMNS = _LOCALE_BREAKDOWN_COLUMNS | frozenset({"updated_at"})
+
+BREAKDOWN_STALE_SEC = 480  # 8 minutes — orphaned daemon threads / hung Gemini calls
 
 _VIDEO_PREVIEW_RE = re.compile(r"\.(mp4|webm|mov|avi|mkv|m4v)(\?.*)?$", re.I)
 
@@ -469,6 +477,30 @@ def set_post_thumbnail_url(post_id: str, thumbnail_url: str) -> None:
     ).eq("id", post_id).execute()
 
 
+def set_post_url(post_id: str, post_url: str) -> None:
+    """Patch a canonical platform permalink onto a single analytics_posts row."""
+    if not post_id or not post_url:
+        return
+    sb = get_supabase()
+    existing = (
+        sb.table("analytics_posts")
+        .select("source,post_url")
+        .eq("id", post_id)
+        .limit(1)
+        .execute()
+    )
+    row = (existing.data or [None])[0]
+    if row:
+        if (row.get("source") or "") == "internal":
+            return
+        current = (row.get("post_url") or "").strip()
+        if current.startswith("studio://"):
+            return
+    sb.table("analytics_posts").update(
+        {"post_url": post_url[:8000]}
+    ).eq("id", post_id).execute()
+
+
 def set_post_duration(post_id: str, duration_seconds: float) -> None:
     """Persist a derived video duration onto a single analytics_posts row.
     Called from the modal once the `<video>` tag fires `loadedmetadata` —
@@ -557,6 +589,53 @@ def get_social_post(user_id: str, social_post_id: str) -> Optional[dict]:
         .execute()
     )
     return (res.data or [None])[0]
+
+
+def get_analytics_post_by_social_post_id(
+    user_id: str,
+    social_post_id: str,
+) -> Optional[dict]:
+    sb = get_supabase()
+    res = (
+        sb.table("analytics_posts")
+        .select("*")
+        .eq("user_id", user_id)
+        .eq("social_post_id", social_post_id)
+        .limit(1)
+        .execute()
+    )
+    return (res.data or [None])[0]
+
+
+def update_social_post(user_id: str, social_post_id: str, updates: dict) -> None:
+    if not social_post_id or not updates:
+        return
+    sb = get_supabase()
+    sb.table("social_posts").update(updates).eq("user_id", user_id).eq(
+        "id", social_post_id,
+    ).execute()
+
+
+def merge_post_raw_payload(post_id: str, merge: dict) -> None:
+    """Shallow-merge keys into analytics_posts.raw_payload (e.g. Ayrshare permalink)."""
+    if not post_id or not merge:
+        return
+    sb = get_supabase()
+    res = (
+        sb.table("analytics_posts")
+        .select("raw_payload")
+        .eq("id", post_id)
+        .limit(1)
+        .execute()
+    )
+    row = (res.data or [None])[0]
+    if not row:
+        return
+    existing = row.get("raw_payload")
+    if not isinstance(existing, dict):
+        existing = {}
+    merged = {**existing, **merge}
+    sb.table("analytics_posts").update({"raw_payload": merged}).eq("id", post_id).execute()
 
 
 def patch_post_metrics(post_id: str, updates: dict) -> None:
@@ -1127,7 +1206,11 @@ def update_tracked_account_config(user_id: str, account_id: str, updates: dict) 
 
 
 def save_account_strategy_report(
-    user_id: str, account_id: str, report_markdown: str,
+    user_id: str,
+    account_id: str,
+    report_markdown: str,
+    *,
+    locale: str = "en",
 ) -> None:
     """Persist the AI strategy report markdown onto the tracked-account row.
 
@@ -1137,12 +1220,17 @@ def save_account_strategy_report(
     (migration 041).
     """
     try:
+        from . import locale_content
+
+        loc = locale_content.normalize_locale(locale)
         sb = get_supabase()
         (
             sb.table("analytics_tracked_accounts")
             .update({
                 "ai_strategy_report": report_markdown,
                 "ai_strategy_generated_at": _now(),
+                "ai_strategy_report_locale": loc,
+                "ai_strategy_report_i18n": {},
             })
             .eq("user_id", user_id)
             .eq("id", account_id)
@@ -1163,7 +1251,10 @@ def get_account_strategy_report(user_id: str, account_id: str) -> dict:
         sb = get_supabase()
         res = (
             sb.table("analytics_tracked_accounts")
-            .select("ai_strategy_report,ai_strategy_generated_at")
+            .select(
+                "ai_strategy_report,ai_strategy_generated_at,"
+                "ai_strategy_report_locale,ai_strategy_report_i18n",
+            )
             .eq("user_id", user_id)
             .eq("id", account_id)
             .limit(1)
@@ -1173,9 +1264,16 @@ def get_account_strategy_report(user_id: str, account_id: str) -> dict:
         return {
             "report": row.get("ai_strategy_report"),
             "generated_at": row.get("ai_strategy_generated_at"),
+            "report_locale": row.get("ai_strategy_report_locale") or "en",
+            "report_i18n": row.get("ai_strategy_report_i18n") or {},
         }
     except Exception:
-        return {"report": None, "generated_at": None}
+        return {
+            "report": None,
+            "generated_at": None,
+            "report_locale": "en",
+            "report_i18n": {},
+        }
 
 
 def delete_tracked_account(user_id: str, account_id: str) -> bool:
@@ -1386,6 +1484,19 @@ def get_breakdown_by_target(
     return (res.data or [None])[0]
 
 
+def get_breakdown_for_post(user_id: str, post: dict) -> Optional[dict]:
+    """Resolve a breakdown row by analytics post id, then video_job_id fallback."""
+    post_id = post.get("id")
+    if post_id:
+        row = get_breakdown_by_target(user_id, analytics_post_id=str(post_id))
+        if row:
+            return row
+    video_job_id = post.get("video_job_id")
+    if video_job_id:
+        return get_breakdown_by_target(user_id, video_job_id=str(video_job_id))
+    return None
+
+
 def get_breakdown(user_id: str, breakdown_id: str) -> Optional[dict]:
     sb = get_supabase()
     res = (
@@ -1419,24 +1530,131 @@ def create_breakdown(
     return res.data[0]
 
 
-def update_breakdown(breakdown_id: str, updates: dict) -> None:
-    sb = get_supabase()
-    sb.table("analytics_video_breakdowns").update(updates).eq("id", breakdown_id).execute()
+def _is_missing_optional_column_error(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return (
+        "pgrst204" in text
+        or "could not find" in text and "column" in text
+    ) and any(col in text for col in _OPTIONAL_BREAKDOWN_COLUMNS)
 
 
-def list_breakdown_statuses_for_posts(user_id: str, post_ids: list[str]) -> dict[str, str]:
-    """Return {analytics_post_id: status} for the given post ids."""
-    if not post_ids:
-        return {}
-    sb = get_supabase()
-    res = (
-        sb.table("analytics_video_breakdowns")
-        .select("analytics_post_id,status")
-        .eq("user_id", user_id)
-        .in_("analytics_post_id", post_ids)
-        .execute()
+def _parse_breakdown_timestamp(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        normalized = value.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(normalized)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def breakdown_is_stale(row: dict, *, max_age_sec: int = BREAKDOWN_STALE_SEC) -> bool:
+    """True when a pending/running breakdown exceeded max_age without completing."""
+    status = row.get("status")
+    if status not in ("pending", "running"):
+        return False
+    ts = row.get("updated_at") or row.get("created_at")
+    dt = _parse_breakdown_timestamp(ts)
+    if not dt:
+        return False
+    age = datetime.now(timezone.utc) - dt
+    return age.total_seconds() > max_age_sec
+
+
+def fail_stale_breakdown_if_needed(breakdown_id: str, row: dict) -> Optional[dict]:
+    """Mark orphaned pending/running rows failed so the UI can retry."""
+    if not breakdown_is_stale(row):
+        return None
+    stale_at = _parse_breakdown_timestamp(row.get("updated_at") or row.get("created_at"))
+    age_sec = (datetime.now(timezone.utc) - stale_at).total_seconds() if stale_at else 0
+    logger.warning(
+        "[analytics] failing stale breakdown id=%s status=%s age_sec=%.0f",
+        breakdown_id,
+        row.get("status"),
+        age_sec,
     )
-    return {row["analytics_post_id"]: row["status"] for row in (res.data or []) if row.get("analytics_post_id")}
+    update_breakdown(
+        breakdown_id,
+        {
+            "status": "failed",
+            "error_message": "Analysis interrupted — please retry.",
+            "completed_at": _now(),
+        },
+    )
+    user_id = str(row.get("user_id") or "")
+    refreshed = get_breakdown(user_id, breakdown_id) if user_id else None
+    return refreshed or {**row, "status": "failed", "error_message": "Analysis interrupted — please retry."}
+
+
+def update_breakdown(breakdown_id: str, updates: dict) -> None:
+    """Update a breakdown row. Strips optional columns and retries once if migrations
+    063/064 have not been applied yet — analysis must keep working without them."""
+    sb = get_supabase()
+    payload = dict(updates)
+    payload["updated_at"] = _now()
+    try:
+        sb.table("analytics_video_breakdowns").update(payload).eq("id", breakdown_id).execute()
+    except Exception as exc:
+        if not _is_missing_optional_column_error(exc):
+            raise
+        stripped = {k: v for k, v in payload.items() if k not in _OPTIONAL_BREAKDOWN_COLUMNS}
+        if stripped == payload:
+            raise
+        logger.warning(
+            "[analytics] optional breakdown columns missing — "
+            "retrying without output_locale/locale_variants/updated_at: %s",
+            exc,
+        )
+        sb.table("analytics_video_breakdowns").update(stripped).eq("id", breakdown_id).execute()
+
+
+def list_breakdown_statuses_for_posts(user_id: str, posts: list[dict]) -> dict[str, str]:
+    """Return {analytics_post_id: status} for each post in the list."""
+    if not posts:
+        return {}
+    post_ids = [str(p["id"]) for p in posts if p.get("id")]
+    video_job_ids = [str(p["video_job_id"]) for p in posts if p.get("video_job_id")]
+    sb = get_supabase()
+    out: dict[str, str] = {}
+
+    if post_ids:
+        res = (
+            sb.table("analytics_video_breakdowns")
+            .select("analytics_post_id,status")
+            .eq("user_id", user_id)
+            .in_("analytics_post_id", post_ids)
+            .execute()
+        )
+        for row in res.data or []:
+            pid = row.get("analytics_post_id")
+            if pid:
+                out[str(pid)] = row["status"]
+
+    if video_job_ids:
+        res = (
+            sb.table("analytics_video_breakdowns")
+            .select("video_job_id,status")
+            .eq("user_id", user_id)
+            .in_("video_job_id", video_job_ids)
+            .execute()
+        )
+        job_status = {
+            str(row["video_job_id"]): row["status"]
+            for row in (res.data or [])
+            if row.get("video_job_id")
+        }
+        for post in posts:
+            pid = str(post.get("id") or "")
+            if pid and pid in out:
+                continue
+            jid = post.get("video_job_id")
+            if jid and str(jid) in job_status:
+                out[pid] = job_status[str(jid)]
+
+    return out
 
 
 # ── social_posts back-link helpers ──────────────────────────────────────────

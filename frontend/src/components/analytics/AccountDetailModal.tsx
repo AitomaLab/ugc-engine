@@ -125,7 +125,7 @@ function RefreshSpinner() {
 }
 
 export default function AccountDetailModal({ account, onClose, onOpenPost, onRefreshed, avatarUrl }: Props) {
-    const { t } = useTranslation();
+    const { t, lang } = useTranslation();
     const [refreshKey, setRefreshKey] = useState(0);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [lastScrapedAt, setLastScrapedAt] = useState<string | null>(account.last_scraped_at ?? null);
@@ -138,7 +138,7 @@ export default function AccountDetailModal({ account, onClose, onOpenPost, onRef
 
     const { data: trend, loading: trendLoading } = useAccountTrend(account.id, 30, refreshKey);
     const { data: top, loading: topLoading } = useAccountTopPosts(account.id, fetchLimit, refreshKey);
-    const { data: strategy, loading: strategyLoading } = useAccountStrategyReport(account.id, refreshKey);
+    const { data: strategy, loading: strategyLoading } = useAccountStrategyReport(account.id, refreshKey, lang);
 
     useEffect(() => {
         setLastScrapedAt(account.last_scraped_at ?? null);

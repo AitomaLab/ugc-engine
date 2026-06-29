@@ -779,3 +779,17 @@ async def get_post_analytics(
             raise ValueError(friendly or resp.text[:500])
         data = resp.json()
         return data if isinstance(data, dict) else {}
+
+
+async def get_post(profile_key: str, ayrshare_post_id: str) -> dict:
+    """Fetch Ayrshare post status + platform postIds (GET /post/:id)."""
+    async with httpx.AsyncClient(timeout=45) as client:
+        resp = await client.get(
+            f"{AYRSHARE_BASE}/post/{ayrshare_post_id}",
+            headers=_headers(profile_key),
+        )
+        if resp.status_code >= 400:
+            friendly = _friendly_ayrshare_post_error(resp)
+            raise ValueError(friendly or resp.text[:500])
+        data = resp.json()
+        return data if isinstance(data, dict) else {}

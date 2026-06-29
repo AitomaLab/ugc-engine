@@ -45,6 +45,7 @@ import os
 import re
 import tempfile
 import time
+import concurrent.futures
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -162,6 +163,7 @@ class VisionResult:
 
 _MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 _MAX_VIDEO_BYTES = int(os.getenv("ANALYTICS_MAX_VIDEO_BYTES", str(150 * 1024 * 1024)))
+_GEMINI_CALL_TIMEOUT_SEC = int(os.getenv("ANALYTICS_GEMINI_TIMEOUT_SEC", "120"))
 
 
 def _detect_video_provider() -> str:
@@ -264,6 +266,16 @@ def _coerce_json(text: str) -> Optional[dict]:
 
 # ── Provider implementations ───────────────────────────────────────────────
 
+def _call_with_timeout(fn, *, timeout_sec: int, label: str):
+    """Run a blocking Gemini SDK call with a hard timeout."""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        fut = pool.submit(fn)
+        try:
+            return fut.result(timeout=timeout_sec)
+        except concurrent.futures.TimeoutError as exc:
+            raise RuntimeError(f"Gemini {label} timed out after {timeout_sec}s") from exc
+
+
 def _call_gemini_video(prompt: str, video_path: Path, *, model: str) -> str:
     """Direct google-genai call — mirrors the claude-vision skill verbatim.
 
@@ -315,11 +327,18 @@ def _call_gemini_video(prompt: str, video_path: Path, *, model: str) -> str:
         else:
             raise RuntimeError("Gemini Files API processing timed out after 300s")
 
-    resp = client.models.generate_content(
-        model=model,
-        contents=types.Content(parts=[part, types.Part(text=prompt)]),
+    def _generate() -> str:
+        resp = client.models.generate_content(
+            model=model,
+            contents=types.Content(parts=[part, types.Part(text=prompt)]),
+        )
+        return resp.text or ""
+
+    return _call_with_timeout(
+        _generate,
+        timeout_sec=_GEMINI_CALL_TIMEOUT_SEC,
+        label="video analysis",
     )
-    return resp.text or ""
 
 
 def _call_gemini_text(prompt: str, *, model: str) -> str:
@@ -327,11 +346,18 @@ def _call_gemini_text(prompt: str, *, model: str) -> str:
     from google.genai import types
 
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-    resp = client.models.generate_content(
-        model=model,
-        contents=types.Content(parts=[types.Part(text=prompt)]),
+    def _generate() -> str:
+        resp = client.models.generate_content(
+            model=model,
+            contents=types.Content(parts=[types.Part(text=prompt)]),
+        )
+        return resp.text or ""
+
+    return _call_with_timeout(
+        _generate,
+        timeout_sec=_GEMINI_CALL_TIMEOUT_SEC,
+        label="text analysis",
     )
-    return resp.text or ""
 
 
 def _call_kie_video(prompt: str, video_path: Path, *, model: str) -> str:
@@ -450,6 +476,8 @@ def _friendly_error(err: BaseException) -> str:
         return "This video is too large to analyze right now."
     if "no llm provider" in low or "gemini_api_key" in low:
         return "AI analysis is not configured on this environment yet."
+    if "google-genai is not installed" in low:
+        return "AI analysis is not configured on this environment yet."
     # Generic fallback — never the raw API payload.
     return "AI analysis is temporarily unavailable. Please try again."
 
@@ -480,8 +508,10 @@ def _call_with_retry(label: str, fn, *args, **kwargs):
     raise last_err
 
 
-def _run_pass1(video_path: Path, *, provider: str, model: str) -> str:
-    prompt = PASS1_SYSTEM
+def _run_pass1(video_path: Path, *, provider: str, model: str, locale: str = "en") -> str:
+    from . import locale_content
+
+    prompt = PASS1_SYSTEM + locale_content.locale_prompt_suffix(locale)
     if provider == "fal":
         return _call_with_retry("pass1.fal", _call_fal_video, prompt, video_path, model=model)
     if provider == "kie":
@@ -490,9 +520,16 @@ def _run_pass1(video_path: Path, *, provider: str, model: str) -> str:
     return _call_with_retry("pass1.gemini", _call_gemini_video, prompt, video_path, model=model)
 
 
-def _run_pass2(structured: dict, metrics: dict, *, provider: str, model: str) -> str:
+def _run_pass2(structured: dict, metrics: dict, *, provider: str, model: str, locale: str = "en") -> str:
+    from . import locale_content
+
     payload = {"breakdown": structured, "metrics": metrics}
-    prompt = PASS2_SYSTEM + "\n\n--- INPUT ---\n" + json.dumps(payload, ensure_ascii=False, indent=2)
+    prompt = (
+        PASS2_SYSTEM
+        + locale_content.locale_prompt_suffix(locale)
+        + "\n\n--- INPUT ---\n"
+        + json.dumps(payload, ensure_ascii=False, indent=2)
+    )
     if provider == "kie":
         return _call_with_retry("pass2.kie", _call_kie_text, prompt, model=model)
     if provider == "fal":
@@ -564,10 +601,13 @@ def _sanitize_takeaways(text: str) -> Optional[list[str]]:
 
 # ── Public entry point ─────────────────────────────────────────────────────
 
-def analyze_video(*, video_url: str, metrics: Optional[dict] = None) -> VisionResult:
+def analyze_video(*, video_url: str, metrics: Optional[dict] = None, locale: str = "en") -> VisionResult:
     """Run the full two-pass analysis. Synchronous — designed to run inside a
     background thread spawned by jobs.run_breakdown_in_background.
     """
+    from . import locale_content
+
+    loc = locale_content.normalize_locale(locale)
     model = _MODEL
 
     # Detect the video-capable provider up front so a missing GEMINI_API_KEY
@@ -589,11 +629,11 @@ def analyze_video(*, video_url: str, metrics: Optional[dict] = None) -> VisionRe
     try:
         tmp_path = _download_video(video_url)
 
-        raw_text = _run_pass1(tmp_path, provider=video_provider, model=model)
+        raw_text = _run_pass1(tmp_path, provider=video_provider, model=model, locale=loc)
         parsed = _coerce_json(raw_text)
         if parsed is None:
             # Retry once with an explicit instruction reminder.
-            raw_text_retry = _run_pass1(tmp_path, provider=video_provider, model=model)
+            raw_text_retry = _run_pass1(tmp_path, provider=video_provider, model=model, locale=loc)
             parsed = _coerce_json(raw_text_retry)
             if parsed is None:
                 return VisionResult(
@@ -609,7 +649,7 @@ def analyze_video(*, video_url: str, metrics: Optional[dict] = None) -> VisionRe
         # Pass 2 — strategic takeaways (text-only, can use any provider)
         takeaways: Optional[list[str]] = None
         try:
-            tk_text = _run_pass2(sanitized, metrics or {}, provider=text_provider, model=model)
+            tk_text = _run_pass2(sanitized, metrics or {}, provider=text_provider, model=model, locale=loc)
             takeaways = _sanitize_takeaways(tk_text)
         except Exception as e:
             # Don't fail the whole breakdown just because takeaways flopped.

@@ -195,8 +195,13 @@ def _post_to_json_row(post: dict) -> dict:
     }
 
 
-def _generate_account_report(user_id: str, account_id: str) -> Optional[str]:
+def _generate_account_report(
+    user_id: str, account_id: str, locale: str = "en",
+) -> Optional[str]:
     """Generate + persist a strategy report scoped to one tracked account."""
+    from . import locale_content
+
+    loc = locale_content.normalize_locale(locale)
     account = analytics_db.get_tracked_account(user_id, account_id)
     if not account:
         logger.info(
@@ -250,10 +255,11 @@ def _generate_account_report(user_id: str, account_id: str) -> Optional[str]:
     )
 
     client = _get_llm_client()
+    system_prompt = _ACCOUNT_SYSTEM_PROMPT + locale_content.markdown_prompt_suffix(loc)
     response = client.chat.completions.create(
         model=_MODEL,
         messages=[
-            {"role": "system", "content": _ACCOUNT_SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
         max_tokens=1500,
@@ -261,7 +267,7 @@ def _generate_account_report(user_id: str, account_id: str) -> Optional[str]:
     )
     report = (response.choices[0].message.content or "").strip()
     if report:
-        analytics_db.save_account_strategy_report(user_id, account_id, report)
+        analytics_db.save_account_strategy_report(user_id, account_id, report, locale=loc)
         logger.info(
             "[ai_analyzer] Account strategy report saved for %s/%s",
             user_id, account_id,
@@ -303,7 +309,9 @@ def _save_strategy_to_memory(user_id: str, report_markdown: str) -> None:
 # ── Core ─────────────────────────────────────────────────────────────────────
 
 def generate_strategy_report(
-    user_id: str, account_id: Optional[str] = None,
+    user_id: str,
+    account_id: Optional[str] = None,
+    locale: Optional[str] = None,
 ) -> Optional[str]:
     """Generate and persist the AI strategy report.
 
@@ -316,9 +324,14 @@ def generate_strategy_report(
     API key, LLM error). Safe to call from a background thread — every
     exception path is caught and logged.
     """
+    from . import locale_content
+
+    loc = locale_content.normalize_locale(
+        locale or locale_content.get_profile_ui_language(user_id),
+    )
     if account_id:
         try:
-            return _generate_account_report(user_id, account_id)
+            return _generate_account_report(user_id, account_id, locale=loc)
         except Exception as exc:
             logger.warning(
                 "[ai_analyzer] Account report failed for %s/%s: %s",
@@ -376,10 +389,11 @@ def generate_strategy_report(
         )
 
         client = _get_llm_client()
+        system_prompt = _SYSTEM_PROMPT + locale_content.markdown_prompt_suffix(loc)
         response = client.chat.completions.create(
             model=_MODEL,
             messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             max_tokens=1500,
@@ -400,7 +414,9 @@ def generate_strategy_report(
 
 
 def enqueue_strategy_report(
-    user_id: str, account_id: Optional[str] = None,
+    user_id: str,
+    account_id: Optional[str] = None,
+    locale: Optional[str] = None,
 ) -> None:
     """Spawn a daemon thread to generate the strategy report off the request path.
 
@@ -412,9 +428,13 @@ def enqueue_strategy_report(
     """
     if not user_id:
         return
+    from . import locale_content
+
+    loc = locale or locale_content.get_profile_ui_language(user_id)
     t = threading.Thread(
         target=generate_strategy_report,
         args=(user_id, account_id),
+        kwargs={"locale": loc},
         daemon=True,
         name=f"ai_analyzer_{user_id[:8]}",
     )

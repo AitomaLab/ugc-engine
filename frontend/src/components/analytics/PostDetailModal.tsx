@@ -1,12 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslation } from '@/lib/i18n';
 import HookBreakdownPanel from './HookBreakdownPanel';
 import {
     analyticsFetch,
     formatCount,
+    isVideoAnalyticsPost,
     resolveDisplayViews,
     resolvePostPosterUrl,
     timeAgo,
@@ -17,6 +18,7 @@ import {
     type VideoPrepResponse,
     type VideoPrepStatus,
 } from './analytics-types';
+import { resolveInstagramEmbedShortcode } from './instagramPermalink';
 import { exportPostAnalysisPdf } from './exportPostAnalysisPdf';
 import { launchCreativeOsProject } from '@/lib/launchCreativeOsProject';
 import type { AgentRef } from '@/lib/creative-os-api';
@@ -33,6 +35,34 @@ const PLATFORM_COLORS: Record<string, string> = {
 interface Props {
     postId: string;
     onClose: () => void;
+    /** Bumped by the analytics page Refresh button — restarts prep polling. */
+    refreshKey?: number;
+}
+
+type PrepPollSession = {
+    cancelled: boolean;
+    elapsed: number;
+    stuckQueuedMs: number;
+    timerId: number | null;
+    postId: string;
+    needsKickoff: boolean;
+};
+
+function formatAnalyzeError(err: unknown, t: (key: string) => string): string {
+    const raw = err instanceof Error ? err.message : String(err);
+    const m = raw.toLowerCase();
+    if (
+        m === 'failed to fetch'
+        || m.includes('networkerror')
+        || m.includes('load failed')
+        || m.includes('network request failed')
+    ) {
+        return t('analytics.detail.error.network');
+    }
+    if (/^api error: 5\d\d/.test(m)) {
+        return t('analytics.detail.error.server');
+    }
+    return raw || t('analytics.detail.error.startFailed');
 }
 
 function MetricCell({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
@@ -59,8 +89,8 @@ function MetricCell({ label, value, accent }: { label: string; value: string; ac
     );
 }
 
-export default function PostDetailModal({ postId, onClose }: Props) {
-    const { t } = useTranslation();
+export default function PostDetailModal({ postId, onClose, refreshKey = 0 }: Props) {
+    const { t, lang } = useTranslation();
     const router = useRouter();
     const [post, setPost] = useState<AnalyticsPost | null>(null);
     const [breakdown, setBreakdown] = useState<AnalyticsBreakdown | null>(null);
@@ -92,7 +122,21 @@ export default function PostDetailModal({ postId, onClose }: Props) {
     const [templateLaunching, setTemplateLaunching] = useState(false);
     const [templateError, setTemplateError] = useState<string | null>(null);
     const persistedDurationRef = useRef<boolean>(false);
-    const autoStudioBreakdownRef = useRef(false);
+    const autoBreakdownRef = useRef(false);
+    const breakdownPollElapsedRef = useRef(0);
+    const lastPollBreakdownIdRef = useRef<string | null>(null);
+    const initialLocaleSyncRef = useRef(false);
+    const prepPollRef = useRef<PrepPollSession | null>(null);
+
+    const stopPrepPolling = useCallback(() => {
+        const session = prepPollRef.current;
+        if (!session) return;
+        session.cancelled = true;
+        if (session.timerId != null) {
+            window.clearTimeout(session.timerId);
+        }
+        prepPollRef.current = null;
+    }, []);
 
     /* Fetch post + existing breakdown */
     const reload = useCallback(async () => {
@@ -116,18 +160,210 @@ export default function PostDetailModal({ postId, onClose }: Props) {
         }
     }, [postId]);
 
+    /** Re-fetch breakdown when UI language changes (sync translate on server). */
+    const reloadBreakdown = useCallback(async (opts?: { syncLocale?: boolean }) => {
+        try {
+            const data = await analyticsFetch<PostDetailResponse>(
+                `/api/analytics/posts/${postId}`,
+                {
+                    skipProjectScope: true,
+                    headers: opts?.syncLocale ? { 'X-Ui-Language-Sync': '1' } : undefined,
+                },
+            );
+            setPost(data.post);
+            setBreakdown(data.breakdown);
+        } catch {
+            /* Keep existing content visible on transient refetch failure. */
+        }
+    }, [postId]);
+
+    const startPrepPolling = useCallback((opts?: { force?: boolean }) => {
+        if (!post || post.storage_video_url) {
+            if (post?.storage_video_url) {
+                setPrep({
+                    status: 'ready',
+                    progress_pct: 100,
+                    storage_video_url: post.storage_video_url,
+                });
+            }
+            return;
+        }
+        if (!isVideoAnalyticsPost(post)) {
+            setPrep({
+                status: 'skipped',
+                progress_pct: 0,
+                error_message: t('analytics.detail.prep.videoOnly'),
+            });
+            return;
+        }
+
+        stopPrepPolling();
+        const session: PrepPollSession = {
+            cancelled: false,
+            elapsed: 0,
+            stuckQueuedMs: 0,
+            timerId: null,
+            postId: post.id,
+            needsKickoff: true,
+        };
+        prepPollRef.current = session;
+
+        const pollInterval = 2000;
+        const maxPrepMs = 5 * 60 * 1000;
+        const stuckThresholdMs = 25_000;
+
+        const schedule = (fn: () => void, delay: number) => {
+            session.timerId = window.setTimeout(fn, delay);
+        };
+
+        const finishReady = (res: VideoPrepResponse) => {
+            setPrep(res);
+            if (res.storage_video_url) {
+                setPost((prev) =>
+                    prev ? { ...prev, storage_video_url: res.storage_video_url ?? undefined } : prev,
+                );
+            } else {
+                reloadBreakdown();
+            }
+        };
+
+        const tick = async (force = false) => {
+            if (session.cancelled || prepPollRef.current !== session) return;
+            if (session.elapsed >= maxPrepMs) {
+                setPrep({
+                    status: 'failed',
+                    progress_pct: 0,
+                    error_message: 'Video prep timed out — try again or refresh the post.',
+                });
+                stopPrepPolling();
+                return;
+            }
+
+            try {
+                let res: VideoPrepResponse;
+                if (session.needsKickoff || force) {
+                    const path = force
+                        ? `/api/analytics/posts/${session.postId}/prepare-video?force=true`
+                        : `/api/analytics/posts/${session.postId}/prepare-video`;
+                    res = await analyticsFetch<VideoPrepResponse>(path, {
+                        method: 'POST',
+                        skipProjectScope: true,
+                    });
+                    session.needsKickoff = false;
+                } else {
+                    res = await analyticsFetch<VideoPrepResponse>(
+                        `/api/analytics/posts/${session.postId}/prepare-video/status`,
+                        { skipProjectScope: true },
+                    );
+                    if (res.status === 'idle') {
+                        session.needsKickoff = true;
+                        schedule(() => tick(false), 0);
+                        return;
+                    }
+                }
+
+                if (session.cancelled || prepPollRef.current !== session) return;
+                setPrep(res);
+
+                if (res.status === 'ready') {
+                    finishReady(res);
+                    stopPrepPolling();
+                    return;
+                }
+                if (res.status === 'failed' || res.status === 'skipped') {
+                    stopPrepPolling();
+                    return;
+                }
+
+                if (
+                    (res.status === 'queued' || res.status === 'scraping')
+                    && (res.progress_pct ?? 0) <= 5
+                ) {
+                    session.stuckQueuedMs += pollInterval;
+                    if (session.stuckQueuedMs >= stuckThresholdMs && !force) {
+                        session.stuckQueuedMs = 0;
+                        schedule(() => tick(true), 0);
+                        return;
+                    }
+                } else {
+                    session.stuckQueuedMs = 0;
+                }
+
+                session.elapsed += pollInterval;
+                schedule(() => tick(false), pollInterval);
+            } catch (e) {
+                if (session.cancelled || prepPollRef.current !== session) return;
+                setPrep({
+                    status: 'failed',
+                    progress_pct: 0,
+                    error_message: e instanceof Error ? e.message : 'Video prep failed',
+                });
+                stopPrepPolling();
+            }
+        };
+
+        tick(opts?.force ?? false);
+    }, [post, stopPrepPolling, reloadBreakdown, t]);
+
+    const retryPrep = useCallback(() => {
+        if (!post) return;
+        startPrepPolling({ force: true });
+    }, [post, startPrepPolling]);
+
+    const retryLocale = useCallback(() => {
+        reloadBreakdown({ syncLocale: true });
+    }, [reloadBreakdown]);
+
+    const prevLangRef = useRef(lang);
+    useEffect(() => {
+        if (prevLangRef.current === lang) return;
+        prevLangRef.current = lang;
+        reloadBreakdown({ syncLocale: true });
+    }, [lang, reloadBreakdown]);
+
+    /* Reset prep + auto-analyze when switching posts. */
+    useEffect(() => {
+        setPrep(null);
+        stopPrepPolling();
+        autoBreakdownRef.current = false;
+    }, [postId, stopPrepPolling]);
+
     useEffect(() => {
         reload();
     }, [reload]);
 
-    /* Lazy video prep — fire on mount once the post is loaded and we don't
-     * already have a Storage URL. Polls every 2s; backoff is unnecessary
-     * because prep typically settles in < 30s (one BrightData scrape + one
-     * Supabase upload).
-     */
+    /* Sync-translate on open when UI language differs from breakdown content. */
     useEffect(() => {
-        if (!post) return;
-        // Already mirrored / internal job with a stable URL — skip entirely.
+        initialLocaleSyncRef.current = false;
+    }, [postId, lang]);
+
+    useEffect(() => {
+        if (loading || initialLocaleSyncRef.current || !breakdown) return;
+        if (breakdown.status !== 'completed') return;
+        const contentLoc = breakdown.content_locale;
+        if (!contentLoc || contentLoc === lang) return;
+        initialLocaleSyncRef.current = true;
+        reloadBreakdown({ syncLocale: true });
+    }, [loading, breakdown, lang, reloadBreakdown]);
+
+    /* Reset auto-analyze guard when video prep completes. */
+    useEffect(() => {
+        if (prep?.status === 'ready') {
+            autoBreakdownRef.current = false;
+        }
+    }, [prep?.status]);
+
+    /* Lazy video prep — POST once to kick off, then poll GET status until ready/failed. */
+    useEffect(() => {
+        if (!post || loading) return;
+        if (!isVideoAnalyticsPost(post)) {
+            setPrep({
+                status: 'skipped',
+                progress_pct: 0,
+                error_message: t('analytics.detail.prep.videoOnly'),
+            });
+            return;
+        }
         if (post.storage_video_url) {
             setPrep({
                 status: 'ready',
@@ -136,79 +372,66 @@ export default function PostDetailModal({ postId, onClose }: Props) {
             });
             return;
         }
-        let cancelled = false;
-        let elapsed = 0;
-        const pollInterval = 2000;
-        const maxPrepMs = 5 * 60 * 1000;
-
-        const poll = async () => {
-            if (cancelled) return;
-            if (elapsed >= maxPrepMs) {
-                setPrep({
-                    status: 'failed',
-                    progress_pct: 0,
-                    error_message: 'Video prep timed out — try again or refresh the post.',
-                });
-                return;
-            }
-            try {
-                const res = await analyticsFetch<VideoPrepResponse>(
-                    `/api/analytics/posts/${post.id}/prepare-video`,
-                    { method: 'POST', skipProjectScope: true },
-                );
-                if (cancelled) return;
-                setPrep(res);
-                if (res.status === 'ready' && res.storage_video_url) {
-                    // Patch the post in-place so directVideoUrl below picks
-                    // up the mirrored URL and the iframe is replaced.
-                    setPost((prev) =>
-                        prev ? { ...prev, storage_video_url: res.storage_video_url ?? undefined } : prev,
-                    );
-                    return;
-                }
-                if (res.status === 'failed') return;
-                elapsed += pollInterval;
-                window.setTimeout(poll, pollInterval);
-            } catch (e) {
-                if (cancelled) return;
-                setPrep({
-                    status: 'failed',
-                    progress_pct: 0,
-                    error_message: e instanceof Error ? e.message : 'Video prep failed',
-                });
-            }
-        };
-
-        // Kick off the first call immediately so the spinner is responsive.
-        poll();
+        startPrepPolling();
         return () => {
-            cancelled = true;
+            stopPrepPolling();
         };
-    }, [post?.id]);  // eslint-disable-line react-hooks/exhaustive-deps
+    }, [post?.id, post?.storage_video_url, post?.media_type, post?.video_job_id, loading, startPrepPolling, stopPrepPolling, t]);
+
+    /* Restart prep when the analytics page Refresh button fires. */
+    const prevRefreshKeyRef = useRef(refreshKey);
+    useEffect(() => {
+        if (prevRefreshKeyRef.current === refreshKey) return;
+        prevRefreshKeyRef.current = refreshKey;
+        if (!refreshKey || !post || loading || post.storage_video_url || !isVideoAnalyticsPost(post)) return;
+        startPrepPolling({ force: true });
+    }, [refreshKey, post, loading, startPrepPolling]);
 
     /* Poll while a breakdown is running */
+    const breakdownId = breakdown?.id;
+    const breakdownStatus = breakdown?.status;
+
     useEffect(() => {
-        if (!breakdown || (breakdown.status !== 'pending' && breakdown.status !== 'running')) return;
+        if (!breakdownId || (breakdownStatus !== 'pending' && breakdownStatus !== 'running')) {
+            return;
+        }
+        if (lastPollBreakdownIdRef.current !== breakdownId) {
+            breakdownPollElapsedRef.current = 0;
+            lastPollBreakdownIdRef.current = breakdownId;
+        }
         let cancelled = false;
         let delay = 3000;
-        let elapsed = 0;
+        let pollErrors = 0;
         const maxTotal = 5 * 60 * 1000;
 
         const tick = async () => {
             if (cancelled) return;
             try {
                 const next = await analyticsFetch<AnalyticsBreakdown>(
-                    `/api/analytics/breakdowns/${breakdown.id}`,
+                    `/api/analytics/breakdowns/${breakdownId}`,
                     { skipProjectScope: true },
                 );
                 if (cancelled) return;
+                pollErrors = 0;
                 setBreakdown(next);
                 if (next.status === 'completed' || next.status === 'failed') return;
-            } catch {
-                // swallow; we'll retry next tick
+            } catch (e) {
+                pollErrors += 1;
+                if (pollErrors >= 5) {
+                    setBreakdown((prev) =>
+                        prev
+                            ? {
+                                ...prev,
+                                status: 'failed',
+                                error_message: formatAnalyzeError(e, t),
+                            }
+                            : prev,
+                    );
+                    return;
+                }
             }
-            elapsed += delay;
-            if (elapsed >= maxTotal) {
+            breakdownPollElapsedRef.current += delay;
+            if (breakdownPollElapsedRef.current >= maxTotal) {
                 setBreakdown((prev) =>
                     prev
                         ? {
@@ -229,7 +452,50 @@ export default function PostDetailModal({ postId, onClose }: Props) {
             cancelled = true;
             window.clearTimeout(timer);
         };
-    }, [breakdown]);
+    }, [breakdownId, breakdownStatus, t]);
+
+    /* Poll while a locale translation is pending (async path on first open). */
+    const localePending = breakdown?.locale_pending === true;
+
+    useEffect(() => {
+        if (!breakdownId || breakdownStatus !== 'completed' || !localePending) {
+            return;
+        }
+        let cancelled = false;
+        let elapsed = 0;
+        const interval = 2500;
+        const maxMs = 60_000;
+
+        const tick = async () => {
+            if (cancelled) return;
+            try {
+                const next = await analyticsFetch<AnalyticsBreakdown>(
+                    `/api/analytics/breakdowns/${breakdownId}`,
+                    {
+                        skipProjectScope: true,
+                        headers: elapsed >= 15_000 ? { 'X-Ui-Language-Sync': '1' } : undefined,
+                    },
+                );
+                if (cancelled) return;
+                setBreakdown(next);
+                if (!next.locale_pending && next.content_locale === lang) return;
+            } catch {
+                /* retry */
+            }
+            elapsed += interval;
+            if (elapsed >= maxMs) {
+                reloadBreakdown({ syncLocale: true });
+                return;
+            }
+            window.setTimeout(tick, interval);
+        };
+
+        const timer = window.setTimeout(tick, interval);
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timer);
+        };
+    }, [breakdownId, breakdownStatus, localePending, lang, reloadBreakdown]);
 
     /* Close on Escape */
     useEffect(() => {
@@ -272,19 +538,13 @@ export default function PostDetailModal({ postId, onClose }: Props) {
         [post],
     );
 
-    useEffect(() => {
-        autoStudioBreakdownRef.current = false;
-    }, [postId]);
-
     const triggerGenerate = useCallback(async () => {
         if (!post) return;
         setGenerating(true);
         try {
-            const body: Record<string, string> = {};
-            if (post.source === 'internal' && post.video_job_id) {
+            const body: Record<string, string> = { analytics_post_id: post.id };
+            if (post.video_job_id) {
                 body.video_job_id = post.video_job_id;
-            } else {
-                body.analytics_post_id = post.id;
             }
             const res = await analyticsFetch<AnalyzeVideoResponse>('/api/analytics/analyze-video', {
                 method: 'POST',
@@ -300,7 +560,7 @@ export default function PostDetailModal({ postId, onClose }: Props) {
             // breakdown so the HookBreakdownPanel renders the error + retry
             // button instead of silently doing nothing. Reuses the existing
             // failed-state UI — no extra branches needed.
-            const message = e instanceof Error ? e.message : 'Failed to start AI breakdown.';
+            const message = formatAnalyzeError(e, t);
             setBreakdown({
                 id: breakdown?.id || 'pending-error',
                 status: 'failed',
@@ -309,26 +569,29 @@ export default function PostDetailModal({ postId, onClose }: Props) {
         } finally {
             setGenerating(false);
         }
-    }, [post, breakdown?.id]);
+    }, [post, breakdown?.id, t]);
 
-    /* Studio-published videos — kick off AI breakdown automatically when
-     * the modal opens and no completed analysis exists yet. */
+    const videoReadyForAnalysis = useMemo(
+        () =>
+            !!post
+            && isVideoAnalyticsPost(post)
+            && (
+                !!post.storage_video_url
+                || (post.source === 'internal' && !!post.video_job_id)
+                || prep?.status === 'ready'
+            ),
+        [post, prep?.status],
+    );
+
+    /* Auto-start AI breakdown when video is ready and no analysis is in flight. */
     useEffect(() => {
-        if (autoStudioBreakdownRef.current || loading || generating) return;
-        if (!post || post.source !== 'internal' || !post.video_job_id) return;
-        if (
-            breakdown?.status === 'completed'
-            || breakdown?.status === 'pending'
-            || breakdown?.status === 'running'
-        ) return;
-        const ready =
-            !!post.storage_video_url
-            || !!post.video_job_id
-            || prep?.status === 'ready';
-        if (!ready) return;
-        autoStudioBreakdownRef.current = true;
+        if (autoBreakdownRef.current || loading || generating || !post) return;
+        const bs = breakdown?.status;
+        if (bs === 'completed' || bs === 'pending' || bs === 'running') return;
+        if (!videoReadyForAnalysis) return;
+        autoBreakdownRef.current = true;
         triggerGenerate();
-    }, [post, breakdown, loading, generating, prep?.status, triggerGenerate]);
+    }, [post, breakdown, loading, generating, prep?.status, videoReadyForAnalysis, triggerGenerate]);
 
     /* Resolve the best video URL.
      *
@@ -365,11 +628,15 @@ export default function PostDetailModal({ postId, onClose }: Props) {
     const embedUrl: string | null = (() => {
         if (!post) return null;
         const platform = (post.platform || '').toLowerCase();
-        const pid = post.external_post_id || '';
         const postUrl = post.post_url || '';
-        if (platform === 'instagram' && pid) {
-            return `https://www.instagram.com/p/${encodeURIComponent(pid)}/embed/`;
+        if (platform === 'instagram') {
+            const shortcode = resolveInstagramEmbedShortcode(post);
+            if (shortcode) {
+                return `https://www.instagram.com/p/${encodeURIComponent(shortcode)}/embed/`;
+            }
+            return null;
         }
+        const pid = post.external_post_id || '';
         if (platform === 'tiktok' && pid) {
             return `https://www.tiktok.com/embed/v2/${encodeURIComponent(pid)}`;
         }
@@ -383,15 +650,6 @@ export default function PostDetailModal({ postId, onClose }: Props) {
     })();
 
     const status: AnalyticsBreakdown['status'] | 'none' = breakdown ? breakdown.status : 'none';
-    // Internal/UGC posts can be analyzed via video_job_id directly (no mirror
-    // required). External posts must wait for the prep pipeline to populate a
-    // downloadable URL — otherwise Gemini will 422.
-    const videoReadyForAnalysis =
-        !!post && (
-            (post.source === 'internal' && !!post.video_job_id) ||
-            !!post.storage_video_url ||
-            prep?.status === 'ready'
-        );
     const canGenerate = !!post && videoReadyForAnalysis;
     const platformAccent = post ? PLATFORM_COLORS[post.platform] || 'var(--text-2)' : 'var(--text-2)';
 
@@ -949,13 +1207,13 @@ export default function PostDetailModal({ postId, onClose }: Props) {
                                                 gap: '8px',
                                             }}
                                         >
-                                            <MetricCell label="Views" value={formatCount(resolveDisplayViews(post))} />
-                                            <MetricCell label="Likes" value={formatCount(post.likes)} />
-                                            <MetricCell label="Comments" value={formatCount(post.comments)} />
-                                            <MetricCell label="Shares" value={sharesValue} />
-                                            <MetricCell label="Engagement" value={formatCount(post.total_engagement)} accent />
+                                            <MetricCell label={t('analytics.detail.export.views')} value={formatCount(resolveDisplayViews(post))} />
+                                            <MetricCell label={t('analytics.detail.export.likes')} value={formatCount(post.likes)} />
+                                            <MetricCell label={t('analytics.detail.export.comments')} value={formatCount(post.comments)} />
+                                            <MetricCell label={t('analytics.detail.export.shares')} value={sharesValue} />
+                                            <MetricCell label={t('analytics.detail.export.engagement')} value={formatCount(post.total_engagement)} accent />
                                             {!isStaticPost && (
-                                                <MetricCell label="Duration" value={durationValue} />
+                                                <MetricCell label={t('analytics.detail.export.duration')} value={durationValue} />
                                             )}
                                         </div>
                                     </div>
@@ -1002,6 +1260,10 @@ export default function PostDetailModal({ postId, onClose }: Props) {
                                     prepStatus={prep?.status}
                                     prepProgressPct={prep?.progress_pct}
                                     prepError={prep?.error_message ?? undefined}
+                                    videoOnly={prep?.status === 'skipped' || !isVideoAnalyticsPost(post)}
+                                    targetLang={lang}
+                                    onRetryPrep={retryPrep}
+                                    onRetryLocale={retryLocale}
                                 />
                             </div>
                         </>

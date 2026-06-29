@@ -190,7 +190,11 @@ export default function AnalyticsTab() {
                 cross-component triggers (e.g. a CTA inside the dashboard
                 opening a post detail) drive them deterministically. */}
             {activePostId && (
-                <PostDetailModal postId={activePostId} onClose={closePost} />
+                <PostDetailModal
+                    postId={activePostId}
+                    onClose={closePost}
+                    refreshKey={metricsEpoch}
+                />
             )}
             {activeAccount && (
                 <AccountDetailModal

@@ -8,6 +8,19 @@ import { fetchWithAuth, getValidAccessToken } from '@/lib/auth';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
+/** Shared with i18n.tsx — persisted UI language for API + AI locale. */
+export const UI_LANGUAGE_STORAGE_KEY = 'aitoma_ui_language';
+
+function getUiLanguageHeader(): string {
+    if (typeof window === 'undefined') return 'en';
+    try {
+        const stored = localStorage.getItem(UI_LANGUAGE_STORAGE_KEY);
+        return stored === 'es' ? 'es' : 'en';
+    } catch {
+        return 'en';
+    }
+}
+
 /**
  * Get the backend API base URL.
  */
@@ -69,6 +82,7 @@ export async function apiFetch<T = unknown>(
     // opt out via { skipProjectScope: true } — we send an explicit skip header
     // so the backend doesn't silently fall back to the user's default project.
     if (typeof window !== 'undefined') {
+        headers['X-Ui-Language'] = getUiLanguageHeader();
         if (options?.skipProjectScope) {
             headers['X-Skip-Project-Scope'] = '1';
         } else {

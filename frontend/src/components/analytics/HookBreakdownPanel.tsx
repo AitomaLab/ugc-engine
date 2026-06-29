@@ -23,11 +23,60 @@ function classifyBreakdownError(message?: string | null): 'transient' | 'permane
         m.includes('busy') ||
         m.includes('rate limit') ||
         m.includes('took too long') ||
-        m.includes('try again')
+        m.includes('try again') ||
+        m.includes('interrupted')
     ) {
         return 'transient';
     }
     return 'permanent';
+}
+
+/** Map backend video-prep errors to user-facing i18n strings. */
+function friendlyPrepError(
+    message: string | null | undefined,
+    t: (key: string) => string,
+): string {
+    if (!message) return t('analytics.detail.prep.failed');
+    const m = message.toLowerCase();
+    if (
+        m.includes('parse error')
+        || m.includes('brightdata returned')
+    ) {
+        return t('analytics.detail.prep.brightdataFailed');
+    }
+    if (
+        m.includes('empty trigger payload')
+        || m.includes('no url could be derived')
+        || m.includes('missing post url')
+        || m.includes('could not detect platform')
+    ) {
+        return t('analytics.detail.prep.missingPostUrl');
+    }
+    return message;
+}
+
+/** Map backend `vision_service._friendly_error` strings to i18n keys. */
+function localizeBreakdownErrorBody(
+    message: string | null | undefined,
+    t: (key: string) => string,
+): string {
+    if (!message) return t('analytics.detail.error.permanentBody');
+    const m = message.toLowerCase();
+    if (m.includes('temporarily busy') || m.includes('service is temporarily busy')) {
+        return t('analytics.detail.error.busy');
+    }
+    if (m.includes('rate limit')) return t('analytics.detail.error.rateLimit');
+    if (m.includes('took too long')) return t('analytics.detail.error.timeout');
+    if (m.includes('too large')) return t('analytics.detail.error.tooLarge');
+    if (m.includes('not configured')) return t('analytics.detail.error.notConfigured');
+    if (m.includes('temporarily unavailable')) return t('analytics.detail.error.genericUnavailable');
+    if (m.includes('timed out') || m.includes('ai analysis timed out')) {
+        return t('analytics.detail.error.timeout');
+    }
+    if (m.includes('interrupted')) {
+        return t('analytics.detail.error.interrupted');
+    }
+    return message;
 }
 
 interface Props {
@@ -52,6 +101,10 @@ interface Props {
     prepStatus?: VideoPrepStatus;
     prepProgressPct?: number;
     prepError?: string;
+    videoOnly?: boolean;
+    targetLang?: string;
+    onRetryPrep?: () => void;
+    onRetryLocale?: () => void;
 }
 
 function ProgressLine({ label }: { label: string }) {
@@ -134,13 +187,34 @@ function Section({
 
 export default function HookBreakdownPanel({
     breakdown, status, videoRef, onGenerate, canGenerate, generating,
-    prepStatus, prepProgressPct, prepError,
+    prepStatus, prepProgressPct, prepError, videoOnly,
+    targetLang, onRetryPrep, onRetryLocale,
 }: Props) {
     const { t } = useTranslation();
     const [scenesOpen, setScenesOpen] = useState(false);
     const [audioOpen, setAudioOpen] = useState(false);
     const [visualOpen, setVisualOpen] = useState(false);
     const [momentsOpen, setMomentsOpen] = useState(false);
+    const [localeWaitSec, setLocaleWaitSec] = useState(0);
+
+    const localePending = breakdown?.locale_pending === true;
+    const localeMismatch = !!(
+        breakdown
+        && targetLang
+        && breakdown.content_locale
+        && breakdown.content_locale !== targetLang
+    );
+
+    useEffect(() => {
+        if (!localePending && !localeMismatch) {
+            setLocaleWaitSec(0);
+            return;
+        }
+        const timer = window.setInterval(() => {
+            setLocaleWaitSec((s) => s + 1);
+        }, 1000);
+        return () => window.clearInterval(timer);
+    }, [localePending, localeMismatch, breakdown?.id]);
 
     /**
      * Silent auto-retry for transient failures (Gemini 503 spikes, rate
@@ -161,6 +235,26 @@ export default function HookBreakdownPanel({
     }, [status, breakdown, canGenerate, generating, onGenerate]);
 
     if (status === 'none' || !breakdown) {
+        if (videoOnly || prepStatus === 'skipped') {
+            return (
+                <div
+                    style={{
+                        background: 'var(--blue-light)',
+                        border: '1px dashed var(--border)',
+                        borderRadius: 'var(--radius)',
+                        padding: '20px',
+                        textAlign: 'center',
+                        color: 'var(--text-2)',
+                        fontSize: '13px',
+                        maxWidth: 360,
+                        margin: '0 auto',
+                    }}
+                >
+                    {prepError || t('analytics.detail.prep.videoOnly')}
+                </div>
+            );
+        }
+
         // Prep is in flight — show a progress bar in place of the button so
         // the user understands *why* "Generate AI breakdown" is unavailable.
         const prepInProgress = prepStatus === 'queued' || prepStatus === 'scraping' || prepStatus === 'downloading';
@@ -185,7 +279,7 @@ export default function HookBreakdownPanel({
                     {prepInProgress
                         ? t('analytics.detail.prep.preparing')
                         : prepStatus === 'failed'
-                            ? (prepError || t('analytics.detail.prep.failed'))
+                            ? friendlyPrepError(prepError, t)
                             : t('analytics.detail.aiBreakdown')}
                 </div>
 
@@ -215,6 +309,25 @@ export default function HookBreakdownPanel({
                             {prepStatus === 'downloading' && t('analytics.detail.prep.downloading')}
                             {prepStatus === 'queued'      && t('analytics.detail.prep.queued')}
                         </div>
+                        {onRetryPrep && (
+                            <button
+                                type="button"
+                                onClick={onRetryPrep}
+                                style={{
+                                    marginTop: 4,
+                                    padding: '6px 14px',
+                                    borderRadius: '8px',
+                                    border: '1px solid var(--border)',
+                                    background: 'white',
+                                    color: 'var(--blue)',
+                                    fontSize: '12px',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                }}
+                            >
+                                {t('analytics.detail.prep.retry')}
+                            </button>
+                        )}
                     </div>
                 ) : (
                     <button
@@ -257,9 +370,9 @@ export default function HookBreakdownPanel({
                     gap: '10px',
                 }}
             >
-                <ProgressLine label={status === 'pending' ? 'Uploading…' : 'Analyzing video…'} />
+                <ProgressLine label={status === 'pending' ? t('analytics.detail.progress.uploading') : t('analytics.detail.progress.analyzing')} />
                 <div style={{ fontSize: '12px', color: 'var(--text-3)' }}>
-                    Uploading → Sampling → Analyzing → Generating takeaways
+                    {t('analytics.detail.progress.pipeline')}
                 </div>
             </div>
         );
@@ -275,8 +388,7 @@ export default function HookBreakdownPanel({
             : t('analytics.detail.error.permanentTitle');
         // Prefer the friendly server message; only fall back to generic copy
         // if the row is somehow missing one.
-        const body = breakdown.error_message
-            || t('analytics.detail.error.permanentBody');
+        const body = localizeBreakdownErrorBody(breakdown.error_message, t);
         // When we have an auto-retry queued, surface a subtle "retrying…"
         // hint so the user understands the activity instead of seeing a
         // stale failure card.
@@ -359,8 +471,58 @@ export default function HookBreakdownPanel({
     }
 
     // status === 'completed'
+    const showLocaleBanner = localePending || localeMismatch || !!breakdown.locale_error;
+
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {showLocaleBanner && (
+                <div
+                    style={{
+                        fontSize: '12px',
+                        color: breakdown.locale_error ? '#a35a00' : 'var(--blue)',
+                        padding: '8px 12px',
+                        borderRadius: '8px',
+                        background: breakdown.locale_error
+                            ? 'rgba(255,159,10,0.08)'
+                            : 'rgba(51,122,255,0.08)',
+                        border: breakdown.locale_error
+                            ? '1px solid rgba(255,159,10,0.25)'
+                            : '1px solid rgba(51,122,255,0.20)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '8px',
+                    }}
+                >
+                    <span>
+                        {breakdown.locale_error
+                            ? (breakdown.locale_error.includes('OPENAI')
+                                ? t('analytics.detail.locale.notConfigured')
+                                : t('analytics.detail.locale.failed'))
+                            : localeWaitSec >= 30
+                                ? t('analytics.detail.locale.slow')
+                                : t('analytics.detail.progress.translating')}
+                    </span>
+                    {onRetryLocale && (breakdown.locale_error || localeWaitSec >= 30) && (
+                        <button
+                            type="button"
+                            onClick={onRetryLocale}
+                            style={{
+                                alignSelf: 'flex-start',
+                                padding: '6px 14px',
+                                borderRadius: '8px',
+                                border: '1px solid var(--border)',
+                                background: 'white',
+                                color: 'var(--blue)',
+                                fontSize: '12px',
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                            }}
+                        >
+                            {t('analytics.detail.locale.retry')}
+                        </button>
+                    )}
+                </div>
+            )}
             {/* Summary */}
             {breakdown.summary && (
                 <div
@@ -463,7 +625,7 @@ export default function HookBreakdownPanel({
                         ))
                     ) : (
                         <div style={{ fontSize: '13px', color: 'var(--text-3)' }}>
-                            {breakdown.audio.notes || 'No audio / silent track.'}
+                            {breakdown.audio.notes || t('analytics.detail.noAudio')}
                         </div>
                     )}
                 </Section>

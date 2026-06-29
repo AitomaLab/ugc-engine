@@ -17,7 +17,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from ugc_backend.auth import get_current_user
@@ -26,6 +26,7 @@ from ugc_backend import ayrshare_client
 
 from . import db as analytics_db
 from . import jobs as analytics_jobs
+from . import locale_content as analytics_locale
 from . import scraper_service
 from . import studio_service
 from .models import (
@@ -85,11 +86,10 @@ def _annotate_breakdown_status(user_id: str, posts: list[dict]) -> list[dict]:
     """Join breakdown status + stable media previews onto each post."""
     if not posts:
         return posts
-    statuses = analytics_db.list_breakdown_statuses_for_posts(
-        user_id, [p["id"] for p in posts]
-    )
+    statuses = analytics_db.list_breakdown_statuses_for_posts(user_id, posts)
     for p in posts:
         p["breakdown_status"] = statuses.get(p["id"], "none")
+        p["permalink"] = scraper_service.permalink_from_post(p)
     return analytics_db.enrich_posts_media_preview(user_id, posts)
 
 
@@ -432,15 +432,24 @@ def api_list_posts(
 @router.get("/posts/{post_id}", response_model=PostDetailResponse)
 def api_get_post(
     post_id: str,
+    request: Request,
     user: dict = Depends(get_current_user),
 ):
+    locale = analytics_locale.resolve_request_locale(request, user["id"])
     post = analytics_db.get_post(user["id"], post_id)
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
     annotated = _annotate_breakdown_status(user["id"], [post])[0]
-    breakdown_row = analytics_db.get_breakdown_by_target(
-        user["id"], analytics_post_id=post_id
-    )
+    breakdown_row = analytics_db.get_breakdown_for_post(user["id"], post)
+    if breakdown_row:
+        stale = analytics_db.fail_stale_breakdown_if_needed(breakdown_row["id"], breakdown_row)
+        if stale:
+            breakdown_row = stale
+        breakdown_row = analytics_locale.localize_breakdown(
+            breakdown_row,
+            locale,
+            sync=analytics_locale.request_wants_sync_locale(request),
+        )
     breakdown = BreakdownOut(**breakdown_row) if breakdown_row else None
     return PostDetailResponse(post=AnalyticsPostOut(**annotated), breakdown=breakdown)
 
@@ -534,14 +543,39 @@ def api_set_post_duration(
 
 # ── POST /posts/{id}/prepare-video ─────────────────────────────────────────
 #
-# Lazy-mirror endpoint used by the post detail modal. The frontend opens the
-# modal → POSTs here → polls every ~2s until status="ready" or "failed". Until
-# ready, the AI breakdown button stays disabled (the only useful video URL is
-# the one this endpoint produces).
+# Lazy-mirror endpoint used by the post detail modal. The frontend POSTs here
+# once to kick off (or force-restart) prep, then polls GET …/status every ~2s
+# until status="ready" or "failed".
+
+def _video_prep_response(user_id: str, post_id: str, post: dict, state: dict) -> VideoPrepResponse:
+    fresh = analytics_db.get_post(user_id, post_id) or post
+    return VideoPrepResponse(
+        status=state["status"],
+        progress_pct=state.get("progress_pct", 0),
+        error_message=state.get("error_message"),
+        storage_video_url=fresh.get("storage_video_url"),
+    )
+
+
+@router.get("/posts/{post_id}/prepare-video/status", response_model=VideoPrepResponse)
+def api_prepare_video_status(
+    post_id: str,
+    user: dict = Depends(get_current_user),
+):
+    post = analytics_db.get_post(user["id"], post_id)
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    state = scraper_service.video_prep_snapshot(user["id"], post)
+    return _video_prep_response(user["id"], post_id, post, state)
+
 
 @router.post("/posts/{post_id}/prepare-video", response_model=VideoPrepResponse)
 def api_prepare_video(
     post_id: str,
+    force: bool = Query(
+        default=False,
+        description="Restart a stuck in-memory prep job (orphaned after server reload).",
+    ),
     user: dict = Depends(get_current_user),
 ):
     post = analytics_db.get_post(user["id"], post_id)
@@ -559,15 +593,8 @@ def api_prepare_video(
             except Exception:
                 pass  # Best-effort; the prep pipeline will handle the fallback.
 
-    state = scraper_service.start_video_prep(user["id"], post)
-    # Re-read in case the runner already finished (fast path: row already mirrored).
-    fresh = analytics_db.get_post(user["id"], post_id) or post
-    return VideoPrepResponse(
-        status=state["status"],
-        progress_pct=state.get("progress_pct", 0),
-        error_message=state.get("error_message"),
-        storage_video_url=fresh.get("storage_video_url"),
-    )
+    state = scraper_service.start_video_prep(user["id"], post, force=force)
+    return _video_prep_response(user["id"], post_id, post, state)
 
 
 # ── POST /analyze-video ────────────────────────────────────────────────────
@@ -575,10 +602,13 @@ def api_prepare_video(
 @router.post("/analyze-video", response_model=AnalyzeVideoResponse)
 def api_analyze_video(
     body: AnalyzeVideoRequest,
+    request: Request,
     user: dict = Depends(get_current_user),
 ):
+    locale = analytics_locale.resolve_request_locale(request, user["id"])
     video_url: Optional[str] = None
     metrics: dict = {}
+    post: Optional[dict] = None
 
     if body.analytics_post_id:
         post = analytics_db.get_post(user["id"], body.analytics_post_id)
@@ -619,37 +649,50 @@ def api_analyze_video(
             ),
         )
 
-    existing = analytics_db.get_breakdown_by_target(
-        user["id"],
-        analytics_post_id=body.analytics_post_id,
-        video_job_id=body.video_job_id,
-    )
+    if post:
+        existing = analytics_db.get_breakdown_for_post(user["id"], post)
+    else:
+        existing = analytics_db.get_breakdown_by_target(
+            user["id"], video_job_id=body.video_job_id,
+        )
     if existing and existing["status"] in ("pending", "running"):
-        return AnalyzeVideoResponse(breakdown_id=existing["id"], status=existing["status"])
+        if not analytics_db.breakdown_is_stale(existing):
+            return AnalyzeVideoResponse(breakdown_id=existing["id"], status=existing["status"])
 
     if existing:
         # Re-run — reset row and kick off again.
-        analytics_db.update_breakdown(
-            existing["id"],
-            {
-                "status": "pending",
-                "summary": None,
-                "hook": None,
-                "scenes": None,
-                "audio": None,
-                "visual_details": None,
-                "key_moments": None,
-                "takeaways": None,
-                "raw_markdown": None,
-                "error_message": None,
-                "completed_at": None,
-            },
-        )
+        reset_payload = {
+            "status": "pending",
+            "summary": None,
+            "hook": None,
+            "scenes": None,
+            "audio": None,
+            "visual_details": None,
+            "key_moments": None,
+            "takeaways": None,
+            "raw_markdown": None,
+            "error_message": None,
+            "completed_at": None,
+            "locale_variants": {},
+            "output_locale": locale,
+        }
+        try:
+            analytics_db.update_breakdown(existing["id"], reset_payload)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Could not reset the existing analysis row. "
+                    "If this persists, ensure migration 063_analytics_locale_variants "
+                    "has been applied to Supabase."
+                ),
+            ) from exc
         breakdown = existing
     else:
+        create_post_id = body.analytics_post_id or (str(post["id"]) if post else None)
         breakdown = analytics_db.create_breakdown(
             user["id"],
-            analytics_post_id=body.analytics_post_id,
+            analytics_post_id=create_post_id,
             video_job_id=body.video_job_id,
         )
 
@@ -658,6 +701,7 @@ def api_analyze_video(
         user_id=user["id"],
         video_url=video_url,
         metrics=metrics,
+        locale=locale,
     )
     return AnalyzeVideoResponse(breakdown_id=breakdown["id"], status="pending")
 
@@ -667,11 +711,21 @@ def api_analyze_video(
 @router.get("/breakdowns/{breakdown_id}", response_model=BreakdownOut)
 def api_get_breakdown(
     breakdown_id: str,
+    request: Request,
     user: dict = Depends(get_current_user),
 ):
+    locale = analytics_locale.resolve_request_locale(request, user["id"])
     row = analytics_db.get_breakdown(user["id"], breakdown_id)
     if not row:
         raise HTTPException(status_code=404, detail="Breakdown not found")
+    stale = analytics_db.fail_stale_breakdown_if_needed(breakdown_id, row)
+    if stale:
+        row = stale
+    row = analytics_locale.localize_breakdown(
+        row,
+        locale,
+        sync=analytics_locale.request_wants_sync_locale(request),
+    )
     return BreakdownOut(**row)
 
 
@@ -769,7 +823,7 @@ async def _execute_refresh_all(user_id: str) -> None:
         metrics_refreshed = metric_counts.get("studio", 0) + metric_counts.get("external", 0)
         breakdowns_queued = studio_service.enqueue_all_account_breakdowns(
             user_id,
-            force=True,
+            force=False,
         )
         settings = analytics_db.get_analytics_settings(user_id)
         _refresh_jobs[user_id] = {
@@ -1022,6 +1076,7 @@ def api_delete_tracked_account(
 )
 def api_account_strategy_report(
     account_id: str,
+    request: Request,
     user: dict = Depends(get_current_user),
 ):
     """Latest AI "Do More / Do Less" strategy report for one tracked account.
@@ -1030,13 +1085,23 @@ def api_account_strategy_report(
     produced asynchronously by ``ai_analyzer`` after each account refresh, so
     the UI should treat a null report as "pending".
     """
+    locale = analytics_locale.resolve_request_locale(request, user["id"])
     account = analytics_db.get_tracked_account(user["id"], account_id)
     if not account:
         raise HTTPException(status_code=404, detail="Tracked account not found")
     data = analytics_db.get_account_strategy_report(user["id"], account_id)
+    report = analytics_locale.localize_strategy_report(
+        report=data.get("report"),
+        report_locale=data.get("report_locale"),
+        i18n_cache=data.get("report_i18n"),
+        target_locale=locale,
+        user_id=user["id"],
+        account_id=account_id,
+        sync=analytics_locale.request_wants_sync_locale(request),
+    )
     return AccountStrategyReportResponse(
         account_id=account_id,
-        report=data.get("report"),
+        report=report,
         generated_at=data.get("generated_at"),
     )
 

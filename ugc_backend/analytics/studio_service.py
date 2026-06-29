@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from ugc_backend import ayrshare_client
+from ugc_db.db_manager import get_supabase
 
 from . import ai_analyzer
 from . import db as analytics_db
@@ -172,11 +173,23 @@ def normalize_ayrshare_metrics(platform: str, payload: dict) -> dict:
         out["media_type"] = normalized_media
 
     post_url = block.get("postUrl") or analytics.get("postUrl")
+    permalink: Optional[str] = None
     if isinstance(post_url, str) and post_url.strip():
-        out["post_url"] = post_url.strip()[:8000]
+        permalink = post_url.strip()[:8000]
+        out["post_url"] = permalink
     ext_id = block.get("id") or analytics.get("id")
-    if ext_id:
+    shortcode = _instagram_shortcode(permalink) if permalink else None
+    if shortcode:
+        out["external_post_id"] = shortcode
+    elif ext_id:
         out["external_post_id"] = str(ext_id)[:500]
+    raw_merge: dict = {}
+    if permalink:
+        raw_merge["permalink"] = permalink
+    if ext_id:
+        raw_merge["ayrshare_id"] = str(ext_id)
+    if raw_merge:
+        out["_raw_payload_merge"] = raw_merge
     return out
 
 
@@ -248,6 +261,9 @@ def post_metrics_dict(post: dict) -> dict:
 
 def _social_post_ready_for_metrics(sp: dict) -> bool:
     """True when Ayrshare should have live metrics for a scheduled/posted row."""
+    err = (sp.get("error_message") or "").lower()
+    if "[ayrshare:186]" in err or "[ayrshare:missing]" in err:
+        return False
     status = (sp.get("status") or "").strip().lower()
     if status == "posted":
         return True
@@ -263,6 +279,163 @@ def _social_post_ready_for_metrics(sp: dict) -> bool:
         return when <= datetime.now(timezone.utc)
     except (TypeError, ValueError):
         return False
+
+
+_AYRSHARE_186_LOGGED: set[str] = set()
+
+
+def _is_ayrshare_post_not_found(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "186" in msg or "post id not found" in msg
+
+
+def _is_ayrshare_post_missing(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "221" in msg or "history not found" in msg or "not found" in msg
+
+
+def apply_ayrshare_platform_urls(
+    user_id: str,
+    social_post_id: str,
+    post_ids: list,
+    platform: str,
+) -> None:
+    """Merge permalink + platform IDs from Ayrshare postIds onto analytics row."""
+    post = analytics_db.get_analytics_post_by_social_post_id(user_id, social_post_id)
+    if not post:
+        return
+    plat = (platform or "").strip().lower()
+    raw_merge: dict = {}
+    ext_patch: dict = {}
+    for entry in post_ids or []:
+        if not isinstance(entry, dict):
+            continue
+        if (entry.get("platform") or "").strip().lower() != plat:
+            continue
+        post_url = entry.get("postUrl")
+        if isinstance(post_url, str) and post_url.strip():
+            raw_merge["permalink"] = post_url.strip()[:8000]
+        pid = entry.get("id")
+        if pid:
+            raw_merge["platform_post_id"] = str(pid)
+        shortcode = _instagram_shortcode(
+            post_url if isinstance(post_url, str) else None,
+        )
+        if shortcode:
+            ext_patch["external_post_id"] = shortcode
+        break
+    if raw_merge:
+        analytics_db.merge_post_raw_payload(post["id"], raw_merge)
+    if ext_patch:
+        analytics_db.patch_post_metrics(post["id"], ext_patch)
+
+
+async def reconcile_scheduled_social_posts(
+    user_id: str,
+    profile_key: str,
+) -> int:
+    """Poll Ayrshare for past-due scheduled rows; flip status + store permalinks."""
+    if not profile_key:
+        return 0
+    sb = get_supabase()
+    res = (
+        sb.table("social_posts")
+        .select("*")
+        .eq("user_id", user_id)
+        .eq("status", "scheduled")
+        .execute()
+    )
+    reconciled = 0
+    now = datetime.now(timezone.utc)
+    for sp in res.data or []:
+        sp_id = sp.get("id")
+        ayr_id = sp.get("ayrshare_post_id")
+        if not sp_id or not ayr_id:
+            continue
+        scheduled_at = sp.get("scheduled_at")
+        if not scheduled_at:
+            continue
+        try:
+            when = datetime.fromisoformat(str(scheduled_at).replace("Z", "+00:00"))
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=timezone.utc)
+            if when > now:
+                continue
+        except (TypeError, ValueError):
+            continue
+        platform = (sp.get("platform") or "").strip().lower()
+        try:
+            body = await ayrshare_client.get_post(profile_key, ayr_id)
+        except Exception as exc:
+            if _is_ayrshare_post_missing(exc):
+                analytics_db.update_social_post(
+                    user_id,
+                    sp_id,
+                    {
+                        "status": "failed",
+                        "error_message": "[ayrshare:missing] Post not found in Ayrshare.",
+                        "updated_at": now.isoformat(),
+                    },
+                )
+                reconciled += 1
+            continue
+        ayr_status = (body.get("status") or "").strip().lower()
+        post_ids = body.get("postIds") or []
+        if ayr_status == "success":
+            updates: dict = {
+                "status": "posted",
+                "posted_at": now.isoformat(),
+                "updated_at": now.isoformat(),
+            }
+            analytics_db.update_social_post(user_id, sp_id, updates)
+            apply_ayrshare_platform_urls(user_id, sp_id, post_ids, platform)
+            reconciled += 1
+        elif ayr_status == "error":
+            analytics_db.update_social_post(
+                user_id,
+                sp_id,
+                {
+                    "status": "failed",
+                    "error_message": (
+                        body.get("message")
+                        or "[ayrshare:missing] Ayrshare reported publish error."
+                    ),
+                    "updated_at": now.isoformat(),
+                },
+            )
+            reconciled += 1
+    return reconciled
+
+
+def handle_ayrshare_webhook_post(
+    ayrshare_id: str,
+    payload: dict,
+) -> None:
+    """Enrich analytics rows when Ayrshare reports a successful publish."""
+    sb = get_supabase()
+    res = (
+        sb.table("social_posts")
+        .select("*")
+        .eq("ayrshare_post_id", ayrshare_id)
+        .limit(5)
+        .execute()
+    )
+    for sp in res.data or []:
+        user_id = sp.get("user_id")
+        sp_id = sp.get("id")
+        platform = sp.get("platform") or ""
+        if not user_id or not sp_id:
+            continue
+        post_ids = payload.get("postIds") or []
+        if post_ids:
+            apply_ayrshare_platform_urls(user_id, sp_id, post_ids, platform)
+        elif payload.get("postUrl"):
+            apply_ayrshare_platform_urls(
+                user_id,
+                sp_id,
+                [{"platform": platform, "postUrl": payload.get("postUrl")}],
+                platform,
+            )
 
 
 def _instagram_shortcode(url: Optional[str]) -> Optional[str]:
@@ -292,17 +465,32 @@ def _metrics_patch_from_row(row: dict) -> dict:
     return patch
 
 
+def _internal_has_permalink(post: dict) -> bool:
+    raw = post.get("raw_payload")
+    if isinstance(raw, dict) and raw.get("permalink"):
+        return True
+    stored = post.get("post_url") or ""
+    if isinstance(stored, str) and stored.strip() and not stored.startswith("studio://"):
+        return bool(_instagram_shortcode(stored))
+    return False
+
+
+def _caption_match_key(post: dict) -> str:
+    return (post.get("caption") or "").strip().lower()[:240]
+
+
 def propagate_studio_metrics_to_scraped_posts(
     user_id: str,
     *,
     platform: str,
     username: str,
 ) -> int:
-    """Copy Ayrshare metrics from Studio rows onto matching scraped duplicates.
+    """Copy metrics external←internal and permalinks internal←external.
 
     BrightData account scrapes create ``source=external`` rows with the public
     IG URL, while Schedule creates ``source=internal`` rows keyed by
-    ``studio://``. Users see both in account detail — this keeps views in sync.
+    ``studio://``. Users see both in account detail — this keeps views and
+    permalinks in sync.
     """
     plat = platform.strip().lower()
     nick = username.strip().lower().lstrip("@")
@@ -311,37 +499,66 @@ def propagate_studio_metrics_to_scraped_posts(
     )
     internal_by_code: dict[str, dict] = {}
     internal_by_ext: dict[str, dict] = {}
+    internal_by_caption: dict[str, list[dict]] = {}
     for post in posts:
         if (post.get("source") or "") != "internal":
             continue
         patch = _metrics_patch_from_row(post)
-        if not patch:
-            continue
-        code = _instagram_shortcode(post.get("post_url"))
-        if code:
-            internal_by_code[code] = post
-        ext_id = post.get("external_post_id")
-        if ext_id:
-            internal_by_ext[str(ext_id)] = post
+        if patch:
+            code = _instagram_shortcode(post.get("post_url"))
+            if code:
+                internal_by_code[code] = post
+            ext_id = post.get("external_post_id")
+            if ext_id:
+                internal_by_ext[str(ext_id)] = post
+        cap = _caption_match_key(post)
+        if cap:
+            internal_by_caption.setdefault(cap, []).append(post)
 
     updated = 0
     for post in posts:
         if (post.get("source") or "") != "external":
             continue
-        if (post.get("views") or 0) > 0:
-            continue
-        match: Optional[dict] = None
-        code = _instagram_shortcode(post.get("post_url"))
-        if code and code in internal_by_code:
-            match = internal_by_code[code]
-        elif post.get("external_post_id"):
-            match = internal_by_ext.get(str(post.get("external_post_id")))
-        if not match:
-            continue
-        patch = _metrics_patch_from_row(match)
-        if patch:
-            analytics_db.patch_post_metrics(post["id"], patch)
-            updated += 1
+
+        ext_code = _instagram_shortcode(
+            scraper_service.permalink_from_post(post) or post.get("post_url"),
+        )
+        ext_permalink = scraper_service.permalink_from_post(post)
+
+        # Metrics: Studio → scraped duplicate
+        if (post.get("views") or 0) <= 0:
+            match: Optional[dict] = None
+            if ext_code and ext_code in internal_by_code:
+                match = internal_by_code[ext_code]
+            elif post.get("external_post_id"):
+                match = internal_by_ext.get(str(post.get("external_post_id")))
+            if not match:
+                cap = _caption_match_key(post)
+                candidates = internal_by_caption.get(cap) or []
+                match = candidates[0] if len(candidates) == 1 else None
+            if match:
+                patch = _metrics_patch_from_row(match)
+                if patch:
+                    analytics_db.patch_post_metrics(post["id"], patch)
+                    updated += 1
+
+        # Permalink: scraped duplicate → Studio row
+        if ext_permalink and ext_code:
+            cap = _caption_match_key(post)
+            candidates = internal_by_caption.get(cap) or []
+            for internal in candidates:
+                if _internal_has_permalink(internal):
+                    continue
+                raw_merge = {"permalink": ext_permalink}
+                ext_patch: dict = {}
+                if ext_code:
+                    ext_patch["external_post_id"] = ext_code
+                analytics_db.merge_post_raw_payload(internal["id"], raw_merge)
+                if ext_patch:
+                    analytics_db.patch_post_metrics(internal["id"], ext_patch)
+                updated += 1
+                break
+
     return updated
 
 
@@ -379,22 +596,28 @@ def queue_breakdown_for_post(
     video_job_id = post.get("video_job_id")
     is_studio_job = (post.get("source") or "") == "internal" and video_job_id
 
-    if is_studio_job:
-        existing = analytics_db.get_breakdown_by_target(
-            user_id, video_job_id=video_job_id,
-        )
-    else:
-        existing = analytics_db.get_breakdown_by_target(
-            user_id, analytics_post_id=str(post_id),
-        )
+    existing = analytics_db.get_breakdown_for_post(user_id, post)
 
     if existing and existing["status"] in ("pending", "running"):
-        return False
+        if not analytics_db.breakdown_is_stale(existing):
+            return False
     if existing and existing["status"] == "completed" and not force:
         return False
 
+    from . import locale_content
+
+    locale = locale_content.get_profile_ui_language(user_id)
     video_url = resolve_post_video_url(user_id, post)
     if not video_url:
+        try:
+            from . import scraper_service
+            scraper_service.start_video_prep(user_id, post)
+        except Exception as exc:
+            logger.warning(
+                "[analytics] video prep kickoff failed for post %s: %s",
+                post_id,
+                exc,
+            )
         return False
 
     metrics = post_metrics_dict(post)
@@ -414,12 +637,16 @@ def queue_breakdown_for_post(
                 "raw_markdown": None,
                 "error_message": None,
                 "completed_at": None,
+                "locale_variants": {},
+                "output_locale": locale,
             },
         )
         breakdown = existing
     elif is_studio_job:
         breakdown = analytics_db.create_breakdown(
-            user_id, video_job_id=video_job_id,
+            user_id,
+            analytics_post_id=str(post_id),
+            video_job_id=video_job_id,
         )
     else:
         breakdown = analytics_db.create_breakdown(
@@ -431,6 +658,7 @@ def queue_breakdown_for_post(
         user_id=user_id,
         video_url=video_url,
         metrics=metrics,
+        locale=locale,
     )
     return True
 
@@ -444,6 +672,15 @@ async def refresh_studio_post_metrics(
     username: Optional[str] = None,
 ) -> int:
     """Pull live engagement from Ayrshare for posted Studio content."""
+    if profile_key:
+        try:
+            await reconcile_scheduled_social_posts(user_id, profile_key)
+        except Exception as exc:
+            logger.info(
+                "[analytics] scheduled-post reconciliation skipped: %s",
+                exc,
+            )
+
     posts = analytics_db.list_internal_posts(user_id)
     refreshed = 0
     scope_platform = (platform or "").strip().lower() or None
@@ -482,19 +719,43 @@ async def refresh_studio_post_metrics(
             patch = normalize_ayrshare_metrics(platform, raw)
             if not patch:
                 continue
+            raw_merge = patch.pop("_raw_payload_merge", None)
             # Internal Studio rows must keep their stable key (``studio://…`` or
             # an existing permalink). Never rewrite ``post_url`` from Ayrshare —
             # a BrightData-scraped duplicate may already own that unique key.
             if (post.get("source") or "") == "internal":
                 patch.pop("post_url", None)
             analytics_db.patch_post_metrics(post["id"], patch)
+            if raw_merge:
+                analytics_db.merge_post_raw_payload(post["id"], raw_merge)
             refreshed += 1
         except Exception as exc:
-            logger.warning(
-                "[analytics] Ayrshare metrics refresh failed for post %s: %s",
-                post.get("id"),
-                exc,
-            )
+            post_key = str(post.get("id") or "")
+            if _is_ayrshare_post_not_found(exc):
+                sp_id = post.get("social_post_id")
+                if sp_id:
+                    analytics_db.update_social_post(
+                        user_id,
+                        sp_id,
+                        {
+                            "error_message": (
+                                "[ayrshare:186] Post ID not found in Ayrshare analytics."
+                            ),
+                        },
+                    )
+                if post_key not in _AYRSHARE_186_LOGGED:
+                    _AYRSHARE_186_LOGGED.add(post_key)
+                    logger.info(
+                        "[analytics] Ayrshare analytics unavailable for post %s "
+                        "(code 186) — skipping until publish is reconciled.",
+                        post_key,
+                    )
+            else:
+                logger.warning(
+                    "[analytics] Ayrshare metrics refresh failed for post %s: %s",
+                    post.get("id"),
+                    exc,
+                )
 
     return refreshed
 
