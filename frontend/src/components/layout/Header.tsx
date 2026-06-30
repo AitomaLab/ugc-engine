@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState, useRef, useEffect } from 'react';
 import { useApp } from '@/providers/AppProvider';
+import { useTopUp } from '@/providers/TopUpProvider';
 import { supabase } from '@/lib/supabaseClient';
 import { apiFetch } from '@/lib/utils';
 import { useTranslation } from '@/lib/i18n';
@@ -604,6 +605,7 @@ function NotificationDropdown() {
 function ProfileDropdown() {
     const { t } = useTranslation();
     const [open, setOpen] = useState(false);
+    const { openTopUp } = useTopUp();
     const { session, profile, profileStatus, subscription, wallet } = useApp();
 
     const displayName = profile?.name || profile?.email || (
@@ -656,7 +658,7 @@ function ProfileDropdown() {
                             <div className="pd-bar-labels"><span>{t('header.used')} {used.toLocaleString()}</span><span>{percentage}% {t('header.remaining')}</span></div>
                         </>
                     )}
-                    <button className="pd-topup" onClick={() => { window.location.href = '/manage?topup=1'; }}>{t('header.topUp')}</button>
+                    <button className="pd-topup" onClick={() => { setOpen(false); openTopUp(); }}>{t('header.topUp')}</button>
                 </div>
                 <Link href="/profile" className="pd-menu-item"><IconUser />{t('nav.profile')}</Link>
                 <Link href="/activity" className="pd-menu-item"><IconActivity />{t('nav.activity')}</Link>

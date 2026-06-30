@@ -8,6 +8,7 @@ interface Invite {
     email: string | null;
     code: string;
     label: string | null;
+    list_id?: number | null;
     is_used: boolean;
     brevo_synced: boolean;
     created_at: string;
@@ -35,7 +36,10 @@ export default function InvitesTab() {
         setLoadingInvites(true);
         try {
             const rows = await adminFetch<Invite[]>('/api/admin/invites');
-            setInvites(Array.isArray(rows) ? rows : []);
+            const deduped = Array.from(
+                new Map((Array.isArray(rows) ? rows : []).map((row) => [row.id, row])).values(),
+            );
+            setInvites(deduped);
         } catch (err) {
             console.error('Failed to load invites', err);
         } finally {
@@ -51,7 +55,7 @@ export default function InvitesTab() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
             <ListSegmentControl selectedListId={selectedListId} onChange={setSelectedListId} />
             <BrevoImportPanel listId={selectedListId} onDone={loadInvites} />
-            <ManualGeneratePanel onDone={loadInvites} />
+            <ManualGeneratePanel listId={selectedListId} onDone={loadInvites} />
             <CodeTablePanel invites={invites} listId={selectedListId} loading={loadingInvites} onReload={loadInvites} />
         </div>
     );
@@ -196,7 +200,7 @@ function BrevoImportPanel({ listId, onDone }: { listId: number; onDone: () => vo
     );
 }
 
-function ManualGeneratePanel({ onDone }: { onDone: () => void }) {
+function ManualGeneratePanel({ listId, onDone }: { listId: number; onDone: () => void }) {
     const [emails, setEmails] = useState('');
     const [label, setLabel] = useState('');
     const [busy, setBusy] = useState(false);
@@ -213,7 +217,7 @@ function ManualGeneratePanel({ onDone }: { onDone: () => void }) {
         try {
             const res = await adminFetch<{ created: number; skipped: number }>(
                 '/api/admin/invites/generate',
-                { method: 'POST', body: JSON.stringify({ emails: list, label: label || null }) },
+                { method: 'POST', body: JSON.stringify({ emails: list, label: label || null, list_id: listId }) },
             );
             setNote({ tone: 'ok', text: `Created ${res.created} codes · skipped ${res.skipped} (already existed / invalid).` });
             setEmails('');
@@ -282,12 +286,28 @@ function CodeTablePanel({ invites, listId, loading, onReload }: { invites: Invit
 
     const syncLabel = labelForList(listId);
     const listName = listDisplayName(listId);
+    const listLabel = syncLabel;
+    const isBrevoImport = (inv: Invite) => inv.label === listLabel;
+
+    const filteredCodes = useMemo(() => {
+        return invites
+            .filter(
+                (c) =>
+                    c.list_id === listId ||
+                    (c.list_id == null && c.label === listLabel),
+            )
+            .sort((a, b) => {
+                const aCustom = !isBrevoImport(a);
+                const bCustom = !isBrevoImport(b);
+                if (aCustom !== bCustom) return aCustom ? -1 : 1;
+                return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+            });
+    }, [invites, listId, listLabel]);
+
     const unsyncedCount = useMemo(
         () => invites.filter((i) => !i.brevo_synced && i.email && i.label === syncLabel).length,
         [invites, syncLabel],
     );
-
-    const filteredCodes = invites.filter((c) => c.label === labelForList(listId));
 
     const copyLink = async (code: string, id: string) => {
         const base =
@@ -352,7 +372,16 @@ function CodeTablePanel({ invites, listId, loading, onReload }: { invites: Invit
                             <tr key={inv.id} style={{ borderBottom: '1px solid #F1F5F9', color: '#0F172A' }}>
                                 <td style={{ padding: '10px 10px', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inv.email || '—'}</td>
                                 <td style={{ padding: '10px 10px', fontFamily: 'ui-monospace, monospace', fontWeight: 700 }}>{inv.code}</td>
-                                <td style={{ padding: '10px 10px', color: '#475569' }}>{inv.label || '—'}</td>
+                                <td style={{ padding: '10px 10px', color: '#475569' }}>
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                        {inv.label || '—'}
+                                        {!isBrevoImport(inv) && (
+                                            <span style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 999, fontSize: 10, fontWeight: 700, background: 'rgba(37,99,235,0.10)', color: ADMIN_PRIMARY }}>
+                                                Custom
+                                            </span>
+                                        )}
+                                    </span>
+                                </td>
                                 <td style={{ padding: '10px 10px' }}><Badge on={inv.is_used} onText="Yes" offText="No" /></td>
                                 <td style={{ padding: '10px 10px' }}><Badge on={inv.brevo_synced} onText="Synced" offText="No" /></td>
                                 <td style={{ padding: '10px 10px', color: '#64748B', whiteSpace: 'nowrap' }}>{formatDate(inv.created_at)}</td>

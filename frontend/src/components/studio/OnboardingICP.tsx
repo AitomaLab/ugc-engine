@@ -19,7 +19,6 @@ interface OnboardingICPProps {
 type ICPQuestionId = keyof ICPAnswers;
 
 interface ICPOption {
-    emoji: string;
     labelEn: string;
     labelEs: string;
     value: string;
@@ -38,12 +37,12 @@ const ICP_QUESTIONS: ICPQuestion[] = [
         questionEn: 'What best describes you?',
         questionEs: '¿Cuál es tu rol principal?',
         options: [
-            { emoji: '🛍️', labelEn: 'Brand Owner', labelEs: 'Dueño de marca', value: 'Brand Owner' },
-            { emoji: '📣', labelEn: 'Marketing Manager', labelEs: 'Director de marketing', value: 'Marketing Manager' },
-            { emoji: '🎯', labelEn: 'Media Buyer', labelEs: 'Comprador de medios', value: 'Media Buyer' },
-            { emoji: '🏢', labelEn: 'Agency', labelEs: 'Agencia', value: 'Agency' },
-            { emoji: '🎨', labelEn: 'Content Creator', labelEs: 'Creador de contenido', value: 'Content Creator' },
-            { emoji: '🔧', labelEn: 'Other', labelEs: 'Otro', value: 'Other' },
+            { labelEn: 'Brand Owner', labelEs: 'Dueño de marca', value: 'Brand Owner' },
+            { labelEn: 'Marketing Manager', labelEs: 'Director de marketing', value: 'Marketing Manager' },
+            { labelEn: 'Media Buyer', labelEs: 'Comprador de medios', value: 'Media Buyer' },
+            { labelEn: 'Agency', labelEs: 'Agencia', value: 'Agency' },
+            { labelEn: 'Content Creator', labelEs: 'Creador de contenido', value: 'Content Creator' },
+            { labelEn: 'Other', labelEs: 'Otro', value: 'Other' },
         ],
     },
     {
@@ -51,10 +50,10 @@ const ICP_QUESTIONS: ICPQuestion[] = [
         questionEn: 'How big is your team?',
         questionEs: '¿Cuántas personas hay en tu equipo?',
         options: [
-            { emoji: '👤', labelEn: 'Just me', labelEs: 'Solo', value: 'Solo' },
-            { emoji: '👥', labelEn: '2–5 people', labelEs: '2–5 personas', value: '2–5' },
-            { emoji: '🏬', labelEn: '6–20 people', labelEs: '6–20 personas', value: '6–20' },
-            { emoji: '🏢', labelEn: '21+ people', labelEs: '21+ personas', value: '21+' },
+            { labelEn: 'Just me', labelEs: 'Solo', value: 'Just me' },
+            { labelEn: '2–5 people', labelEs: '2–5 personas', value: '2–5' },
+            { labelEn: '6–20 people', labelEs: '6–20 personas', value: '6–20' },
+            { labelEn: '21+ people', labelEs: '21+ personas', value: '21+' },
         ],
     },
     {
@@ -62,11 +61,11 @@ const ICP_QUESTIONS: ICPQuestion[] = [
         questionEn: "What's your biggest content challenge right now?",
         questionEs: '¿Cuál es tu mayor reto con el contenido hoy?',
         options: [
-            { emoji: '⏱️', labelEn: 'Takes too long to produce', labelEs: 'Tarda demasiado', value: 'Takes too long' },
-            { emoji: '💸', labelEn: 'Too expensive', labelEs: 'Es muy costoso', value: 'Too expensive' },
-            { emoji: '📉', labelEn: "Doesn't convert", labelEs: 'No convierte', value: "Doesn't convert" },
-            { emoji: '🔁', labelEn: 'Need more volume', labelEs: 'Necesito más volumen', value: 'Need more volume' },
-            { emoji: '🤷', labelEn: "Don't know where to start", labelEs: 'No sé por dónde empezar', value: "Don't know where to start" },
+            { labelEn: 'Takes too long to produce', labelEs: 'Tarda demasiado', value: 'Takes too long' },
+            { labelEn: 'Too expensive', labelEs: 'Es muy costoso', value: 'Too expensive' },
+            { labelEn: "Doesn't convert", labelEs: 'No convierte', value: "Doesn't convert" },
+            { labelEn: 'Need more volume', labelEs: 'Necesito más volumen', value: 'Need more volume' },
+            { labelEn: "Don't know where to start", labelEs: 'No sé por dónde empezar', value: "Don't know where to start" },
         ],
     },
     {
@@ -74,11 +73,11 @@ const ICP_QUESTIONS: ICPQuestion[] = [
         questionEn: 'What type of content do you mainly want to create?',
         questionEs: '¿Qué tipo de contenido quieres crear principalmente?',
         options: [
-            { emoji: '📱', labelEn: 'UGC Videos', labelEs: 'UGC Videos', value: 'UGC Videos' },
-            { emoji: '🎬', labelEn: 'Cinematic Ads', labelEs: 'Anuncios cinemáticos', value: 'Cinematic Ads' },
-            { emoji: '🖼️', labelEn: 'Image Ads', labelEs: 'Creativos de imagen', value: 'Image Ads' },
-            { emoji: '📦', labelEn: 'Product Shots', labelEs: 'Fotos de producto', value: 'Product Shots' },
-            { emoji: '📊', labelEn: 'All of the above', labelEs: 'Todo lo anterior', value: 'All of the above' },
+            { labelEn: 'UGC Videos', labelEs: 'UGC Videos', value: 'UGC Videos' },
+            { labelEn: 'Cinematic Ads', labelEs: 'Anuncios cinemáticos', value: 'Cinematic Ads' },
+            { labelEn: 'Image Ads', labelEs: 'Creativos de imagen', value: 'Image Ads' },
+            { labelEn: 'Product Shots', labelEs: 'Fotos de producto', value: 'Product Shots' },
+            { labelEn: 'All of the above', labelEs: 'Todo lo anterior', value: 'All of the above' },
         ],
     },
     {
@@ -86,14 +85,68 @@ const ICP_QUESTIONS: ICPQuestion[] = [
         questionEn: 'How many content pieces do you produce per month?',
         questionEs: '¿Cuántas piezas de contenido produces al mes?',
         options: [
-            { emoji: '0️⃣', labelEn: 'None yet', labelEs: 'Ninguna todavía', value: 'None yet' },
-            { emoji: '🔢', labelEn: '1–10', labelEs: '1–10', value: '1–10' },
-            { emoji: '🔢', labelEn: '11–50', labelEs: '11–50', value: '11–50' },
-            { emoji: '🔢', labelEn: '51–200', labelEs: '51–200', value: '51–200' },
-            { emoji: '🔢', labelEn: '200+', labelEs: '200+', value: '200+' },
+            { labelEn: 'None yet', labelEs: 'Ninguna todavía', value: 'None yet' },
+            { labelEn: '1–10', labelEs: '1–10', value: '1–10' },
+            { labelEn: '11–50', labelEs: '11–50', value: '11–50' },
+            { labelEn: '51–200', labelEs: '51–200', value: '51–200' },
+            { labelEn: '200+', labelEs: '200+', value: '200+' },
         ],
     },
 ];
+
+function IcpLangToggle() {
+    const { lang, setLang } = useTranslation();
+    return (
+        <button
+            type="button"
+            onClick={() => setLang(lang === 'en' ? 'es' : 'en')}
+            title={lang === 'en' ? 'Switch to Spanish' : 'Cambiar a Inglés'}
+            style={{
+                position: 'absolute',
+                top: 24,
+                right: 24,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 2,
+                padding: '4px 8px',
+                borderRadius: 6,
+                border: '1px solid #E5E9F2',
+                background: '#FFFFFF',
+                cursor: 'pointer',
+                fontSize: 12,
+                fontWeight: 600,
+                color: '#64748B',
+                transition: 'all 0.15s ease',
+                whiteSpace: 'nowrap' as const,
+            }}
+        >
+            <span
+                style={{
+                    padding: '2px 6px',
+                    borderRadius: 4,
+                    background: lang === 'en' ? '#337AFF' : 'transparent',
+                    color: lang === 'en' ? '#fff' : '#94A3B8',
+                    transition: 'all 0.15s ease',
+                    fontWeight: lang === 'en' ? 700 : 500,
+                }}
+            >
+                EN
+            </span>
+            <span
+                style={{
+                    padding: '2px 6px',
+                    borderRadius: 4,
+                    background: lang === 'es' ? '#337AFF' : 'transparent',
+                    color: lang === 'es' ? '#fff' : '#94A3B8',
+                    transition: 'all 0.15s ease',
+                    fontWeight: lang === 'es' ? 700 : 500,
+                }}
+            >
+                ES
+            </span>
+        </button>
+    );
+}
 
 export function OnboardingICP({ userId: _userId, onComplete }: OnboardingICPProps) {
     const { t, lang } = useTranslation();
@@ -149,7 +202,6 @@ export function OnboardingICP({ userId: _userId, onComplete }: OnboardingICPProp
     }, [answers, onComplete, question.id, selectedValue, step, total]);
 
     const primaryQuestion = lang === 'es' ? question.questionEs : question.questionEn;
-    const subQuestion = lang === 'es' ? question.questionEn : question.questionEs;
 
     return (
         <div
@@ -165,6 +217,8 @@ export function OnboardingICP({ userId: _userId, onComplete }: OnboardingICPProp
                 padding: '32px 24px 48px',
             }}
         >
+            <IcpLangToggle />
+
             <header style={{ textAlign: 'center', marginBottom: 32, flexShrink: 0 }}>
                 <img
                     src="/StudioLogo_Black.svg"
@@ -201,7 +255,7 @@ export function OnboardingICP({ userId: _userId, onComplete }: OnboardingICPProp
             >
                 <h2
                     style={{
-                        margin: '0 0 8px',
+                        margin: '0 0 28px',
                         fontSize: 22,
                         fontWeight: 700,
                         color: '#0D1B3E',
@@ -211,17 +265,6 @@ export function OnboardingICP({ userId: _userId, onComplete }: OnboardingICPProp
                 >
                     {primaryQuestion}
                 </h2>
-                <p
-                    style={{
-                        margin: '0 0 28px',
-                        fontSize: 14,
-                        color: '#8A93B0',
-                        textAlign: 'center',
-                        lineHeight: 1.5,
-                    }}
-                >
-                    {subQuestion}
-                </p>
 
                 <div
                     style={{
@@ -244,13 +287,13 @@ export function OnboardingICP({ userId: _userId, onComplete }: OnboardingICPProp
                                     position: 'relative',
                                     display: 'flex',
                                     alignItems: 'center',
-                                    gap: 12,
+                                    justifyContent: 'center',
                                     padding: '16px 20px',
                                     borderRadius: 14,
                                     border: isSelected ? '1.5px solid #337AFF' : '1.5px solid #E5E9F2',
                                     background: isSelected ? 'rgba(51,122,255,0.08)' : '#FFFFFF',
                                     cursor: selectedValue !== null ? 'default' : 'pointer',
-                                    textAlign: 'left',
+                                    textAlign: 'center',
                                     fontFamily: 'inherit',
                                     transition: 'border-color 0.15s, background 0.15s',
                                     opacity: selectedValue !== null && !isSelected ? 0.5 : 1,
@@ -266,9 +309,6 @@ export function OnboardingICP({ userId: _userId, onComplete }: OnboardingICPProp
                                     e.currentTarget.style.background = '#FFFFFF';
                                 }}
                             >
-                                <span style={{ fontSize: 24, lineHeight: 1, flexShrink: 0 }} aria-hidden="true">
-                                    {option.emoji}
-                                </span>
                                 <span style={{ fontSize: 14, fontWeight: 600, color: '#0D1B3E', lineHeight: 1.35 }}>
                                     {label}
                                 </span>

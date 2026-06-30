@@ -1,24 +1,61 @@
 'use client';
 
 import { useEffect, useState, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { useApp } from '@/providers/AppProvider';
+import { useTranslation } from '@/lib/i18n';
 import Link from 'next/link';
 
 function SuccessContent() {
   const { refreshWallet, refreshSubscription } = useApp();
+  const { t } = useTranslation();
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const isOnboardingFlow = searchParams.get('flow') === 'onboarding';
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    // Give Stripe webhooks a moment to process, then refresh local state
-    const timer = setTimeout(() => {
-      refreshWallet();
-      refreshSubscription();
+    const timer = setTimeout(async () => {
+      await Promise.all([refreshWallet(), refreshSubscription()]);
       setReady(true);
+      if (isOnboardingFlow) {
+        router.replace('/?subscription=confirming');
+      }
     }, 2500);
     return () => clearTimeout(timer);
-  }, [refreshWallet, refreshSubscription]);
+  }, [refreshWallet, refreshSubscription, isOnboardingFlow, router]);
+
+  if (isOnboardingFlow) {
+    return (
+      <div className="content-area" style={{ textAlign: 'center', paddingTop: '4rem' }}>
+        <div style={{
+          width: '64px', height: '64px', borderRadius: '50%', margin: '0 auto 20px',
+          background: 'linear-gradient(135deg, #22c55e, #16a34a)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <svg viewBox="0 0 24 24" style={{ width: 32, height: 32, stroke: 'white', fill: 'none', strokeWidth: 2.5, strokeLinecap: 'round', strokeLinejoin: 'round' }}>
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+        </div>
+        <h1 style={{ fontSize: '24px', fontWeight: 800, color: 'var(--text-1)', marginBottom: '8px', letterSpacing: '-0.02em' }}>
+          {t('onboarding.subscribe.paymentSuccessTitle')}
+        </h1>
+        <p style={{ fontSize: '14px', color: 'var(--text-3)', marginBottom: '32px', maxWidth: '400px', margin: '0 auto 32px', lineHeight: 1.6 }}>
+          {ready ? t('onboarding.subscribe.paymentSuccessRedirect') : t('onboarding.subscribe.confirming')}
+        </p>
+        {!ready && (
+          <div style={{ marginBottom: '24px' }}>
+            <div style={{ width: '24px', height: '24px', border: '3px solid var(--border)', borderTop: '3px solid var(--blue)', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto' }} />
+          </div>
+        )}
+        <style jsx>{`
+          @keyframes spin {
+            to { transform: rotate(360deg); }
+          }
+        `}</style>
+      </div>
+    );
+  }
 
   return (
     <div className="content-area" style={{ textAlign: 'center', paddingTop: '4rem' }}>

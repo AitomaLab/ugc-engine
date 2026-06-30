@@ -24,6 +24,12 @@ const OnboardingICP = dynamic(
   () => import("@/components/studio/OnboardingICP").then(m => m.OnboardingICP),
   { ssr: false },
 );
+const SubscribeGate = dynamic(
+  () => import("@/components/studio/SubscribeGate").then(m => m.SubscribeGate),
+  { ssr: false },
+);
+import type { ICPAnswers } from "@/components/studio/OnboardingICP";
+import { hasActivePaidPlan, REQUIRE_PAID_PLAN } from "@/lib/onboarding-gate";
 import { thumbUrl, videoPosterCandidate } from "@/lib/media";
 import { useVideoThumbnails } from "@/hooks/useVideoThumbnails";
 import { HoverPlayVideo } from "@/components/ui/HoverPlayVideo";
@@ -152,7 +158,7 @@ export default function StudioPage() {
   const router = useRouter();
   const [isCreating, setIsCreating] = useState(false);
   const [activeBottomTab, setActiveBottomTab] = useState<'projects' | 'videos' | 'images' | 'campaigns'>('projects');
-  const { session, profile, activeProject } = useApp();
+  const { session, profile, activeProject, subscription, refreshSubscription, refreshWallet } = useApp();
 
   // ── Data layer (SWR) ──────────────────────────────────────────────
   const { data: jobsData, isLoading: jobsLoading } = useSWR(
@@ -193,12 +199,84 @@ export default function StudioPage() {
   const onboardingKey = userId ? `aitoma_onboarding_done_${userId}` : '';
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [icpDone, setIcpDone] = useState(false);
+  const [confirmingPayment, setConfirmingPayment] = useState(false);
+  const [confirmTimedOut, setConfirmTimedOut] = useState(false);
+  const icpBackfillSentRef = useRef(false);
+
+  const paidPlanActive = hasActivePaidPlan(subscription);
+  const needsSubscribeGate = showOnboarding && REQUIRE_PAID_PLAN && !paidPlanActive;
+  const onboardingUnlocked = !REQUIRE_PAID_PLAN || paidPlanActive;
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('subscription') !== 'confirming') return;
+    setConfirmingPayment(true);
+    setConfirmTimedOut(false);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('subscription');
+    window.history.replaceState({}, '', url.pathname + url.search);
+  }, []);
+
+  useEffect(() => {
+    if (!REQUIRE_PAID_PLAN || !showOnboarding) return;
+    if (paidPlanActive) {
+      setConfirmingPayment(false);
+      setConfirmTimedOut(false);
+      return;
+    }
+    if (!confirmingPayment) return;
+
+    let attempts = 0;
+    const maxAttempts = 15;
+    const id = setInterval(async () => {
+      attempts += 1;
+      await Promise.all([refreshSubscription(), refreshWallet()]);
+      if (attempts >= maxAttempts) {
+        setConfirmTimedOut(true);
+        setConfirmingPayment(false);
+        clearInterval(id);
+      }
+    }, 2000);
+
+    return () => clearInterval(id);
+  }, [confirmingPayment, paidPlanActive, showOnboarding, refreshSubscription, refreshWallet]);
 
   useEffect(() => {
     if (!userId) return;
     const existing = localStorage.getItem(`aitoma_icp_${userId}`);
     if (existing) setIcpDone(true);
   }, [userId]);
+
+  useEffect(() => {
+    if (!userId || icpBackfillSentRef.current) return;
+    const raw = localStorage.getItem(`aitoma_icp_${userId}`);
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw) as Partial<ICPAnswers>;
+      const { role, team_size, challenge, content_type, monthly_volume } = parsed;
+      if (!role || !team_size || !challenge || !content_type || !monthly_volume) return;
+      icpBackfillSentRef.current = true;
+      apiFetch('/api/onboarding/submit', {
+        method: 'POST',
+        body: JSON.stringify({
+          role,
+          team_size,
+          challenge,
+          content_type,
+          monthly_volume,
+          name: userName,
+          ui_language: lang,
+        }),
+        skipProjectScope: true,
+      }).catch((err) => {
+        icpBackfillSentRef.current = false;
+        console.error('Failed to backfill onboarding responses', err);
+      });
+    } catch {
+      // ignore invalid localStorage payload
+    }
+  }, [userId, userName, lang]);
 
   const hasExistingActivity = useMemo(() => {
     if (projects.some((p) => (p.asset_counts?.images ?? 0) + (p.asset_counts?.videos ?? 0) > 0)) return true;
@@ -749,8 +827,14 @@ export default function StudioPage() {
       backgroundAttachment: 'fixed'
     }}>
 
-      {/* ICP qualification then onboarding modal for first-time users */}
-      {showOnboarding && !icpDone && userId && (
+      {/* Subscribe → ICP → product onboarding for first-time users */}
+      {needsSubscribeGate && (
+        <SubscribeGate
+          confirmingPayment={confirmingPayment}
+          confirmTimedOut={confirmTimedOut}
+        />
+      )}
+      {showOnboarding && onboardingUnlocked && !icpDone && userId && (
         <OnboardingICP
           userId={userId}
           onComplete={(answers) => {
@@ -759,10 +843,17 @@ export default function StudioPage() {
               JSON.stringify({ ...answers, completed_at: new Date().toISOString() }),
             );
             setIcpDone(true);
+            apiFetch('/api/onboarding/submit', {
+              method: 'POST',
+              body: JSON.stringify({ ...answers, name: userName, ui_language: lang }),
+              skipProjectScope: true,
+            }).catch((err) => {
+              console.error('Failed to submit onboarding responses', err);
+            });
           }}
         />
       )}
-      {showOnboarding && icpDone && (
+      {showOnboarding && onboardingUnlocked && icpDone && (
         <OnboardingModal
           onComplete={async ({ productId, productName, productImageUrl, influencerId, influencerName, influencerImageUrl, prompt: selectedPrompt }) => {
             try {

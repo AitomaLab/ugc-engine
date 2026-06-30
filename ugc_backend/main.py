@@ -2796,32 +2796,31 @@ def api_get_wallet(user: dict = Depends(get_current_user)):
     wallet = get_wallet(user["id"])
     if not wallet:
         # User has no wallet row yet. Supabase trigger handle_new_user failed or is missing.
-        # Lazily initialize their wallet with 100 free credits.
+        # Lazily initialize wallet; amount from WELCOME_SIGNUP_CREDITS (default 100, 0 during beta).
+        welcome_credits = int(os.getenv("WELCOME_SIGNUP_CREDITS", "100"))
         sb = get_supabase()
-        
-        # Ensure profile exists
+
         existing_profile = sb.table("profiles").select("id").eq("id", user["id"]).execute()
         if not existing_profile.data:
             sb.table("profiles").insert({"id": user["id"]}).execute()
-            
-        # Create wallet with 100 credits
+
         result = sb.table("credit_wallets").insert({
             "user_id": user["id"],
-            "balance": 100
+            "balance": welcome_credits,
         }).execute()
-        
+
         wallet_id = result.data[0]["id"]
-        
-        # Log the 100 credits as a Welcome Bonus
-        sb.table("credit_transactions").insert({
-            "wallet_id": wallet_id,
-            "amount": 100,
-            "type": "welcome_bonus",
-            "description": "100 Free Credits on Sign-up",
-            "metadata": {}
-        }).execute()
-        
-        return {"balance": 100, "user_id": user["id"]}
+
+        if welcome_credits > 0:
+            sb.table("credit_transactions").insert({
+                "wallet_id": wallet_id,
+                "amount": welcome_credits,
+                "type": "welcome_bonus",
+                "description": f"{welcome_credits} Free Credits on Sign-up",
+                "metadata": {},
+            }).execute()
+
+        return {"balance": welcome_credits, "user_id": user["id"]}
     return wallet
 
 @app.get("/api/wallet/transactions")
@@ -2903,6 +2902,7 @@ TOPUP_PACKAGES = {
 class CheckoutSubscriptionRequest(BaseModel):
     plan_id: str
     billing_interval: Literal["monthly", "yearly"] = "monthly"
+    flow: Literal["default", "onboarding"] = "default"
 
 class CheckoutTopUpRequest(BaseModel):
     package: str  # "small", "medium", "large", "xl"
@@ -2942,12 +2942,20 @@ def api_stripe_checkout_subscription(
 
     origin = request.headers.get("origin", os.getenv("FRONTEND_URL", "http://localhost:3000"))
 
+    if body.flow == "onboarding":
+        success_url = f"{origin}/checkout/success?flow=onboarding&session_id={{CHECKOUT_SESSION_ID}}"
+        cancel_url = f"{origin}/"
+    else:
+        success_url = f"{origin}/checkout/success?session_id={{CHECKOUT_SESSION_ID}}"
+        cancel_url = f"{origin}/upgrade"
+
     session = stripe.checkout.Session.create(
         customer=customer_id,
         mode="subscription",
+        allow_promotion_codes=True,
         line_items=[{"price": stripe_price_id, "quantity": 1}],
-        success_url=f"{origin}/checkout/success?session_id={{CHECKOUT_SESSION_ID}}",
-        cancel_url=f"{origin}/upgrade",
+        success_url=success_url,
+        cancel_url=cancel_url,
         metadata={
             "supabase_user_id": user["id"],
             "plan_id": plan["id"],
@@ -4264,3 +4272,6 @@ app.include_router(admin_router, prefix="/api/admin")
 
 from ugc_backend.feedback.router import router as feedback_router
 app.include_router(feedback_router, prefix="/api/feedback")
+
+from ugc_backend.onboarding.router import router as onboarding_router
+app.include_router(onboarding_router, prefix="/api/onboarding")

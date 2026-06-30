@@ -3,6 +3,7 @@
 import { usePathname } from 'next/navigation';
 import { SWRConfig } from 'swr';
 import { AppProvider } from '@/providers/AppProvider';
+import { TopUpProvider } from '@/providers/TopUpProvider';
 import { Header } from '@/components/layout/Header';
 import { FeedbackBubble } from '@/components/feedback/FeedbackBubble';
 import { studioSwrOptions } from '@/lib/swr';
@@ -21,7 +22,9 @@ export function ClientProviders({ children }: { children: React.ReactNode }) {
     return (
       <SWRConfig value={studioSwrOptions}>
         <AppProvider>
-          {children}
+          <TopUpProvider>
+            {children}
+          </TopUpProvider>
         </AppProvider>
       </SWRConfig>
     );
@@ -30,11 +33,13 @@ export function ClientProviders({ children }: { children: React.ReactNode }) {
   return (
     <SWRConfig value={studioSwrOptions}>
       <AppProvider>
-        {!isAuthPage && <Header />}
-        <main className="app-body">
-          {children}
-        </main>
-        <FeedbackBubble />
+        <TopUpProvider>
+          {!isAuthPage && <Header />}
+          <main className="app-body">
+            {children}
+          </main>
+          <FeedbackBubble />
+        </TopUpProvider>
       </AppProvider>
     </SWRConfig>
   );

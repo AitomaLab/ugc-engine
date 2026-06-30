@@ -1,9 +1,12 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useTranslation } from '@/lib/i18n';
 import { apiFetch } from '@/lib/utils';
 import { creativeFetch } from '@/lib/creative-os-api';
+import { useApp } from '@/providers/AppProvider';
+import { REQUIRE_PAID_PLAN } from '@/lib/onboarding-gate';
+import { formatCredits } from '@/lib/pricing';
 
 /* ── Types ────────────────────────────────────────────────────── */
 
@@ -226,6 +229,7 @@ interface OnboardingModalProps {
 
 export function OnboardingModal({ onComplete, onSkip }: OnboardingModalProps) {
     const { t } = useTranslation();
+    const { wallet, subscription } = useApp();
     const [step, setStep] = useState(0);
     const [selectedProduct, setSelectedProduct] = useState('');
     const [selectedInfluencer, setSelectedInfluencer] = useState('');
@@ -296,6 +300,13 @@ export function OnboardingModal({ onComplete, onSkip }: OnboardingModalProps) {
         });
     };
 
+    const creditsBadgeText = REQUIRE_PAID_PLAN
+        ? t('onboarding.planCredits').replace(
+            '{credits}',
+            formatCredits(wallet?.balance ?? subscription?.plan?.credits_monthly ?? 0),
+          )
+        : t('onboarding.freeCredits');
+
     const renderStep = () => {
         switch (step) {
             /* ── Step 1: Welcome ── */
@@ -333,7 +344,7 @@ export function OnboardingModal({ onComplete, onSkip }: OnboardingModalProps) {
                                 <path d="M3 13h18" />
                                 <path d="M7.5 8C7.5 8 7 3 12 3s4.5 5 4.5 5" />
                             </svg>
-                            {t('onboarding.freeCredits')}
+                            {creditsBadgeText}
                         </div>
                         <div style={{ marginTop: '32px' }}>
                             <button onClick={() => setStep(1)} style={primaryBtnStyle}>
@@ -613,10 +624,9 @@ export function OnboardingModal({ onComplete, onSkip }: OnboardingModalProps) {
                     display: 'flex',
                     flexDirection: 'column',
                 }}>
-                    {/* Step indicator + skip */}
+                    {/* Step indicator */}
                     <div style={{
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        position: 'relative',
                         padding: '16px 20px 0',
                     }}>
                         <div style={{ display: 'flex', gap: '4px' }}>
@@ -630,28 +640,6 @@ export function OnboardingModal({ onComplete, onSkip }: OnboardingModalProps) {
                                 }} />
                             ))}
                         </div>
-                        <button
-                            type="button"
-                            onClick={onSkip}
-                            style={{
-                                position: 'absolute',
-                                right: '20px',
-                                top: '12px',
-                                padding: '4px 8px',
-                                border: 'none',
-                                background: 'transparent',
-                                color: '#8A93B0',
-                                fontSize: '13px',
-                                fontWeight: 500,
-                                cursor: 'pointer',
-                                fontFamily: 'inherit',
-                                transition: 'color 0.15s',
-                            }}
-                            onMouseEnter={(e) => { e.currentTarget.style.color = '#337AFF'; }}
-                            onMouseLeave={(e) => { e.currentTarget.style.color = '#8A93B0'; }}
-                        >
-                            {t('onboarding.skip')}
-                        </button>
                     </div>
                     {renderStep()}
                 </div>

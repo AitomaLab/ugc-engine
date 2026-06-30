@@ -164,6 +164,7 @@ def _insert_in_chunks(sb, rows: List[dict], chunk: int = 500) -> int:
 class GenerateRequest(BaseModel):
     emails: List[str] = Field(default_factory=list)
     label: Optional[str] = None
+    list_id: int = 3
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +210,7 @@ def pull_brevo(list_id: int = 3, user: dict = Depends(get_current_user)) -> dict
                         "email": email,
                         "code": _gen_unique_code(existing_codes),
                         "label": pull_label,
+                        "list_id": list_id,
                     }
                 )
                 imported += 1
@@ -258,6 +260,7 @@ def generate_invites(
                 "email": email,
                 "code": _gen_unique_code(existing_codes),
                 "label": label,
+                "list_id": body.list_id,
             }
         )
         created += 1

@@ -5,11 +5,12 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import InvitesTab from './InvitesTab';
 import FeedbackTab from './FeedbackTab';
+import OnboardingTab from './OnboardingTab';
 
 const ADMIN_EMAIL = 'max@aitoma.ai';
 const PRIMARY = '#337AFF';
 
-type AdminTab = 'invites' | 'feedback';
+type AdminTab = 'invites' | 'feedback' | 'onboarding';
 
 export default function AdminPage() {
     const router = useRouter();
@@ -43,7 +44,7 @@ export default function AdminPage() {
             <header>
                 <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: '#0F172A' }}>Admin</h1>
                 <p style={{ margin: '6px 0 0', color: '#64748B', fontSize: 14 }}>
-                    Manage beta invites and review tester feedback. Admin-only.
+                    Manage beta invites, review tester feedback, and view onboarding responses. Admin-only.
                 </p>
             </header>
 
@@ -51,6 +52,7 @@ export default function AdminPage() {
                 {([
                     { id: 'invites' as const, label: 'Invites' },
                     { id: 'feedback' as const, label: 'Feedback' },
+                    { id: 'onboarding' as const, label: 'Onboarding' },
                 ]).map(({ id, label }) => (
                     <button
                         key={id}
@@ -73,7 +75,9 @@ export default function AdminPage() {
                 ))}
             </div>
 
-            {tab === 'invites' ? <InvitesTab /> : <FeedbackTab />}
+            {tab === 'invites' && <InvitesTab />}
+            {tab === 'feedback' && <FeedbackTab />}
+            {tab === 'onboarding' && <OnboardingTab />}
         </div>
     );
 }
