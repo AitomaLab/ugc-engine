@@ -911,8 +911,8 @@ def _ffmpeg_binary() -> Optional[str]:
         return None
 
 
-def _probe_video_dimensions(video_path: Path, ffmpeg_path: str) -> tuple[int, int]:
-    """Return (width, height), defaulting to 1080x1920."""
+def _probe_local_video_dimensions(video_path: Path, ffmpeg_path: str) -> tuple[int, int]:
+    """Return (width, height) for a local file, defaulting to 1080x1920."""
     width, height = 1080, 1920
     ffprobe = shutil.which("ffprobe")
     if ffprobe:
@@ -986,7 +986,7 @@ def _ffmpeg_burn_captions(
             video_path.write_bytes(resp.content)
 
             # 2. Probe video dimensions
-            probe_width, probe_height = _probe_video_dimensions(video_path, ffmpeg_path)
+            probe_width, probe_height = _probe_local_video_dimensions(video_path, ffmpeg_path)
 
             print(f"[CAPTION BURN] Video: {probe_width}x{probe_height}")
 
