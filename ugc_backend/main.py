@@ -40,6 +40,10 @@ from ugc_backend.credit_cost_service import (
     resolve_job_credit_cost,
 )
 
+from ugc_backend.billing_service import (
+    fulfill_from_checkout_session,
+    fulfill_from_invoice_paid,
+)
 from ugc_db.db_manager import (
     get_supabase,
     get_stats,
@@ -2908,6 +2912,64 @@ class CheckoutTopUpRequest(BaseModel):
     package: str  # "small", "medium", "large", "xl"
 
 
+class BillingConfirmRequest(BaseModel):
+    session_id: str
+
+
+@app.post("/api/billing/confirm")
+def api_billing_confirm(
+    body: BillingConfirmRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Fulfill a completed Checkout Session if webhooks were delayed or missed."""
+    _require_stripe_configured()
+
+    try:
+        session = stripe.checkout.Session.retrieve(
+            body.session_id,
+            expand=["subscription"],
+        )
+    except stripe.error.StripeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    metadata = session.get("metadata") or {}
+    session_user_id = metadata.get("supabase_user_id")
+    if session_user_id and session_user_id != user["id"]:
+        raise HTTPException(status_code=403, detail="Checkout session does not belong to this account")
+
+    mode = session.get("mode")
+    payment_status = session.get("payment_status")
+
+    if mode == "subscription" and payment_status in ("paid", "no_payment_required"):
+        fulfill_from_checkout_session(dict(session))
+    elif mode == "payment" and payment_status == "paid":
+        credits = int(metadata.get("topup_credits", "0"))
+        package = metadata.get("topup_package", "unknown")
+        if credits > 0:
+            add_credits(
+                user_id=user["id"],
+                amount=credits,
+                tx_type="top_up",
+                description=f"Credit top-up: {package} ({credits} credits)",
+                metadata={
+                    "stripe_session_id": session.get("id"),
+                    "package": package,
+                },
+            )
+    else:
+        print(
+            f"[Stripe] billing/confirm skipped: mode={mode!r} payment_status={payment_status!r} "
+            f"session={body.session_id!r}"
+        )
+
+    sub = get_subscription(user["id"])
+    wallet = get_wallet(user["id"])
+    return {
+        "subscription": sub or {"status": "none", "plan": {"name": "Free", "credits_monthly": 0}},
+        "wallet": wallet,
+    }
+
+
 @app.post("/api/stripe/checkout/subscription")
 def api_stripe_checkout_subscription(
     body: CheckoutSubscriptionRequest,
@@ -3044,6 +3106,7 @@ async def api_stripe_webhook(request: Request):
     sig_header = request.headers.get("stripe-signature")
 
     if not sig_header or not STRIPE_WEBHOOK_SECRET:
+        print("[Stripe] webhook rejected: missing signature or STRIPE_WEBHOOK_SECRET")
         raise HTTPException(status_code=400, detail="Missing Stripe signature or webhook secret")
 
     try:
@@ -3081,67 +3144,24 @@ async def api_stripe_webhook(request: Request):
                     },
                 )
                 print(f"[Stripe] Added {credits} credits to user {user_id} (top-up: {package})")
+            else:
+                print(
+                    "[Stripe] checkout.session.completed payment skipped: "
+                    f"user_id={user_id!r} credits={credits}"
+                )
+
+        elif mode == "subscription":
+            fulfill_from_checkout_session(data)
+
+        else:
+            print(
+                "[Stripe] checkout.session.completed skipped: "
+                f"mode={mode!r} session={data.get('id')!r}"
+            )
 
     # ── invoice.paid ───────────────────────────────────────────────────
     elif event_type == "invoice.paid":
-        subscription_id = data.get("subscription")
-        customer_id = data.get("customer")
-
-        if subscription_id:
-            sub = stripe.Subscription.retrieve(subscription_id)
-            user_id = sub.metadata.get("supabase_user_id")
-            plan_id = sub.metadata.get("plan_id")
-
-            if not user_id:
-                user_id = get_user_id_by_stripe_customer(customer_id)
-
-            if user_id and plan_id:
-                plan = get_plan_by_id(plan_id)
-                if plan:
-                    period_start = datetime.fromtimestamp(
-                        sub["current_period_start"], tz=timezone.utc
-                    ).isoformat()
-                    period_end = datetime.fromtimestamp(
-                        sub["current_period_end"], tz=timezone.utc
-                    ).isoformat()
-
-                    upsert_subscription(
-                        user_id=user_id,
-                        plan_id=plan_id,
-                        stripe_subscription_id=subscription_id,
-                        status="active",
-                        period_start=period_start,
-                        period_end=period_end,
-                    )
-
-                    interval = "month"
-                    items = sub.get("items", {}).get("data", [])
-                    if items:
-                        interval = items[0].get("price", {}).get("recurring", {}).get("interval", "month")
-                    credit_multiplier = 12 if interval == "year" else 1
-                    credit_amount = plan["credits_monthly"] * credit_multiplier
-                    if interval == "year":
-                        desc = (
-                            f"{plan['name']} annual plan: {credit_amount} credits "
-                            f"({plan['credits_monthly']}/mo × 12)"
-                        )
-                    else:
-                        desc = f"{plan['name']} plan: {plan['credits_monthly']} monthly credits"
-
-                    add_credits(
-                        user_id=user_id,
-                        amount=credit_amount,
-                        tx_type="monthly_allotment",
-                        description=desc,
-                        metadata={
-                            "stripe_invoice_id": data.get("id"),
-                            "stripe_subscription_id": subscription_id,
-                            "period_start": period_start,
-                            "period_end": period_end,
-                            "billing_interval": interval,
-                        },
-                    )
-                    print(f"[Stripe] Replenished {credit_amount} credits for user {user_id} ({plan['name']}, {interval})")
+        fulfill_from_invoice_paid(data)
 
     # ── customer.subscription.updated ──────────────────────────────────
     elif event_type == "customer.subscription.updated":
@@ -3176,6 +3196,21 @@ async def api_stripe_webhook(request: Request):
                         period_end=period_end,
                     )
                     print(f"[Stripe] Subscription updated for user {user_id}: {new_plan['name']} ({status})")
+                else:
+                    print(
+                        "[Stripe] customer.subscription.updated skipped: "
+                        f"unknown price_id={new_price_id!r} sub={subscription_id!r}"
+                    )
+            else:
+                print(
+                    "[Stripe] customer.subscription.updated skipped: "
+                    f"no line items sub={subscription_id!r}"
+                )
+        else:
+            print(
+                "[Stripe] customer.subscription.updated skipped: "
+                f"user_id={user_id!r} sub={subscription_id!r}"
+            )
 
     # ── customer.subscription.deleted ──────────────────────────────────
     elif event_type == "customer.subscription.deleted":

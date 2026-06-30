@@ -535,11 +535,11 @@ def delete_project(project_id: str, user_id: str):
 # ---------------------------------------------------------------------------
 
 def get_subscription(user_id: str):
-    """Get user's subscription with joined plan details."""
+    """Get user's active subscription with joined plan details."""
     sb = get_supabase()
     result = sb.table("subscriptions").select(
         "*, plan:subscription_plans(name, credits_monthly, price_monthly)"
-    ).eq("user_id", user_id).execute()
+    ).eq("user_id", user_id).eq("status", "active").execute()
     return result.data[0] if result.data else None
 
 
@@ -702,7 +702,11 @@ def add_credits(user_id: str, amount: int, tx_type: str, description: str, metad
     sb = get_supabase()
     idempotency_key = None
     if metadata:
-        idempotency_key = metadata.get("stripe_invoice_id") or metadata.get("stripe_session_id")
+        idempotency_key = (
+            metadata.get("stripe_allotment_key")
+            or metadata.get("stripe_invoice_id")
+            or metadata.get("stripe_session_id")
+        )
 
     wallet = get_wallet(user_id)
     if not wallet:

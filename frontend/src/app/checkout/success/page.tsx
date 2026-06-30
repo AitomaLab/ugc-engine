@@ -4,6 +4,7 @@ import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useApp } from '@/providers/AppProvider';
 import { useTranslation } from '@/lib/i18n';
+import { apiFetch } from '@/lib/utils';
 import Link from 'next/link';
 
 function SuccessContent() {
@@ -12,18 +13,42 @@ function SuccessContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const isOnboardingFlow = searchParams.get('flow') === 'onboarding';
+  const sessionId = searchParams.get('session_id');
   const [ready, setReady] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const timer = setTimeout(async () => {
-      await Promise.all([refreshWallet(), refreshSubscription()]);
-      setReady(true);
-      if (isOnboardingFlow) {
-        router.replace('/?subscription=confirming');
+    let cancelled = false;
+
+    const finalize = async () => {
+      try {
+        if (sessionId) {
+          await apiFetch('/api/billing/confirm', {
+            method: 'POST',
+            body: JSON.stringify({ session_id: sessionId }),
+          });
+        }
+      } catch (err: unknown) {
+        if (!cancelled) {
+          const message = err instanceof Error ? err.message : 'Failed to confirm payment';
+          setError(message);
+        }
       }
-    }, 2500);
-    return () => clearTimeout(timer);
-  }, [refreshWallet, refreshSubscription, isOnboardingFlow, router]);
+
+      await Promise.all([refreshWallet(), refreshSubscription()]);
+      if (!cancelled) {
+        setReady(true);
+        if (isOnboardingFlow) {
+          router.replace('/?subscription=confirming');
+        }
+      }
+    };
+
+    finalize();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, refreshWallet, refreshSubscription, isOnboardingFlow, router]);
 
   if (isOnboardingFlow) {
     return (
@@ -41,9 +66,13 @@ function SuccessContent() {
           {t('onboarding.subscribe.paymentSuccessTitle')}
         </h1>
         <p style={{ fontSize: '14px', color: 'var(--text-3)', marginBottom: '32px', maxWidth: '400px', margin: '0 auto 32px', lineHeight: 1.6 }}>
-          {ready ? t('onboarding.subscribe.paymentSuccessRedirect') : t('onboarding.subscribe.confirming')}
+          {error
+            ? error
+            : ready
+              ? t('onboarding.subscribe.paymentSuccessRedirect')
+              : t('onboarding.subscribe.confirming')}
         </p>
-        {!ready && (
+        {!ready && !error && (
           <div style={{ marginBottom: '24px' }}>
             <div style={{ width: '24px', height: '24px', border: '3px solid var(--border)', borderTop: '3px solid var(--blue)', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto' }} />
           </div>
@@ -72,11 +101,13 @@ function SuccessContent() {
         Payment Successful
       </h1>
       <p style={{ fontSize: '14px', color: 'var(--text-3)', marginBottom: '32px', maxWidth: '400px', margin: '0 auto 32px', lineHeight: 1.6 }}>
-        {ready
-          ? 'Your account has been updated. Credits are ready to use.'
-          : 'Processing your payment... This will take just a moment.'}
+        {error
+          ? error
+          : ready
+            ? 'Your account has been updated. Credits are ready to use.'
+            : 'Processing your payment... This will take just a moment.'}
       </p>
-      {!ready && (
+      {!ready && !error && (
         <div style={{ marginBottom: '24px' }}>
           <div style={{ width: '24px', height: '24px', border: '3px solid var(--border)', borderTop: '3px solid var(--blue)', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto' }} />
         </div>
