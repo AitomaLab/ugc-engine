@@ -335,6 +335,7 @@ export type AgentStreamEvent =
     | { type: 'interrupted' }
     | { type: 'keepalive'; tool_use_id?: string; elapsed_seconds: number; phase?: string }
     | { type: 'disconnected' }
+    | { type: 'insufficient_credits'; balance?: number; required?: number; message?: string }
     | { type: 'error'; message: string };
 
 /** Load the persisted thread for the current project. */

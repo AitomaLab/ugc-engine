@@ -3742,6 +3742,57 @@ async def _charge_for_op(
     return await _charge_credits(ctx, amount, operation, metadata)
 
 
+def _insufficient_credits_error_json(msg: str, credits_required: int | None = None) -> str:
+    return json.dumps({
+        "error": "insufficient_credits",
+        "msg": msg,
+        "credits_required": credits_required,
+    })
+
+
+def _insufficient_credits_from_result(result_text: str) -> dict | None:
+    """Parse a tool result for insufficient-credits signals."""
+    if not result_text:
+        return None
+    parsed = None
+    try:
+        parsed = json.loads(result_text)
+    except Exception:
+        parsed = None
+
+    if isinstance(parsed, dict):
+        err = parsed.get("error")
+        err_str = str(err or "")
+        if err == "insufficient_credits" or "insufficient" in err_str.lower():
+            msg = str(parsed.get("msg") or err_str or result_text)
+            required = parsed.get("credits_required")
+            balance = None
+            bal_m = re.search(r"(?:current\s+)?balance[:\s]+(\d+)", msg, re.I)
+            req_m = re.search(r"required[:\s]+(\d+)", msg, re.I)
+            if bal_m:
+                balance = int(bal_m.group(1))
+            if req_m:
+                required = required if required is not None else int(req_m.group(1))
+            return {
+                "balance": balance,
+                "required": int(required) if required is not None else None,
+                "message": msg,
+            }
+
+    text = result_text if isinstance(result_text, str) else str(result_text)
+    if "insufficient" not in text.lower() and "402" not in text:
+        return None
+    bal_m = re.search(r"(?:current\s+)?balance[:\s]+(\d+)", text, re.I)
+    req_m = re.search(r"required[:\s]+(\d+)", text, re.I)
+    if not bal_m and not req_m and "insufficient" not in text.lower():
+        return None
+    return {
+        "balance": int(bal_m.group(1)) if bal_m else None,
+        "required": int(req_m.group(1)) if req_m else None,
+        "message": text[:400],
+    }
+
+
 async def _tool_generate_image(ctx: ToolContext, **kwargs: Any) -> str:
     from routers.generate_image import ExecuteRequest, execute_image_generation
 
@@ -4218,6 +4269,11 @@ async def _tool_generate_video(ctx: ToolContext, **kwargs: Any) -> str:
     try:
         result = await generate_video(req, bg, user=user)  # type: ignore[arg-type]
     except Exception as e:
+        msg = str(e)
+        if "402" in msg or "insufficient" in msg.lower():
+            req_m = re.search(r"required[:\s]+(\d+)", msg, re.I)
+            required = int(req_m.group(1)) if req_m else None
+            return _insufficient_credits_error_json(msg, required)
         return json.dumps({"error": f"generate_video failed: {e}"})
 
     # The handler returns immediately with {status: "generating", job_id, ...}
@@ -11908,6 +11964,14 @@ class ManagedAgentClient:
                             "content": [{"type": "text", "text": result_text}],
                             "is_error": is_error,
                         })
+                        _ic = _insufficient_credits_from_result(result_text)
+                        if _ic:
+                            yield {
+                                "type": "insufficient_credits",
+                                "balance": _ic.get("balance"),
+                                "required": _ic.get("required"),
+                                "message": _ic.get("message"),
+                            }
                         if not is_error:
                             try:
                                 parsed = json.loads(result_text)

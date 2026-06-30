@@ -21,6 +21,9 @@ import { CaptionStylePreviewCard } from '@/components/captions/CaptionStylePrevi
 import { CAPTION_STYLE_PREVIEWS } from '@/components/captions/styles';
 import { supabase } from '@/lib/supabaseClient';
 import { useTranslation } from '@/lib/i18n';
+import { isInsufficientCreditsError, parseInsufficientCredits } from '@/lib/insufficient-credits';
+import { useApp } from '@/providers/AppProvider';
+import { useTopUp } from '@/providers/TopUpProvider';
 import ProductModal from '@/components/ui/ProductModal';
 import { InfluencerModal } from '@/app/library/InfluencerModal';
 import { FEATURE_AGENTPANEL_EDITOR_ROUTING } from '@/editor/flags';
@@ -336,6 +339,8 @@ const PRO_LANGUAGES = ['EN', 'ES'];
 
 export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact, embedded = false, onCollapse, hideHeader = false, onStateChange, onSubmitOverride, initialBrief, initialRefs, initialUseSeedance, onJobStart, onVideoJobStarted, onArtifactPending, onArtifactReady, jobId }: AgentPanelProps, ref: React.Ref<AgentPanelHandle>) {
     const { lang, t } = useTranslation();
+    const { wallet } = useApp();
+    const { openTopUp } = useTopUp();
     const [open, setOpen] = useState(false);
     const [brief, setBrief] = useState('');
     const [turns, setTurns] = useState<AgentTurn[]>([]);
@@ -885,24 +890,60 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
     // (e.g. [9:16 vertical], [5s clip duration], [ONBOARDING_FIRST_VIDEO ...])
     // AND scrub leaked technical content from agent turns (AI_EDIT_OPS, JSON ops, tool calls).
     const sanitizeTurns = useCallback((turns: AgentTurn[]): AgentTurn[] => {
-        return turns.map((t) => {
-            if (t.role === 'user' && t.text) {
-                const clean = t.text.replace(/\s*\[[^\]]*\]\s*/g, ' ').trim();
-                if (clean !== t.text) return { ...t, text: clean };
+        const friendlyCredits = t('creativeOs.agent.insufficientCreditsChat');
+        return turns.map((turn) => {
+            if (turn.role === 'user' && turn.text) {
+                const clean = turn.text.replace(/\s*\[[^\]]*\]\s*/g, ' ').trim();
+                if (clean !== turn.text) return { ...turn, text: clean };
             }
-            if (t.role === 'agent' && t.text) {
-                const clean = scrubAgentText(t.text);
-                if (!clean) return { ...t, text: '' };
-                if (clean !== t.text) return { ...t, text: clean };
+            if (turn.role === 'agent' && turn.text) {
+                if (isInsufficientCreditsError(turn.text)) {
+                    return { ...turn, text: friendlyCredits, generation_failed: false };
+                }
+                const clean = scrubAgentText(turn.text);
+                if (!clean) return { ...turn, text: '' };
+                if (clean !== turn.text) return { ...turn, text: clean };
             }
-            return t;
-        }).filter((t) => {
-            // Drop agent turns that are now empty after scrubbing
-            // (unless they have artifacts, tool_calls, or a failure notice)
-            if (t.role === 'agent' && !t.text && !(t.artifacts?.length) && !(t.tool_calls?.length) && !t.generation_failed) return false;
+            return turn;
+        }).filter((turn) => {
+            if (turn.role === 'agent' && !turn.text && !(turn.artifacts?.length) && !(turn.tool_calls?.length) && !turn.generation_failed) return false;
             return true;
         });
-    }, []);
+    }, [t]);
+
+    const appendInsufficientCreditsNote = useCallback((opts?: { balance?: number; required?: number }) => {
+        openTopUp({
+            balance: opts?.balance ?? wallet?.balance,
+            required: opts?.required,
+        });
+        const friendly = t('creativeOs.agent.insufficientCreditsChat');
+        setTurns((prev) => {
+            const last = prev[prev.length - 1];
+            if (last?.role === 'agent' && last.text === friendly) return prev;
+            return [
+                ...prev,
+                {
+                    role: 'agent' as const,
+                    text: friendly,
+                    artifacts: [],
+                    tool_calls: [],
+                    ts: Date.now(),
+                },
+            ];
+        });
+    }, [openTopUp, wallet?.balance, t]);
+
+    const resolveInsufficientCreditsText = useCallback((text: string, openModal: boolean): string | null => {
+        if (!isInsufficientCreditsError(text)) return null;
+        const parsed = parseInsufficientCredits(text);
+        if (openModal) {
+            openTopUp({
+                balance: parsed?.balance ?? wallet?.balance,
+                required: parsed?.required,
+            });
+        }
+        return t('creativeOs.agent.insufficientCreditsChat');
+    }, [openTopUp, wallet?.balance, t]);
 
     // Hydrate when panel opens or project changes
     useEffect(() => {
@@ -1311,7 +1352,11 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     // so the user sees the message instead of a redundant spinner.
                     setActivity('');
                     // Scrub any leaked technical content before displaying
-                    const cleanText = scrubAgentText(e.text);
+                    let cleanText = scrubAgentText(e.text);
+                    const insufficientFriendly = cleanText
+                        ? resolveInsufficientCreditsText(cleanText, true)
+                        : null;
+                    if (insufficientFriendly) cleanText = insufficientFriendly;
                     if (!cleanText) break; // purely technical message — suppress entirely
                     // Grab any deferred confirmation so we can attach it to the
                     // turn that contains the cost-message text.
@@ -1504,6 +1549,17 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     // No red error pill — this is invisible recovery.
                     setActivity(t('creativeOs.agent.reconnectingShort'));
                     startThreadPolling();
+                    break;
+                case 'insufficient_credits':
+                    appendInsufficientCreditsNote({
+                        balance: e.balance,
+                        required: e.required,
+                    });
+                    setRunning(false);
+                    setActivity('');
+                    setActivityStartedAt(null);
+                    abortRef.current = null;
+                    if (queueRef.current.length > 0) setQueuePaused(true);
                     break;
                 case 'error':
                     setError(e.message);
@@ -2041,6 +2097,24 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
     }, [projectId, sanitizeTurns]);
 
     const reportGenerationFailure = useCallback((message: string) => {
+        const friendly = resolveInsufficientCreditsText(message, true);
+        if (friendly) {
+            setTurns(prev => {
+                const last = prev[prev.length - 1];
+                if (last?.role === 'agent' && last.text === friendly) return prev;
+                return [
+                    ...prev,
+                    {
+                        role: 'agent' as const,
+                        text: friendly,
+                        artifacts: [],
+                        tool_calls: [],
+                        ts: Date.now(),
+                    },
+                ];
+            });
+            return;
+        }
         const text = (message || '').trim();
         if (!text) return;
         setTurns(prev => {
@@ -2059,7 +2133,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                 },
             ];
         });
-    }, []);
+    }, [resolveInsufficientCreditsText]);
 
     const appendPostDeliveryUpsell = useCallback((jobId?: string) => {
         const text = t('creativeOs.agent.postDeliveryUpsell');
@@ -2394,6 +2468,8 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                         suppressRedundantProductText={suppressRedundantProductTextTurns.has(idx)}
                                         lastUserText={lastUserText}
                                         nextUserText={nextUserText}
+                                        walletBalance={wallet?.balance}
+                                        onInsufficientCredits={appendInsufficientCreditsNote}
                                     />
                                 );
                             });
@@ -3569,9 +3645,25 @@ function AnimatedText({ text, refMap, speedCharsPerSec = 60 }: { text: string; r
     return <>{renderMessageContent(shown, refMap, false)}</>;
 }
 
-function CostConfirmChip({ pending, active, onQuickReply }: { pending: { credits: number; summaries: string[] }; active: boolean; onQuickReply?: (text: string) => void }) {
+function CostConfirmChip({
+    pending,
+    active,
+    onQuickReply,
+    walletBalance,
+    onInsufficientCredits,
+}: {
+    pending: { credits: number; summaries: string[] };
+    active: boolean;
+    onQuickReply?: (text: string) => void;
+    walletBalance?: number;
+    onInsufficientCredits?: (opts: { required: number; balance: number }) => void;
+}) {
     const { t, lang } = useTranslation();
     const handleConfirm = () => {
+        if (active && walletBalance != null && walletBalance < pending.credits) {
+            onInsufficientCredits?.({ required: pending.credits, balance: walletBalance });
+            return;
+        }
         // Send the confirmation reply in the user's UI language so it doesn't
         // visually break a Spanish conversation. Both phrasings are recognized
         // by the backend's _AUTO_BUTTON_TEXTS exclusion set so language
@@ -3846,6 +3938,8 @@ function TurnBubble({
     suppressRedundantProductText,
     lastUserText,
     nextUserText = '',
+    walletBalance,
+    onInsufficientCredits,
 }: {
     turn: AgentTurn;
     refMap: Map<string, AgentRef>;
@@ -3877,6 +3971,8 @@ function TurnBubble({
     suppressRedundantProductText?: boolean;
     lastUserText?: string;
     nextUserText?: string;
+    walletBalance?: number;
+    onInsufficientCredits?: (opts: { required: number; balance: number }) => void;
 }) {
     const { t } = useTranslation();
     const [chatShotPickerItem, setChatShotPickerItem] = useState<MentionItem | null>(null);
@@ -4309,6 +4405,8 @@ function TurnBubble({
                         pending={turn.pendingConfirmation}
                         active={confirmChipActive}
                         onQuickReply={onQuickReply}
+                        walletBalance={walletBalance}
+                        onInsufficientCredits={onInsufficientCredits}
                     />
                 )}
 
