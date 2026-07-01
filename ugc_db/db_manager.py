@@ -659,6 +659,19 @@ def get_plan_by_id(plan_id: str):
     return result.data[0] if result.data else None
 
 
+def get_topup_package(package_id: str):
+    """Look up an active credit top-up package by slug (small, medium, large, xl)."""
+    sb = get_supabase()
+    result = (
+        sb.table("credit_topup_packages")
+        .select("*")
+        .eq("id", package_id)
+        .eq("is_active", True)
+        .execute()
+    )
+    return result.data[0] if result.data else None
+
+
 def upsert_subscription(user_id: str, plan_id: str, stripe_subscription_id: str,
                          status: str, period_start: str, period_end: str):
     """Create or update a subscription row tied to a Stripe Subscription."""

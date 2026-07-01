@@ -6,10 +6,10 @@ import { useTranslation } from '@/lib/i18n';
 import { apiFetch } from '@/lib/utils';
 
 export const CREDIT_PACKAGES = [
-  { name: 'Small Top-Up', credits: 250, price: 9, perCredit: '3.6¢' },
-  { name: 'Medium Top-Up', credits: 700, price: 24, perCredit: '3.4¢', popular: true },
-  { name: 'Large Top-Up', credits: 2000, price: 59, perCredit: '3.0¢' },
-  { name: 'XL Top-Up', credits: 5000, price: 139, perCredit: '2.8¢' },
+  { id: 'small', name: 'Small Top-Up', credits: 250, price: 9, perCredit: '3.6¢' },
+  { id: 'medium', name: 'Medium Top-Up', credits: 700, price: 24, perCredit: '3.4¢', popular: true },
+  { id: 'large', name: 'Large Top-Up', credits: 2000, price: 59, perCredit: '3.0¢' },
+  { id: 'xl', name: 'XL Top-Up', credits: 5000, price: 139, perCredit: '2.8¢' },
 ] as const;
 
 interface TopUpCreditsModalProps {
@@ -105,7 +105,7 @@ export function TopUpCreditsModal({ open, onClose, notice }: TopUpCreditsModalPr
             const isPopular = 'popular' in pkg && pkg.popular;
             return (
             <div
-              key={pkg.name}
+              key={pkg.id}
               style={{
                 background: '#FFFFFF',
                 border: isPopular ? '2px solid var(--blue)' : '1px solid var(--border)',
@@ -163,14 +163,13 @@ export function TopUpCreditsModal({ open, onClose, notice }: TopUpCreditsModalPr
 
               <button
                 type="button"
-                disabled={topUpLoading === pkg.name}
+                disabled={topUpLoading === pkg.id}
                 onClick={async () => {
                   try {
-                    setTopUpLoading(pkg.name);
-                    const packageKey = pkg.name.split(' ')[0].toLowerCase();
+                    setTopUpLoading(pkg.id);
                     const { checkout_url } = await apiFetch<{ checkout_url: string }>(
                       '/api/billing/checkout/topup',
-                      { method: 'POST', body: JSON.stringify({ package: packageKey }) },
+                      { method: 'POST', body: JSON.stringify({ package: pkg.id }) },
                     );
                     window.location.href = checkout_url;
                   } catch (err: unknown) {
@@ -184,7 +183,7 @@ export function TopUpCreditsModal({ open, onClose, notice }: TopUpCreditsModalPr
                   borderRadius: '8px',
                   fontSize: '13px',
                   fontWeight: 700,
-                  cursor: topUpLoading === pkg.name ? 'wait' : 'pointer',
+                  cursor: topUpLoading === pkg.id ? 'wait' : 'pointer',
                   transition: 'all 0.2s',
                   border: 'none',
                   marginTop: 'auto',
@@ -192,7 +191,7 @@ export function TopUpCreditsModal({ open, onClose, notice }: TopUpCreditsModalPr
                   color: isPopular ? 'white' : 'var(--text-1)',
                   ...(!isPopular ? { border: '1.5px solid var(--border)' } : {}),
                   boxShadow: isPopular ? '0 4px 12px rgba(51,122,255,0.25)' : 'none',
-                  opacity: topUpLoading === pkg.name ? 0.7 : 1,
+                  opacity: topUpLoading === pkg.id ? 0.7 : 1,
                 }}
                 onMouseEnter={(e) => {
                   if (!isPopular) {
@@ -211,7 +210,7 @@ export function TopUpCreditsModal({ open, onClose, notice }: TopUpCreditsModalPr
                   }
                 }}
               >
-                {topUpLoading === pkg.name ? t('manage.redirecting') : t('manage.buyNow')}
+                {topUpLoading === pkg.id ? t('manage.redirecting') : t('manage.buyNow')}
               </button>
             </div>
             );

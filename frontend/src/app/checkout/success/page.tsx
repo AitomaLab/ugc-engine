@@ -15,7 +15,6 @@ function SuccessContent() {
   const isOnboardingFlow = searchParams.get('flow') === 'onboarding';
   const sessionId = searchParams.get('session_id');
   const [ready, setReady] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -29,10 +28,8 @@ function SuccessContent() {
           });
         }
       } catch (err: unknown) {
-        if (!cancelled) {
-          const message = err instanceof Error ? err.message : 'Failed to confirm payment';
-          setError(message);
-        }
+        // Best-effort fallback when webhooks are delayed; payment already succeeded in Stripe.
+        console.warn('[checkout/success] confirm fallback:', err);
       }
 
       await Promise.all([refreshWallet(), refreshSubscription()]);
@@ -66,13 +63,11 @@ function SuccessContent() {
           {t('onboarding.subscribe.paymentSuccessTitle')}
         </h1>
         <p style={{ fontSize: '14px', color: 'var(--text-3)', marginBottom: '32px', maxWidth: '400px', margin: '0 auto 32px', lineHeight: 1.6 }}>
-          {error
-            ? error
-            : ready
-              ? t('onboarding.subscribe.paymentSuccessRedirect')
-              : t('onboarding.subscribe.confirming')}
+          {ready
+            ? t('onboarding.subscribe.paymentSuccessRedirect')
+            : t('onboarding.subscribe.confirming')}
         </p>
-        {!ready && !error && (
+        {!ready && (
           <div style={{ marginBottom: '24px' }}>
             <div style={{ width: '24px', height: '24px', border: '3px solid var(--border)', borderTop: '3px solid var(--blue)', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto' }} />
           </div>
@@ -101,13 +96,11 @@ function SuccessContent() {
         Payment Successful
       </h1>
       <p style={{ fontSize: '14px', color: 'var(--text-3)', marginBottom: '32px', maxWidth: '400px', margin: '0 auto 32px', lineHeight: 1.6 }}>
-        {error
-          ? error
-          : ready
-            ? 'Your account has been updated. Credits are ready to use.'
-            : 'Processing your payment... This will take just a moment.'}
+        {ready
+          ? 'Your account has been updated. Credits are ready to use.'
+          : 'Processing your payment... This will take just a moment.'}
       </p>
-      {!ready && !error && (
+      {!ready && (
         <div style={{ marginBottom: '24px' }}>
           <div style={{ width: '24px', height: '24px', border: '3px solid var(--border)', borderTop: '3px solid var(--blue)', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto' }} />
         </div>

@@ -63,7 +63,7 @@ from ugc_db.db_manager import (
     create_project as db_create_project, update_project as db_update_project, delete_project as db_delete_project,
     get_subscription, get_wallet, list_transactions, deduct_credits, refund_credits,
     get_stripe_customer_id, save_stripe_customer_id,
-    get_plan_by_stripe_price_id, get_plan_by_id,
+    get_plan_by_stripe_price_id, get_plan_by_id, get_topup_package,
     upsert_subscription, cancel_subscription,
     get_user_id_by_stripe_customer, add_credits,
     list_influencers_for_user, list_scripts_scoped, list_products_scoped,
@@ -2897,14 +2897,6 @@ def api_deduct_credits(body: CreditDeductRequest, user: dict = Depends(get_curre
 # Stripe Billing
 # ---------------------------------------------------------------------------
 
-# Top-up package definitions (server-side source of truth)
-TOPUP_PACKAGES = {
-    "small":  {"credits": 250,  "stripe_price_id": os.getenv("STRIPE_TOPUP_SMALL_PRICE_ID", "")},
-    "medium": {"credits": 700,  "stripe_price_id": os.getenv("STRIPE_TOPUP_MEDIUM_PRICE_ID", "")},
-    "large":  {"credits": 2000, "stripe_price_id": os.getenv("STRIPE_TOPUP_LARGE_PRICE_ID", "")},
-    "xl":     {"credits": 5000, "stripe_price_id": os.getenv("STRIPE_TOPUP_XL_PRICE_ID", "")},
-}
-
 class CheckoutSubscriptionRequest(BaseModel):
     plan_id: str
     billing_interval: Literal["monthly", "yearly"] = "monthly"
@@ -2943,7 +2935,11 @@ def api_billing_confirm(
     payment_status = session.get("payment_status")
 
     if mode == "subscription" and payment_status in ("paid", "no_payment_required"):
-        fulfill_from_checkout_session(dict(session))
+        try:
+            fulfill_from_checkout_session(session)
+        except Exception:
+            traceback.print_exc()
+            # Webhook may have already fulfilled — return current account state below.
     elif mode == "payment" and payment_status == "paid":
         credits = int(metadata.get("topup_credits", "0"))
         package = metadata.get("topup_package", "unknown")
@@ -3043,9 +3039,14 @@ def api_stripe_checkout_topup(
 ):
     """Create a Stripe Checkout Session for a one-time credit top-up."""
     _require_stripe_configured()
-    pkg = TOPUP_PACKAGES.get(body.package)
-    if not pkg or not pkg["stripe_price_id"]:
-        raise HTTPException(status_code=400, detail="Invalid top-up package")
+    pkg = get_topup_package(body.package)
+    if not pkg:
+        raise HTTPException(status_code=400, detail="Unknown top-up package")
+    if not pkg.get("stripe_price_id"):
+        raise HTTPException(
+            status_code=400,
+            detail="Top-up package not configured (missing Stripe price ID in database)",
+        )
 
     # Get or lazily create Stripe Customer
     customer_id = get_stripe_customer_id(user["id"])
