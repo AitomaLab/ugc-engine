@@ -16,6 +16,7 @@ from pydantic import BaseModel, model_validator
 from typing import List, Literal, Optional
 from fastapi.middleware.cors import CORSMiddleware
 import os
+import traceback
 from dotenv import load_dotenv
 load_dotenv(".env.saas")
 load_dotenv("env.saas")
@@ -43,6 +44,7 @@ from ugc_backend.credit_cost_service import (
 from ugc_backend.billing_service import (
     fulfill_from_checkout_session,
     fulfill_from_invoice_paid,
+    period_bounds,
 )
 from ugc_db.db_manager import (
     get_supabase,
@@ -3151,7 +3153,11 @@ async def api_stripe_webhook(request: Request):
                 )
 
         elif mode == "subscription":
-            fulfill_from_checkout_session(data)
+            try:
+                fulfill_from_checkout_session(data)
+            except Exception:
+                traceback.print_exc()
+                raise
 
         else:
             print(
@@ -3161,7 +3167,11 @@ async def api_stripe_webhook(request: Request):
 
     # ── invoice.paid ───────────────────────────────────────────────────
     elif event_type == "invoice.paid":
-        fulfill_from_invoice_paid(data)
+        try:
+            fulfill_from_invoice_paid(data)
+        except Exception:
+            traceback.print_exc()
+            raise
 
     # ── customer.subscription.updated ──────────────────────────────────
     elif event_type == "customer.subscription.updated":
@@ -3180,12 +3190,7 @@ async def api_stripe_webhook(request: Request):
                 new_plan = get_plan_by_stripe_price_id(new_price_id) if new_price_id else None
 
                 if new_plan:
-                    period_start = datetime.fromtimestamp(
-                        data["current_period_start"], tz=timezone.utc
-                    ).isoformat()
-                    period_end = datetime.fromtimestamp(
-                        data["current_period_end"], tz=timezone.utc
-                    ).isoformat()
+                    period_start, period_end = period_bounds(data)
 
                     upsert_subscription(
                         user_id=user_id,
