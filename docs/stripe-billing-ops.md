@@ -36,6 +36,8 @@ Top-up price IDs live in Supabase (`credit_topup_packages.stripe_price_id`) — 
 
 1. Run migration [`ugc_db/migrations/065_credit_topup_packages.sql`](ugc_db/migrations/065_credit_topup_packages.sql) in Supabase SQL editor (creates table + seeds four packages).
 
+2. Run [`ugc_db/migrations/066_credit_topup_packages_grants.sql`](ugc_db/migrations/066_credit_topup_packages_grants.sql) so PostgREST exposes the new table (fixes 500 / schema cache errors).
+
 2. Stripe Dashboard (Live mode) → **Products** → create four **one-time** prices:
 
 | Package slug (`id`) | Credits | Price |

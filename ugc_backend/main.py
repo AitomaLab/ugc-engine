@@ -3039,10 +3039,23 @@ def api_stripe_checkout_topup(
 ):
     """Create a Stripe Checkout Session for a one-time credit top-up."""
     _require_stripe_configured()
-    pkg = get_topup_package(body.package)
+    try:
+        pkg = get_topup_package(body.package)
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Top-up catalog unavailable. Run migrations 065–066 in Supabase "
+                f"and reload the API schema. ({e})"
+            ),
+        ) from e
+
     if not pkg:
         raise HTTPException(status_code=400, detail="Unknown top-up package")
-    if not pkg.get("stripe_price_id"):
+
+    stripe_price_id = (pkg.get("stripe_price_id") or "").strip()
+    if not stripe_price_id:
         raise HTTPException(
             status_code=400,
             detail="Top-up package not configured (missing Stripe price ID in database)",
@@ -3060,18 +3073,22 @@ def api_stripe_checkout_topup(
 
     origin = request.headers.get("origin", os.getenv("FRONTEND_URL", "http://localhost:3000"))
 
-    session = stripe.checkout.Session.create(
-        customer=customer_id,
-        mode="payment",
-        line_items=[{"price": pkg["stripe_price_id"], "quantity": 1}],
-        success_url=f"{origin}/checkout/success?session_id={{CHECKOUT_SESSION_ID}}",
-        cancel_url=f"{origin}/manage?topup=1",
-        metadata={
-            "supabase_user_id": user["id"],
-            "topup_package": body.package,
-            "topup_credits": str(pkg["credits"]),
-        },
-    )
+    try:
+        session = stripe.checkout.Session.create(
+            customer=customer_id,
+            mode="payment",
+            line_items=[{"price": stripe_price_id, "quantity": 1}],
+            success_url=f"{origin}/checkout/success?session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"{origin}/manage?topup=1",
+            metadata={
+                "supabase_user_id": user["id"],
+                "topup_package": body.package,
+                "topup_credits": str(pkg["credits"]),
+            },
+        )
+    except stripe.error.StripeError as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     return {"checkout_url": session.url}
 

@@ -662,14 +662,22 @@ def get_plan_by_id(plan_id: str):
 def get_topup_package(package_id: str):
     """Look up an active credit top-up package by slug (small, medium, large, xl)."""
     sb = get_supabase()
-    result = (
-        sb.table("credit_topup_packages")
-        .select("*")
-        .eq("id", package_id)
-        .eq("is_active", True)
-        .execute()
-    )
-    return result.data[0] if result.data else None
+    try:
+        result = (
+            sb.table("credit_topup_packages")
+            .select("*")
+            .eq("id", package_id)
+            .execute()
+        )
+    except Exception as e:
+        print(f"[billing] credit_topup_packages lookup failed for {package_id!r}: {e}")
+        raise
+    if not result.data:
+        return None
+    row = result.data[0]
+    if row.get("is_active") is False:
+        return None
+    return row
 
 
 def upsert_subscription(user_id: str, plan_id: str, stripe_subscription_id: str,
