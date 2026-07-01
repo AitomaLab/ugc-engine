@@ -4,6 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { adminFetch, ADMIN_PRIMARY } from './adminFetch';
 
 type FeedbackStatus = 'open' | 'complete' | 'archived';
+type EntryType = 'feedback' | 'feature';
+type CategoryTab = EntryType;
+type StatusFilter = 'all' | FeedbackStatus;
 
 interface FeedbackRow {
     id: string;
@@ -13,10 +16,9 @@ interface FeedbackRow {
     message: string;
     image_url?: string | null;
     status: FeedbackStatus;
+    type?: EntryType | null;
     created_at: string;
 }
-
-type StatusFilter = 'all' | FeedbackStatus;
 
 function statusBadgeStyle(status: FeedbackStatus): { bg: string; color: string; label: string } {
     if (status === 'complete') return { bg: 'rgba(5,150,105,0.12)', color: '#059669', label: 'Complete' };
@@ -40,28 +42,39 @@ function formatTime(iso: string): string {
     }
 }
 
+function buildListQuery(category: CategoryTab, filter: StatusFilter): string {
+    const params = new URLSearchParams();
+    params.set('type', category);
+    if (filter !== 'all') params.set('status', filter);
+    return `?${params.toString()}`;
+}
+
 export default function FeedbackTab() {
     const [rows, setRows] = useState<FeedbackRow[]>([]);
     const [loading, setLoading] = useState(false);
+    const [category, setCategory] = useState<CategoryTab>('feedback');
     const [filter, setFilter] = useState<StatusFilter>('all');
     const [expandedId, setExpandedId] = useState<string | null>(null);
 
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            const qs = filter === 'all' ? '' : `?status=${filter}`;
-            const data = await adminFetch<FeedbackRow[]>(`/api/feedback/list${qs}`);
+            const data = await adminFetch<FeedbackRow[]>(`/api/feedback/list${buildListQuery(category, filter)}`);
             setRows(Array.isArray(data) ? data : []);
         } catch (err) {
             console.error('Failed to load feedback', err);
         } finally {
             setLoading(false);
         }
-    }, [filter]);
+    }, [category, filter]);
 
     useEffect(() => {
         load();
     }, [load]);
+
+    useEffect(() => {
+        setExpandedId(null);
+    }, [category]);
 
     const grouped = useMemo(() => {
         const map = new Map<string, FeedbackRow[]>();
@@ -82,13 +95,42 @@ export default function FeedbackTab() {
     };
 
     const remove = async (id: string) => {
-        if (!window.confirm('Delete this feedback permanently?')) return;
+        const label = category === 'feature' ? 'feature request' : 'feedback';
+        if (!window.confirm(`Delete this ${label} permanently?`)) return;
         await adminFetch(`/api/feedback/${id}`, { method: 'DELETE' });
         await load();
     };
 
+    const emptyLabel = category === 'feature' ? 'No feature requests yet.' : 'No feedback yet.';
+
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div style={{ display: 'flex', gap: 8, borderBottom: '1px solid #E2E8F0' }}>
+                {([
+                    { id: 'feedback' as const, label: 'Feedback' },
+                    { id: 'feature' as const, label: 'Features' },
+                ]).map(({ id, label }) => (
+                    <button
+                        key={id}
+                        type="button"
+                        onClick={() => setCategory(id)}
+                        style={{
+                            padding: '10px 16px',
+                            marginBottom: -1,
+                            border: 'none',
+                            borderBottom: category === id ? `2px solid ${ADMIN_PRIMARY}` : '2px solid transparent',
+                            background: 'transparent',
+                            color: category === id ? ADMIN_PRIMARY : '#64748B',
+                            fontSize: 14,
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                        }}
+                    >
+                        {label}
+                    </button>
+                ))}
+            </div>
+
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                     {(['all', 'open', 'complete', 'archived'] as StatusFilter[]).map((s) => (
@@ -137,7 +179,7 @@ export default function FeedbackTab() {
 
             {!loading && rows.length === 0 && (
                 <div style={{ padding: 24, color: '#94A3B8', fontSize: 14, background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 16 }}>
-                    No feedback yet.
+                    {emptyLabel}
                 </div>
             )}
 

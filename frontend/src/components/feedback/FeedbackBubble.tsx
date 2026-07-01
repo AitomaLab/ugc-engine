@@ -2,12 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { usePathname } from 'next/navigation';
+import html2canvas from 'html2canvas';
 import { useApp } from '@/providers/AppProvider';
 
 const PRIMARY = '#337AFF';
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 const HIDDEN_PREFIXES = ['/editor', '/admin', '/login', '/signup', '/forgot-password', '/reset-password', '/logout'];
+
+type EntryType = 'feedback' | 'feature';
 
 function isHiddenRoute(pathname: string | null): boolean {
     if (!pathname) return true;
@@ -50,12 +53,14 @@ export function FeedbackBubble() {
     const [narrow, setNarrow] = useState(false);
     const [name, setName] = useState('');
     const [message, setMessage] = useState('');
+    const [entryType, setEntryType] = useState<EntryType>('feedback');
     const [imageFile, setImageFile] = useState<File | null>(null);
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
     const [sending, setSending] = useState(false);
     const [error, setError] = useState('');
     const [thanks, setThanks] = useState(false);
     const [submitAttempted, setSubmitAttempted] = useState(false);
+    const [isCapturing, setIsCapturing] = useState(false);
 
     useEffect(() => {
         const check = () => setNarrow(window.innerWidth < 420);
@@ -82,6 +87,7 @@ export function FeedbackBubble() {
     const resetForm = useCallback(() => {
         setName('');
         setMessage('');
+        setEntryType('feedback');
         setImageFile(null);
         if (previewUrl) URL.revokeObjectURL(previewUrl);
         setPreviewUrl(null);
@@ -121,6 +127,37 @@ export function FeedbackBubble() {
         if (fileInputRef.current) fileInputRef.current.value = '';
     };
 
+    const handleTakeScreenshot = async () => {
+        setIsCapturing(true);
+        try {
+            const panelEl = document.getElementById('feedback-bubble-panel');
+            if (panelEl) panelEl.style.visibility = 'hidden';
+
+            await new Promise((res) => setTimeout(res, 80));
+
+            const canvas = await html2canvas(document.body, {
+                useCORS: true,
+                allowTaint: false,
+                scale: 1,
+                logging: false,
+            });
+
+            if (panelEl) panelEl.style.visibility = 'visible';
+
+            canvas.toBlob((blob) => {
+                if (!blob) return;
+                const file = new File([blob], `screenshot-${Date.now()}.png`, { type: 'image/png' });
+                onPickImage(file);
+            }, 'image/png');
+        } catch (err) {
+            const panelEl = document.getElementById('feedback-bubble-panel');
+            if (panelEl) panelEl.style.visibility = 'visible';
+            console.error('Screenshot failed', err);
+        } finally {
+            setIsCapturing(false);
+        }
+    };
+
     const submit = async () => {
         setSubmitAttempted(true);
         if (!name.trim() || !message.trim()) return;
@@ -131,6 +168,7 @@ export function FeedbackBubble() {
             const fd = new FormData();
             fd.append('name', name.trim());
             fd.append('message', message.trim());
+            fd.append('type', entryType);
             if (imageFile) fd.append('image', imageFile);
 
             const res = await fetch(`${API_BASE}/api/feedback/submit`, {
@@ -222,6 +260,7 @@ export function FeedbackBubble() {
 
             {open && (
                 <div
+                    id="feedback-bubble-panel"
                     role="dialog"
                     aria-labelledby="feedback-panel-title"
                     style={panelStyle}
@@ -289,6 +328,22 @@ export function FeedbackBubble() {
                     ) : (
                         <div style={{ padding: '16px' }}>
                             <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 6 }}>
+                                Type
+                            </label>
+                            <select
+                                value={entryType}
+                                onChange={(e) => setEntryType(e.target.value as EntryType)}
+                                style={{
+                                    ...inputStyle,
+                                    cursor: 'pointer',
+                                    appearance: 'auto',
+                                }}
+                            >
+                                <option value="feedback">Feedback</option>
+                                <option value="feature">Feature request</option>
+                            </select>
+
+                            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#374151', margin: '12px 0 6px' }}>
                                 Name
                             </label>
                             <input
@@ -306,12 +361,12 @@ export function FeedbackBubble() {
                             )}
 
                             <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#374151', margin: '12px 0 6px' }}>
-                                Your feedback
+                                {entryType === 'feature' ? 'Feature request' : 'Your feedback'}
                             </label>
                             <textarea
                                 value={message}
                                 onChange={(e) => setMessage(e.target.value)}
-                                placeholder="What's on your mind?"
+                                placeholder={entryType === 'feature' ? 'Describe the feature you would like to see…' : "What's on your mind?"}
                                 rows={4}
                                 style={{
                                     ...inputStyle,
@@ -374,29 +429,75 @@ export function FeedbackBubble() {
                                     </button>
                                 </div>
                             ) : (
-                                <button
-                                    type="button"
-                                    onClick={() => fileInputRef.current?.click()}
-                                    style={{
-                                        width: '100%',
-                                        border: '1.5px dashed #CBD5E1',
-                                        borderRadius: 10,
-                                        padding: '12px 16px',
-                                        background: '#F8FAFC',
-                                        cursor: 'pointer',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        gap: 8,
-                                    }}
-                                >
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                                        <polyline points="17 8 12 3 7 8" />
-                                        <line x1="12" y1="3" x2="12" y2="15" />
-                                    </svg>
-                                    <span style={{ fontSize: 13, color: '#64748B' }}>Attach a screenshot</span>
-                                </button>
+                                <>
+                                    <button
+                                        type="button"
+                                        onClick={() => fileInputRef.current?.click()}
+                                        style={{
+                                            width: '100%',
+                                            border: '1.5px dashed #CBD5E1',
+                                            borderRadius: 10,
+                                            padding: '12px 16px',
+                                            background: '#F8FAFC',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            gap: 8,
+                                        }}
+                                    >
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                            <polyline points="17 8 12 3 7 8" />
+                                            <line x1="12" y1="3" x2="12" y2="15" />
+                                        </svg>
+                                        <span style={{ fontSize: 13, color: '#64748B' }}>Attach a screenshot</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => void handleTakeScreenshot()}
+                                        disabled={isCapturing}
+                                        style={{
+                                            width: '100%',
+                                            marginTop: 8,
+                                            border: '1.5px dashed #CBD5E1',
+                                            borderRadius: 10,
+                                            padding: '12px 16px',
+                                            background: '#F8FAFC',
+                                            cursor: isCapturing ? 'not-allowed' : 'pointer',
+                                            opacity: isCapturing ? 0.5 : 1,
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            gap: 8,
+                                        }}
+                                    >
+                                        {isCapturing ? (
+                                            <>
+                                                <span
+                                                    style={{
+                                                        width: 14,
+                                                        height: 14,
+                                                        border: '2px solid #94A3B8',
+                                                        borderTopColor: 'transparent',
+                                                        borderRadius: '50%',
+                                                        animation: 'admin-spin 0.7s linear infinite',
+                                                        flexShrink: 0,
+                                                    }}
+                                                />
+                                                <span style={{ fontSize: 13, color: '#64748B' }}>Capturing...</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                                                    <circle cx="12" cy="13" r="4" />
+                                                </svg>
+                                                <span style={{ fontSize: 13, color: '#64748B' }}>Take screenshot</span>
+                                            </>
+                                        )}
+                                    </button>
+                                </>
                             )}
 
                             <div style={{ marginTop: 16 }}>
