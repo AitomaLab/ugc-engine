@@ -1,4 +1,4 @@
--- 060_feedback_type.sql
+-- 068_feedback_type.sql
 -- Distinguish general feedback from feature requests.
 -- Additive only. Safe to run multiple times.
 
