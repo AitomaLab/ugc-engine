@@ -627,8 +627,8 @@ function ProfileDropdown() {
     const planName = subscription?.plan?.name || 'Free';
     const balance = wallet?.balance ?? 0;
     const monthlyCredits = subscription?.plan?.credits_monthly ?? 0;
-    const used = monthlyCredits > 0 ? monthlyCredits - balance : 0;
-    const percentage = monthlyCredits > 0 ? Math.round((balance / monthlyCredits) * 100) : 0;
+    const used = monthlyCredits > 0 ? Math.max(0, monthlyCredits - balance) : 0;
+    const percentage = monthlyCredits > 0 ? Math.min(100, Math.round((balance / monthlyCredits) * 100)) : 0;
 
     const handleSignOut = async () => {
         await supabase.auth.signOut();

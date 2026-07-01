@@ -29,6 +29,9 @@ def _to_dict(obj: Any) -> dict[str, Any]:
         return {}
 
 
+to_stripe_dict = _to_dict
+
+
 def resolve_invoice_subscription_id(invoice: dict[str, Any]) -> str | None:
     """Extract subscription ID from a Stripe Invoice (supports legacy + newer shapes)."""
     sub_id = invoice.get("subscription")
@@ -230,6 +233,46 @@ def fulfill_from_checkout_session(session: Any) -> dict[str, Any] | None:
         subscription_id,
         session_id=session_dict.get("id"),
     )
+
+
+def fulfill_topup_from_checkout_session(session: Any) -> dict[str, Any] | None:
+    """Fulfill a paid one-time credit top-up checkout session."""
+    session_dict = _to_dict(session)
+    metadata = session_dict.get("metadata") or {}
+    user_id = metadata.get("supabase_user_id")
+    package = metadata.get("topup_package", "unknown")
+
+    try:
+        credits = int(metadata.get("topup_credits", "0"))
+    except (TypeError, ValueError):
+        credits = 0
+
+    if session_dict.get("payment_status") not in ("paid", "no_payment_required"):
+        print(
+            "[Stripe] checkout.session.completed top-up skipped: "
+            f"payment_status={session_dict.get('payment_status')!r}"
+        )
+        return None
+
+    if not user_id or credits <= 0:
+        print(
+            "[Stripe] checkout.session.completed top-up skipped: "
+            f"user_id={user_id!r} credits={credits}"
+        )
+        return None
+
+    add_credits(
+        user_id=user_id,
+        amount=credits,
+        tx_type="top_up",
+        description=f"Credit top-up: {package} ({credits} credits)",
+        metadata={
+            "stripe_session_id": session_dict.get("id"),
+            "package": package,
+        },
+    )
+    print(f"[Stripe] Added {credits} credits to user {user_id} (top-up: {package})")
+    return {"credits_added": credits, "package": package, "user_id": user_id}
 
 
 def fulfill_from_invoice_paid(invoice: Any) -> dict[str, Any] | None:

@@ -165,7 +165,11 @@ function ManagePage() {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', padding: '6px 0' }}>
               <span style={{ fontSize: '12px', color: 'var(--text-3)', fontWeight: 500 }}>{t('manage.usage')}</span>
-              <span style={{ fontSize: '12px', color: 'var(--text-1)', fontWeight: 600, marginLeft: 'auto' }}>{Math.round(pct)}%</span>
+              <span style={{ fontSize: '12px', color: 'var(--text-1)', fontWeight: 600, marginLeft: 'auto' }}>
+                {balance > monthlyCredits && monthlyCredits > 0
+                  ? `${balance.toLocaleString()} (${t('manage.creditsRemaining')})`
+                  : `${Math.round(pct)}%`}
+              </span>
             </div>
           </div>
           <button

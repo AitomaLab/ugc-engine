@@ -729,6 +729,17 @@ def add_credits(user_id: str, amount: int, tx_type: str, description: str, metad
             or metadata.get("stripe_session_id")
         )
 
+    if idempotency_key:
+        existing = (
+            sb.table("credit_transactions")
+            .select("id")
+            .eq("stripe_idempotency_key", idempotency_key)
+            .limit(1)
+            .execute()
+        )
+        if existing.data:
+            return
+
     wallet = get_wallet(user_id)
     if not wallet:
         result = sb.table("credit_wallets").insert({

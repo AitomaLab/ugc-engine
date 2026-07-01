@@ -44,7 +44,9 @@ from ugc_backend.credit_cost_service import (
 from ugc_backend.billing_service import (
     fulfill_from_checkout_session,
     fulfill_from_invoice_paid,
+    fulfill_topup_from_checkout_session,
     period_bounds,
+    to_stripe_dict,
 )
 from ugc_db.db_manager import (
     get_supabase,
@@ -65,7 +67,7 @@ from ugc_db.db_manager import (
     get_stripe_customer_id, save_stripe_customer_id,
     get_plan_by_stripe_price_id, get_plan_by_id, get_topup_package,
     upsert_subscription, cancel_subscription,
-    get_user_id_by_stripe_customer, add_credits,
+    get_user_id_by_stripe_customer,
     list_influencers_for_user, list_scripts_scoped, list_products_scoped,
     list_products_for_user, list_app_clips_scoped, list_app_clips_for_user,
     list_jobs_scoped, list_product_shots_scoped,
@@ -2926,6 +2928,7 @@ def api_billing_confirm(
     except stripe.error.StripeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
+    session = to_stripe_dict(session)
     metadata = session.get("metadata") or {}
     session_user_id = metadata.get("supabase_user_id")
     if session_user_id and session_user_id != user["id"]:
@@ -2941,19 +2944,10 @@ def api_billing_confirm(
             traceback.print_exc()
             # Webhook may have already fulfilled — return current account state below.
     elif mode == "payment" and payment_status == "paid":
-        credits = int(metadata.get("topup_credits", "0"))
-        package = metadata.get("topup_package", "unknown")
-        if credits > 0:
-            add_credits(
-                user_id=user["id"],
-                amount=credits,
-                tx_type="top_up",
-                description=f"Credit top-up: {package} ({credits} credits)",
-                metadata={
-                    "stripe_session_id": session.get("id"),
-                    "package": package,
-                },
-            )
+        try:
+            fulfill_topup_from_checkout_session(session)
+        except Exception:
+            traceback.print_exc()
     else:
         print(
             f"[Stripe] billing/confirm skipped: mode={mode!r} payment_status={payment_status!r} "
@@ -3137,38 +3131,20 @@ async def api_stripe_webhook(request: Request):
         raise HTTPException(status_code=400, detail=f"Webhook error: {str(e)}")
 
     event_type = event["type"]
-    data = event["data"]["object"]
+    data = to_stripe_dict(event["data"]["object"])
 
     print(f"[Stripe] Received event: {event_type} (id: {event['id']})")
 
     # ── checkout.session.completed ─────────────────────────────────────
     if event_type == "checkout.session.completed":
-        metadata = data.get("metadata", {})
         mode = data.get("mode")
 
         if mode == "payment":
-            # One-time top-up payment completed
-            user_id = metadata.get("supabase_user_id")
-            credits = int(metadata.get("topup_credits", "0"))
-            package = metadata.get("topup_package", "unknown")
-
-            if user_id and credits > 0:
-                add_credits(
-                    user_id=user_id,
-                    amount=credits,
-                    tx_type="top_up",
-                    description=f"Credit top-up: {package} ({credits} credits)",
-                    metadata={
-                        "stripe_session_id": data.get("id"),
-                        "package": package,
-                    },
-                )
-                print(f"[Stripe] Added {credits} credits to user {user_id} (top-up: {package})")
-            else:
-                print(
-                    "[Stripe] checkout.session.completed payment skipped: "
-                    f"user_id={user_id!r} credits={credits}"
-                )
+            try:
+                fulfill_topup_from_checkout_session(data)
+            except Exception:
+                traceback.print_exc()
+                raise
 
         elif mode == "subscription":
             try:
