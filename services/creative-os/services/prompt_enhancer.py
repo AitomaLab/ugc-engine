@@ -168,6 +168,23 @@ def _build_user_message(user_prompt: str, language: str = "en", context: dict | 
             "final block."
             + leg_rules
         )
+        user_script = (context or {}).get("user_script")
+        if user_script:
+            parts.append(
+                f"\n[USER SCRIPT — use EXACTLY this text for Dialogue; do NOT invent "
+                f"alternate lines]\n{user_script}"
+            )
+        image_urls = (context or {}).get("image_urls") or []
+        if (
+            len(image_urls) >= 2
+            and (context or {}).get("product_type") == "physical"
+        ):
+            parts.append(
+                "\n[PHYSICAL PRODUCT DEMO — dual references]\n"
+                "- @Image1 = influencer/presenter identity (face, hair, skin tone).\n"
+                "- @Image2 = physical product appearance (packaging, color, logos).\n"
+                "- The product must stay visible during demo beats (hold, show, wet, pour, absorb)."
+            )
 
     parts.append(f"\nUser request: {user_prompt}")
     return "\n".join(parts)

@@ -852,6 +852,8 @@
   "creativeOs.agent.selectorNoCreators": "No creators yet",
   "creativeOs.agent.aspectVertical": "Vertical (9:16)",
   "creativeOs.agent.aspectHorizontal": "Horizontal (16:9)",
+  "creativeOs.agent.sceneModeToCamera": "Looking at camera, showing the product",
+  "creativeOs.agent.sceneModeMultiScene": "Multiple scenes and transitions",
   "creativeOs.agent.accentSpain": "Spain (Castilian)",
   "creativeOs.agent.accentLatam": "Latin America",
   "creativeOs.agent.costCredits": "{n} credits",

@@ -28,6 +28,8 @@ from services.managed_agent_client import (
     get_managed_agent_client,
     _detect_input_language,
     is_dynamic_speaking_ugc,
+    should_use_seedance_dynamic_routing,
+    allows_product_dynamic_seedance,
     has_routing_character_for_session,
     _recent_agent_turn_text,
     session_has_multi_video_intent,
@@ -505,6 +507,10 @@ async def agent_stream(
     )
     _has_product_ref = any(r.type == "product" for r in refs)
     _has_creator_ref = any(r.type in ("influencer", "clone") for r in refs)
+    _product_ref = next((r for r in refs if r.type == "product"), None)
+    _product_id = _product_ref.id if _product_ref else None
+    _product_type = _product_ref.product_type if _product_ref else None
+    _app_clip_id = _product_ref.app_clip_id if _product_ref else None
 
     bulk_reminder: Optional[str] = None
     if session_has_multi_video_intent(brief, _prior_turns_all):
@@ -579,25 +585,74 @@ async def agent_stream(
                     return True
         return False
 
-    _routing_text = _session_routing_text()
+    _user_routing_text = _session_user_text()
     _refs_as_dicts = [{"type": r.type} for r in refs]
     _has_routing_character = has_routing_character_for_session(
-        _routing_text,
+        _user_routing_text,
         refs=_refs_as_dicts,
     )
-    _is_dynamic_speaking = is_dynamic_speaking_ugc(
-        _routing_text,
+    _is_multi_beat_brief = is_dynamic_speaking_ugc(
+        _user_routing_text,
         has_character=_has_routing_character,
+    )
+    _is_dynamic_speaking = should_use_seedance_dynamic_routing(
+        _user_routing_text,
+        has_character=_has_routing_character,
+        product_id=_product_id,
+        product_type=_product_type,
+        app_clip_id=_app_clip_id,
+    )
+    _is_digital_multi_beat = (
+        _is_multi_beat_brief
+        and _has_product_ref
+        and not allows_product_dynamic_seedance(
+            product_id=_product_id,
+            product_type=_product_type,
+            app_clip_id=_app_clip_id,
+        )
     )
     dynamic_speaking_reminder: Optional[str] = None
     if _is_dynamic_speaking:
         dynamic_speaking_reminder = (
             "[DYNAMIC_SPEAKING_UGC — do NOT use create_ugc_video or create_bulk_campaign. "
             "Use generate_video(mode=seedance_2_ugc, dynamic_speaking=true, clip_length=15). "
-            "For 30s insistence pass target_duration=30. Pass hook with the script. "
+            "For 30s insistence pass target_duration=30. Pass hook with the EXACT confirmed script "
+            "(chat display alone does NOT reach Seedance — never put dialogue in prompt). "
+            "Put comma/y/and-separated visual beats in prompt. "
             "After dispatch tell user ~10–12 min ETA (walk-and-talk complexity); watch Videos tab.]"
         )
+        if _has_product_ref and _has_creator_ref:
+            dynamic_speaking_reminder += (
+                " Physical product multi-beat: pass product_id, product_type='physical', "
+                "influencer_id, reference_image_urls=[influencer, product]."
+            )
         engine_marker = dynamic_speaking_engine_marker
+    elif _is_digital_multi_beat:
+        dynamic_speaking_reminder = (
+            "[DIGITAL PRODUCT MULTI-BEAT UGC — use create_ugc_video with product_type='digital' "
+            "and app_clip_id from Referenced assets. Do NOT use dynamic_speaking or Seedance "
+            "for digital/SaaS multi-scene briefs — Veo + app-clip B-roll is the correct path.]"
+        )
+    elif (
+        _has_creator_ref
+        and _has_product_ref
+        and allows_product_dynamic_seedance(
+            product_id=_product_id,
+            product_type=_product_type,
+            app_clip_id=_app_clip_id,
+        )
+        and _ugc_intent_re.search(_user_routing_text)
+        and not _is_multi_beat_brief
+    ):
+        dynamic_speaking_reminder = (
+            "[SCENE MODE UNCLEAR — physical product + influencer, single-scene brief. "
+            "Do NOT default to Seedance dynamic. Ask (phrased visually, NO engine names) whether they "
+            "want (a) the influencer looking at camera showing the product, or (b) several separate "
+            "shots or settings across the clip — end the message with [[SCENE_MODE_BUTTONS]]. If already "
+            "answered, follow the choice: (a) create_ugc_video, (b) generate_video dynamic_speaking=true. "
+            "Resolve scene mode BEFORE aspect ratio or cost.]"
+        )
+        engine_marker = default_marker
     elif data.use_seedance:
         engine_marker = seedance_marker
     else:

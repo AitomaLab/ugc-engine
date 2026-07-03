@@ -1509,6 +1509,9 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     pendingConfirmRef.current = { credits: e.credits, summaries: e.summaries };
                     break;
                 }
+                case 'scene_mode_required':
+                    // Backend already emitted agent_message with [[SCENE_MODE_BUTTONS]].
+                    break;
                 case 'done': {
                     // Flush any deferred confirmation that wasn't consumed by an
                     // agent_message (edge case: backend synthesised fallback text).
@@ -2412,6 +2415,10 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                         : /16\s*:\s*9|horizontal/i.test(nextUserText) ? 'horizontal'
                                             : /4\s*:\s*3|classic/i.test(nextUserText) ? 'classic'
                                                 : null;
+                                const selectedSceneMode: 'tocamera' | 'multiscene' | null =
+                                    /multiple scenes|transitions|varias escenas|transiciones/i.test(nextUserText) ? 'multiscene'
+                                        : /looking at camera|mirando a c[aá]mara/i.test(nextUserText) ? 'tocamera'
+                                            : null;
                                 const selectedDuration: 5 | 10 | 15 | null =
                                     /\b5\s*s(econds?)?\b/i.test(nextUserText) ? 5
                                         : /\b10\s*s(econds?)?\b/i.test(nextUserText) ? 10
@@ -2449,6 +2456,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                                         running={running}
                                         onQuickReply={(text) => { handleRun(text); }}
                                         selectedAspect={selectedAspect}
+                                        selectedSceneMode={selectedSceneMode}
                                         selectedDuration={selectedDuration}
                                         selectedUgcDuration={selectedUgcDuration}
                                         selectedCaptionStyle={captionPick.style}
@@ -3919,6 +3927,7 @@ function TurnBubble({
     running,
     onQuickReply,
     selectedAspect,
+    selectedSceneMode,
     selectedDuration,
     selectedUgcDuration,
     selectedCaptionStyle,
@@ -3952,6 +3961,7 @@ function TurnBubble({
     running?: boolean;
     onQuickReply?: (text: string) => void;
     selectedAspect?: 'vertical' | 'horizontal' | 'classic' | null;
+    selectedSceneMode?: 'tocamera' | 'multiscene' | null;
     selectedDuration?: 5 | 10 | 15 | null;
     selectedUgcDuration?: 8 | 15 | 30 | null;
     selectedCaptionStyle?: string | null;
@@ -3989,6 +3999,7 @@ function TurnBubble({
     // historical turns they reflect the user's selection (filled vs. muted).
     const rawText = turn.text || '';
     const hasAspectMarker = !isUser && rawText.includes('[[ASPECT_BUTTONS]]');
+    const hasSceneModeMarker = !isUser && rawText.includes('[[SCENE_MODE_BUTTONS]]');
     const hasAccentMarker = !isUser && rawText.includes('[[SPANISH_ACCENT_BUTTONS]]');
     const hasDurationMarker = !isUser && rawText.includes('[[DURATION_BUTTONS]]');
     const hasUgcDurationMarker = !isUser && rawText.includes('[[UGC_DURATION_BUTTONS]]');
@@ -4022,6 +4033,7 @@ function TurnBubble({
     // Strip all markers from display text
     let displayText = rawText;
     if (hasAspectMarker) displayText = displayText.replace(/\s*\[\[ASPECT_BUTTONS\]\]\s*/g, '').trim();
+    if (hasSceneModeMarker) displayText = displayText.replace(/\s*\[\[SCENE_MODE_BUTTONS\]\]\s*/g, '').trim();
     if (hasAccentMarker) displayText = displayText.replace(/\s*\[\[SPANISH_ACCENT_BUTTONS\]\]\s*/g, '').trim();
     if (hasDurationMarker) displayText = displayText.replace(/\s*\[\[DURATION_BUTTONS\]\]\s*/g, '').trim();
     if (hasUgcDurationMarker) displayText = displayText.replace(/\s*\[\[UGC_DURATION_BUTTONS\]\]\s*/g, '').trim();
@@ -4045,6 +4057,7 @@ function TurnBubble({
 
     // Save-or-generate modal state — selectedAccent used below for accent buttons.
     const aspectButtonsActive = hasAspectMarker && !!isLast && !!onQuickReply && !selectedAspect;
+    const sceneModeButtonsActive = hasSceneModeMarker && !!isLast && !!onQuickReply && !selectedSceneMode;
     const durationButtonsActive = hasDurationMarker && !!isLast && !!onQuickReply && !selectedDuration;
     const ugcDurationButtonsActive = hasUgcDurationMarker && !!isLast && !!onQuickReply && !selectedUgcDuration;
     const accentButtonsActive = hasAccentMarker && !!isLast && !!onQuickReply && !selectedAccent;
@@ -4074,7 +4087,7 @@ function TurnBubble({
         (captionPlacementActive && !!isLast)
         || (!!selectedCaptionPlacement && hasCaptionStylePicker)
     );
-    const hasContent = !!displayText || !!turn.artifacts?.length || turn.interrupted || turn.generation_failed || hasRefPreviews || hasAspectMarker || hasAccentMarker || hasDurationMarker || hasUgcDurationMarker || showProductSelector || showCreatorSelector || hasSaveOrGenMarker || !!turn.pendingConfirmation;
+    const hasContent = !!displayText || !!turn.artifacts?.length || turn.interrupted || turn.generation_failed || hasRefPreviews || hasAspectMarker || hasSceneModeMarker || hasAccentMarker || hasDurationMarker || hasUgcDurationMarker || showProductSelector || showCreatorSelector || hasSaveOrGenMarker || !!turn.pendingConfirmation;
     const hasSelector = showProductSelector || showCreatorSelector;
     // While a run is active, show a placeholder "…" bubble (three breathing
     // dots) in place of the empty agent turn so the UI never looks frozen
@@ -4221,6 +4234,44 @@ function TurnBubble({
                                         fontSize: '13px',
                                         fontWeight: 500,
                                         cursor: aspectButtonsActive ? 'pointer' : 'default',
+                                    }}
+                                >
+                                    {label}
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
+
+                {hasSceneModeMarker && (
+                    <div style={{ display: 'flex', gap: '8px', marginTop: displayText ? '10px' : 0, flexWrap: 'wrap' }}>
+                        {(['tocamera', 'multiscene'] as const).map((kind) => {
+                            const label = kind === 'tocamera'
+                                ? t('creativeOs.agent.sceneModeToCamera')
+                                : t('creativeOs.agent.sceneModeMultiScene');
+                            const isSelected = selectedSceneMode === kind;
+                            const muted = !!selectedSceneMode && !isSelected;
+                            return (
+                                <button
+                                    key={kind}
+                                    type="button"
+                                    disabled={!sceneModeButtonsActive}
+                                    onClick={() => sceneModeButtonsActive && onQuickReply?.(label)}
+                                    style={{
+                                        padding: '6px 14px',
+                                        borderRadius: '8px',
+                                        border: isSelected
+                                            ? '1px solid #337AFF'
+                                            : '1px solid rgba(51,122,255,0.15)',
+                                        background: isSelected
+                                            ? 'linear-gradient(135deg, #337AFF 0%, #5B8FFF 100%)'
+                                            : muted
+                                                ? 'rgba(51,122,255,0.03)'
+                                                : 'white',
+                                        color: isSelected ? 'white' : muted ? '#8A93B0' : '#337AFF',
+                                        fontSize: '13px',
+                                        fontWeight: 500,
+                                        cursor: sceneModeButtonsActive ? 'pointer' : 'default',
                                     }}
                                 >
                                     {label}

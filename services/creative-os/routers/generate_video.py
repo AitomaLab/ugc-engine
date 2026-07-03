@@ -878,7 +878,7 @@ async def _generate_seedance_video(
             "language_accent": getattr(data, "language_accent", None),
             "subtitles_enabled": False,
             "music_enabled": False,
-            "hook": (data.prompt or "")[:500],
+            "hook": (data.hook or "")[:500],
         }
         if influencer_id:
             job_payload["influencer_id"] = influencer_id
@@ -1198,6 +1198,11 @@ async def _run_seedance_clip_pipeline(
             # the script across time blocks for a continuous walk-and-talk clip.
             if getattr(data, "dynamic_speaking", False):
                 enhance_context["dynamic_speaking"] = True
+                if data.hook and data.hook.strip():
+                    enhance_context["user_script"] = data.hook.strip()
+            if data.product_id:
+                pt = getattr(data, "product_type", None) or "physical"
+                enhance_context["product_type"] = pt
             # Pass all reference images so the enhancer can map @image_1, @image_2, etc.
             if reference_image_urls:
                 enhance_context["image_urls"] = reference_image_urls
@@ -1260,7 +1265,12 @@ async def _run_seedance_clip_pipeline(
             # Inject bindings for ALL reference images, not just the first
             binding_lines = []
             for idx, _url in enumerate(reference_image_urls, 1):
-                subject = "person" if reference_video_urls and idx == 1 else "product"
+                if len(reference_image_urls) >= 2 and data.influencer_id and data.product_id:
+                    subject = "person" if idx == 1 else "product"
+                elif data.influencer_id and idx == 1:
+                    subject = "person"
+                else:
+                    subject = "product"
                 if subject == "person":
                     binding_lines.append(
                         f"@Image{idx} — preserve exact facial identity: "
@@ -1471,6 +1481,10 @@ async def _build_dynamic_leg_prompt(
             "leg_index": leg_index,
             "leg_total": 2,
         }
+        if leg_script and leg_script.strip():
+            enhance_context["user_script"] = leg_script.strip()
+        if data.product_id:
+            enhance_context["product_type"] = getattr(data, "product_type", None) or "physical"
         if reference_image_urls:
             enhance_context["image_urls"] = reference_image_urls
             enhance_context["image_url"] = reference_image_urls[0]
@@ -1503,10 +1517,21 @@ async def _build_dynamic_leg_prompt(
         )
 
     if reference_image_urls and "@Image" not in structured_prompt:
-        binding_lines = [
-            f"@Image{idx} — preserve exact facial identity: features, skin tone, and hair of @Image{idx}."
-            for idx, _u in enumerate(reference_image_urls, 1)
-        ]
+        binding_lines = []
+        for idx, _u in enumerate(reference_image_urls, 1):
+            if len(reference_image_urls) >= 2 and data.influencer_id and data.product_id:
+                if idx == 1:
+                    binding_lines.append(
+                        f"@Image{idx} — preserve exact facial identity: features, skin tone, and hair of @Image{idx}."
+                    )
+                else:
+                    binding_lines.append(
+                        f"@Image{idx} — preserve product appearance, text, logos, and exact spelling of @Image{idx}."
+                    )
+            else:
+                binding_lines.append(
+                    f"@Image{idx} — preserve exact facial identity: features, skin tone, and hair of @Image{idx}."
+                )
         structured_prompt += "\n\nImage references provided:\n" + "\n".join(binding_lines)
 
     structured_prompt = _re.sub(r"^```(?:markdown|text)?\s*\n", "", structured_prompt)
