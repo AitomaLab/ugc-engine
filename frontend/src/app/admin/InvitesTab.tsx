@@ -18,12 +18,14 @@ interface Invite {
 function labelForList(listId: number): string {
     if (listId === 3) return 'Brevo Waitlist';
     if (listId === 10) return 'Beta Testers';
+    if (listId === 11) return 'Beta Waitlist';
     return `Brevo List ${listId}`;
 }
 
 function listDisplayName(listId: number): string {
     if (listId === 3) return 'Waitlist';
     if (listId === 10) return 'Beta Testers';
+    if (listId === 11) return 'Beta Waitlist';
     return `List ${listId}`;
 }
 
@@ -65,6 +67,7 @@ function ListSegmentControl({ selectedListId, onChange }: { selectedListId: numb
     const options = [
         { id: 3, label: 'Waitlist (List 3)' },
         { id: 10, label: 'Beta Testers (List 10)' },
+        { id: 11, label: 'Beta Waitlist (List 11)' },
     ] as const;
 
     return (

@@ -136,6 +136,8 @@ def _label_for_list(list_id: int) -> str:
         return "Brevo Waitlist"
     if list_id == 10:
         return "Beta Testers"
+    if list_id == 11:
+        return "Beta Waitlist"
     return f"Brevo List {list_id}"
 
 
