@@ -31,6 +31,7 @@ from services.managed_agent_client import (
     should_use_seedance_dynamic_routing,
     allows_product_dynamic_seedance,
     has_routing_character_for_session,
+    _is_explicit_walk_and_talk,
     _recent_agent_turn_text,
     session_has_multi_video_intent,
     CAMPAIGN_INTENT_RE,
@@ -643,6 +644,7 @@ async def agent_stream(
         )
         and _ugc_intent_re.search(_user_routing_text)
         and not _is_multi_beat_brief
+        and not _is_explicit_walk_and_talk(_user_routing_text)
     ):
         dynamic_speaking_reminder = (
             "[SCENE MODE UNCLEAR — physical product + influencer, single-scene brief. "

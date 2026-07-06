@@ -246,6 +246,8 @@ function sessionHasCaptionIntent(turns: AgentTurn[]): boolean {
     return false;
 }
 
+const SCENE_MODE_MARKER_RE = /\[\[\s*SCENE_MODE_BUTTONS\s*\]\]/gi;
+
 function scrubAgentText(text: string): string {
     return text
         .replace(_AI_EDIT_OPS_RE, '')
@@ -1510,7 +1512,7 @@ export const AgentPanel = forwardRef(function AgentPanel({ projectId, onArtifact
                     break;
                 }
                 case 'scene_mode_required':
-                    // Backend already emitted agent_message with [[SCENE_MODE_BUTTONS]].
+                    updateLastAgentTurn((t) => ({ ...t, sceneModeRequired: true }));
                     break;
                 case 'done': {
                     // Flush any deferred confirmation that wasn't consumed by an
@@ -3999,7 +4001,9 @@ function TurnBubble({
     // historical turns they reflect the user's selection (filled vs. muted).
     const rawText = turn.text || '';
     const hasAspectMarker = !isUser && rawText.includes('[[ASPECT_BUTTONS]]');
-    const hasSceneModeMarker = !isUser && rawText.includes('[[SCENE_MODE_BUTTONS]]');
+    const hasSceneModeMarker = !isUser && (
+        !!turn.sceneModeRequired || /\[\[\s*SCENE_MODE_BUTTONS\s*\]\]/i.test(rawText)
+    );
     const hasAccentMarker = !isUser && rawText.includes('[[SPANISH_ACCENT_BUTTONS]]');
     const hasDurationMarker = !isUser && rawText.includes('[[DURATION_BUTTONS]]');
     const hasUgcDurationMarker = !isUser && rawText.includes('[[UGC_DURATION_BUTTONS]]');
@@ -4033,7 +4037,7 @@ function TurnBubble({
     // Strip all markers from display text
     let displayText = rawText;
     if (hasAspectMarker) displayText = displayText.replace(/\s*\[\[ASPECT_BUTTONS\]\]\s*/g, '').trim();
-    if (hasSceneModeMarker) displayText = displayText.replace(/\s*\[\[SCENE_MODE_BUTTONS\]\]\s*/g, '').trim();
+    if (hasSceneModeMarker) displayText = displayText.replace(SCENE_MODE_MARKER_RE, '').trim();
     if (hasAccentMarker) displayText = displayText.replace(/\s*\[\[SPANISH_ACCENT_BUTTONS\]\]\s*/g, '').trim();
     if (hasDurationMarker) displayText = displayText.replace(/\s*\[\[DURATION_BUTTONS\]\]\s*/g, '').trim();
     if (hasUgcDurationMarker) displayText = displayText.replace(/\s*\[\[UGC_DURATION_BUTTONS\]\]\s*/g, '').trim();

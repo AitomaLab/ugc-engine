@@ -314,6 +314,8 @@ export interface AgentTurn {
     generation_failed?: boolean;
     /** Tracks which job triggered an auto upsell (captions/music after render). */
     post_delivery_upsell_job_id?: string;
+    /** Set when scene-mode disambiguation buttons should render (SSE scene_mode_required). */
+    sceneModeRequired?: boolean;
     ts: number;
 }
 
@@ -331,6 +333,7 @@ export type AgentStreamEvent =
     | { type: 'artifact_pending'; pending_id: string; kind: 'image' | 'video'; label: string; stage?: string; tool_name?: string; eta_seconds?: number }
     | { type: 'video_job_started'; job_id: string; label?: string; tool_name?: string; eta_seconds?: number; duration?: number; subtitles_enabled?: boolean; music_enabled?: boolean }
     | { type: 'confirmation_pending'; credits: number; summaries: string[] }
+    | { type: 'scene_mode_required'; lang?: 'en' | 'es' }
     | { type: 'done'; session_id: string }
     | { type: 'interrupted' }
     | { type: 'keepalive'; tool_use_id?: string; elapsed_seconds: number; phase?: string }

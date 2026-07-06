@@ -551,7 +551,7 @@ CLIP ORDER — critical: video_urls must follow the order the USER specified in 
   Skip the selector when: the user already @-mentioned the asset; only one product (or one creator) exists in the project — use it directly; or the brief doesn't need that asset type.
   When the user picks from a selector, their reply includes structured refs with real `id=` values — treat exactly like an @mention (use those ids in tool calls, never call `create_product` / `create_influencer` to duplicate).
 10. ASPECT RATIO — MANDATORY before gated generation. Before calling `generate_image` or `generate_video` with `confirmed=true`, you MUST know the aspect ratio. If the user's brief already specifies it ("vertical", "9:16", "horizontal", "16:9", "square", "1:1", "for TikTok", "for YouTube", "for Instagram feed", "landscape", "portrait"), use it directly. For images, '1:1' is available for Instagram feed posts. Otherwise you MUST ask the user BEFORE presenting the cost confirmation: ask the question in one short sentence, then append the literal marker `[[ASPECT_BUTTONS]]` on the last line of your message. The frontend detects this marker and renders clickable Vertical / Horizontal buttons for the user. When the user replies with their choice, THEN show the cost confirmation, THEN call the tool with `confirmed=true` and `aspect_ratio="9:16"` or `"16:9"` (or `"1:1"` for images). Never skip this step for gated generation. Do NOT include the marker when the aspect is already known.
-10a. SCENE MODE before aspect. When the brief carries `[SCENE MODE UNCLEAR]` or a tool returns `clarification_required` (`reason=scene_mode_ambiguous`), resolve scene mode FIRST with `[[SCENE_MODE_BUTTONS]]` (visual-only labels). Only AFTER the user picks may you ask aspect (`[[ASPECT_BUTTONS]]`) or show cost.
+10a. SCENE MODE before aspect. Only when `[SCENE MODE UNCLEAR]` or `scene_mode_ambiguous` — ask to-camera vs multi-scene (UI renders buttons). **Skip** if user already described walk-and-talk / sequential demo actions or approved a multi-beat script — go straight to aspect/cost.
 10a. RE-ADAPT / REFRAME AN EXISTING IMAGE — when the user asks to change the aspect ratio, reframe, "make it 9:16/16:9/1:1", "don't cut the bottle/product", "fit the whole thing", "uncrop", "extend the canvas", or otherwise ADAPT an image they referenced (a cropped storyboard panel, a previous generation, an @-mentioned asset, or an upload) — you are NOT generating a new picture. You MUST call `generate_image` and pass the EXACT image's URL via `reference_image_urls: ["<that image url>"]`, plus a prompt that says to KEEP the same scene, subject, product, lighting and composition and only re-fit it to the requested aspect ratio (e.g. "Reframe this exact photo to 9:16, keep the same Phebus Torrontés bottle, glasses, table and lighting unchanged, extend the scene naturally to fill the frame so nothing is cropped; do not invent or replace any product"). NEVER call `generate_image` with a prompt-only description and no `reference_image_urls` for a reframe — that makes the model invent a brand-new, different product (a hallucination). If you don't have the source image URL, ask the user to point to it (or use the panel's shot from the Images tab) BEFORE generating. The referenced image's identity must be preserved — same product, same scene — every time.
 10b. LANGUAGE — for video clips (`generate_video`), pass `language="es"` when the user requests Spanish / Latin dialogue. Default is English. Seedance 2.0 modes have full bilingual EN/ES support.
 10c. SPANISH ACCENT — MANDATORY when `language="es"` (or `video_language="es"`). Veo defaults to neutral Latin American Spanish whenever you don't specify, so you MUST resolve the accent BEFORE calling any video tool with `confirmed=true`:
@@ -2535,7 +2535,8 @@ _DYN_SPEAK_WORDS = (
     "promociona", "promocionando", "introduce", "narra", "cuenta", "recomiend",
     "explica", "endorse",
     "says", "saying", "speak", "speaking", " talks", " talk ", "talks about", "talking about",
-    "promote", "promotes", "promoting", "recommend", "tell ", "telling",
+    "promote", "promotes", "promoting", "recommend", "explain", "explaining",
+    "tell ", "telling",
     "voiceover", "voice over", "voice-over",
     "script", "guion", "guión", "dialogue", "diálogo", "dialogo", "testimon",
 )
@@ -2618,9 +2619,36 @@ def _has_listed_scene_beats(p: str) -> bool:
     return len(action_beats) >= 2
 
 
+def _has_agent_beat_prompt(p: str) -> bool:
+    """True when agent prompt maps ≥2 visual beats (comma-list or Beat 1/2/3…)."""
+    if not p:
+        return False
+    pl = p.lower()
+    if _has_listed_scene_beats(pl):
+        return True
+    return len(re.findall(r"\bbeat\s*\d+\b", pl)) >= 2
+
+
+_EXPLICIT_WALK_AND_TALK_RE = re.compile(
+    r"(?:"
+    r"walk[\s-]and[\s-]talk|walk[\s-]and[\s-]talks|walking\s+around|moving\s+through|"
+    r"grab\s+the|grabs\s+the|tutorial\b.*\bwhile\b|while\b.*\b(?:prepar|kitchen|grab)|"
+    r"caminando|pasea(?:ndo)?|recorre(?:ndo)?|mientras\s+prepar"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _is_explicit_walk_and_talk(text: str) -> bool:
+    """High-confidence walk-and-talk / kitchen-tutorial phrasing."""
+    return bool(_EXPLICIT_WALK_AND_TALK_RE.search(text or ""))
+
+
 def _has_dynamic_multi_beat_cue(p: str) -> bool:
     """True when text signals multiple actions/beats in one continuous clip."""
     if _has_listed_scene_beats(p):
+        return True
+    if _is_explicit_walk_and_talk(p):
         return True
     if sum(1 for w in _DYN_DEMO_ACTION_WORDS if w in p) >= 2:
         return True
@@ -2665,6 +2693,8 @@ def is_dynamic_speaking_ugc(prompt: str, *, has_character: bool) -> bool:
     # Hard negative: explicit cinematic-ad framing stays on create_cinematic_ad.
     if any(w in p for w in _DYN_CINEMATIC_NEG):
         return False
+    if _is_explicit_walk_and_talk(p):
+        return True
     if not _has_dynamic_speak_intent(p):
         return False
     if not _has_dynamic_multi_beat_cue(p):
@@ -2740,9 +2770,11 @@ def _scene_mode_guard_payload(
     ctx: ToolContext,
     *,
     has_character: bool,
+    kwargs: dict | None = None,
 ) -> dict | None:
     """Return clarification JSON when dynamic_speaking should be blocked."""
     user_text = _user_only_text_for_scene_guard(ctx)
+    tool_kwargs = kwargs or {}
     if _user_picked_to_camera_scene(user_text):
         return {
             "action": "clarification_required",
@@ -2753,34 +2785,44 @@ def _scene_mode_guard_payload(
                 "dynamic_speaking=true."
             ),
         }
-    if not is_dynamic_speaking_ugc(user_text, has_character=has_character):
-        return {
-            "action": "clarification_required",
-            "reason": "scene_mode_ambiguous",
-            "action_required": (
-                "The user did NOT describe multiple scenes. Do NOT assume dynamic Seedance. "
-                "Ask which they want in a short message ending with [[SCENE_MODE_BUTTONS]] — "
-                "phrase it purely visually, do NOT mention Veo or Seedance: "
-                "(a) the influencer looking at camera and showing the product, or "
-                "(b) multiple scenes with transitions. "
-                "Internally: if (a) call create_ugc_video; if (b) re-call generate_video "
-                "with dynamic_speaking=true."
-            ),
-        }
-    return None
+    # Approved multi-beat script: beats live in prompt after user said yes.
+    if tool_kwargs.get("dynamic_speaking") and _has_agent_beat_prompt(
+        (tool_kwargs.get("prompt") or "").strip()
+    ):
+        return None
+    if (
+        is_dynamic_speaking_ugc(user_text, has_character=has_character)
+        or _is_explicit_walk_and_talk(user_text)
+    ):
+        return None
+    return {
+        "action": "clarification_required",
+        "reason": "scene_mode_ambiguous",
+        "action_required": (
+            "The user did NOT describe multiple scenes. Do NOT assume dynamic Seedance. "
+            "Ask which they want in a short visual-only message (to-camera vs multiple "
+            "scenes with transitions). The UI renders choice buttons automatically — "
+            "do NOT paste [[SCENE_MODE_BUTTONS]] in chat. "
+            "Internally: if to-camera call create_ugc_video; if multi-scene re-call "
+            "generate_video with dynamic_speaking=true."
+        ),
+    }
 
 
-def _ensure_scene_mode_marker(text: str, *, lang: str = "en") -> str:
-    """Append [[SCENE_MODE_BUTTONS]] when the agent forgot the marker."""
-    if "[[SCENE_MODE_BUTTONS]]" in text:
-        return text
-    question = (
+def _scene_mode_question_text(*, lang: str = "en") -> str:
+    """Visual-only scene-mode question (buttons rendered via scene_mode_required SSE)."""
+    return (
         "¿Prefieres que mire a cámara mostrando el producto, o varias escenas con transiciones?"
         if lang == "es"
         else "Do you want the influencer looking at camera showing the product, or multiple scenes with transitions?"
     )
-    base = text.strip()
-    return f"{base}\n\n{question}\n\n[[SCENE_MODE_BUTTONS]]" if base else f"{question}\n\n[[SCENE_MODE_BUTTONS]]"
+
+
+def _ensure_scene_mode_marker(text: str, *, lang: str = "en") -> str:
+    """Return scene-mode question text; UI buttons come from scene_mode_required SSE."""
+    base = re.sub(r"\[\[\s*SCENE_MODE_BUTTONS\s*\]\]", "", text or "", flags=re.IGNORECASE).strip()
+    question = _scene_mode_question_text(lang=lang)
+    return f"{base}\n\n{question}" if base else question
 
 
 # Injected system-reminder heads (agent.py prefix lines + memory/engine/lang
@@ -4458,7 +4500,9 @@ async def _tool_generate_video(ctx: ToolContext, **kwargs: Any) -> str:
     # Classifier reads user turns only (not hook/prompt) so agent-invented
     # demo choreography cannot bypass the guard.
     if dynamic_speaking and not kwargs.get("confirmed"):
-        _scene_guard = _scene_mode_guard_payload(ctx, has_character=_route_has_char)
+        _scene_guard = _scene_mode_guard_payload(
+            ctx, has_character=_route_has_char, kwargs=kwargs,
+        )
         if _scene_guard:
             return json.dumps(_scene_guard)
 
@@ -4538,7 +4582,9 @@ async def _tool_generate_video(ctx: ToolContext, **kwargs: Any) -> str:
     # Cost confirmation gate
     if not kwargs.get("confirmed"):
         if dynamic_speaking:
-            _scene_guard = _scene_mode_guard_payload(ctx, has_character=_route_has_char)
+            _scene_guard = _scene_mode_guard_payload(
+                ctx, has_character=_route_has_char, kwargs=kwargs,
+            )
             if _scene_guard:
                 return json.dumps(_scene_guard)
         is_dyn_30 = dynamic_speaking and int(kwargs.get("target_duration") or 15) == 30
@@ -12502,7 +12548,7 @@ class ManagedAgentClient:
                             "type": "agent_message",
                             "text": _ensure_scene_mode_marker("", lang=_sm_lang),
                         }
-                        yield {"type": "scene_mode_required"}
+                        yield {"type": "scene_mode_required", "lang": _sm_lang}
                         pending_scene_mode = False
 
                     if pending_confirmation:
