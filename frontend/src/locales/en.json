@@ -1628,6 +1628,7 @@
   "brands.studio.toast.renderingRow": "Row {id}: rendering all {total} slides with <code>GPT Image 2</code>",
   "brands.studio.toast.slidesFailed": "{failed} of {total} slide{plural} failed after retries - {error}",
   "brands.studio.toast.slideFailed": "Row {row}, slide {slide} failed — {error}",
+  "brands.studio.toast.logoUnavailable": "Logo could not be used for render — upload a PNG logo or retry scrape.",
   "brands.studio.toast.slideNotRendered": "Slide {n} not rendered yet",
   "brands.studio.toast.partialRender": "{done} of {total} slides rendered",
   "brands.studio.toast.noSlidesRendered": "No slides rendered — check Fal key and Creative OS on :8001",

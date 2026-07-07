@@ -702,8 +702,12 @@ const LS_KEY='render_studio_brand';
 let _saveT;
 function saveBrand(){
   try{localStorage.setItem(LS_KEY,JSON.stringify(brand));}catch(e){toast(t('brands.studio.toast.storageFull'),3200);}
-  /* persist to disk too (when the local server is running) so it survives on your computer */
-  clearTimeout(_saveT);_saveT=setTimeout(()=>{fetch('/api/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({brand})}).catch(()=>{});},400);
+  clearTimeout(_saveT);_saveT=setTimeout(()=>{
+    fetch('/api/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({brand})})
+      .then(r=>r.ok?r.json():null)
+      .then(j=>{if(j&&j.brand&&j.brand.logos){brand.logos=j.brand.logos;renderLogos(brand);}})
+      .catch(()=>{});
+  },400);
 }
 let brand;
 try{const s=localStorage.getItem(LS_KEY);brand=s?JSON.parse(s):(window.BRAND_DATA||FALLBACK_BRAND);}catch(e){brand=window.BRAND_DATA||FALLBACK_BRAND;}
@@ -739,6 +743,7 @@ function logoBadges(it){
   const parts=[];
   if(kind!=='unknown')parts.push('<span>'+esc(kind)+'</span>');
   if(contrast!=='unknown')parts.push('<span>'+esc(contrast)+'</span>');
+  if(it&&it.renderUrl)parts.push('<span>ready</span>');
   return parts.length?'<div class="logo-badge">'+parts.join('')+'</div>':'';
 }
 
@@ -1023,31 +1028,42 @@ function heroPreview(p){
     `<div style="position:absolute;left:14px;bottom:11px;font-family:Doto,monospace;font-weight:700;font-size:12px;letter-spacing:1px;color:${tcol};opacity:.92">${esc((brand.name||'').toUpperCase())}</div>`+
     `</div>`;
 }
-function slidePrompt(post,role,i,n,selectedLogo){
+function shouldShowLogo(role){
+  const tag=((role&&role.tag)||'').toUpperCase();
+  const lay=((role&&role.layout)||'').toLowerCase();
+  if(tag==='HOOK'||tag==='SHOP'||lay==='cta')return true;
+  if(tag==='LINEUP'||tag==='FLAVOR'||lay==='hero')return true;
+  return false;
+}
+function logoPlacementForSlide(role){
+  if(!shouldShowLogo(role))return null;
+  const tag=((role&&role.tag)||'').toUpperCase();
+  const lay=((role&&role.layout)||'').toLowerCase();
+  if(tag==='LINEUP'||tag==='FLAVOR'||lay==='hero')return 'small';
+  return 'prominent';
+}
+function slidePrompt(post,role,i,n,showLogo,logoPlacement){
   const C=brand.colors||[],pal=C.slice(0,5).join(', '),c1=C[0]||'#ff6b1a',c2=C[1]||'#1c1a16';
   const font=(brand.fonts&&brand.fonts.display)||'a clean modern sans-serif';
   const dir=post.direction||'on-brand';
   const concept=(post.idea||'').replace(/<[^>]+>/g,'').slice(0,160);
   const ref=(role&&role.productRef!=null)?` A reference photo of the real product is provided - use it as the EXACT product: preserve its real shape, colour, packaging and label, and place it naturally in the scene. Do not invent a different product.`:` Feature the real ${brand.name} product, shot in a style that suits the brand.`;
   let logoRef='';
-  if(selectedLogo&&selectedLogo.url){
-    const kind=selectedLogo.kind||'unknown';
-    const contrast=selectedLogo.contrast||'unknown';
-    logoRef=` Reference image 1 is the brand's official logo (${kind}, ${contrast} variant). If a logo appears in this slide, reproduce it exactly — same shape, colors, and typography. Do not invent, redraw, or substitute a different logo.`;
-    const tag=(role.tag||'').toUpperCase();
-    if(tag==='HOOK'||tag==='SHOP')logoRef+=' Include the brand logo prominently.';
-    else if(tag==='PROOF'||(role.layout==='stat'))logoRef+=' Use the icon mark only if a logo is needed; keep it small.';
+  if(showLogo){
+    logoRef=' Do NOT render any brand logo, wordmark, logotype, or brand symbol in this image. Leave clean negative space at the top-left for post-production logo placement.';
+  }else{
+    logoRef=' Do NOT include any brand logo, wordmark, logotype, icon mark, monogram, or invented brand symbol anywhere in the image—including on packaging, screens, watermarks, or props. Do not spell the brand name as a logo treatment.';
   }
-  return `A finished, production-ready 1080x1350 vertical Instagram carousel slide (${i+1} of ${n}) for the real brand ${brand.name}. This slide's job: ${role.tag}. Carousel concept: ${concept}. Art direction: ${dir}. The layout, props, lighting, typography and mood must clearly reflect this and the brand's own visual identity, not a generic template. Use the brand's actual palette: ${pal} (lead with ${c1} and ${c2}). Set the headline "${role.head}" in a typeface like "${font}" (or a close match).${logoRef}${ref} Keep palette and type consistent across slides, but make it look unmistakably like ${brand.name}, not a generic AI carousel. Do NOT add any corner sticker or badge (no "NEW DROP" stamp, no circular badge), no page number or slide counter (like 01/04), no footer bar, and no brand address, city, location, or series/collection line. No watermark, no placeholder text.`;
+  return `A finished, production-ready 1080x1350 vertical Instagram carousel slide (${i+1} of ${n}). This slide's job: ${role.tag}. Carousel concept: ${concept}. Art direction: ${dir}. The layout, props, lighting, typography and mood must clearly reflect this and the brand's own visual identity, not a generic template. Use the brand's actual palette: ${pal} (lead with ${c1} and ${c2}). Set the headline "${role.head}" in a typeface like "${font}" (or a close match).${logoRef}${ref} Keep palette and type consistent across slides. Do NOT add any corner sticker or badge (no "NEW DROP" stamp, no circular badge), no page number or slide counter (like 01/04), no footer bar, and no brand address, city, location, or series/collection line. No watermark, no placeholder text.`;
 }
 
 async function pickLogoForSlide(role,slideIndex,total,hasProductRef){
   if(!brand.logos||!brand.logos.length)return null;
   try{
-    const r=await fetch('/api/pick-logo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({logos:brand.logos,role:role.tag||'',layout:role.layout||'',colors:brand.colors||[],slideIndex,hasProductRef:!!hasProductRef})});
+    const r=await fetch('/api/pick-logo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({logos:brand.logos,role:role.tag||'',layout:role.layout||'',colors:brand.colors||[],slideIndex,hasProductRef:!!hasProductRef,brand:brand.name||''})});
     if(!r.ok)return null;
     const j=await r.json();
-    return j.url?j:null;
+    return (j.url||j.renderUrl)?j:null;
   }catch(e){return null;}
 }
 /* ---------- engine status ---------- */
@@ -1529,23 +1545,38 @@ async function genCarousel(p,indices){
     renderBarStart(p.id); renderBarTarget(p.id, 0.12);
     toast(t('brands.studio.toast.renderingRow',{id:p.id,total}),4000);
     const moodUrl=(brand.imagery&&brand.imagery.length)?imgUrl(brand.imagery[0]):'';
+    const hookRole=(p.roles||[]).find(r=>(r.tag||'').toUpperCase()==='HOOK')||p.roles[0]||{head:p.head};
+    const hookHasProduct=hookRole.productRef!=null&&brand.productImages&&brand.productImages[hookRole.productRef];
+    let lockedLogo=null;
+    if(brand.logos&&brand.logos.length){
+      lockedLogo=await pickLogoForSlide(hookRole,0,p.photoCount,hookHasProduct);
+      if(lockedLogo)p.lockedLogo=lockedLogo;
+    }
     let _done=0,_fails=0,_outOfCredits=false;
     await Promise.all(selected.map(async (i)=>{
       if(_outOfCredits)return;
       const role=p.roles[i]||{head:p.head};
       const hasProductRef=role.productRef!=null&&brand.productImages&&brand.productImages[role.productRef];
-      const selectedLogo=await pickLogoForSlide(role,i,p.photoCount,hasProductRef);
+      const showLogo=shouldShowLogo(role);
+      const logoPlacement=logoPlacementForSlide(role);
+      if(showLogo&&(!lockedLogo||!(lockedLogo.url||lockedLogo.renderUrl))){
+        const errMsg=t('brands.studio.toast.logoUnavailable');
+        p.slides[i].failed=errMsg; p.slides[i].role=role; _fails++;
+        toast(t('brands.studio.toast.slideFailed',{row:p.id,slide:i+1,error:esc(errMsg)}),4500);
+        _done++; const _rn=document.getElementById('rbN'+p.id); if(_rn)_rn.textContent=_done; renderBarTarget(p.id, Math.max(0.12,_done/total*0.98));
+        return;
+      }
       const refs=[];
-      if(selectedLogo&&selectedLogo.url)refs.push(selectedLogo.url);
       if(hasProductRef){const u=imgUrl(brand.productImages[role.productRef]);if(u)refs.push(u);}
       if(moodUrl&&refs.length<3)refs.push(moodUrl);
-      const prompt=slidePrompt(p,role,i,p.photoCount,selectedLogo);
+      const prompt=slidePrompt(p,role,i,p.photoCount,showLogo,logoPlacement);
+      const logoUrl=showLogo?(lockedLogo.renderUrl||lockedLogo.url||''):'';
       let ok=false,lastErr='';
       for(let a=0;a<3 && !ok;a++){
         await new Promise(r=>setTimeout(r, a? 700*a : i*150));
         await falAcquire();
         try{
-          const res=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt,n:1,imageUrls:refs,brand:brand.name,postId:String(p.id),slide:String(i+1),role:role.tag||''})});
+          const res=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt,n:1,imageUrls:refs,brand:brand.name,postId:String(p.id),slide:String(i+1),role:role.tag||'',showLogo,logoUrl,logoPlacement:logoPlacement||''})});
           const j=await res.json().catch(()=>({}));
           if(res.status===402){
             toastInsufficientCredits(parseInsufficientCredits(j,res.status));

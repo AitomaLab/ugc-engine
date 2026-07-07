@@ -1,6 +1,9 @@
 """Brand Studio — scrape, ideas (OpenRouter), render (Fal GPT Image 2)."""
 from __future__ import annotations
 
+import base64
+import hashlib
+import io
 import json
 import os
 import re
@@ -662,12 +665,190 @@ def _extract_logos(html: str, origin: str) -> list[dict]:
     return out[:6]
 
 
+def should_show_logo(role_tag: str = "", layout: str = "") -> bool:
+    """Whether a carousel slide should display the brand logo (post-composited)."""
+    tag = (role_tag or "").upper()
+    lay = (layout or "").lower()
+    if tag in ("HOOK", "SHOP") or lay == "cta":
+        return True
+    if tag in ("LINEUP", "FLAVOR") or lay == "hero":
+        return True
+    return False
+
+
+def logo_placement(role_tag: str = "", layout: str = "") -> str | None:
+    """prominent | small | None"""
+    if not should_show_logo(role_tag, layout):
+        return None
+    tag = (role_tag or "").upper()
+    lay = (layout or "").lower()
+    if tag in ("LINEUP", "FLAVOR") or lay == "hero":
+        return "small"
+    return "prominent"
+
+
+def _parse_data_url(url: str) -> tuple[bytes, str]:
+    if not url.startswith("data:"):
+        raise ValueError("not a data url")
+    header, _, payload = url.partition(",")
+    mime = header.split(";", 1)[0].replace("data:", "").strip().lower()
+    if ";base64" in header:
+        return base64.b64decode(payload), mime
+    return urllib.parse.unquote_to_bytes(payload), mime
+
+
+def _fetch_image_bytes(url: str) -> bytes:
+    if url.startswith("data:"):
+        data, _ = _parse_data_url(url)
+        return data
+    safe = _vision_url(url) or (url if url.startswith("https://") else "")
+    if not safe:
+        raise RuntimeError(f"cannot fetch image: {url[:80]}")
+    req = urllib.request.Request(safe, headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        data = resp.read()
+    if len(data) > 8_000_000:
+        raise RuntimeError("image too large")
+    return data
+
+
+def _rasterize_logo_png(data: bytes, *, url_hint: str = "", max_dim: int = 512) -> bytes:
+    hint = (url_hint or "").lower()
+    is_svg = hint.endswith(".svg") or data[:300].lstrip().startswith((b"<svg", b"<?xml"))
+    if is_svg:
+        try:
+            import cairosvg
+
+            data = cairosvg.svg2png(bytestring=data, output_width=max_dim)
+        except ImportError as exc:
+            raise RuntimeError("SVG logo — upload a PNG or install cairosvg") from exc
+    from PIL import Image, ImageOps
+
+    im = Image.open(io.BytesIO(data))
+    im = ImageOps.exif_transpose(im)
+    if im.mode != "RGBA":
+        im = im.convert("RGBA")
+    if max(im.size) > max_dim:
+        im.thumbnail((max_dim, max_dim), Image.LANCZOS)
+    out = io.BytesIO()
+    im.save(out, format="PNG", optimize=True)
+    return out.getvalue()
+
+
+def ensure_logo_render_url(
+    logo: dict,
+    *,
+    user_id: str,
+    brand_slug: str,
+) -> str:
+    """Fetch/rasterize a sidebar logo and return a stable HTTPS PNG URL for overlay."""
+    if not isinstance(logo, dict):
+        return ""
+    existing = (logo.get("renderUrl") or "").strip()
+    if existing.startswith("https://"):
+        return existing
+    src = _img_url(logo)
+    if not src:
+        return ""
+    try:
+        raw = _fetch_image_bytes(src)
+        png = _rasterize_logo_png(raw, url_hint=src)
+    except Exception as exc:
+        print(f"[brand_studio] ensure_logo_render_url failed ({src[:80]}): {exc}")
+        return ""
+    digest = hashlib.sha256(png).hexdigest()[:16]
+    safe_user = re.sub(r"[^a-zA-Z0-9_-]+", "_", user_id) or "anon"
+    slug = _brand_slug(brand_slug)
+    storage_path = f"brand-studio/{safe_user}/{slug}/logos/{digest}.png"
+    try:
+        public = _upload_render_bytes(png, storage_path)
+    except Exception as exc:
+        print(f"[brand_studio] logo upload failed: {exc}")
+        return ""
+    logo["renderUrl"] = public
+    return public
+
+
+def ensure_logos_render_urls(logos: list, user_id: str, brand_slug: str) -> list:
+    out: list = []
+    for lg in logos or []:
+        if isinstance(lg, dict):
+            ensure_logo_render_url(lg, user_id=user_id, brand_slug=brand_slug)
+            out.append(lg)
+        elif isinstance(lg, str) and lg.strip():
+            entry = {"url": lg.strip(), "source": "legacy"}
+            ensure_logo_render_url(entry, user_id=user_id, brand_slug=brand_slug)
+            out.append(entry)
+    return out
+
+
 def _logo_render_url(logo: dict | str) -> str:
+    if isinstance(logo, dict):
+        render = (logo.get("renderUrl") or "").strip()
+        if render.startswith("https://"):
+            return render
     u = _img_url(logo)
     if not u:
         return ""
     v = _vision_url(u)
     return v or (u if u.startswith("data:") else "")
+
+
+def _mirror_ref_url(url: str, *, user_id: str, brand_slug: str, label: str) -> str:
+    """Re-host data: or flaky refs as HTTPS PNG for Fal."""
+    if not url:
+        return ""
+    if url.startswith("https://") and _vision_url(url):
+        return url
+    try:
+        raw = _fetch_image_bytes(url)
+        from PIL import Image, ImageOps
+
+        im = Image.open(io.BytesIO(raw))
+        im = ImageOps.exif_transpose(im)
+        if im.mode != "RGBA":
+            im = im.convert("RGBA")
+        if max(im.size) > 1536:
+            im.thumbnail((1536, 1536), Image.LANCZOS)
+        buf = io.BytesIO()
+        im.save(buf, format="PNG", optimize=True)
+        png = buf.getvalue()
+    except Exception as exc:
+        print(f"[brand_studio] mirror ref failed ({url[:60]}): {exc}")
+        return _vision_url(url) or ""
+    safe_user = re.sub(r"[^a-zA-Z0-9_-]+", "_", user_id) or "anon"
+    slug = _brand_slug(brand_slug)
+    digest = hashlib.sha256(png).hexdigest()[:12]
+    path = f"brand-studio/{safe_user}/{slug}/refs/{label}_{digest}.png"
+    try:
+        return _upload_render_bytes(png, path)
+    except Exception:
+        return _vision_url(url) or (url if url.startswith("https://") else "")
+
+
+def composite_logo_bytes(bg_bytes: bytes, logo_bytes: bytes, placement: str = "prominent") -> bytes:
+    from PIL import Image
+
+    bg = Image.open(io.BytesIO(bg_bytes)).convert("RGBA")
+    logo = Image.open(io.BytesIO(logo_bytes)).convert("RGBA")
+    w, h = bg.size
+    pad = max(12, int(min(w, h) * 0.04))
+    max_w = int(w * (0.10 if placement == "small" else 0.18))
+    lw, lh = logo.size
+    if lw <= 0:
+        raise ValueError("invalid logo width")
+    scale = max_w / lw
+    logo = logo.resize((max_w, max(1, int(lh * scale))), Image.LANCZOS)
+    bg.paste(logo, (pad, pad), logo)
+    out = io.BytesIO()
+    bg.convert("RGB").save(out, format="PNG", optimize=True)
+    return out.getvalue()
+
+
+def composite_logo_on_image_url(image_url: str, logo_url: str, placement: str = "prominent") -> bytes:
+    bg = _fetch_image_bytes(image_url)
+    logo = _fetch_image_bytes(logo_url)
+    return composite_logo_bytes(bg, logo, placement)
 
 
 def select_logo(
@@ -691,7 +872,7 @@ def select_logo(
         render_url = _logo_render_url(lg)
         if not render_url:
             continue
-        entries.append({**lg, "url": url, "_render_url": render_url})
+        entries.append({**lg, "url": url, "_render_url": render_url, "renderUrl": lg.get("renderUrl") or render_url})
     if not entries:
         return None
 
@@ -724,8 +905,10 @@ def select_logo(
         return s
 
     best = max(entries, key=score)
+    render = best.get("renderUrl") or best["_render_url"]
     return {
-        "url": best["_render_url"],
+        "url": render,
+        "renderUrl": render,
         "kind": best.get("kind") or "unknown",
         "contrast": best.get("contrast") or "unknown",
     }
@@ -810,13 +993,26 @@ def scrape_brand(url: str) -> dict:
     }
 
 
-def generate_images(prompt: str, image_urls: list[str], n: int = 1) -> dict:
+def generate_images(
+    prompt: str,
+    image_urls: list[str],
+    n: int = 1,
+    *,
+    user_id: str = "",
+    brand_slug: str = "",
+    logo_policy: str = "hide",
+) -> dict:
     prompt = (prompt or "").strip()
     n = max(1, min(5, n))
     refs: list[str] = []
-    for u in image_urls:
-        v = _vision_url(u) or (u if isinstance(u, str) and u.startswith("data:") else "")
-        if v.startswith(("https://", "data:")):
+    for idx, u in enumerate(image_urls or []):
+        if not u:
+            continue
+        if user_id and brand_slug:
+            v = _mirror_ref_url(u, user_id=user_id, brand_slug=brand_slug, label=f"ref{idx}")
+        else:
+            v = _vision_url(u) or (u if isinstance(u, str) and u.startswith("data:") else "")
+        if v.startswith("https://"):
             refs.append(v)
         if len(refs) >= 3:
             break
@@ -827,7 +1023,7 @@ def generate_images(prompt: str, image_urls: list[str], n: int = 1) -> dict:
         raise RuntimeError("No FAL_KEY found")
     endpoint = FAL_EDIT_ENDPOINT if refs else FAL_ENDPOINT
 
-    def fire(image_size):
+    def fire(image_size, *, use_fidelity: bool = True):
         body: dict[str, Any] = {
             "prompt": prompt,
             "image_size": image_size,
@@ -837,6 +1033,8 @@ def generate_images(prompt: str, image_urls: list[str], n: int = 1) -> dict:
         }
         if refs:
             body["image_urls"] = refs
+            if use_fidelity:
+                body["input_fidelity"] = "high"
         req = urllib.request.Request(
             endpoint,
             data=json.dumps(body).encode("utf-8"),
@@ -852,18 +1050,27 @@ def generate_images(prompt: str, image_urls: list[str], n: int = 1) -> dict:
         mode = "edit" if refs else "text"
         est_cogs = 0.225 if mode == "edit" else 0.20
         print(
-            f"[brand_studio] fal gpt-image-2/{mode} refs={len(refs)} "
-            f"quality=high est_cogs_usd={est_cogs:.3f} images={len(images)}"
+            f"[brand_studio] fal gpt-image-2/{mode} logoPolicy={logo_policy} refs={len(refs)} "
+            f"quality=high input_fidelity={'high' if refs else 'n/a'} est_cogs_usd={est_cogs:.3f} "
+            f"images={len(images)}"
         )
         return {"images": images, "mode": mode}
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "ignore")[:400]
+        if refs and e.code == 422 and "input_fidelity" in detail.lower():
+            images = fire(first_size, use_fidelity=False)
+            mode = "edit"
+            print(
+                f"[brand_studio] fal gpt-image-2/edit logoPolicy={logo_policy} refs={len(refs)} "
+                f"(input_fidelity rejected, retried without)"
+            )
+            return {"images": images, "mode": mode}
         if e.code == 422 and "image_size" in detail:
             images = fire("portrait_4_3")
             mode = "edit" if refs else "text"
             est_cogs = 0.225 if mode == "edit" else 0.20
             print(
-                f"[brand_studio] fal gpt-image-2/{mode} refs={len(refs)} "
+                f"[brand_studio] fal gpt-image-2/{mode} logoPolicy={logo_policy} refs={len(refs)} "
                 f"quality=high est_cogs_usd={est_cogs:.3f} images={len(images)} (portrait_4_3 fallback)"
             )
             return {"images": images, "mode": mode}
@@ -964,6 +1171,35 @@ def generate_ideas(brand: dict, direction: str, count: int, lang: str = "en") ->
     if vision_fallback:
         result["visionFallback"] = True
     return result
+
+
+def store_image_bytes(
+    data: bytes,
+    *,
+    brand: str,
+    post_id: str,
+    slide: str,
+    role: str,
+    user_id: str,
+) -> dict:
+    slug = re.sub(r"[^a-z0-9]+", "-", (brand or "brand").lower()).strip("-") or "brand"
+    pid = re.sub(r"[^0-9A-Za-z]+", "", str(post_id or "0")) or "0"
+    sn = re.sub(r"[^0-9]+", "", str(slide or "0")) or "0"
+    role_clean = re.sub(r"[^a-z0-9]+", "", str(role or "").lower())
+    safe_user = re.sub(r"[^a-zA-Z0-9_-]+", "_", user_id) or "anon"
+    fname = f"post{pid}_slide{sn}{('_' + role_clean) if role_clean else ''}.png"
+    storage_path = f"brand-studio/{safe_user}/{slug}/{fname}"
+    try:
+        public_url = _upload_render_bytes(data, storage_path)
+        return {"ok": True, "url": public_url, "bytes": len(data)}
+    except Exception as exc:
+        folder = _user_dir(user_id) / "renders" / slug
+        folder.mkdir(parents=True, exist_ok=True)
+        dest = folder / fname
+        dest.write_bytes(data)
+        rel = f"renders/{slug}/{fname}"
+        print(f"[brand_studio] Supabase upload failed ({exc}); saved locally at {dest}")
+        return {"ok": True, "path": rel, "bytes": len(data), "ephemeral": True}
 
 
 def store_image(

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import urllib.parse
 from typing import Any
 
 import httpx
@@ -36,6 +37,9 @@ class GenerateRequest(BaseModel):
     postId: str = ""
     slide: str = ""
     role: str = ""
+    showLogo: bool = False
+    logoUrl: str = ""
+    logoPlacement: str = ""
 
 
 class IdeasRequest(BaseModel):
@@ -64,6 +68,7 @@ class PickLogoRequest(BaseModel):
     colors: list = Field(default_factory=list)
     slideIndex: int = 0
     hasProductRef: bool = False
+    brand: str = ""
 
 
 def _http_error_detail(exc: httpx.HTTPStatusError) -> str:
@@ -165,6 +170,12 @@ async def scrape(req: ScrapeRequest, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=400, detail="no url")
     try:
         brand = await asyncio.to_thread(brand_studio.scrape_brand, url)
+        brand["logos"] = await asyncio.to_thread(
+            brand_studio.ensure_logos_render_urls,
+            brand.get("logos") or [],
+            user["id"],
+            brand.get("name", "brand"),
+        )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"scrape failed: {e}") from e
     brand_studio.write_brand_state(user["id"], brand)
@@ -173,8 +184,16 @@ async def scrape(req: ScrapeRequest, user: dict = Depends(get_current_user)):
 
 @router.post("/save")
 async def save(req: SaveRequest, user: dict = Depends(get_current_user)):
-    brand_studio.write_brand_state(user["id"], req.brand or {})
-    return {"ok": True}
+    brand = dict(req.brand or {})
+    if brand.get("logos"):
+        brand["logos"] = await asyncio.to_thread(
+            brand_studio.ensure_logos_render_urls,
+            brand.get("logos") or [],
+            user["id"],
+            brand.get("name", "brand"),
+        )
+    brand_studio.write_brand_state(user["id"], brand)
+    return {"ok": True, "brand": brand}
 
 
 @router.get("/stored-renders")
@@ -192,6 +211,13 @@ async def generate(req: GenerateRequest, user: dict = Depends(get_current_user))
     slide_credits = get_brand_studio_slide_credit_cost()
     await _ensure_wallet_balance(client, slide_credits)
 
+    logo_policy = "show" if req.showLogo else "hide"
+    if req.showLogo and not (req.logoUrl or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Logo required for this slide but no render-ready logo URL was provided. Upload a PNG logo or retry scrape.",
+        )
+
     refs = [u for u in (req.imageUrls or []) if u][:3]
     mode = "edit" if refs else "text"
     charge_meta = {
@@ -202,11 +228,18 @@ async def generate(req: GenerateRequest, user: dict = Depends(get_current_user))
         "role": req.role,
         "mode": mode,
         "refs": len(refs),
+        "logo_policy": logo_policy,
     }
 
     try:
         result = await asyncio.to_thread(
-            brand_studio.generate_images, req.prompt, req.imageUrls, req.n
+            brand_studio.generate_images,
+            req.prompt,
+            req.imageUrls,
+            req.n,
+            user_id=user["id"],
+            brand_slug=req.brand,
+            logo_policy=logo_policy,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -217,44 +250,87 @@ async def generate(req: GenerateRequest, user: dict = Depends(get_current_user))
     if not images:
         raise HTTPException(status_code=502, detail="no images returned")
 
-    wallet = await _deduct_credits(client, slide_credits, charge_meta)
-    result["creditsCharged"] = slide_credits
-    if wallet.get("balance") is not None:
-        result["balance"] = wallet["balance"]
-    print(
-        f"[brand_studio] charged {slide_credits} credits for slide render "
-        f"(brand={req.brand!r} post={req.postId} slide={req.slide}), "
-        f"balance={wallet.get('balance')}"
-    )
-
-    if req.brand and req.postId:
+    overlay_applied = False
+    stored_overlay: dict[str, Any] = {}
+    if req.showLogo and req.logoUrl:
         try:
-            stored = await asyncio.to_thread(
-                brand_studio.store_image,
+            composited = await asyncio.to_thread(
+                brand_studio.composite_logo_on_image_url,
                 images[0],
+                req.logoUrl.strip(),
+                (req.logoPlacement or "prominent").strip() or "prominent",
+            )
+            stored_overlay = await asyncio.to_thread(
+                brand_studio.store_image_bytes,
+                composited,
                 brand=req.brand,
                 post_id=req.postId,
                 slide=req.slide or "1",
                 role=req.role,
                 user_id=user["id"],
             )
-            if stored.get("url"):
-                result["images"] = [stored["url"]]
-            if stored.get("path"):
-                result["savedPath"] = stored["path"]
-            result["persisted"] = True
+            if stored_overlay.get("url"):
+                images[0] = stored_overlay["url"]
+            overlay_applied = True
         except Exception as exc:
-            print(f"[brand_studio] auto-persist after generate failed: {exc}")
-            result["persistWarning"] = str(exc)
+            raise HTTPException(
+                status_code=502,
+                detail=f"Logo overlay failed: {exc}",
+            ) from exc
+
+    result["images"] = images
+    result["overlayApplied"] = overlay_applied
+
+    wallet = await _deduct_credits(client, slide_credits, charge_meta)
+    result["creditsCharged"] = slide_credits
+    if wallet.get("balance") is not None:
+        result["balance"] = wallet["balance"]
+    logo_host = urllib.parse.urlparse(req.logoUrl).netloc if req.logoUrl else ""
+    print(
+        f"[brand_studio] charged {slide_credits} credits for slide render "
+        f"(brand={req.brand!r} post={req.postId} slide={req.slide}), "
+        f"logoPolicy={logo_policy} overlayApplied={overlay_applied} logoHost={logo_host!r}, "
+        f"balance={wallet.get('balance')}"
+    )
+
+    if req.brand and req.postId:
+        if overlay_applied and stored_overlay:
+            if stored_overlay.get("path"):
+                result["savedPath"] = stored_overlay["path"]
+            result["persisted"] = True
+        elif images[0].startswith(("http://", "https://")):
+            try:
+                stored = await asyncio.to_thread(
+                    brand_studio.store_image,
+                    images[0],
+                    brand=req.brand,
+                    post_id=req.postId,
+                    slide=req.slide or "1",
+                    role=req.role,
+                    user_id=user["id"],
+                )
+                if stored.get("url"):
+                    result["images"] = [stored["url"]]
+                if stored.get("path"):
+                    result["savedPath"] = stored["path"]
+                result["persisted"] = True
+            except Exception as exc:
+                print(f"[brand_studio] auto-persist after generate failed: {exc}")
+                result["persistWarning"] = str(exc)
 
     return result
 
 
 @router.post("/pick-logo")
 async def pick_logo(req: PickLogoRequest, user: dict = Depends(get_current_user)):
-    _ = user
+    logos = await asyncio.to_thread(
+        brand_studio.ensure_logos_render_urls,
+        list(req.logos or []),
+        user["id"],
+        req.brand or "brand",
+    )
     picked = brand_studio.select_logo(
-        req.logos or [],
+        logos,
         role_tag=req.role,
         layout=req.layout,
         palette=req.colors,

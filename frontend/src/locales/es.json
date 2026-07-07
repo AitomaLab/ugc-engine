@@ -1628,6 +1628,7 @@
   "brands.studio.toast.renderingRow": "Fila {id}: renderizando las {total} diapositivas con <code>GPT Image 2</code>",
   "brands.studio.toast.slidesFailed": "{failed} de {total} diapositiva{plural} fallaron tras reintentos - {error}",
   "brands.studio.toast.slideFailed": "Fila {row}, diapositiva {slide} falló — {error}",
+  "brands.studio.toast.logoUnavailable": "No se pudo usar el logo — sube un PNG o vuelve a hacer scrape.",
   "brands.studio.toast.slideNotRendered": "La diapositiva {n} aún no está renderizada",
   "brands.studio.toast.partialRender": "{done} de {total} diapositivas renderizadas",
   "brands.studio.toast.noSlidesRendered": "No se renderizó ninguna diapositiva — revisa la clave Fal y Creative OS en :8001",
