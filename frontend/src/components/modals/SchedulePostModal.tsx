@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import VideoThumbnail from '@/components/ui/VideoThumbnail';
+import { ScheduleDateTimePicker } from '@/components/ui/ScheduleDateTimePicker';
 import { apiFetch } from '@/lib/utils';
 import { creativeFetch } from '@/lib/creative-os-api';
 import { useProgressiveList } from '@/hooks/useProgressiveList';
@@ -26,6 +27,15 @@ interface VideoConfig {
     scheduledAt: string;
     useCustomTime: boolean;
     ready: boolean;
+    mediaUrls?: string[];
+}
+
+export interface BrandScheduleHandoff {
+    caption: string;
+    hashtags: string[];
+    imageUrls: string[];
+    brandName?: string;
+    postId?: number;
 }
 
 interface Props {
@@ -38,6 +48,8 @@ interface Props {
     /** Connected platforms the caller already fetched — lets the modal skip a
      *  redundant /api/connections round trip on open. */
     initialConnectedPlatforms?: string[];
+    /** Brand Studio carousel — skip to configure step with pre-filled caption */
+    brandHandoff?: BrandScheduleHandoff;
     /** Publish > Calendar refreshes listings after a successful bulk schedule */
     onScheduled?: () => void | Promise<void>;
 }
@@ -82,13 +94,19 @@ interface ScheduleAsset {
     label: string;
     subLabel: string;
     created_at?: string;
+    carouselUrls?: string[];
 }
 
-export default function SchedulePostModal({ isOpen, onClose, preSelectedIds, preSelectedProjectId, initialConnectedPlatforms, onScheduled }: Props) {
+export default function SchedulePostModal({ isOpen, onClose, preSelectedIds, preSelectedProjectId, initialConnectedPlatforms, brandHandoff, onScheduled }: Props) {
     const { t } = useTranslation();
+    const isBrandMode = !!brandHandoff;
     // When a project is pre-selected (opened from a preview modal) start on the
     // asset step so the project picker is skipped and step 2 renders instantly.
-    const [step, setStep] = useState(preSelectedProjectId ? 2 : 1);
+    const [step, setStep] = useState(() => {
+        if (brandHandoff) return 3;
+        if (preSelectedProjectId) return 2;
+        return 1;
+    });
 
     // ── Step 1: Project selection ────────────────────────────────────
     const [projects, setProjects] = useState<ProjectInfo[]>([]);
@@ -108,6 +126,11 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds, pre
     const [activeVideoIdx, setActiveVideoIdx] = useState(0);
     const [globalDate, setGlobalDate] = useState(toLocalDatetimeString(new Date(Date.now() + 86400000)).split('T')[0]);
     const [globalTime, setGlobalTime] = useState('09:00');
+    const globalDateTime = useMemo(() => {
+        const [y, m, d] = globalDate.split('-').map(Number);
+        const [hh, mm] = globalTime.split(':').map(Number);
+        return new Date(y, (m || 1) - 1, d || 1, hh || 0, mm || 0, 0, 0);
+    }, [globalDate, globalTime]);
     const [submitting, setSubmitting] = useState(false);
     const [aiLoading, setAiLoading] = useState(false);
     const [aiCaptions, setAiCaptions] = useState<string[]>([]);
@@ -157,10 +180,9 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds, pre
     // ── Step 1: Fetch supporting data on open ──────────────────────────
     useEffect(() => {
         if (!isOpen) return;
-        // When opened from a preview modal we already know the project and jump
-        // straight to asset selection — skip the (often slow) project-list fetch
-        // entirely. It's lazily loaded only if the user navigates back to step 1.
-        if (preSelectedProjectId) {
+        if (isBrandMode) {
+            setLoadingProjects(false);
+        } else if (preSelectedProjectId) {
             setLoadingProjects(false);
         } else {
             fetchProjects();
@@ -172,27 +194,76 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds, pre
         } else {
             (async () => {
                 try {
-                    const connData = await apiFetch<{ socials: SocialConnection[] }>('/api/connections');
+                    const connData = await apiFetch<{ socials: SocialConnection[] }>('/api/connections?cached=true');
                     setConnectedPlatforms((connData?.socials || []).map(s => s.platform?.toLowerCase()).filter(Boolean) as string[]);
                 } catch {
                     setConnectedPlatforms([]);
                 }
             })();
         }
-        // Fetch influencers for labels
-        (async () => {
-            try {
-                const infData = await apiFetch<Influencer[]>('/influencers');
-                setInfluencers(infData || []);
-            } catch { /* non-critical */ }
-        })();
+        if (!isBrandMode) {
+            (async () => {
+                try {
+                    const infData = await apiFetch<Influencer[]>('/influencers');
+                    setInfluencers(infData || []);
+                } catch { /* non-critical */ }
+            })();
+        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isOpen]);
+    }, [isOpen, isBrandMode, preSelectedProjectId]);
+
+    // ── Brand Studio: synthetic carousel asset, jump to configure ───────
+    useEffect(() => {
+        if (!isOpen || !brandHandoff) return;
+
+        const assetId = `brand-carousel-${brandHandoff.postId ?? Date.now()}`;
+        const slideCount = brandHandoff.imageUrls.length;
+        const label = brandHandoff.brandName
+            ? `${brandHandoff.brandName} — Carousel (${slideCount} slide${slideCount !== 1 ? 's' : ''})`
+            : `Carousel (${slideCount} slide${slideCount !== 1 ? 's' : ''})`;
+
+        const platforms = (initialConnectedPlatforms && initialConnectedPlatforms.length > 0)
+            ? initialConnectedPlatforms
+            : (connectedPlatforms.length > 0 ? connectedPlatforms : ['instagram']);
+        const defaultPlatforms = [platforms[0]];
+        const scheduleDate = `${globalDate}T${globalTime}`;
+
+        const asset: ScheduleAsset = {
+            id: assetId,
+            type: 'image',
+            url: brandHandoff.imageUrls[0],
+            previewUrl: brandHandoff.imageUrls[0],
+            label,
+            subLabel: `${slideCount} slide${slideCount !== 1 ? 's' : ''}`,
+            carouselUrls: brandHandoff.imageUrls,
+        };
+
+        setAssets([asset]);
+        setSelectedIds([assetId]);
+        setLoadingData(false);
+        setLoadingProjects(false);
+        setLoadingAssets(false);
+        setConfigs({
+            [assetId]: {
+                videoJobId: assetId,
+                platforms: defaultPlatforms,
+                caption: brandHandoff.caption,
+                hashtags: brandHandoff.hashtags,
+                scheduledAt: new Date(scheduleDate).toISOString(),
+                useCustomTime: true,
+                ready: brandHandoff.caption.trim().length > 0 && defaultPlatforms.length > 0,
+                mediaUrls: brandHandoff.imageUrls,
+            },
+        });
+        setActiveVideoIdx(0);
+        setStep(3);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOpen, brandHandoff]);
 
     // Lazy-load the project list if the user navigates back to step 1 after
     // having opened the modal pre-scoped to a single project.
     useEffect(() => {
-        if (isOpen && step === 1 && projects.length === 0 && !loadingProjects) {
+        if (isOpen && step === 1 && !isBrandMode && projects.length === 0 && !loadingProjects) {
             fetchProjects();
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -466,19 +537,36 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds, pre
                     scheduled_at: string;
                     video_job_id?: string;
                     product_shot_id?: string;
+                    media_urls?: string[];
                 } = {
                     platforms: cfg.platforms,
                     caption: cfg.caption,
                     hashtags: cfg.hashtags.length > 0 ? cfg.hashtags : undefined,
                     scheduled_at: cfg.useCustomTime ? cfg.scheduledAt : new Date(scheduleDate).toISOString(),
                 };
-                if (asset?.type === 'image') {
+
+                const isBrandAsset = id.startsWith('brand-carousel-');
+                const carouselUrls = (asset?.carouselUrls?.length ? asset.carouselUrls : cfg.mediaUrls) || [];
+                if (isBrandAsset || carouselUrls.length > 0) {
+                    row.media_urls = carouselUrls;
+                } else if (asset?.type === 'image') {
                     row.product_shot_id = id;
                 } else {
                     row.video_job_id = id;
                 }
                 return row;
             });
+
+            const missingMedia = posts.some(
+                (p) => !p.video_job_id && !p.product_shot_id && !(p.media_urls && p.media_urls.length > 0),
+            );
+            if (missingMedia) {
+                setToast(t('scheduleModal.missingMedia'));
+                setTimeout(() => setToast(''), 4000);
+                setSubmitting(false);
+                return;
+            }
+
             const res = await apiFetch<{
                 scheduled?: number;
                 failed?: number;
@@ -508,9 +596,15 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds, pre
             }
         } catch (err) {
             const hint = err instanceof Error && err.message ? err.message : '';
+            const isStaleBackend = hint.includes('product_shot_id')
+                && !hint.includes('media_urls')
+                && hint.includes('video_job_id');
             const trimmed = hint.length > 420 ? `${hint.slice(0, 420)}…` : hint;
-            setToast(trimmed ? `${t('scheduleModal.failToast')} — ${trimmed}` : t('scheduleModal.failToast'));
-            setTimeout(() => setToast(''), trimmed ? 5500 : 3000);
+            const message = isStaleBackend
+                ? t('scheduleModal.staleBackend')
+                : (trimmed ? `${t('scheduleModal.failToast')} — ${trimmed}` : t('scheduleModal.failToast'));
+            setToast(message);
+            setTimeout(() => setToast(''), isStaleBackend ? 6500 : (trimmed ? 5500 : 3000));
         }
         setSubmitting(false);
     };
@@ -547,7 +641,7 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds, pre
                     <div>
                         <h2 style={{ margin: 0, fontSize: '22px', fontWeight: 700 }}>{t('scheduleModal.title')}</h2>
                         <p style={{ margin: '4px 0 0', color: 'var(--text-3)', fontSize: '13px' }}>
-                            {t('scheduleModal.subtitle')}
+                            {isBrandMode ? t('scheduleModal.subtitleAssets') : t('scheduleModal.subtitle')}
                         </p>
                     </div>
                     <button onClick={onClose} style={{
@@ -569,13 +663,13 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds, pre
                     {STEPS.map((label, i) => {
                         const num = i + 1;
                         const isActive = step === num;
-                        const isDone = step > num;
+                        const isDone = step > num || (isBrandMode && num <= 2);
                         return (
                             <div key={label} style={{ display: 'flex', alignItems: 'center', flex: i < STEPS.length - 1 ? 1 : 'none' }}>
                                 <div style={{
                                     display: 'flex', alignItems: 'center', gap: '8px',
                                     cursor: isDone ? 'pointer' : 'default',
-                                }} onClick={() => isDone && setStep(num)}>
+                                }} onClick={() => isDone && !isBrandMode && setStep(num)}>
                                     <div style={{
                                         width: 28, height: 28, borderRadius: '50%',
                                         background: isActive || isDone ? 'var(--blue)' : 'var(--border)',
@@ -980,20 +1074,21 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds, pre
                                         }
                                     </div>
                                     <div style={{ display: 'flex', gap: '8px' }}>
-                                        <input type="date" value={globalDate}
-                                            onChange={e => setGlobalDate(e.target.value)}
-                                            style={{
-                                                flex: 1, padding: '8px 10px', borderRadius: '8px',
-                                                border: '1px solid var(--border)', fontSize: '13px',
-                                                color: 'var(--text-1)', background: 'white',
+                                        <ScheduleDateTimePicker
+                                            mode="date"
+                                            value={globalDateTime}
+                                            onChange={(dt) => {
+                                                const pad = (n: number) => n.toString().padStart(2, '0');
+                                                setGlobalDate(`${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`);
                                             }}
                                         />
-                                        <input type="time" value={globalTime}
-                                            onChange={e => setGlobalTime(e.target.value)}
-                                            style={{
-                                                width: '100px', padding: '8px 10px', borderRadius: '8px',
-                                                border: '1px solid var(--border)', fontSize: '13px',
-                                                color: 'var(--text-1)', background: 'white',
+                                        <ScheduleDateTimePicker
+                                            mode="time"
+                                            compact
+                                            value={globalDateTime}
+                                            onChange={(dt) => {
+                                                const pad = (n: number) => n.toString().padStart(2, '0');
+                                                setGlobalTime(`${pad(dt.getHours())}:${pad(dt.getMinutes())}`);
                                             }}
                                         />
                                     </div>
@@ -1145,13 +1240,9 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds, pre
                                     </label>
                                 </div>
                                 {activeConfig.useCustomTime && (
-                                    <input type="datetime-local"
-                                        value={toLocalDatetimeString(new Date(activeConfig.scheduledAt))}
-                                        onChange={e => updateConfig(activeVideoId, { scheduledAt: new Date(e.target.value).toISOString() })}
-                                        style={{
-                                            width: '100%', padding: '8px 10px', borderRadius: '8px',
-                                            border: '1px solid var(--border)', fontSize: '13px', color: 'var(--text-1)',
-                                        }}
+                                    <ScheduleDateTimePicker
+                                        value={new Date(activeConfig.scheduledAt)}
+                                        onChange={(d) => updateConfig(activeVideoId, { scheduledAt: d.toISOString() })}
                                     />
                                 )}
                             </div>
@@ -1238,7 +1329,7 @@ export default function SchedulePostModal({ isOpen, onClose, preSelectedIds, pre
                     </div>
                     <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                         {step > 1 && (
-                            <button onClick={() => setStep(s => s - 1)} style={{
+                            <button onClick={() => (isBrandMode && step === 3) ? onClose() : setStep(s => s - 1)} style={{
                                 padding: '10px 20px', borderRadius: '10px',
                                 border: '1px solid var(--border)', background: 'white',
                                 color: 'var(--text-2)', fontSize: '13px', fontWeight: 600, cursor: 'pointer',

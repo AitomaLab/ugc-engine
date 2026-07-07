@@ -11,7 +11,7 @@ if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
 if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
-from fastapi import FastAPI, HTTPException, Query, Depends, Request, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Query, Depends, Request, BackgroundTasks, Response
 from pydantic import BaseModel, model_validator
 from typing import List, Literal, Optional
 from fastapi.middleware.cors import CORSMiddleware
@@ -1650,7 +1650,13 @@ def api_create_transition_shot(product_id: str, data: TransitionShotRequest):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "3.0.0", "database": "supabase-rest"}
+    return {
+        "status": "ok",
+        "version": "3.0.0",
+        "database": "supabase-rest",
+        "schedule_schema": "v2",
+        "schedule_supports_media_urls": True,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -3448,16 +3454,54 @@ def _update_ayrshare_profile_row(sb, payload: dict, **filters) -> None:
                 raise
 
 
+def _format_social_post_insert_error(err: Exception, *, had_media_urls: bool = False) -> str:
+    """Turn raw Postgres/PostgREST errors into actionable schedule messages."""
+    msg = str(err)
+    lower = msg.lower()
+    if "chk_social_posts_media_source" in lower or "23514" in msg:
+        if had_media_urls:
+            return (
+                "Could not save this image post. Apply migration "
+                "069_social_posts_external_media.sql in Supabase, then reload the API schema "
+                "(Settings → API → Reload schema)."
+            )
+        return (
+            "Could not save scheduled post: each item needs a video job, product shot, "
+            "or image URL (media_urls)."
+        )
+    if "pgrst204" in lower and "media_urls" in lower:
+        return (
+            "social_posts.media_urls is not available via the API yet. "
+            "Run migration 069 and reload the Supabase API schema cache."
+        )
+    return msg
+
+
 def _strip_missing_social_post_columns(payload: dict, err: Exception) -> bool:
     """Drop optional columns missing from ``social_posts`` (PGRST204)."""
     msg = str(err).lower()
     if "pgrst204" not in msg and "could not find" not in msg:
         return False
+    if "media_urls" in payload and "media_urls" in msg:
+        raise ValueError(_format_social_post_insert_error(err, had_media_urls=True)) from err
     for col in ("updated_at", "posted_at", "media_kind", "product_shot_id", "error_message"):
         if col in payload and col in msg:
             payload.pop(col, None)
             return True
     return False
+
+
+def _insert_social_post_row(sb, payload: dict) -> dict:
+    data = dict(payload)
+    had_media_urls = bool(data.get("media_urls"))
+    while True:
+        try:
+            result = sb.table("social_posts").insert(data).execute()
+            return result.data[0] if result.data else {}
+        except Exception as e:
+            if _strip_missing_social_post_columns(data, e):
+                continue
+            raise ValueError(_format_social_post_insert_error(e, had_media_urls=had_media_urls)) from e
 
 
 def _update_social_post_row(sb, payload: dict, **filters) -> None:
@@ -3873,6 +3917,7 @@ class SchedulePostItem(BaseModel):
     """Schedule a single video job **or** a product shot (image / animation still)."""
     video_job_id: Optional[str] = None
     product_shot_id: Optional[str] = None
+    media_urls: Optional[List[str]] = None
     platforms: List[str]
     caption: Optional[str] = None
     hashtags: Optional[List[str]] = None
@@ -3882,8 +3927,9 @@ class SchedulePostItem(BaseModel):
     def _exactly_one_media_asset(self):
         has_v = bool((self.video_job_id or "").strip())
         has_s = bool((self.product_shot_id or "").strip())
-        if has_v == has_s:
-            raise ValueError("Each item needs exactly one of video_job_id or product_shot_id.")
+        has_m = bool(self.media_urls and any((u or "").strip() for u in self.media_urls))
+        if sum([has_v, has_s, has_m]) != 1:
+            raise ValueError("Each item needs exactly one of video_job_id, product_shot_id, or media_urls.")
         return self
 
 
@@ -3895,9 +3941,11 @@ class BulkScheduleRequest(BaseModel):
 async def api_schedule_bulk(
     data: BulkScheduleRequest,
     background_tasks: BackgroundTasks,
+    response: Response,
     user: dict = Depends(get_current_user),
 ):
     """Schedule one or more videos or images for social media posting."""
+    response.headers["X-Schedule-Schema"] = "v2"
     sb = get_supabase()
     user_id = user["id"]
 
@@ -3914,10 +3962,27 @@ async def api_schedule_bulk(
     for post in data.posts:
         video_jid = (post.video_job_id or "").strip() or None
         shot_id = (post.product_shot_id or "").strip() or None
+        carousel_urls = [u.strip() for u in (post.media_urls or []) if u and u.strip()]
         media_url: Optional[str] = None
+        media_urls_resolved: Optional[list[str]] = None
         media_kind: str = "video"
 
-        if video_jid:
+        if carousel_urls:
+            media_kind = "carousel" if len(carousel_urls) > 1 else "image"
+            try:
+                media_urls_resolved = []
+                for url in carousel_urls:
+                    media_urls_resolved.append(
+                        await prepare_image_url_for_ayrshare(url, user_id=user_id)
+                    )
+            except Exception as e:
+                results.append({
+                    "status": "failed",
+                    "error": f"Image could not be prepared for Instagram: {e}",
+                })
+                failed_count += 1
+                continue
+        elif video_jid:
             job = get_job(video_jid)
             if not job or job.get("user_id") != user_id:
                 results.append({"video_job_id": video_jid, "status": "failed", "error": "Video not found"})
@@ -3946,7 +4011,7 @@ async def api_schedule_bulk(
                 continue
 
         # Instagram (via Ayrshare) rejects images > 8 MB — compress + re-host.
-        if media_kind == "image" and media_url:
+        if media_kind == "image" and media_url and not media_urls_resolved:
             try:
                 media_url = await prepare_image_url_for_ayrshare(media_url, user_id=user_id)
             except Exception as e:
@@ -3974,15 +4039,18 @@ async def api_schedule_bulk(
                     "video_job_id": video_jid,
                     "product_shot_id": shot_id,
                 }
-                post_record = sb.table("social_posts").insert(insert_payload).execute()
+                if media_urls_resolved:
+                    insert_payload["media_urls"] = media_urls_resolved
 
-                social_post_id = post_record.data[0]["id"] if post_record.data else None
+                inserted = _insert_social_post_row(sb, insert_payload)
+                social_post_id = inserted.get("id")
 
                 # Send to Ayrshare
+                ayrshare_media = media_urls_resolved if media_urls_resolved else ([media_url] if media_url else [])
                 ayrshare_data = {
                     "post": post.caption or "",
                     "platforms": [platform],
-                    "mediaUrls": [media_url],
+                    "mediaUrls": ayrshare_media,
                     "scheduleDate": post.scheduled_at,
                 }
                 if post.hashtags:
@@ -4008,6 +4076,7 @@ async def api_schedule_bulk(
                 results.append({
                     **({"video_job_id": video_jid} if video_jid else {}),
                     **({"product_shot_id": shot_id} if shot_id else {}),
+                    **({"media_urls": carousel_urls} if carousel_urls else {}),
                     "platform": platform,
                     "social_post_id": social_post_id,
                     "status": "scheduled",
@@ -4015,17 +4084,19 @@ async def api_schedule_bulk(
                 scheduled_count += 1
 
             except Exception as e:
+                err_text = e.args[0] if isinstance(e, ValueError) and e.args else str(e)
                 if social_post_id:
                     sb.table("social_posts").update({
                         "status": "failed",
-                        "error_message": str(e),
+                        "error_message": err_text,
                     }).eq("id", social_post_id).execute()
                 results.append({
                     **({"video_job_id": video_jid} if video_jid else {}),
                     **({"product_shot_id": shot_id} if shot_id else {}),
+                    **({"media_urls": carousel_urls} if carousel_urls else {}),
                     "platform": platform,
                     "status": "failed",
-                    "error": str(e),
+                    "error": err_text,
                 })
                 failed_count += 1
 
@@ -4095,6 +4166,14 @@ def api_get_schedule(
                     shot_ownership[sid_key] = _user_owns_product_shot(sb, user_id, shot)
                 if shot_ownership[sid_key]:
                     thumb = shot.get("image_url") or shot.get("video_url") or shot.get("result_url")
+        if not thumb:
+            stored_urls = row.get("media_urls")
+            if isinstance(stored_urls, list) and stored_urls:
+                first = stored_urls[0]
+                if isinstance(first, str) and first.strip():
+                    thumb = first.strip()
+                elif isinstance(first, dict):
+                    thumb = (first.get("url") or "").strip() or None
         if thumb:
             row["thumbnail_url"] = thumb
         enriched.append(row)

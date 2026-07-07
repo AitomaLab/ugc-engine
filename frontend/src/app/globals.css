@@ -172,7 +172,21 @@ a {
   stroke: currentColor;
   fill: none;
   stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
   flex-shrink: 0;
+}
+
+.nav-item svg.nav-icon-carousel {
+  width: 17px;
+  height: 17px;
+  stroke-width: 2.25;
+}
+
+.nav-item svg.nav-icon-package {
+  width: 17px;
+  height: 17px;
+  stroke-width: 2.25;
 }
 
 .nav-divider {
@@ -629,6 +643,19 @@ a {
   margin-top: var(--header-h);
   min-height: calc(100vh - var(--header-h));
   padding-bottom: 40px;
+}
+
+.app-body:has(.brand-studio-page) {
+  padding-bottom: 0;
+  height: calc(100vh - var(--header-h));
+  overflow: hidden;
+}
+
+.brand-studio-page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .content-area {

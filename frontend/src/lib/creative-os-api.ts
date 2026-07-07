@@ -82,7 +82,7 @@ async function creativeFetchOnce<T = unknown>(
         controller.abort();
     }, timeoutMs);
 
-    try {
+    const run = async (): Promise<T> => {
         const accessToken = await getValidAccessToken();
 
         const result = await fetchWithAuth<T>(`${CREATIVE_OS_URL}${path}`, {
@@ -100,9 +100,13 @@ async function creativeFetchOnce<T = unknown>(
             }
             throw new Error(result.unauthorized
                 ? 'Session expired. Please sign in again.'
-                : `Creative OS error: ${result.status}`);
+                : (result.detail || `Creative OS error: ${result.status}`));
         }
         return result.data;
+    };
+
+    try {
+        return await run();
     } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') {
             if (externalSignal?.aborted) {

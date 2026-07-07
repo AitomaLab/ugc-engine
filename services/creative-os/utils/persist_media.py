@@ -19,6 +19,8 @@ GENERATED_VIDEOS_BUCKET = "generated-videos"
 EPHEMERAL_HOSTS = (
     "d2p7pge43lyniu.cloudfront.net",
     "tempfile.aiquickdraw.com",
+    "fal.media",
+    "fal.run",
 )
 
 

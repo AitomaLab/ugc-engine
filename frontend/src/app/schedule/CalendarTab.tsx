@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { apiFetch } from '@/lib/utils';
 import { syncStudioConnections } from '@/components/analytics/analytics-types';
 import type { SocialPost, SocialConnection } from '@/lib/types';
@@ -41,6 +42,8 @@ function formatMonth(year: number, month: number) {
 /* ── Component ───────────────────────────────────────────────────────────── */
 export default function CalendarTab() {
     const { t } = useTranslation();
+    const searchParams = useSearchParams();
+    const router = useRouter();
     const [viewDate, setViewDate] = useState(new Date());
     const [posts, setPosts] = useState<SocialPost[]>([]);
     const [connectedCount, setConnectedCount] = useState(0);
@@ -51,6 +54,13 @@ export default function CalendarTab() {
     const postsRef = useRef<SocialPost[]>([]);
     const [cancellingId, setCancellingId] = useState<string | null>(null);
     const [cancelError, setCancelError] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (searchParams.get('openSchedule') === '1') {
+            setScheduleModalOpen(true);
+            router.replace('/schedule');
+        }
+    }, [searchParams, router]);
 
     const loadConnectedCount = useCallback(async () => {
         setConnectionsLoading(true);
