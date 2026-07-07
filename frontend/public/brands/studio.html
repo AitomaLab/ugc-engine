@@ -84,13 +84,13 @@ button{font-family:'Inter',sans-serif;cursor:pointer;}
 
 /* ---------- PANELS ---------- */
 .panel{overflow-y:auto;overflow-x:hidden;min-height:0;}
-.panel.left{border-right:1px solid var(--line);background:var(--glass-soft);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);padding:0;position:relative;overflow:hidden;}
+.panel.left{border-right:1px solid var(--line);background:var(--glass-soft);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);padding:0;position:relative;overflow:hidden;display:flex;flex-direction:column;min-height:0;}
 .panel.center{padding:28px 32px 80px;}
 
 .phead{
   position:sticky;top:0;background:var(--glass);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);z-index:5;
   padding:14px 12px 14px 16px;border-bottom:1px solid var(--line);
-  display:flex;align-items:center;gap:8px;min-width:0;
+  display:flex;align-items:center;gap:8px;min-width:0;flex-shrink:0;
 }
 .phead h2{font-weight:700;font-size:15px;letter-spacing:-0.3px;display:flex;align-items:center;gap:9px;color:var(--ink);flex:1 1 auto;min-width:0;overflow:hidden;}
 .phead h2 span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -103,7 +103,7 @@ button{font-family:'Inter',sans-serif;cursor:pointer;}
 .collapse-btn:hover{background:var(--blue-light);color:var(--blue);border-color:rgba(51,122,255,0.3);}
 
 /* ----- LEFT: brand system ----- */
-.left-body{padding:20px 20px 28px;}
+.left-body{padding:20px 20px 28px;flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;}
 .left-collapsed .left-body,.left-collapsed .phead h2 span,.left-collapsed .phead .kick,.left-collapsed .phead-actions{display:none;}
 .left-collapsed .phead{justify-content:center;padding:18px 8px;}
 
@@ -148,6 +148,8 @@ button{font-family:'Inter',sans-serif;cursor:pointer;}
 .imgwrap .thumb:hover .rm{opacity:1;}
 .imgwrap .thumb .rm:hover{background:var(--red);color:#fff;border-color:var(--red);}
 .imgwrap .thumb .up-tag{position:absolute;left:0;bottom:0;background:var(--blue);color:#fff;font-size:8px;font-weight:600;letter-spacing:.5px;padding:2px 5px;border-radius:0 6px 0 0;}
+.imgwrap .thumb .logo-badge{position:absolute;left:0;bottom:0;right:0;display:flex;flex-wrap:wrap;gap:2px;padding:3px 4px;background:linear-gradient(transparent,rgba(0,0,0,.55));}
+.imgwrap .thumb .logo-badge span{font-size:7px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:#fff;background:rgba(0,0,0,.35);padding:1px 4px;border-radius:4px;}
 .imgwrap .add{aspect-ratio:1;border:1px dashed var(--muted);border-radius:8px;background:var(--glass-input);display:flex;align-items:center;justify-content:center;font-size:20px;color:var(--muted);cursor:pointer;transition:all .15s;}
 .imgwrap .add:hover{border-color:var(--blue);color:var(--blue);background:var(--blue-light);}
 .bsec .khead{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
@@ -412,7 +414,7 @@ button{font-family:'Inter',sans-serif;cursor:pointer;}
           <input type="text" id="urlInput" data-i18n="brands.studio.brand.urlPlaceholder" data-i18n-attr="placeholder" placeholder="paste a brand URL" autocomplete="off">
           <button id="urlGo" data-i18n="brands.studio.brand.scrapeTitle" data-i18n-attr="title">→</button>
         </div>
-        <p class="hint" data-i18n="brands.studio.brand.scrapeHint">Paste a URL and hit enter. Code reads the site's fonts, colors, voice, and images. Runs locally, no tokens.</p>
+        <p class="hint" data-i18n="brands.studio.brand.scrapeHint">Paste a URL and hit enter. Code reads the site's fonts, colors, voice, and images.</p>
         <p class="hint scrape-offline-warn" id="scrapeOfflineWarn" style="display:none;color:var(--amber,#d97706);margin-top:6px;" data-i18n="brands.studio.brand.scraperOffline">Brand scraper offline — start Creative OS on port 8001.</p>
       </div>
 
@@ -438,6 +440,13 @@ button{font-family:'Inter',sans-serif;cursor:pointer;}
           <span class="kick" data-i18n="brands.studio.brand.voice">Voice</span>
           <div class="voice" id="bVoice" contenteditable="true" spellcheck="false" data-i18n="brands.studio.brand.voiceEditTitle" data-i18n-attr="title"></div>
           <div class="vtags" id="bVtags"></div>
+        </div>
+
+        <div class="bsec">
+          <div class="khead"><span class="kick" data-i18n="brands.studio.brand.logo">Logo</span><button class="up" id="upLogoBtn" data-i18n="brands.studio.brand.upload">+ upload</button></div>
+          <p class="hint" style="margin-top:0;margin-bottom:8px" data-i18n="brands.studio.brand.logoHint">Used automatically on renders — light/dark/icon picked per slide.</p>
+          <div class="imgwrap" id="bLogo"></div>
+          <input type="file" id="upLogo" accept="image/*" multiple hidden>
         </div>
 
         <div class="bsec">
@@ -579,7 +588,7 @@ const FALLBACK_BRAND = {
   fonts:{display:"Outfit", body:"Outfit"},
   colors:["#1c1a16","#6f6a5c","#d9d3c6","#f2efe8","#ff6b1a"],
   voice:"Paste a brand URL on the left to scrape a real brand system.",
-  voiceTags:[], taglines:[], imagery:[], productImages:[]
+  voiceTags:[], taglines:[], logos:[], imagery:[], productImages:[]
 };
 
 
@@ -658,7 +667,34 @@ function renderImages(containerId,b,key){
   h+=`<div class="add" data-key="${key}" title="${t('brands.studio.img.upload')}">+</div>`;
   const c=document.getElementById(containerId);c.innerHTML=h;
   c.querySelectorAll('.rm').forEach(btn=>btn.onclick=()=>{brand[key].splice(+btn.dataset.i,1);renderImages(containerId,brand,key);});
-  c.querySelector('.add').onclick=()=>{$('#'+(key==='imagery'?'upImagery':'upProduct')).click();};
+  c.querySelector('.add').onclick=()=>{$('#'+(key==='imagery'?'upImagery':key==='logos'?'upLogo':'upProduct')).click();};
+  c.querySelectorAll('.thumb img').forEach(im=>im.onclick=()=>openLightbox('<img src="'+im.src+'">'));
+  saveBrand();
+}
+
+function logoBadges(it){
+  const kind=(it&&it.kind)||'unknown';
+  const contrast=(it&&it.contrast)||'unknown';
+  const parts=[];
+  if(kind!=='unknown')parts.push('<span>'+esc(kind)+'</span>');
+  if(contrast!=='unknown')parts.push('<span>'+esc(contrast)+'</span>');
+  return parts.length?'<div class="logo-badge">'+parts.join('')+'</div>':'';
+}
+
+function renderLogos(b){
+  const arr=b.logos||[];
+  let h=arr.map((it,i)=>`
+    <div class="thumb contain">
+      <img src="${imgUrl(it)}" loading="lazy" onerror="this.closest('.thumb').style.display='none'">
+      ${logoBadges(it)}
+      ${isUp(it)?'<span class="up-tag">'+t('brands.studio.img.yours')+'</span>':''}
+      <button class="rm" data-i="${i}" title="${t('brands.studio.img.remove')}">&#10005;</button>
+    </div>`).join('');
+  h+=`<div class="add" title="${t('brands.studio.img.upload')}">+</div>`;
+  const c=document.getElementById('bLogo'); if(!c)return;
+  c.innerHTML=h;
+  c.querySelectorAll('.rm').forEach(btn=>btn.onclick=()=>{brand.logos.splice(+btn.dataset.i,1);renderLogos(brand);});
+  c.querySelector('.add').onclick=()=>$('#upLogo').click();
   c.querySelectorAll('.thumb img').forEach(im=>im.onclick=()=>openLightbox('<img src="'+im.src+'">'));
   saveBrand();
 }
@@ -675,7 +711,7 @@ function renderPalette(b){
   });
 }
 function renderBrand(b){
-  brand=b;state.brand=b;b.fonts=b.fonts||{};
+  brand=b;state.brand=b;b.fonts=b.fonts||{};b.logos=b.logos||[];
   if(!b.name){const _br=$('#brandResult');if(_br)_br.classList.remove('show');return;} // empty / reset brand -> blank left panel
   $('#bName').textContent=b.name;
   $('#bUrl').textContent=b.url||'';
@@ -694,6 +730,7 @@ function renderBrand(b){
   $('#bVoice').textContent=b.voice;
   $('#bVtags').innerHTML=(b.voiceTags||[]).map(t=>`<span class="vtag">${t}</span>`).join('');
   // images
+  renderLogos(b);
   renderImages('bImagery',b,'imagery');
   renderImages('bProduct',b,'productImages');
   $('#brandResult').classList.add('show');
@@ -714,14 +751,23 @@ function downscale(file,max,cb){
 function wireUpload(inputId,key,containerId){
   $('#'+inputId).addEventListener('change',e=>{
     const files=[...e.target.files];if(!files.length)return;let pend=files.length;
-    files.forEach(f=>downscale(f,900,url=>{(brand[key]=brand[key]||[]).push({url,uploaded:true,name:f.name});if(--pend===0)renderImages(containerId,brand,key);}));
+    files.forEach(f=>downscale(f,900,url=>{
+      const entry=key==='logos'?{url,uploaded:true,kind:'unknown',contrast:'unknown',source:'upload'}:{url,uploaded:true,name:f.name};
+      (brand[key]=brand[key]||[]).push(entry);
+      if(--pend===0){
+        if(key==='logos')renderLogos(brand);
+        else renderImages(containerId,brand,key);
+      }
+    }));
     e.target.value='';
-    toast(t('brands.studio.toast.imagesAdded',{count:files.length,type:t(key==='imagery'?'brands.studio.toast.imagesAddedType.imagery':'brands.studio.toast.imagesAddedType.product'),plural:key==='imagery'?pluralEs(files.length):pluralS(files.length)}));
+    toast(t('brands.studio.toast.imagesAdded',{count:files.length,type:t(key==='imagery'?'brands.studio.toast.imagesAddedType.imagery':key==='logos'?'brands.studio.toast.imagesAddedType.logo':'brands.studio.toast.imagesAddedType.product'),plural:key==='imagery'||key==='logos'?pluralEs(files.length):pluralS(files.length)}));
   });
 }
 wireUpload('upImagery','imagery','bImagery');
+wireUpload('upLogo','logos','bLogo');
 wireUpload('upProduct','productImages','bProduct');
 $('#upImageryBtn').onclick=()=>$('#upImagery').click();
+$('#upLogoBtn').onclick=()=>$('#upLogo').click();
 $('#upProductBtn').onclick=()=>$('#upProduct').click();
 
 /* editable voice - persists like everything else */
@@ -916,13 +962,32 @@ function heroPreview(p){
     `<div style="position:absolute;left:14px;bottom:11px;font-family:Doto,monospace;font-weight:700;font-size:12px;letter-spacing:1px;color:${tcol};opacity:.92">${esc((brand.name||'').toUpperCase())}</div>`+
     `</div>`;
 }
-function slidePrompt(post,role,i,n){
+function slidePrompt(post,role,i,n,selectedLogo){
   const C=brand.colors||[],pal=C.slice(0,5).join(', '),c1=C[0]||'#ff6b1a',c2=C[1]||'#1c1a16';
   const font=(brand.fonts&&brand.fonts.display)||'a clean modern sans-serif';
   const dir=post.direction||'on-brand';
   const concept=(post.idea||'').replace(/<[^>]+>/g,'').slice(0,160);
   const ref=(role&&role.productRef!=null)?` A reference photo of the real product is provided - use it as the EXACT product: preserve its real shape, colour, packaging and label, and place it naturally in the scene. Do not invent a different product.`:` Feature the real ${brand.name} product, shot in a style that suits the brand.`;
-  return `A finished, production-ready 1080x1350 vertical Instagram carousel slide (${i+1} of ${n}) for the real brand ${brand.name}. This slide's job: ${role.tag}. Carousel concept: ${concept}. Art direction: ${dir}. The layout, props, lighting, typography and mood must clearly reflect this and the brand's own visual identity, not a generic template. Use the brand's actual palette: ${pal} (lead with ${c1} and ${c2}). Set the headline "${role.head}" in a typeface like "${font}" (or a close match).${ref} Keep palette and type consistent across slides, but make it look unmistakably like ${brand.name}, not a generic AI carousel. Do NOT add any corner sticker or badge (no "NEW DROP" stamp, no circular badge), no page number or slide counter (like 01/04), no footer bar, and no brand address, city, location, or series/collection line. No watermark, no placeholder text.`;
+  let logoRef='';
+  if(selectedLogo&&selectedLogo.url){
+    const kind=selectedLogo.kind||'unknown';
+    const contrast=selectedLogo.contrast||'unknown';
+    logoRef=` Reference image 1 is the brand's official logo (${kind}, ${contrast} variant). If a logo appears in this slide, reproduce it exactly — same shape, colors, and typography. Do not invent, redraw, or substitute a different logo.`;
+    const tag=(role.tag||'').toUpperCase();
+    if(tag==='HOOK'||tag==='SHOP')logoRef+=' Include the brand logo prominently.';
+    else if(tag==='PROOF'||(role.layout==='stat'))logoRef+=' Use the icon mark only if a logo is needed; keep it small.';
+  }
+  return `A finished, production-ready 1080x1350 vertical Instagram carousel slide (${i+1} of ${n}) for the real brand ${brand.name}. This slide's job: ${role.tag}. Carousel concept: ${concept}. Art direction: ${dir}. The layout, props, lighting, typography and mood must clearly reflect this and the brand's own visual identity, not a generic template. Use the brand's actual palette: ${pal} (lead with ${c1} and ${c2}). Set the headline "${role.head}" in a typeface like "${font}" (or a close match).${logoRef}${ref} Keep palette and type consistent across slides, but make it look unmistakably like ${brand.name}, not a generic AI carousel. Do NOT add any corner sticker or badge (no "NEW DROP" stamp, no circular badge), no page number or slide counter (like 01/04), no footer bar, and no brand address, city, location, or series/collection line. No watermark, no placeholder text.`;
+}
+
+async function pickLogoForSlide(role,slideIndex,total,hasProductRef){
+  if(!brand.logos||!brand.logos.length)return null;
+  try{
+    const r=await fetch('/api/pick-logo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({logos:brand.logos,role:role.tag||'',layout:role.layout||'',colors:brand.colors||[],slideIndex,hasProductRef:!!hasProductRef})});
+    if(!r.ok)return null;
+    const j=await r.json();
+    return j.url?j:null;
+  }catch(e){return null;}
 }
 /* ---------- engine status ---------- */
 const SERVED=true;
@@ -1384,10 +1449,13 @@ async function genCarousel(p,indices){
     let _done=0,_fails=0;
     await Promise.all(selected.map(async (i)=>{
       const role=p.roles[i]||{head:p.head};
+      const hasProductRef=role.productRef!=null&&brand.productImages&&brand.productImages[role.productRef];
+      const selectedLogo=await pickLogoForSlide(role,i,p.photoCount,hasProductRef);
       const refs=[];
-      if(role.productRef!=null && brand.productImages && brand.productImages[role.productRef]){const u=imgUrl(brand.productImages[role.productRef]); if(u)refs.push(u);}
-      if(moodUrl)refs.push(moodUrl);
-      const prompt=slidePrompt(p,role,i,p.photoCount);
+      if(selectedLogo&&selectedLogo.url)refs.push(selectedLogo.url);
+      if(hasProductRef){const u=imgUrl(brand.productImages[role.productRef]);if(u)refs.push(u);}
+      if(moodUrl&&refs.length<3)refs.push(moodUrl);
+      const prompt=slidePrompt(p,role,i,p.photoCount,selectedLogo);
       let ok=false,lastErr='';
       for(let a=0;a<3 && !ok;a++){
         await new Promise(r=>setTimeout(r, a? 700*a : i*150));
@@ -1536,7 +1604,7 @@ function resetApp(){
   if(!confirm(t('brands.studio.confirm.reset')))return;
   try{localStorage.removeItem(SESSION_KEY);localStorage.removeItem(LS_KEY);}catch(e){}
   if(SERVED){try{fetch('/api/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({brand:{}})});fetch('/api/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session:{}})}).catch(()=>{});}catch(e){}}
-  brand={name:'',url:'',colors:[],fonts:{},voice:'',voiceTags:[],taglines:[],imagery:[],productImages:[]};
+  brand={name:'',url:'',colors:[],fonts:{},voice:'',voiceTags:[],taglines:[],logos:[],imagery:[],productImages:[]};
   state.brand=brand;state.posts=[];state.direction='';state.ideaCount=3;
   const r=$('#rows');if(r)r.innerHTML='';
   if(emptyEl)emptyEl.style.display='';

@@ -51,6 +51,15 @@ class SessionSaveRequest(BaseModel):
     session: dict = Field(default_factory=dict)
 
 
+class PickLogoRequest(BaseModel):
+    logos: list = Field(default_factory=list)
+    role: str = ""
+    layout: str = ""
+    colors: list = Field(default_factory=list)
+    slideIndex: int = 0
+    hasProductRef: bool = False
+
+
 @router.get("/health")
 async def health(user: dict = Depends(get_current_user)):
     return {
@@ -147,6 +156,19 @@ async def generate(req: GenerateRequest, user: dict = Depends(get_current_user))
             result["persistWarning"] = str(exc)
 
     return result
+
+
+@router.post("/pick-logo")
+async def pick_logo(req: PickLogoRequest, user: dict = Depends(get_current_user)):
+    picked = brand_studio.select_logo(
+        req.logos or [],
+        role_tag=req.role,
+        layout=req.layout,
+        palette=req.colors,
+        slide_index=req.slideIndex,
+        has_product_ref=req.hasProductRef,
+    )
+    return picked or {}
 
 
 @router.post("/ideas")

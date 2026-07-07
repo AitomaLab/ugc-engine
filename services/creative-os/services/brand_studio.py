@@ -413,6 +413,289 @@ def _images(html: str, origin: str) -> list[str]:
     return imagery[:4]
 
 
+_LOGO_JUNK = (
+    "facebook", "twitter", "instagram", "linkedin", "youtube", "pinterest", "tiktok",
+    "payment", "visa", "mastercard", "apple-pay", "google-play", "sprite", "flag",
+    "badge", "placeholder", "avatar", "gravatar", "emoji",
+)
+
+
+def _classify_logo_hints(text: str) -> tuple[str, str]:
+    low = (text or "").lower()
+    tokens = [t for t in re.split(r"[^a-z0-9]+", low) if t]
+    kind = "unknown"
+    contrast = "unknown"
+    if any(k in tokens or k in low for k in ("favicon", "touchicon", "icon", "mark", "symbol", "glyph")):
+        kind = "icon"
+    if any(k in tokens for k in ("wordmark", "fulllogo", "horizontal", "lockup")) or "wordmark" in low:
+        kind = "wordmark" if kind == "unknown" else "combo"
+    elif any(k in tokens for k in ("combo", "stacked", "vertical")):
+        kind = "combo"
+    elif "logo" in tokens and kind == "unknown":
+        kind = "wordmark"
+    if re.search(r"\bon[-_]dark\b", low) or re.search(r"\bfor[-_]dark\b", low):
+        contrast = "light"
+    elif any(k in tokens for k in ("white", "light", "inverted", "reverse")):
+        contrast = "light"
+    elif any(k in tokens for k in ("dark", "black")):
+        contrast = "dark"
+    elif re.search(r"\bon[-_]light\b", low) or re.search(r"\bfor[-_]light\b", low):
+        contrast = "dark"
+    elif any(k in tokens for k in ("color", "colour", "primary")):
+        contrast = "color"
+    return kind, contrast
+
+
+def _hex_luminance(hex_color: str) -> float:
+    h = (hex_color or "").strip().lstrip("#")
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    if len(h) != 6:
+        return 0.5
+    try:
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    except ValueError:
+        return 0.5
+    return (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
+
+
+def _palette_dark(palette: list | None) -> bool:
+    colors = [c for c in (palette or [])[:2] if isinstance(c, str) and c.startswith("#")]
+    if not colors:
+        return True
+    return sum(_hex_luminance(c) for c in colors) / len(colors) < 0.45
+
+
+def _classify_brightness_from_url(url: str) -> str | None:
+    render = _vision_url(url)
+    if not render or render.startswith("data:"):
+        return None
+    try:
+        from PIL import Image
+        import io
+
+        req = urllib.request.Request(render, headers={"User-Agent": UA})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = resp.read()
+        if len(data) > 2_000_000:
+            return None
+        img = Image.open(io.BytesIO(data)).convert("RGBA")
+        img.thumbnail((64, 64))
+        opaque = [(r, g, b) for r, g, b, a in img.getdata() if a > 128]
+        if not opaque:
+            return None
+        lum = sum(0.299 * r + 0.587 * g + 0.114 * b for r, g, b in opaque) / (255.0 * len(opaque))
+        return "light" if lum > 0.55 else "dark"
+    except Exception:
+        return None
+
+
+def _logo_is_junk(url: str, context: str = "") -> bool:
+    low = f"{url} {context}".lower()
+    return any(k in low for k in _LOGO_JUNK)
+
+
+def _normalize_logo_key(url: str) -> str:
+    p = urllib.parse.urlparse(url.split("?", 1)[0].split("#", 1)[0])
+    return (p.netloc + p.path).lower()
+
+
+def _jsonld_logos(html: str, origin: str) -> list[str]:
+    urls: list[str] = []
+    for block in re.findall(
+        r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+        html,
+        re.I | re.S,
+    ):
+        try:
+            data = json.loads(block.strip())
+        except Exception:
+            continue
+
+        def walk(obj: Any) -> None:
+            if isinstance(obj, dict):
+                logo = obj.get("logo")
+                if isinstance(logo, str):
+                    urls.append(urllib.parse.urljoin(origin, logo))
+                elif isinstance(logo, dict) and logo.get("url"):
+                    urls.append(urllib.parse.urljoin(origin, logo["url"]))
+                for v in obj.values():
+                    walk(v)
+            elif isinstance(obj, list):
+                for v in obj:
+                    walk(v)
+
+        walk(data)
+    return urls
+
+
+def _link_icon_logos(html: str, origin: str) -> list[tuple[str, str]]:
+    """Return (url, context_hint) from link rel icons, largest sizes first."""
+    icons: list[tuple[int, str, str]] = []
+    for m in re.finditer(
+        r'<link[^>]+rel=["\']([^"\']+)["\'][^>]*>',
+        html,
+        re.I,
+    ):
+        tag = m.group(0)
+        rel = m.group(1).lower()
+        if not any(r in rel for r in ("icon", "apple-touch-icon", "shortcut icon")):
+            continue
+        href_m = re.search(r'href=["\']([^"\']+)["\']', tag, re.I)
+        if not href_m:
+            continue
+        href = urllib.parse.urljoin(origin, unescape(href_m.group(1).strip()))
+        sizes_m = re.search(r'sizes=["\']([^"\']+)["\']', tag, re.I)
+        size_px = 0
+        if sizes_m:
+            for part in sizes_m.group(1).split():
+                dim = re.match(r"(\d+)x(\d+)", part.strip())
+                if dim:
+                    size_px = max(size_px, int(dim.group(1)), int(dim.group(2)))
+        if "apple-touch" in rel:
+            size_px = max(size_px, 180)
+        icons.append((size_px, href, rel))
+    icons.sort(key=lambda x: x[0], reverse=True)
+    return [(u, ctx) for _, u, ctx in icons]
+
+
+def _header_img_logos(html: str, origin: str) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    for m in re.finditer(r"<img[^>]+>", html[:80_000], re.I):
+        tag = m.group(0)
+        ctx = tag.lower()
+        if "logo" not in ctx and "brand" not in ctx:
+            continue
+        src_m = re.search(r'src=["\']([^"\']+)["\']', tag, re.I)
+        if not src_m:
+            continue
+        src = urllib.parse.urljoin(origin, unescape(src_m.group(1).strip()))
+        if _logo_is_junk(src, ctx):
+            continue
+        out.append((src, ctx))
+    return out
+
+
+def _path_logos(html: str, origin: str) -> list[str]:
+    urls: list[str] = []
+    for u in re.findall(
+        r'["\']([^"\']*(?:/|\\)?logo[^"\']*\.(?:png|jpg|jpeg|webp|svg|ico))["\']',
+        html,
+        re.I,
+    ):
+        full = urllib.parse.urljoin(origin, u.replace("\\", "/"))
+        if not _logo_is_junk(full, u):
+            urls.append(full)
+    return urls
+
+
+def _make_logo_entry(url: str, *, context: str = "", source: str = "scraped") -> dict:
+    kind, contrast = _classify_logo_hints(f"{url} {context}")
+    entry = {"url": url, "kind": kind, "contrast": contrast, "source": source}
+    if contrast == "unknown" and _vision_url(url):
+        bright = _classify_brightness_from_url(url)
+        if bright:
+            entry["contrast"] = bright
+    return entry
+
+
+def _extract_logos(html: str, origin: str) -> list[dict]:
+    seen: set[str] = set()
+    out: list[dict] = []
+
+    def add(url: str, context: str = "") -> None:
+        url = (url or "").strip()
+        if not url or url.startswith("data:"):
+            return
+        if not url.startswith("http"):
+            url = urllib.parse.urljoin(origin, url)
+        key = _normalize_logo_key(url)
+        if key in seen or _logo_is_junk(url, context):
+            return
+        seen.add(key)
+        out.append(_make_logo_entry(url, context=context))
+
+    for u in _jsonld_logos(html, origin):
+        add(u, "jsonld logo")
+    for u, ctx in _link_icon_logos(html, origin):
+        add(u, ctx)
+    for u, ctx in _header_img_logos(html, origin):
+        add(u, ctx)
+    for u in _path_logos(html, origin):
+        add(u, "path logo")
+    add(urllib.parse.urljoin(origin, "/favicon.ico"), "favicon fallback")
+    return out[:6]
+
+
+def _logo_render_url(logo: dict | str) -> str:
+    u = _img_url(logo)
+    if not u:
+        return ""
+    v = _vision_url(u)
+    return v or (u if u.startswith("data:") else "")
+
+
+def select_logo(
+    logos: list,
+    *,
+    role_tag: str = "",
+    layout: str = "",
+    palette: list | None = None,
+    slide_index: int = 0,
+    has_product_ref: bool = False,
+) -> dict | None:
+    if not logos:
+        return None
+    entries: list[dict] = []
+    for lg in logos:
+        if not isinstance(lg, dict):
+            continue
+        url = _img_url(lg)
+        if not url:
+            continue
+        render_url = _logo_render_url(lg)
+        if not render_url:
+            continue
+        entries.append({**lg, "url": url, "_render_url": render_url})
+    if not entries:
+        return None
+
+    tag = (role_tag or "").upper()
+    lay = (layout or "").lower()
+    want_contrast = "light" if _palette_dark(palette) else "dark"
+    if tag in ("HOOK", "SHOP") or lay == "cta":
+        want_kinds = ["wordmark", "combo", "icon"]
+    elif tag == "PROOF" or lay == "stat":
+        want_kinds = ["icon", "combo", "wordmark"]
+    elif tag in ("LINEUP", "FLAVOR") or lay == "hero" or has_product_ref:
+        want_kinds = ["combo", "wordmark", "icon"]
+    else:
+        want_kinds = ["combo", "wordmark", "icon"]
+
+    def score(entry: dict) -> int:
+        kind = entry.get("kind") or "unknown"
+        contrast = entry.get("contrast") or "unknown"
+        s = 0
+        if kind in want_kinds:
+            s += 10 - want_kinds.index(kind) * 2
+        if contrast == want_contrast:
+            s += 15
+        elif contrast == "color":
+            s += 8
+        elif contrast == "unknown":
+            s += 3
+        if entry.get("uploaded"):
+            s += 2
+        return s
+
+    best = max(entries, key=score)
+    return {
+        "url": best["_render_url"],
+        "kind": best.get("kind") or "unknown",
+        "contrast": best.get("contrast") or "unknown",
+    }
+
+
 def _looks_like_shopify(html: str) -> bool:
     sample = (html or "")[:120_000].lower()
     return any(
@@ -476,6 +759,7 @@ def scrape_brand(url: str) -> dict:
                 imagery.append(pr["url"])
             if len(imagery) >= 4:
                 break
+    logos = _extract_logos(html, origin)
     return {
         "name": name[:40],
         "url": p.netloc.replace("www.", ""),
@@ -485,6 +769,7 @@ def scrape_brand(url: str) -> dict:
         "voice": (desc[:180] if len(desc.strip()) >= 12 else ""),
         "voiceTags": tags,
         "taglines": headlines,
+        "logos": logos,
         "imagery": imagery[:4],
         "productImages": products,
     }
@@ -493,7 +778,13 @@ def scrape_brand(url: str) -> dict:
 def generate_images(prompt: str, image_urls: list[str], n: int = 1) -> dict:
     prompt = (prompt or "").strip()
     n = max(1, min(5, n))
-    refs = [v for v in (_vision_url(u) for u in image_urls) if v.startswith("https://")][:3]
+    refs: list[str] = []
+    for u in image_urls:
+        v = _vision_url(u) or (u if isinstance(u, str) and u.startswith("data:") else "")
+        if v.startswith(("https://", "data:")):
+            refs.append(v)
+        if len(refs) >= 3:
+            break
     if not prompt:
         raise ValueError("empty prompt")
     fal_key = _fal_key()
@@ -538,6 +829,8 @@ def generate_ideas(brand: dict, direction: str, count: int, lang: str = "en") ->
     usable = [(idx, p, _vision_url(_img_url(p))) for idx, p in enumerate(prods)]
     usable = [(idx, p, v) for idx, p, v in usable if v]
     moods = [v for v in (_vision_url(_img_url(m)) for m in (brand.get("imagery") or [])[:3]) if v]
+    logo_refs = [_logo_render_url(lg) for lg in (brand.get("logos") or [])[:3]]
+    logo_refs = [v for v in logo_refs if v][:2]
     content: list[dict] = [{"type": "text", "text": ideas_prompt(brand, direction, n, len(usable), lang=lang)}]
     for idx, p, v in usable:
         nm = p.get("name", "") if isinstance(p, dict) else ""
@@ -545,6 +838,9 @@ def generate_ideas(brand: dict, direction: str, count: int, lang: str = "en") ->
         content.append({"type": "image_url", "image_url": {"url": v}})
     for v in moods:
         content.append({"type": "text", "text": "IMAGERY (overall mood / vibe reference):"})
+        content.append({"type": "image_url", "image_url": {"url": v}})
+    for v in logo_refs:
+        content.append({"type": "text", "text": "BRAND LOGO (official mark — keep consistent in ideas):"})
         content.append({"type": "image_url", "image_url": {"url": v}})
     system = (
         "You are a world-class DTC creative director. "

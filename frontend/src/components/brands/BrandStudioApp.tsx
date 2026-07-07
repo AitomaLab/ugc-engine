@@ -23,6 +23,7 @@ const BRAND_API_PATHS = new Set([
   '/api/ideas',
   '/api/store-image',
   '/api/stored-renders',
+  '/api/pick-logo',
 ]);
 
 const localeDicts: Record<SupportedLang, Record<string, string>> = {
