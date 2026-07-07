@@ -2901,6 +2901,17 @@ def api_deduct_credits(body: CreditDeductRequest, user: dict = Depends(get_curre
         raise HTTPException(status_code=402, detail=str(e))
 
 
+@app.post("/api/credits/refund")
+def api_refund_credits(body: CreditDeductRequest, user: dict = Depends(get_current_user)):
+    """Refund credits after a failed paid operation (e.g. Brand Studio ideas batch)."""
+    if body.amount <= 0:
+        raise HTTPException(status_code=400, detail="amount must be positive")
+    try:
+        return refund_credits(user["id"], body.amount, body.metadata or {})
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 # ---------------------------------------------------------------------------
 # Stripe Billing
 # ---------------------------------------------------------------------------

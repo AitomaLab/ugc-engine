@@ -125,8 +125,16 @@ def _img_url(it: Any) -> str:
 def _vision_url(u: str) -> str:
     if not u:
         return ""
+    if u.startswith("data:"):
+        mime = u.split(";", 1)[0].lower().replace("data:", "").strip()
+        if mime not in ("image/jpeg", "image/jpg", "image/png", "image/webp"):
+            return ""
+        return u
     base = u.split("?", 1)[0].split("#", 1)[0].lower()
-    if base.endswith(".svg") or u.startswith("data:image/svg"):
+    blocked = (".svg", ".ico", ".avif", ".bmp", ".gif")
+    if any(base.endswith(ext) for ext in blocked):
+        return ""
+    if "favicon" in base:
         return ""
     if u.startswith("https://") or u.startswith("data:"):
         return u
@@ -135,6 +143,18 @@ def _vision_url(u: str) -> str:
     if u.startswith("//"):
         return "https:" + u
     return ""
+
+
+def _logo_vision_url(logo: dict | str) -> str:
+    """Vision-safe logo URL for OpenRouter (excludes favicon / .ico)."""
+    u = _img_url(logo)
+    if not u:
+        return ""
+    if isinstance(logo, dict):
+        ctx = str(logo.get("context") or "").lower()
+        if "favicon" in ctx:
+            return ""
+    return _vision_url(u)
 
 
 def openrouter_chat(
@@ -168,8 +188,23 @@ def openrouter_chat(
             "X-Title": "Aitoma Brand Studio",
         },
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        out = json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            out = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "ignore")[:400]
+        raise RuntimeError(f"OpenRouter error {e.code}: {detail}") from e
+    usage = out.get("usage") or {}
+    if usage:
+        prompt_tok = usage.get("prompt_tokens", 0)
+        completion_tok = usage.get("completion_tokens", 0)
+        total_tok = usage.get("total_tokens", prompt_tok + completion_tok)
+        est_cogs = (prompt_tok * 3 + completion_tok * 15) / 1_000_000
+        print(
+            f"[brand_studio] openrouter usage model={body.get('model')} "
+            f"prompt_tokens={prompt_tok} completion_tokens={completion_tok} "
+            f"total_tokens={total_tok} est_cogs_usd={est_cogs:.4f}"
+        )
     return out["choices"][0]["message"]["content"]
 
 
@@ -813,45 +848,82 @@ def generate_images(prompt: str, image_urls: list[str], n: int = 1) -> dict:
 
     first_size = {"width": 1088, "height": 1360} if refs else {"width": 1080, "height": 1350}
     try:
-        return {"images": fire(first_size), "mode": "edit" if refs else "text"}
+        images = fire(first_size)
+        mode = "edit" if refs else "text"
+        est_cogs = 0.225 if mode == "edit" else 0.20
+        print(
+            f"[brand_studio] fal gpt-image-2/{mode} refs={len(refs)} "
+            f"quality=high est_cogs_usd={est_cogs:.3f} images={len(images)}"
+        )
+        return {"images": images, "mode": mode}
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "ignore")[:400]
         if e.code == 422 and "image_size" in detail:
-            return {"images": fire("portrait_4_3"), "mode": "edit" if refs else "text"}
+            images = fire("portrait_4_3")
+            mode = "edit" if refs else "text"
+            est_cogs = 0.225 if mode == "edit" else 0.20
+            print(
+                f"[brand_studio] fal gpt-image-2/{mode} refs={len(refs)} "
+                f"quality=high est_cogs_usd={est_cogs:.3f} images={len(images)} (portrait_4_3 fallback)"
+            )
+            return {"images": images, "mode": mode}
         raise RuntimeError(f"Fal error: {detail}") from e
 
 
-def generate_ideas(brand: dict, direction: str, count: int, lang: str = "en") -> dict:
-    if not _openrouter_key():
-        raise RuntimeError("no OPENROUTER_API_KEY configured")
-    n = max(1, min(8, count))
-    prods = (brand.get("productImages") or [])[:6]
-    usable = [(idx, p, _vision_url(_img_url(p))) for idx, p in enumerate(prods)]
-    usable = [(idx, p, v) for idx, p, v in usable if v]
-    moods = [v for v in (_vision_url(_img_url(m)) for m in (brand.get("imagery") or [])[:3]) if v]
-    logo_refs = [_logo_render_url(lg) for lg in (brand.get("logos") or [])[:3]]
-    logo_refs = [v for v in logo_refs if v][:2]
-    content: list[dict] = [{"type": "text", "text": ideas_prompt(brand, direction, n, len(usable), lang=lang)}]
-    for idx, p, v in usable:
-        nm = p.get("name", "") if isinstance(p, dict) else ""
-        content.append({"type": "text", "text": f"PRODUCT[{idx}]{(' - ' + nm) if nm else ''}:"})
-        content.append({"type": "image_url", "image_url": {"url": v}})
-    for v in moods:
-        content.append({"type": "text", "text": "IMAGERY (overall mood / vibe reference):"})
-        content.append({"type": "image_url", "image_url": {"url": v}})
-    for v in logo_refs:
-        content.append({"type": "text", "text": "BRAND LOGO (official mark — keep consistent in ideas):"})
-        content.append({"type": "image_url", "image_url": {"url": v}})
+def _ideas_vision_attachments(brand: dict, *, max_images: int = 4) -> list[tuple[str, str, Any]]:
+    """Ordered vision refs for ideas: (label, url, product_obj|None). Capped at max_images."""
+    out: list[tuple[str, str, Any]] = []
+    for idx, p in enumerate((brand.get("productImages") or [])[:6]):
+        v = _vision_url(_img_url(p))
+        if v:
+            nm = p.get("name", "") if isinstance(p, dict) else ""
+            label = f"PRODUCT[{idx}]{(' - ' + nm) if nm else ''}"
+            out.append((label, v, p))
+    for m in (brand.get("imagery") or [])[:3]:
+        v = _vision_url(_img_url(m))
+        if v:
+            out.append(("IMAGERY (overall mood / vibe reference)", v, None))
+    for lg in (brand.get("logos") or [])[:3]:
+        v = _logo_vision_url(lg)
+        if v:
+            out.append(("BRAND LOGO (official mark — keep consistent in ideas)", v, None))
+    return out[:max_images]
+
+
+def _ideas_messages(
+    brand: dict,
+    direction: str,
+    n: int,
+    lang: str,
+    attachments: list[tuple[str, str, Any]],
+) -> list[dict]:
+    nprod = sum(1 for label, _, _ in attachments if label.startswith("PRODUCT["))
+    content: list[dict] = [
+        {"type": "text", "text": ideas_prompt(brand, direction, n, nprod, lang=lang)},
+    ]
+    for label, url, _ in attachments:
+        content.append({"type": "text", "text": f"{label}:"})
+        content.append({"type": "image_url", "image_url": {"url": url}})
     system = (
         "You are a world-class DTC creative director. "
         "Reply with valid JSON only — no markdown."
     )
     if lang.lower().startswith("es"):
         system += " Write all user-facing copy in Spanish (español)."
-    msgs = [
+    return [
         {"role": "system", "content": system},
         {"role": "user", "content": content},
     ]
+
+
+def _call_ideas_openrouter(
+    brand: dict,
+    direction: str,
+    n: int,
+    lang: str,
+    attachments: list[tuple[str, str, Any]],
+) -> tuple[str, str]:
+    msgs = _ideas_messages(brand, direction, n, lang, attachments)
     model = _ideas_model()
     raw = openrouter_chat(
         msgs,
@@ -859,10 +931,39 @@ def generate_ideas(brand: dict, direction: str, count: int, lang: str = "en") ->
         max_tokens=2600,
         provider={"order": ["Anthropic"], "allow_fallbacks": True},
     )
+    return raw, model
+
+
+def generate_ideas(brand: dict, direction: str, count: int, lang: str = "en") -> dict:
+    if not _openrouter_key():
+        raise RuntimeError("no OPENROUTER_API_KEY configured")
+    n = max(1, min(8, count))
+    prods = (brand.get("productImages") or [])[:6]
+    attachments = _ideas_vision_attachments(brand)
+    vision_urls = [url for _, url, _ in attachments]
+
+    try:
+        raw, model = _call_ideas_openrouter(brand, direction, n, lang, attachments)
+        vision_fallback = False
+    except RuntimeError as e:
+        err = str(e)
+        if attachments and "OpenRouter error 415" in err:
+            print(
+                f"[brand_studio] OpenRouter 415 with {len(vision_urls)} vision image(s); "
+                f"retrying text-only. URLs={vision_urls}"
+            )
+            raw, model = _call_ideas_openrouter(brand, direction, n, lang, [])
+            vision_fallback = True
+        else:
+            raise
+
     ideas = parse_ideas(raw)
     if not ideas:
         raise RuntimeError(f"could not parse ideas JSON: {raw[:400]}")
-    return {"ideas": ideas[:n], "model": model, "products": len(prods)}
+    result: dict[str, Any] = {"ideas": ideas[:n], "model": model, "products": len(prods)}
+    if vision_fallback:
+        result["visionFallback"] = True
+    return result
 
 
 def store_image(

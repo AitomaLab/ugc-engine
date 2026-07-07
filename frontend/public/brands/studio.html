@@ -476,6 +476,7 @@ button{font-family:'Inter',sans-serif;cursor:pointer;}
         <div class="grp"><span class="field-label" data-i18n="brands.studio.direction.ideaCount"># of ideas</span><input type="number" id="ideaCount" min="1" max="8" value="3"></div>
         <button class="gen-btn" id="genIdeas" data-i18n="brands.studio.direction.generateIdeas">Generate ideas</button>
       </div>
+      <p class="hint" id="ideasCreditHint"></p>
     </div>
 
     <div class="loadbar" id="loadbar"><div class="loadbar-fill" id="loadbarFill"></div></div>
@@ -542,6 +543,64 @@ function t(key,vars){
 }
 function pluralS(n){if(n<=1)return '';return studioLang()==='es'?'s':'s';}
 function pluralEs(n){if(n<=1)return '';return studioLang()==='es'?'es':'s';}
+function creditCosts(){
+  const c=window.__BRAND_STUDIO_CREDIT_COSTS__||{};
+  return {
+    perIdea:c.brand_studio_ideas_per_idea||2,
+    minBatch:c.brand_studio_ideas_batch_min||6,
+    perSlide:c.brand_studio_slide_render||25,
+  };
+}
+function ideasCreditCost(count){
+  const {perIdea,minBatch}=creditCosts();
+  const n=Math.max(1,Math.min(8,parseInt(count)||3));
+  return Math.max(minBatch,perIdea*n);
+}
+function slideCreditCost(slides){return creditCosts().perSlide*Math.max(1,slides||1);}
+function parseInsufficientCredits(resBody,status){
+  if(status!==402)return null;
+  const detail=resBody&&(resBody.detail||resBody.error||'');
+  const text=typeof detail==='object'?JSON.stringify(detail):String(detail||'');
+  const bal=resBody.balance??((text.match(/balance[:\s]+(\d+)/i)||[])[1]);
+  const req=resBody.required??((text.match(/required[:\s]+(\d+)/i)||[])[1]);
+  return {balance:bal!=null?+bal:null,required:req!=null?+req:null,message:text};
+}
+function toastInsufficientCredits(info){
+  const required=info&&info.required!=null?info.required:'?';
+  const balance=info&&info.balance!=null?info.balance:'?';
+  toast(t('brands.studio.credits.insufficient',{required,balance}),7200);
+}
+function isBillingError(msg){
+  const s=String(msg||'').toLowerCase();
+  return s.includes('insufficient credit')||s.includes('credit deduction')||/\b402\b/.test(s);
+}
+function isApiIdeasError(msg){
+  const s=String(msg||'').toLowerCase();
+  return isBillingError(msg)||s.includes('openrouter')||s.includes('could not parse')||/\b50[02]\b/.test(s)||s.includes('http 5');
+}
+function notifyCreditsCharged(data){
+  if(data&&(data.creditsCharged>0||data.balance!=null)){
+    window.__brandStudioRefreshWallet?.();
+  }
+}
+function updateIdeasCreditHint(){
+  const el=$('#ideasCreditHint'); if(!el)return;
+  const n=Math.max(1,Math.min(8,parseInt($('#ideaCount')?.value)||3));
+  const credits=ideasCreditCost(n);
+  const {minBatch,perSlide}=creditCosts();
+  const main=t('brands.studio.credits.ideasHint',{count:n,credits});
+  const rates=t('brands.studio.credits.rateCard',{min:minBatch,perSlide});
+  el.textContent=`${main} (${rates})`;
+}
+function updateRowRenderCreditHint(p){
+  const el=$('#renderCredit'+p.id); if(!el)return;
+  const slides=+(p.photoCount||1);
+  el.textContent=t('brands.studio.credits.renderHint',{slides,credits:slideCreditCost(slides)});
+}
+function refreshAllCreditHints(){
+  updateIdeasCreditHint();
+  (state.posts||[]).forEach(updateRowRenderCreditHint);
+}
 function applyI18n(){
   const root=document.querySelector('.brand-studio-root')||document;
   root.querySelectorAll('[data-i18n]').forEach(el=>{
@@ -554,6 +613,7 @@ function applyI18n(){
   root.querySelectorAll('[data-i18n-html]').forEach(el=>{el.innerHTML=t(el.getAttribute('data-i18n-html'));});
   document.documentElement.lang=studioLang();
   refreshRowLabels();
+  refreshAllCreditHints();
 }
 function refreshRowLabels(){
   (state.posts||[]).forEach(p=>{
@@ -577,6 +637,7 @@ function refreshRowLabels(){
 }
 window.__brandStudioApplyI18n=applyI18n;
 window.__brandStudioRefreshRows=refreshRowLabels;
+window.__brandStudioRefreshCreditHints=refreshAllCreditHints;
 
 /* ============================================================
    BRAND DATA
@@ -991,7 +1052,7 @@ async function pickLogoForSlide(role,slideIndex,total,hasProductRef){
 }
 /* ---------- engine status ---------- */
 const SERVED=true;
-const $root=()=>document.querySelector('.brand-studio-root'); let API_READY=false, OR_READY=false;
+const $root=()=>document.querySelector('.brand-studio-root'); let API_READY=false, OR_READY=false, BILLING_ENABLED=false;
 async function checkApi(){
   if(!SERVED){API_READY=false;OR_READY=false;return;}
   const warn=$('#scrapeOfflineWarn');
@@ -1003,7 +1064,7 @@ async function checkApi(){
     clearTimeout(tid);
     if(!r.ok){API_READY=false;OR_READY=false;showOffline(true);return;}
     const j=await r.json();
-    API_READY=!!j.falKey; OR_READY=!!j.openRouterKey;
+    API_READY=!!j.falKey; OR_READY=!!j.openRouterKey; BILLING_ENABLED=!!j.billingEnabled;
     showOffline(false);
   }catch(e){API_READY=false;OR_READY=false;showOffline(true);}
 }
@@ -1293,18 +1354,38 @@ $('#genIdeas').onclick=async ()=>{
   let posts;
   try{
     const r=await fetch('/api/ideas',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({brand,direction:state.direction,count:n,lang:studioLang()})});
-    if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.error||e.detail||('HTTP '+r.status));}
-    const data=await r.json();
+    const data=await r.json().catch(()=>({}));
+    if(r.status===402){stopLoadbar();$('#rows').innerHTML='';toastInsufficientCredits(parseInsufficientCredits(data,r.status));return;}
+    if(!r.ok)throw new Error(data.error||data.detail||('HTTP '+r.status));
     if(!data.ideas||!data.ideas.length)throw new Error('no ideas returned');
     posts=fromAiIdeas(data.ideas);
     state.ideasSource='ai';
     showFallbackBanner(false);
+    notifyCreditsCharged(data);
+    if(!data.creditsCharged&&BILLING_ENABLED){
+      console.warn('[brand_studio] Ideas succeeded but no creditsCharged in response');
+    }
+    if(data.visionFallback){
+      toast(t('brands.studio.toast.visionFallback'),6500);
+    }
     toast(t('brands.studio.toast.drafted',{count:posts.length,plural:pluralS(posts.length),model:data.model||'AI'}),5200);
   }catch(e){
+    const errMsg=e&&e.message?e.message:String(e);
+    stopLoadbar();
+    $('#rows').innerHTML='';
+    if(isBillingError(errMsg)){
+      toastInsufficientCredits(parseInsufficientCredits({detail:errMsg},402));
+      return;
+    }
+    if(OR_READY||isApiIdeasError(errMsg)){
+      showFallbackBanner(false);
+      toast(t('brands.studio.toast.ideasFailed',{error:esc(errMsg)}),8000);
+      return;
+    }
     posts=makeIdeas(n, state.direction);
     state.ideasSource='template';
     showFallbackBanner(true);
-    toast(t('brands.studio.toast.aiUnavailable',{error:esc(e.message)}),8000);
+    toast(t('brands.studio.toast.aiUnavailable',{error:esc(errMsg)}),8000);
   }
   stopLoadbar();
   $('#rows').innerHTML='';
@@ -1342,6 +1423,7 @@ function renderRow(p){
             <button type="button" class="sched-btn" id="schedC${p.id}" disabled>${t('brands.studio.row.schedule')}</button>
             <button type="button" class="dl-btn" id="dlC${p.id}" disabled>${t('brands.studio.row.download')}</button>
           </div>
+          <div class="hint" id="renderCredit${p.id}"></div>
           <div class="ph-note" id="phNote${p.id}"></div>
         </div>
       </div>
@@ -1353,7 +1435,7 @@ function renderRow(p){
   $('#rtop'+p.id).addEventListener('click',e=>{if(e.target.closest('.chk'))return;row.classList.toggle('collapsed');});
   $('#cap'+p.id).addEventListener('input',()=>{p.caption=$('#cap'+p.id).innerText;persistSoon();});
   $('#idea'+p.id).addEventListener('input',()=>{p.idea=$('#idea'+p.id).innerHTML;persistSoon();});
-  const sl=$('#sl'+p.id); sl.oninput=()=>{p.photoCount=+sl.value;$('#slv'+p.id).textContent=sl.value;p.rendered=false;p.roles=carouselRoles(p);ensureSlidesArray(p);$('#genC'+p.id).textContent=rowHasAnyUrl(p)?t('brands.studio.row.reRender'):t('brands.studio.row.renderCarousel');drawStack(p);updateRowPhotoActions(p);persistState();};
+  const sl=$('#sl'+p.id); sl.oninput=()=>{p.photoCount=+sl.value;$('#slv'+p.id).textContent=sl.value;p.rendered=false;p.roles=carouselRoles(p);ensureSlidesArray(p);$('#genC'+p.id).textContent=rowHasAnyUrl(p)?t('brands.studio.row.reRender'):t('brands.studio.row.renderCarousel');drawStack(p);updateRowPhotoActions(p);updateRowRenderCreditHint(p);persistState();};
   $('#genC'+p.id).onclick=()=>{
     ensureSlidesArray(p);
     if(rowHasAnyUrl(p))openRerenderModal(p);
@@ -1364,6 +1446,7 @@ function renderRow(p){
   $('#prev'+p.id).onclick=()=>openCarouselLightbox(p,0);
   if(p.scheduled)row.classList.add('scheduled');
   updateRowPhotoActions(p);
+  updateRowRenderCreditHint(p);
 }
 
 /* ---------- deck ---------- */
@@ -1446,8 +1529,9 @@ async function genCarousel(p,indices){
     renderBarStart(p.id); renderBarTarget(p.id, 0.12);
     toast(t('brands.studio.toast.renderingRow',{id:p.id,total}),4000);
     const moodUrl=(brand.imagery&&brand.imagery.length)?imgUrl(brand.imagery[0]):'';
-    let _done=0,_fails=0;
+    let _done=0,_fails=0,_outOfCredits=false;
     await Promise.all(selected.map(async (i)=>{
+      if(_outOfCredits)return;
       const role=p.roles[i]||{head:p.head};
       const hasProductRef=role.productRef!=null&&brand.productImages&&brand.productImages[role.productRef];
       const selectedLogo=await pickLogoForSlide(role,i,p.photoCount,hasProductRef);
@@ -1463,12 +1547,19 @@ async function genCarousel(p,indices){
         try{
           const res=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt,n:1,imageUrls:refs,brand:brand.name,postId:String(p.id),slide:String(i+1),role:role.tag||''})});
           const j=await res.json().catch(()=>({}));
+          if(res.status===402){
+            toastInsufficientCredits(parseInsufficientCredits(j,res.status));
+            lastErr=j.detail||j.error||'insufficient credits';
+            _outOfCredits=true;
+            break;
+          }
           if(res.ok && j.images && j.images[0]){
             p.slides[i].url=j.images[0];
             if(j.savedPath)p.slides[i].savedPath=j.savedPath;
             p.slides[i]._saved=!!j.persisted;
             p.slides[i].role=role;
             ok=true;
+            notifyCreditsCharged(j);
             drawStack(p);
           }
           else lastErr=(j.error||j.detail||('HTTP '+res.status));
@@ -1504,7 +1595,8 @@ function updateRerenderConfirm(){
   const checked=[...grid.querySelectorAll('input[type=checkbox]:checked')].map(el=>+el.value);
   const n=checked.length;
   btn.disabled=n===0;
-  btn.textContent=n?t('brands.studio.rerender.confirm',{count:n,plural:pluralS(n)}):t('brands.studio.rerender.confirm',{count:0,plural:''});
+  const credits=slideCreditCost(n);
+  btn.textContent=n?t('brands.studio.credits.rerenderConfirm',{count:n,plural:pluralS(n),credits}):t('brands.studio.rerender.confirm',{count:0,plural:''});
   const allBox=$('#rerenderSelectAll');
   if(allBox){
     const total=grid.querySelectorAll('input[type=checkbox]').length;
@@ -1636,6 +1728,9 @@ if(_resetBtn)_resetBtn.onclick=resetApp;
     setTimeout(()=>recoverStoredRenders(),800);
   }
   applyI18n();
+  refreshAllCreditHints();
+  const icInput=$('#ideaCount');
+  if(icInput)icInput.addEventListener('input',updateIdeasCreditHint);
   const _p=new URLSearchParams(location.search);
   if((_p.has('dir')||_p.has('n')) && !_restored){
     if(_p.has('dir'))$('#dirInput').value=_p.get('dir')||'';

@@ -16,7 +16,8 @@ const DEFAULT_COSTS: CreditCostTable = {
   video_clip_veo_fast_720p: 34,
   video_clip_cinematic_per_s: 12,
   cinematic_clip_5s: 60,
-  cinematic_clip_10s: 120,
+  brand_studio_ideas_batch_min: 6,
+  brand_studio_slide_render: 25,
 };
 
 let cache: CreditCostTable | null = null;
@@ -95,6 +96,21 @@ export function costForVideoClip(
 
 export function costForImage(costs: CreditCostTable): number {
   return costs.creative_os_image ?? 10;
+}
+
+export function costForBrandStudioIdeas(costs: CreditCostTable, ideaCount: number): number {
+  const perIdea = costs.brand_studio_ideas_per_idea ?? 2;
+  const minBatch = costs.brand_studio_ideas_batch_min ?? 6;
+  const n = Math.max(1, Math.min(8, Math.round(ideaCount)));
+  return Math.max(minBatch, perIdea * n);
+}
+
+export function costForBrandStudioSlide(costs: CreditCostTable): number {
+  return costs.brand_studio_slide_render ?? 25;
+}
+
+export function costForBrandStudioCarousel(costs: CreditCostTable, slideCount: number): number {
+  return costForBrandStudioSlide(costs) * Math.max(1, slideCount);
 }
 
 export function costForCinematicShotImage(costs: CreditCostTable): number {

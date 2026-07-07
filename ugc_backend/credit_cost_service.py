@@ -89,7 +89,15 @@ CREDIT_COSTS = {
     "music_per_video": 6,
     "processing_per_video": 2,
     "elevenlabs_per_1k_chars": 20,
+    # Brand Studio — scrape free; ideas min 6; slides @ production Fal edit COGS
+    "brand_studio_ideas_per_idea": 2,
+    "brand_studio_ideas_batch_min": 6,
+    "brand_studio_slide_render": 25,
 }
+
+BRAND_STUDIO_IDEAS_PER_IDEA = CREDIT_COSTS["brand_studio_ideas_per_idea"]
+BRAND_STUDIO_IDEAS_BATCH_MIN = CREDIT_COSTS["brand_studio_ideas_batch_min"]
+BRAND_STUDIO_SLIDE_RENDER = CREDIT_COSTS["brand_studio_slide_render"]
 
 
 def get_creative_os_image_credit_cost() -> int:
@@ -224,6 +232,18 @@ def get_product_shots_credit_cost() -> int:
 def get_alt_versions_credit_cost() -> int:
     """Credits for a pair of alternative image variations (edit-multi)."""
     return CREDIT_COSTS["wavespeed_alt_versions_pair"]
+
+
+def get_brand_studio_ideas_credit_cost(idea_count: int = 3) -> int:
+    """Credits for one Brand Studio AI ideas batch (2 per idea, min 6)."""
+    n = max(1, min(8, int(idea_count)))
+    return max(BRAND_STUDIO_IDEAS_BATCH_MIN, BRAND_STUDIO_IDEAS_PER_IDEA * n)
+
+
+def get_brand_studio_slide_credit_cost(mode: str = "edit") -> int:
+    """Credits for one successful Brand Studio carousel slide render."""
+    _ = mode  # text-only path priced same until measured lower
+    return BRAND_STUDIO_SLIDE_RENDER
 
 
 def _is_kling_model(model_api: str | None) -> bool:
@@ -384,6 +404,18 @@ def build_credit_cost_catalog(lang: str = "en") -> dict:
         ],
     })
 
+    sections.append({
+        "id": "brand_studio",
+        "title": "Brand Studio" if not es else "Brand Studio",
+        "items": [
+            _row("brand_studio_scrape", "Brand scrape (fonts, colors, voice, images)", "Análisis de marca (fuentes, colores, voz, imágenes)", 0),
+            _row("brand_studio_ideas_3", "AI carousel ideas batch — 3 ideas", "Lote de ideas IA — 3 ideas", get_brand_studio_ideas_credit_cost(3)),
+            _row("brand_studio_ideas_5", "AI carousel ideas batch — 5 ideas", "Lote de ideas IA — 5 ideas", get_brand_studio_ideas_credit_cost(5)),
+            _row("brand_studio_slide", "Carousel slide render (GPT Image 2 edit)", "Render de diapositiva de carrusel (GPT Image 2)", get_brand_studio_slide_credit_cost()),
+            _row("brand_studio_schedule", "Schedule carousel to social", "Programar carrusel en redes", 0),
+        ],
+    })
+
     free_title = "Gratis (sin costo)" if es else "Free (no credit cost)"
     sections.append({
         "id": "free",
@@ -393,6 +425,8 @@ def build_credit_cost_catalog(lang: str = "en") -> dict:
             _row("cinematic_propose", "Cinematic ad — propose 3 directions", "Anuncio cinemático — proponer 3 direcciones", 0),
             _row("captions", "Captions / subtitles on finished video", "Subtítulos en video terminado", 0),
             _row("combine", "Combine videos / editor save", "Combinar videos / guardar editor", 0),
+            _row("brand_studio_scrape", "Brand Studio — scrape brand website", "Brand Studio — analizar sitio web", 0),
+            _row("brand_studio_schedule", "Brand Studio — schedule carousel", "Brand Studio — programar carrusel", 0),
         ],
     })
 

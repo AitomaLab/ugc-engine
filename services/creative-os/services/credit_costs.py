@@ -69,7 +69,14 @@ CREDIT_COSTS = {
     "wavespeed_video_extend_per_s": 34,
     "wavespeed_text_to_image": 10,
     "wavespeed_alt_versions_pair": 20,
+    "brand_studio_ideas_per_idea": 2,
+    "brand_studio_ideas_batch_min": 6,
+    "brand_studio_slide_render": 25,
 }
+
+BRAND_STUDIO_IDEAS_PER_IDEA = CREDIT_COSTS["brand_studio_ideas_per_idea"]
+BRAND_STUDIO_IDEAS_BATCH_MIN = CREDIT_COSTS["brand_studio_ideas_batch_min"]
+BRAND_STUDIO_SLIDE_RENDER = CREDIT_COSTS["brand_studio_slide_render"]
 
 
 def get_cinematic_ad_credit_cost(stage: str, duration_seconds: int = 15) -> int:
@@ -143,6 +150,16 @@ def get_text_to_image_credit_cost() -> int:
 
 def get_alt_versions_credit_cost() -> int:
     return CREDIT_COSTS["wavespeed_alt_versions_pair"]
+
+
+def get_brand_studio_ideas_credit_cost(idea_count: int = 3) -> int:
+    n = max(1, min(8, int(idea_count)))
+    return max(BRAND_STUDIO_IDEAS_BATCH_MIN, BRAND_STUDIO_IDEAS_PER_IDEA * n)
+
+
+def get_brand_studio_slide_credit_cost(mode: str = "edit") -> int:
+    _ = mode
+    return BRAND_STUDIO_SLIDE_RENDER
 
 
 def get_identity_sheet_credit_cost() -> int:
@@ -318,6 +335,17 @@ def build_credit_cost_catalog(lang: str = "en") -> dict:
             _row("gemini_multipass", "Edit video — multi-pass (>10s full clip)", "Editar video — multipase (>10s)", CREDIT_COSTS["gemini_omni_edit_multipass"]),
         ],
     })
+    sections.append({
+        "id": "brand_studio",
+        "title": "Brand Studio",
+        "items": [
+            _row("brand_studio_scrape", "Brand scrape (fonts, colors, voice, images)", "Análisis de marca (fuentes, colores, voz, imágenes)", 0),
+            _row("brand_studio_ideas_3", "AI carousel ideas batch — 3 ideas", "Lote de ideas IA — 3 ideas", get_brand_studio_ideas_credit_cost(3)),
+            _row("brand_studio_ideas_5", "AI carousel ideas batch — 5 ideas", "Lote de ideas IA — 5 ideas", get_brand_studio_ideas_credit_cost(5)),
+            _row("brand_studio_slide", "Carousel slide render (GPT Image 2 edit)", "Render de diapositiva de carrusel (GPT Image 2)", get_brand_studio_slide_credit_cost()),
+            _row("brand_studio_schedule", "Schedule carousel to social", "Programar carrusel en redes", 0),
+        ],
+    })
     free_title = "Gratis (sin costo)" if es else "Free (no credit cost)"
     sections.append({
         "id": "free",
@@ -327,6 +355,8 @@ def build_credit_cost_catalog(lang: str = "en") -> dict:
             _row("cinematic_propose", "Cinematic ad — propose 3 directions", "Anuncio cinemático — proponer 3 direcciones", 0),
             _row("captions", "Captions / subtitles on finished video", "Subtítulos en video terminado", 0),
             _row("combine", "Combine videos / editor save", "Combinar videos / guardar editor", 0),
+            _row("brand_studio_scrape", "Brand Studio — scrape brand website", "Brand Studio — analizar sitio web", 0),
+            _row("brand_studio_schedule", "Brand Studio — schedule carousel", "Brand Studio — programar carrusel", 0),
         ],
     })
     return {

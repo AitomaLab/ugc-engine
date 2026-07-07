@@ -298,6 +298,13 @@ class CoreAPIClient:
             json={"amount": amount, "metadata": metadata or {}},
         )
 
+    async def refund_credits(self, amount: int, metadata: dict | None = None) -> dict:
+        return await self._request(
+            "POST",
+            "/api/credits/refund",
+            json={"amount": amount, "metadata": metadata or {}},
+        )
+
     async def refund_job_credits(self, job_id: str) -> dict:
         return await self._request("POST", f"/jobs/{job_id}/refund")
 

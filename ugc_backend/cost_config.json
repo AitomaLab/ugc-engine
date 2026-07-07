@@ -72,10 +72,14 @@
     "processing": {
         "cost_per_video": 0.01
     },
+    "openrouter": {
+        "brand_studio_ideas_per_batch": 0.05
+    },
     "fal": {
         "_note": "Fal AI pricing for cinematic-ad storyboards (GPT Image 2). Seedance 2.0 video generation runs on Kie.ai — credit costs use WaveSpeed/Kie $0.125/s (720p i2v), not Fal $0.30/s.",
         "gpt_image_2": {
-            "storyboard_high_2560x1792_per_image": 0.18
+            "storyboard_high_2560x1792_per_image": 0.18,
+            "edit_high_portrait_per_image": 0.225
         },
         "seedance_2_pro": {
             "720p_per_s": 0.30,

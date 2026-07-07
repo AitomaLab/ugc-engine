@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { creativeFetch, CreativeFetchAbortedError } from '@/lib/creative-os-api';
+import { fetchCreditCosts } from '@/lib/credit-costs';
+import { useApp } from '@/providers/AppProvider';
 import { useTranslation, type SupportedLang } from '@/lib/i18n';
 import { apiFetch } from '@/lib/utils';
 import type { SocialConnection } from '@/lib/types';
@@ -24,6 +26,7 @@ const BRAND_API_PATHS = new Set([
   '/api/store-image',
   '/api/stored-renders',
   '/api/pick-logo',
+  '/api/credits',
 ]);
 
 const localeDicts: Record<SupportedLang, Record<string, string>> = {
@@ -87,8 +90,11 @@ declare global {
     __CREATIVE_OS_URL?: string;
     __BRAND_STUDIO_LANG__?: SupportedLang;
     __BRAND_STUDIO_I18N__?: Record<string, string>;
+    __BRAND_STUDIO_CREDIT_COSTS__?: Record<string, number>;
     __brandStudioApplyI18n?: () => void;
     __brandStudioRefreshRows?: () => void;
+    __brandStudioRefreshCreditHints?: () => void;
+    __brandStudioRefreshWallet?: () => void;
     __brandStudioMarkScheduled?: (postId: number) => void;
   }
 }
@@ -100,6 +106,7 @@ export function BrandStudioApp() {
   const router = useRouter();
   const initialized = useRef(false);
   const { lang } = useTranslation();
+  const { refreshWallet } = useApp();
   const langRef = useRef(lang);
   langRef.current = lang;
   const platformsCacheRef = useRef<{ platforms: string[]; fetchedAt: number } | null>(null);
@@ -113,6 +120,15 @@ export function BrandStudioApp() {
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    window.__brandStudioRefreshWallet = () => {
+      void refreshWallet();
+    };
+    return () => {
+      delete window.__brandStudioRefreshWallet;
+    };
+  }, [refreshWallet]);
 
   const refreshConnectedPlatforms = useCallback(async () => {
     const cached = platformsCacheRef.current;
@@ -217,6 +233,17 @@ export function BrandStudioApp() {
       const creativeOsUrl = process.env.NEXT_PUBLIC_CREATIVE_OS_URL || 'http://localhost:8001';
       window.__CREATIVE_OS_URL = creativeOsUrl;
 
+      try {
+        window.__BRAND_STUDIO_CREDIT_COSTS__ = await fetchCreditCosts();
+      } catch {
+        window.__BRAND_STUDIO_CREDIT_COSTS__ = {
+          brand_studio_ideas_per_idea: 2,
+          brand_studio_ideas_batch_min: 6,
+          brand_studio_slide_render: 25,
+        };
+      }
+      window.__brandStudioRefreshCreditHints?.();
+
       window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
         const creativePath = toCreativePath(url);
@@ -231,15 +258,28 @@ export function BrandStudioApp() {
             });
           } catch (err) {
             let message = err instanceof Error ? err.message : String(err);
+            let status = 502;
             if (err instanceof CreativeFetchAbortedError && err.kind === 'timeout') {
               if (creativePath.endsWith('/scrape')) {
                 message = 'Request timed out';
               } else if (creativePath.endsWith('/generate')) {
                 message = 'Image generation timed out — try rendering fewer carousels at once';
               }
+            } else if (
+              /402/.test(message)
+              || /insufficient credits/i.test(message)
+            ) {
+              status = 402;
+            } else if (message.includes('404')) {
+              status = 404;
             }
-            const status = message.includes('404') ? 404 : 502;
-            return new Response(JSON.stringify({ error: message }), {
+            const body: Record<string, unknown> = { error: message, detail: message };
+            const balM = message.match(/balance[:\s]+(\d+)/i);
+            const reqM = message.match(/required[:\s]+(\d+)/i);
+            if (balM) body.balance = Number(balM[1]);
+            if (reqM) body.required = Number(reqM[1]);
+            if (status === 402) body.error = 'insufficient_credits';
+            return new Response(JSON.stringify(body), {
               status,
               headers: { 'Content-Type': 'application/json' },
             });
@@ -260,8 +300,10 @@ export function BrandStudioApp() {
       delete window.brandStudioOpenSchedule;
       delete window.__BRAND_STUDIO_LANG__;
       delete window.__BRAND_STUDIO_I18N__;
+      delete window.__BRAND_STUDIO_CREDIT_COSTS__;
       delete window.__brandStudioApplyI18n;
       delete window.__brandStudioRefreshRows;
+      delete window.__brandStudioRefreshWallet;
       delete window.__brandStudioMarkScheduled;
     };
   }, [router, openBrandSchedule]);

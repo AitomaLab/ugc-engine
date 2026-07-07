@@ -4,12 +4,18 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from auth import get_current_user
+from core_api_client import CoreAPIClient
 from services import brand_studio
+from services.credit_costs import (
+    get_brand_studio_ideas_credit_cost,
+    get_brand_studio_slide_credit_cost,
+)
 
 router = APIRouter(prefix="/brands", tags=["brands"])
 
@@ -60,6 +66,51 @@ class PickLogoRequest(BaseModel):
     hasProductRef: bool = False
 
 
+def _http_error_detail(exc: httpx.HTTPStatusError) -> str:
+    detail = str(exc)
+    if exc.response is not None:
+        try:
+            body = exc.response.json()
+            if isinstance(body, dict) and body.get("detail"):
+                detail = str(body["detail"])
+        except Exception:
+            pass
+    return detail
+
+
+async def _ensure_wallet_balance(client: CoreAPIClient, amount: int) -> None:
+    if amount <= 0:
+        return
+    wallet = await client.get_wallet()
+    balance = int(wallet.get("balance") or 0)
+    if balance < amount:
+        raise HTTPException(
+            status_code=402,
+            detail=f"Insufficient credits. Balance: {balance}, Required: {amount}",
+        )
+
+
+async def _deduct_credits(client: CoreAPIClient, amount: int, metadata: dict) -> dict:
+    if amount <= 0:
+        return {}
+    try:
+        return await client.deduct_credits(amount, metadata)
+    except httpx.HTTPStatusError as exc:
+        detail = _http_error_detail(exc)
+        if exc.response is not None and exc.response.status_code == 402:
+            raise HTTPException(status_code=402, detail=detail) from exc
+        raise HTTPException(status_code=502, detail=f"credit deduction failed: {detail}") from exc
+
+
+async def _refund_credits(client: CoreAPIClient, amount: int, metadata: dict) -> None:
+    if amount <= 0:
+        return
+    try:
+        await client.refund_credits(amount, metadata)
+    except Exception as exc:
+        print(f"[brand_studio] credit refund failed ({amount} cr): {exc}")
+
+
 @router.get("/health")
 async def health(user: dict = Depends(get_current_user)):
     return {
@@ -68,6 +119,18 @@ async def health(user: dict = Depends(get_current_user)):
         "openRouterKey": bool(brand_studio._openrouter_key()),
         "ideasModel": brand_studio._ideas_model(),
         "engine": "GPT Image 2 (Fal)",
+        "billingEnabled": True,
+    }
+
+
+@router.get("/credits")
+async def brand_credit_costs(user: dict = Depends(get_current_user)):
+    """Brand Studio credit rates for UI estimates."""
+    _ = user
+    return {
+        "ideasPerIdea": 2,
+        "ideasMin": 6,
+        "slideRender": get_brand_studio_slide_credit_cost(),
     }
 
 
@@ -125,6 +188,22 @@ async def stored_renders(brand: str = "", user: dict = Depends(get_current_user)
 
 @router.post("/generate")
 async def generate(req: GenerateRequest, user: dict = Depends(get_current_user)):
+    client = CoreAPIClient(token=user["token"], skip_project_scope=True)
+    slide_credits = get_brand_studio_slide_credit_cost()
+    await _ensure_wallet_balance(client, slide_credits)
+
+    refs = [u for u in (req.imageUrls or []) if u][:3]
+    mode = "edit" if refs else "text"
+    charge_meta = {
+        "operation": "brand_studio_slide_render",
+        "brand": req.brand,
+        "post_id": req.postId,
+        "slide": req.slide,
+        "role": req.role,
+        "mode": mode,
+        "refs": len(refs),
+    }
+
     try:
         result = await asyncio.to_thread(
             brand_studio.generate_images, req.prompt, req.imageUrls, req.n
@@ -135,7 +214,20 @@ async def generate(req: GenerateRequest, user: dict = Depends(get_current_user))
         raise HTTPException(status_code=502, detail=str(e)) from e
 
     images = result.get("images") or []
-    if images and req.brand and req.postId:
+    if not images:
+        raise HTTPException(status_code=502, detail="no images returned")
+
+    wallet = await _deduct_credits(client, slide_credits, charge_meta)
+    result["creditsCharged"] = slide_credits
+    if wallet.get("balance") is not None:
+        result["balance"] = wallet["balance"]
+    print(
+        f"[brand_studio] charged {slide_credits} credits for slide render "
+        f"(brand={req.brand!r} post={req.postId} slide={req.slide}), "
+        f"balance={wallet.get('balance')}"
+    )
+
+    if req.brand and req.postId:
         try:
             stored = await asyncio.to_thread(
                 brand_studio.store_image,
@@ -160,6 +252,7 @@ async def generate(req: GenerateRequest, user: dict = Depends(get_current_user))
 
 @router.post("/pick-logo")
 async def pick_logo(req: PickLogoRequest, user: dict = Depends(get_current_user)):
+    _ = user
     picked = brand_studio.select_logo(
         req.logos or [],
         role_tag=req.role,
@@ -173,10 +266,39 @@ async def pick_logo(req: PickLogoRequest, user: dict = Depends(get_current_user)
 
 @router.post("/ideas")
 async def ideas(req: IdeasRequest, user: dict = Depends(get_current_user)):
+    client = CoreAPIClient(token=user["token"], skip_project_scope=True)
+    idea_count = max(1, min(8, int(req.count or 3)))
+    credits = get_brand_studio_ideas_credit_cost(idea_count)
+    charge_meta = {
+        "operation": "brand_studio_ideas",
+        "idea_count": idea_count,
+        "brand": (req.brand or {}).get("name", ""),
+    }
+
+    await _ensure_wallet_balance(client, credits)
+    wallet = await _deduct_credits(client, credits, charge_meta)
+
     try:
-        return brand_studio.generate_ideas(req.brand, req.direction, req.count, lang=req.lang)
+        result = await asyncio.to_thread(
+            brand_studio.generate_ideas,
+            req.brand,
+            req.direction,
+            idea_count,
+            lang=req.lang,
+        )
     except RuntimeError as e:
+        await _refund_credits(client, credits, {**charge_meta, "reason": "ideas_generation_failed"})
         raise HTTPException(status_code=502, detail=str(e)) from e
+
+    result["creditsCharged"] = credits
+    if wallet.get("balance") is not None:
+        result["balance"] = wallet["balance"]
+    print(
+        f"[brand_studio] charged {credits} credits for ideas batch "
+        f"(count={idea_count} brand={charge_meta.get('brand')!r}), "
+        f"balance={wallet.get('balance')}"
+    )
+    return result
 
 
 @router.post("/store-image")
