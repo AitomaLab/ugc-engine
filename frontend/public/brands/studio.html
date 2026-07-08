@@ -705,9 +705,28 @@ function saveBrand(){
   clearTimeout(_saveT);_saveT=setTimeout(()=>{
     fetch('/api/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({brand})})
       .then(r=>r.ok?r.json():null)
-      .then(j=>{if(j&&j.brand&&j.brand.logos){brand.logos=j.brand.logos;renderLogos(brand);}})
+      .then(j=>{
+        if(j&&j.brand&&j.brand.logos){
+          const changed=mergeLogoRenderUrls(brand.logos,j.brand.logos);
+          if(changed){
+            try{localStorage.setItem(LS_KEY,JSON.stringify(brand));}catch(e){}
+            renderLogos(brand);
+          }
+        }
+      })
       .catch(()=>{});
   },400);
+}
+function mergeLogoRenderUrls(local,remote){
+  if(!Array.isArray(local)||!Array.isArray(remote))return false;
+  let changed=false;
+  remote.forEach((rl,i)=>{
+    const ll=local[i];
+    if(!ll||typeof ll!=='object'||typeof rl!=='object')return;
+    const next=(rl.renderUrl||'').trim();
+    if(next&&next.startsWith('https://')&&ll.renderUrl!==next){ll.renderUrl=next;changed=true;}
+  });
+  return changed;
 }
 let brand;
 try{const s=localStorage.getItem(LS_KEY);brand=s?JSON.parse(s):(window.BRAND_DATA||FALLBACK_BRAND);}catch(e){brand=window.BRAND_DATA||FALLBACK_BRAND;}
@@ -718,6 +737,23 @@ function fontChip(name,role,css){
   return `<div class="font-chip"><b class="live" style="font-family:${css||'inherit'}">${name}</b><span>${roleLabel}</span></div>`;
 }
 function imgUrl(it){return typeof it==='string'?it:(it&&it.url)||'';}
+function logoDisplayUrl(it){
+  if(typeof it==='string')return it;
+  if(!it)return '';
+  return (it.renderUrl||it.url||'').trim();
+}
+function logoThumbAlt(it){
+  if(!it||typeof it!=='object')return '';
+  const primary=logoDisplayUrl(it);
+  const other=(it.url||'').trim();
+  return other&&other!==primary?other:'';
+}
+function logoThumbError(img){
+  const alt=img.getAttribute('data-alt');
+  if(alt&&img.src!==alt){img.src=alt;return;}
+  const thumb=img.closest('.thumb');
+  if(thumb)thumb.style.display='none';
+}
 function isUp(it){return it&&typeof it==='object'&&it.uploaded;}
 
 function renderImages(containerId,b,key){
@@ -731,10 +767,9 @@ function renderImages(containerId,b,key){
     </div>`).join('');
   h+=`<div class="add" data-key="${key}" title="${t('brands.studio.img.upload')}">+</div>`;
   const c=document.getElementById(containerId);c.innerHTML=h;
-  c.querySelectorAll('.rm').forEach(btn=>btn.onclick=()=>{brand[key].splice(+btn.dataset.i,1);renderImages(containerId,brand,key);});
+  c.querySelectorAll('.rm').forEach(btn=>btn.onclick=()=>{brand[key].splice(+btn.dataset.i,1);renderImages(containerId,brand,key);saveBrand();});
   c.querySelector('.add').onclick=()=>{$('#'+(key==='imagery'?'upImagery':key==='logos'?'upLogo':'upProduct')).click();};
   c.querySelectorAll('.thumb img').forEach(im=>im.onclick=()=>openLightbox('<img src="'+im.src+'">'));
-  saveBrand();
 }
 
 function logoBadges(it){
@@ -751,7 +786,7 @@ function renderLogos(b){
   const arr=b.logos||[];
   let h=arr.map((it,i)=>`
     <div class="thumb contain">
-      <img src="${imgUrl(it)}" loading="lazy" onerror="this.closest('.thumb').style.display='none'">
+      <img src="${logoDisplayUrl(it)}" data-alt="${logoThumbAlt(it)}" loading="lazy" onerror="logoThumbError(this)">
       ${logoBadges(it)}
       ${isUp(it)?'<span class="up-tag">'+t('brands.studio.img.yours')+'</span>':''}
       <button class="rm" data-i="${i}" title="${t('brands.studio.img.remove')}">&#10005;</button>
@@ -759,10 +794,9 @@ function renderLogos(b){
   h+=`<div class="add" title="${t('brands.studio.img.upload')}">+</div>`;
   const c=document.getElementById('bLogo'); if(!c)return;
   c.innerHTML=h;
-  c.querySelectorAll('.rm').forEach(btn=>btn.onclick=()=>{brand.logos.splice(+btn.dataset.i,1);renderLogos(brand);});
+  c.querySelectorAll('.rm').forEach(btn=>btn.onclick=()=>{brand.logos.splice(+btn.dataset.i,1);renderLogos(brand);saveBrand();});
   c.querySelector('.add').onclick=()=>$('#upLogo').click();
   c.querySelectorAll('.thumb img').forEach(im=>im.onclick=()=>openLightbox('<img src="'+im.src+'">'));
-  saveBrand();
 }
 
 function toHex6(c){c=(c||'').trim();if(/^#[0-9a-fA-F]{6}$/.test(c))return c;const m=/^#([0-9a-fA-F]{3})$/.exec(c);if(m)return '#'+m[1].split('').map(x=>x+x).join('');return '#888888';}
@@ -823,6 +857,7 @@ function wireUpload(inputId,key,containerId){
       if(--pend===0){
         if(key==='logos')renderLogos(brand);
         else renderImages(containerId,brand,key);
+        saveBrand();
       }
     }));
     e.target.value='';
@@ -1150,7 +1185,7 @@ function openCarouselLightbox(p,startIndex){
   const slides=[];
   for(let i=0;i<p.photoCount;i++){
     const role=p.roles[i]||{head:p.head};
-    const url=slideURL(p.slides[i]);
+    const url=slideDisplayURL(p.slides[i]);
     if(url)slides.push({url,role,index:i});
   }
   if(!slides.length){toast(t('brands.studio.toast.slideNotRendered',{n:(startIndex||0)+1}),3200);return;}
@@ -1298,12 +1333,18 @@ function slideURL(s){
   if(sp&&sp.startsWith('renders/'))return CREATIVE_OS_BASE+'/creative-os/brands/'+sp;
   return u||'';
 }
+function slideDisplayURL(s){
+  const base=slideURL(s);
+  if(!base)return '';
+  const v=(s&&(s.v||s.updatedAt))||1;
+  return base+(base.includes('?')?'&':'?')+'v='+v;
+}
 function buildSessionPayload(){
   const posts=(state.posts||[]).map(p=>({id:p.id,tone:p.tone,title:p.title,head:p.head,archIdx:p.archIdx,direction:p.direction,
     aiSlides:p.aiSlides||null,idea:p.idea,caption:p.caption,tags:p.tags||[],photoCount:p.photoCount,
     approvedRender:!!p.approvedRender,approvedPost:!!p.approvedPost,rendered:!!p.rendered,scheduled:!!p.scheduled,
     scheduledImages:p.scheduledImages||null,
-    slides:(p.slides||[]).map(s=>({url:(s&&s.url)||null,savedPath:(s&&s.savedPath)||null,_saved:!!(s&&s._saved),failed:(s&&s.failed)||null}))}));
+    slides:(p.slides||[]).map(s=>({url:(s&&s.url)||null,savedPath:(s&&s.savedPath)||null,_saved:!!(s&&s._saved),failed:(s&&s.failed)||null,v:(s&&s.v)||null}))}));
   return {v:1,direction:state.direction,ideaCount:state.ideaCount,ideasSource:state.ideasSource||null,posts:posts,ts:Date.now()};
 }
 function persistState(){
@@ -1321,7 +1362,7 @@ function applySession(data){
   const di=$('#dirInput'); if(di)di.value=state.direction;
   const ic=$('#ideaCount'); if(ic&&state.ideaCount)ic.value=state.ideaCount;
   state.posts=data.posts.map(p=>{
-    const slides=(p.slides||[]).map(s=>({url:s.url||null,savedPath:s.savedPath||null,_saved:!!s._saved,failed:s.failed||null}));
+    const slides=(p.slides||[]).map(s=>({url:s.url||null,savedPath:s.savedPath||null,_saved:!!s._saved,failed:s.failed||null,v:s.v||null}));
     const urlCount=slides.filter(s=>s&&s.url).length;
     return {...p,roles:[],slides,rendered:urlCount===p.photoCount&&urlCount>0};
   });
@@ -1473,7 +1514,7 @@ function drawStack(p){
   const n=p.photoCount;
   for(let i=n-1;i>=0;i--){
     const role=p.roles[i]||{head:p.head};
-    const img=slideURL(p.slides[i]);
+    const img=slideDisplayURL(p.slides[i]);
     const failed=p.slides[i]&&p.slides[i].failed;
     const s=document.createElement('div'); s.className='slide'+(img?'':' placeholder'); s.style.zIndex=String(50-i);
     s.style.transform=`translate(${i*16}px, 120px) rotate(${-14+i*2}deg) scale(.7)`; s.style.opacity='0';
@@ -1506,7 +1547,7 @@ async function persistRender(p){
         const res=await fetch('/api/store-image',{method:'POST',headers:{'Content-Type':'application/json'},
           body:JSON.stringify({url:s.url,brand:brand.name,postId:p.id,slide:i+1,role:(s.role&&s.role.tag)||''})});
         const j=await res.json().catch(()=>({}));
-        if(j&&j.url){s.url=j.url;s._saved=true;drawStack(p);}
+        if(j&&j.url){s.url=j.url;s.v=Date.now();s._saved=true;drawStack(p);}
         else if(j&&j.path){s.savedPath=j.path;s._saved=true;}
       }catch(e){/* leave _saved false so a later pass can retry */}
     }
@@ -1586,6 +1627,7 @@ async function genCarousel(p,indices){
           }
           if(res.ok && j.images && j.images[0]){
             p.slides[i].url=j.images[0];
+            p.slides[i].v=Date.now();
             if(j.savedPath)p.slides[i].savedPath=j.savedPath;
             p.slides[i]._saved=!!j.persisted;
             p.slides[i].role=role;
@@ -1647,7 +1689,7 @@ function openRerenderModal(p){
   const allComplete=rowAllSlidesRendered(p);
   for(let i=0;i<p.photoCount;i++){
     const role=p.roles[i]||{head:p.head};
-    const url=slideURL(p.slides[i]);
+    const url=slideDisplayURL(p.slides[i]);
     const preselect=!allComplete&&slideNeedsRender(p,i);
     const tile=document.createElement('label');
     tile.className='rerender-tile'+(preselect?' selected':'');

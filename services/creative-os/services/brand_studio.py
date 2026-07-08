@@ -773,7 +773,9 @@ def ensure_logos_render_urls(logos: list, user_id: str, brand_slug: str) -> list
     out: list = []
     for lg in logos or []:
         if isinstance(lg, dict):
-            ensure_logo_render_url(lg, user_id=user_id, brand_slug=brand_slug)
+            existing = (lg.get("renderUrl") or "").strip()
+            if not existing.startswith("https://"):
+                ensure_logo_render_url(lg, user_id=user_id, brand_slug=brand_slug)
             out.append(lg)
         elif isinstance(lg, str) and lg.strip():
             entry = {"url": lg.strip(), "source": "legacy"}
