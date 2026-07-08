@@ -712,8 +712,14 @@ def _fetch_image_bytes(url: str) -> bytes:
     return data
 
 
+def _logo_src_key(src: str) -> str:
+    return hashlib.sha256((src or "").encode()).hexdigest()[:16]
+
+
 def _rasterize_logo_png(data: bytes, *, url_hint: str = "", max_dim: int = 512) -> bytes:
     hint = (url_hint or "").lower()
+    if hint.startswith("data:image/jpeg") or hint.startswith("data:image/jpg") or hint.endswith((".jpg", ".jpeg")):
+        print("[brand_studio] warning: JPEG logo source cannot preserve transparency — re-upload as PNG")
     is_svg = hint.endswith(".svg") or data[:300].lstrip().startswith((b"<svg", b"<?xml"))
     if is_svg:
         try:
@@ -728,6 +734,10 @@ def _rasterize_logo_png(data: bytes, *, url_hint: str = "", max_dim: int = 512) 
     im = ImageOps.exif_transpose(im)
     if im.mode != "RGBA":
         im = im.convert("RGBA")
+    alpha = im.split()[-1]
+    bbox = alpha.getbbox()
+    if bbox:
+        im = im.crop(bbox)
     if max(im.size) > max_dim:
         im.thumbnail((max_dim, max_dim), Image.LANCZOS)
     out = io.BytesIO()
@@ -741,21 +751,22 @@ def ensure_logo_render_url(
     user_id: str,
     brand_slug: str,
 ) -> str:
-    """Fetch/rasterize a sidebar logo and return a stable HTTPS PNG URL for overlay."""
+    """Fetch/rasterize a sidebar logo and return a stable HTTPS PNG URL for Fal refs."""
     if not isinstance(logo, dict):
         return ""
-    existing = (logo.get("renderUrl") or "").strip()
-    if existing.startswith("https://"):
-        return existing
     src = _img_url(logo)
     if not src:
         return ""
+    src_key = _logo_src_key(src)
+    existing = (logo.get("renderUrl") or "").strip()
+    if existing.startswith("https://") and logo.get("_renderSrcKey") == src_key:
+        return existing
     try:
         raw = _fetch_image_bytes(src)
         png = _rasterize_logo_png(raw, url_hint=src)
     except Exception as exc:
         print(f"[brand_studio] ensure_logo_render_url failed ({src[:80]}): {exc}")
-        return ""
+        return existing if existing.startswith("https://") else ""
     digest = hashlib.sha256(png).hexdigest()[:16]
     safe_user = re.sub(r"[^a-zA-Z0-9_-]+", "_", user_id) or "anon"
     slug = _brand_slug(brand_slug)
@@ -764,8 +775,9 @@ def ensure_logo_render_url(
         public = _upload_render_bytes(png, storage_path)
     except Exception as exc:
         print(f"[brand_studio] logo upload failed: {exc}")
-        return ""
+        return existing if existing.startswith("https://") else ""
     logo["renderUrl"] = public
+    logo["_renderSrcKey"] = src_key
     return public
 
 
@@ -773,9 +785,7 @@ def ensure_logos_render_urls(logos: list, user_id: str, brand_slug: str) -> list
     out: list = []
     for lg in logos or []:
         if isinstance(lg, dict):
-            existing = (lg.get("renderUrl") or "").strip()
-            if not existing.startswith("https://"):
-                ensure_logo_render_url(lg, user_id=user_id, brand_slug=brand_slug)
+            ensure_logo_render_url(lg, user_id=user_id, brand_slug=brand_slug)
             out.append(lg)
         elif isinstance(lg, str) and lg.strip():
             entry = {"url": lg.strip(), "source": "legacy"}
@@ -810,6 +820,10 @@ def _mirror_ref_url(url: str, *, user_id: str, brand_slug: str, label: str) -> s
         im = ImageOps.exif_transpose(im)
         if im.mode != "RGBA":
             im = im.convert("RGBA")
+        alpha = im.split()[-1]
+        bbox = alpha.getbbox()
+        if bbox:
+            im = im.crop(bbox)
         if max(im.size) > 1536:
             im.thumbnail((1536, 1536), Image.LANCZOS)
         buf = io.BytesIO()
@@ -1051,10 +1065,11 @@ def generate_images(
         images = fire(first_size)
         mode = "edit" if refs else "text"
         est_cogs = 0.225 if mode == "edit" else 0.20
+        logo_ref_included = logo_policy == "show" and len(refs) > 0
         print(
-            f"[brand_studio] fal gpt-image-2/{mode} logoPolicy={logo_policy} refs={len(refs)} "
-            f"quality=high input_fidelity={'high' if refs else 'n/a'} est_cogs_usd={est_cogs:.3f} "
-            f"images={len(images)}"
+            f"[brand_studio] fal gpt-image-2/{mode} logoPolicy={logo_policy} logoRefIncluded={logo_ref_included} "
+            f"refs={len(refs)} quality=high input_fidelity={'high' if refs else 'n/a'} "
+            f"est_cogs_usd={est_cogs:.3f} images={len(images)}"
         )
         return {"images": images, "mode": mode}
     except urllib.error.HTTPError as e:

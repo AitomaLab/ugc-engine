@@ -144,6 +144,12 @@ button{font-family:'Inter',sans-serif;cursor:pointer;}
 .imgwrap .thumb{position:relative;aspect-ratio:1;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff;animation:fadeUp .35s ease both;}
 .imgwrap .thumb img{width:100%;height:100%;object-fit:cover;display:block;}
 .imgwrap .thumb.contain img{object-fit:contain;padding:4px;}
+#bLogo .thumb.contain{
+  background-color:#fff;
+  background-image:linear-gradient(45deg,#e4e4e4 25%,transparent 25%),linear-gradient(-45deg,#e4e4e4 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#e4e4e4 75%),linear-gradient(-45deg,transparent 75%,#e4e4e4 75%);
+  background-size:8px 8px;
+  background-position:0 0,0 4px,4px -4px,-4px 0;
+}
 .imgwrap .thumb .rm{position:absolute;top:4px;right:4px;width:18px;height:18px;border:1px solid var(--line);background:#fff;color:var(--text-2);font-size:11px;line-height:1;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .15s;cursor:pointer;border-radius:50%;box-shadow:var(--shadow-sm);}
 .imgwrap .thumb:hover .rm{opacity:1;}
 .imgwrap .thumb .rm:hover{background:var(--red);color:#fff;border-color:var(--red);}
@@ -720,11 +726,12 @@ function saveBrand(){
 function mergeLogoRenderUrls(local,remote){
   if(!Array.isArray(local)||!Array.isArray(remote))return false;
   let changed=false;
-  remote.forEach((rl,i)=>{
+    remote.forEach((rl,i)=>{
     const ll=local[i];
     if(!ll||typeof ll!=='object'||typeof rl!=='object')return;
     const next=(rl.renderUrl||'').trim();
     if(next&&next.startsWith('https://')&&ll.renderUrl!==next){ll.renderUrl=next;changed=true;}
+    if(rl._renderSrcKey&&ll._renderSrcKey!==rl._renderSrcKey){ll._renderSrcKey=rl._renderSrcKey;changed=true;}
   });
   return changed;
 }
@@ -848,10 +855,24 @@ function downscale(file,max,cb){
   };img.onerror=()=>cb(r.result);img.src=r.result;};
   r.readAsDataURL(file);
 }
+function downscaleLogo(file,max,cb){
+  const r=new FileReader();
+  r.onload=()=>{const img=new Image();img.onload=()=>{
+    let w=img.width,h=img.height;const sc=Math.min(1,max/Math.max(w,h));
+    const cw=Math.max(1,Math.round(w*sc)),ch=Math.max(1,Math.round(h*sc));
+    const cv=document.createElement('canvas');cv.width=cw;cv.height=ch;
+    const ctx=cv.getContext('2d');
+    ctx.clearRect(0,0,cw,ch);
+    ctx.drawImage(img,0,0,cw,ch);
+    try{cb(cv.toDataURL('image/png'));}catch(_){cb(r.result);}
+  };img.onerror=()=>cb(r.result);img.src=r.result;};
+  r.readAsDataURL(file);
+}
 function wireUpload(inputId,key,containerId){
   $('#'+inputId).addEventListener('change',e=>{
     const files=[...e.target.files];if(!files.length)return;let pend=files.length;
-    files.forEach(f=>downscale(f,900,url=>{
+    const scaleFn=key==='logos'?downscaleLogo:downscale;
+    files.forEach(f=>scaleFn(f,900,url=>{
       const entry=key==='logos'?{url,uploaded:true,kind:'unknown',contrast:'unknown',source:'upload'}:{url,uploaded:true,name:f.name};
       (brand[key]=brand[key]||[]).push(entry);
       if(--pend===0){
@@ -1077,15 +1098,25 @@ function logoPlacementForSlide(role){
   if(tag==='LINEUP'||tag==='FLAVOR'||lay==='hero')return 'small';
   return 'prominent';
 }
-function slidePrompt(post,role,i,n,showLogo,logoPlacement){
+function slidePrompt(post,role,i,n,showLogo,logoPlacement,hasProductRef,hasMood){
   const C=brand.colors||[],pal=C.slice(0,5).join(', '),c1=C[0]||'#ff6b1a',c2=C[1]||'#1c1a16';
   const font=(brand.fonts&&brand.fonts.display)||'a clean modern sans-serif';
   const dir=post.direction||'on-brand';
   const concept=(post.idea||'').replace(/<[^>]+>/g,'').slice(0,160);
-  const ref=(role&&role.productRef!=null)?` A reference photo of the real product is provided - use it as the EXACT product: preserve its real shape, colour, packaging and label, and place it naturally in the scene. Do not invent a different product.`:` Feature the real ${brand.name} product, shot in a style that suits the brand.`;
+  let ref='';
+  if(hasProductRef){
+    ref=` Reference image ${showLogo?2:1} is the real product — preserve its exact shape, colour, packaging and label, and place it naturally in the scene. Do not invent a different product.`;
+  }else{
+    ref=` Feature the real ${brand.name} product, shot in a style that suits the brand.`;
+  }
+  if(hasMood){
+    const moodIdx=1+(showLogo?1:0)+(hasProductRef?1:0);
+    ref+=` Reference image ${moodIdx} is overall mood and style inspiration.`;
+  }
   let logoRef='';
   if(showLogo){
-    logoRef=' Do NOT render any brand logo, wordmark, logotype, or brand symbol in this image. Leave clean negative space at the top-left for post-production logo placement.';
+    const place=logoPlacement==='small'?'top-left corner (small, subtle)':'top-left';
+    logoRef=` Reference image 1 is the official brand logo with a transparent background. Integrate it in the ${place} as part of the layout — not a sticker pasted on top. Reproduce the logo exactly from the reference (same shapes, colors, typography). Do not invent, redraw, or substitute a different logo. Do not add any solid background behind the logo. Position the headline and product so they do not overlap the logo area.`;
   }else{
     logoRef=' Do NOT include any brand logo, wordmark, logotype, icon mark, monogram, or invented brand symbol anywhere in the image—including on packaging, screens, watermarks, or props. Do not spell the brand name as a logo treatment.';
   }
@@ -1608,16 +1639,17 @@ async function genCarousel(p,indices){
         return;
       }
       const refs=[];
+      const logoUrl=showLogo?(lockedLogo.renderUrl||lockedLogo.url||''):'';
+      if(showLogo&&logoUrl)refs.push(logoUrl);
       if(hasProductRef){const u=imgUrl(brand.productImages[role.productRef]);if(u)refs.push(u);}
       if(moodUrl&&refs.length<3)refs.push(moodUrl);
-      const prompt=slidePrompt(p,role,i,p.photoCount,showLogo,logoPlacement);
-      const logoUrl=showLogo?(lockedLogo.renderUrl||lockedLogo.url||''):'';
+      const prompt=slidePrompt(p,role,i,p.photoCount,showLogo,logoPlacement,hasProductRef,!!moodUrl);
       let ok=false,lastErr='';
       for(let a=0;a<3 && !ok;a++){
         await new Promise(r=>setTimeout(r, a? 700*a : i*150));
         await falAcquire();
         try{
-          const res=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt,n:1,imageUrls:refs,brand:brand.name,postId:String(p.id),slide:String(i+1),role:role.tag||'',showLogo,logoUrl,logoPlacement:logoPlacement||''})});
+          const res=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt,n:1,imageUrls:refs,brand:brand.name,postId:String(p.id),slide:String(i+1),role:role.tag||'',showLogo,logoUrl,logoPlacement:logoPlacement||'',logoOverlay:false})});
           const j=await res.json().catch(()=>({}));
           if(res.status===402){
             toastInsufficientCredits(parseInsufficientCredits(j,res.status));

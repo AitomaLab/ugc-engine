@@ -40,6 +40,7 @@ class GenerateRequest(BaseModel):
     showLogo: bool = False
     logoUrl: str = ""
     logoPlacement: str = ""
+    logoOverlay: bool = False
 
 
 class IdeasRequest(BaseModel):
@@ -252,7 +253,7 @@ async def generate(req: GenerateRequest, user: dict = Depends(get_current_user))
 
     overlay_applied = False
     stored_overlay: dict[str, Any] = {}
-    if req.showLogo and req.logoUrl:
+    if req.showLogo and req.logoUrl and req.logoOverlay:
         try:
             composited = await asyncio.to_thread(
                 brand_studio.composite_logo_on_image_url,
