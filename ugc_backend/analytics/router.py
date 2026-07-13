@@ -12,6 +12,7 @@ the existing ``get_current_user`` dependency.
 from __future__ import annotations
 
 import csv
+import hmac
 import io
 import os
 from datetime import datetime, timedelta, timezone
@@ -1638,3 +1639,22 @@ def api_export_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ── Internal cron trigger (nightly self-improvement sweep) ──────────────────
+#
+# Called by the Modal cron (modal_jobs/nightly_reflection.py), NOT by users —
+# hence no get_current_user. Auth is a shared secret: the endpoint is
+# disabled (404) until ANALYTICS_CRON_SECRET is set in the environment.
+
+@router.post("/internal/cron/nightly", status_code=202)
+def api_internal_cron_nightly(request: Request):
+    secret = os.environ.get("ANALYTICS_CRON_SECRET") or ""
+    if not secret:
+        raise HTTPException(status_code=404, detail="Not found")
+    provided = request.headers.get("x-cron-secret") or ""
+    if not hmac.compare_digest(provided, secret):
+        raise HTTPException(status_code=403, detail="Invalid cron secret")
+
+    queued_users = studio_service.start_nightly_sweep_thread()
+    return {"status": "started", "queued_users": queued_users}

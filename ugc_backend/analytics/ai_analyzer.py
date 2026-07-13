@@ -277,12 +277,14 @@ def _generate_account_report(
 
 # ── Persistence ──────────────────────────────────────────────────────────────
 
-def _save_strategy_to_memory(user_id: str, report_markdown: str) -> None:
+def _save_strategy_to_memory(user_id: str, report_markdown: str) -> bool:
     """Upsert the strategy report into ``agent_memories`` at ``MEMORY_PATH``.
 
     Uses the service-role Supabase client (matches every other write in the
     analytics module) and the ``(user_id, path)`` unique index from
-    migration 028 so the row is overwritten in place on each run.
+    migration 028 so the row is overwritten in place on each run. Returns
+    True on success so the caller can chain the reflection session only
+    when the report actually landed.
     """
     try:
         sb = get_supabase()
@@ -300,10 +302,12 @@ def _save_strategy_to_memory(user_id: str, report_markdown: str) -> None:
             "[ai_analyzer] Strategy report saved to memory for user %s",
             user_id,
         )
+        return True
     except Exception as exc:
         logger.warning(
             "[ai_analyzer] Failed to save strategy to memory: %s", exc
         )
+        return False
 
 
 # ── Core ─────────────────────────────────────────────────────────────────────
@@ -401,7 +405,21 @@ def generate_strategy_report(
         )
         report = (response.choices[0].message.content or "").strip()
         if report:
-            _save_strategy_to_memory(user_id, report)
+            saved = _save_strategy_to_memory(user_id, report)
+            if saved:
+                # Chain the self-improvement reflection (daemon thread).
+                # Lazy import avoids a module-level cycle; any failure here
+                # must never break report generation.
+                try:
+                    from . import reflection_runner
+
+                    reflection_runner.enqueue_reflection_session(user_id)
+                except Exception as exc:
+                    logger.warning(
+                        "[ai_analyzer] reflection enqueue failed for %s: %s",
+                        user_id,
+                        exc,
+                    )
         return report or None
 
     except Exception as exc:

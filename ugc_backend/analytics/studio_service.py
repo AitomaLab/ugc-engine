@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -868,9 +870,16 @@ async def run_connected_accounts_pipeline(
     platform_usernames: dict[str, str],
     *,
     force_metrics: bool = True,
+    require_new_signal: bool = False,
 ) -> dict:
     """Sync Studio publications for OAuth-linked platforms only, purge stale
-    rows, refresh Ayrshare metrics, and queue AI breakdowns."""
+    rows, refresh Ayrshare metrics, and queue AI breakdowns.
+
+    ``require_new_signal`` is only passed by the nightly sweep: it gates the
+    LLM stages (strategy report + reflection) behind the deterministic
+    signal fingerprint in ``reflection_runner.has_new_signal`` so quiet
+    accounts cost zero tokens. Default False keeps every user-triggered
+    call path exactly as before."""
     connected = {p.strip().lower() for p in platform_usernames.keys() if p}
 
     purged_internal = analytics_db.purge_internal_off_connected_platforms(
@@ -912,8 +921,28 @@ async def run_connected_accounts_pipeline(
     #   • user-level report  → agent_memories (creative-director feedback loop)
     #   • per-account reports → tracked-account rows (Account Detail modal)
     if metrics_refreshed > 0 or synced > 0:
-        ai_analyzer.enqueue_strategy_report(user_id)
-        ai_analyzer.enqueue_account_strategy_reports(user_id)
+        skip_llm = False
+        if require_new_signal:
+            # Nightly-sweep token gate — deterministic fingerprint compare,
+            # zero LLM cost. Fails open inside has_new_signal.
+            try:
+                from . import reflection_runner
+
+                skip_llm = not reflection_runner.has_new_signal(user_id)
+            except Exception as exc:
+                logger.warning(
+                    "[analytics] signal gate failed for %s (running anyway): %s",
+                    user_id,
+                    exc,
+                )
+        if skip_llm:
+            logger.info(
+                "[analytics] no new signal for %s — skipping strategy report",
+                user_id,
+            )
+        else:
+            ai_analyzer.enqueue_strategy_report(user_id)
+            ai_analyzer.enqueue_account_strategy_reports(user_id)
 
     return {
         "publications_synced": synced,
@@ -1140,6 +1169,7 @@ async def sync_studio_connections_for_user(
     *,
     force_metrics: bool = False,
     skip_pipeline: bool = False,
+    require_new_signal: bool = False,
 ) -> dict[str, int]:
     """Mirror OAuth-linked profiles into ``analytics_tracked_accounts``, sync
     Studio ``social_posts`` into ``analytics_posts``, refresh Ayrshare metrics,
@@ -1172,6 +1202,7 @@ async def sync_studio_connections_for_user(
                 profile_key,
                 platform_usernames,
                 force_metrics=force_metrics,
+                require_new_signal=require_new_signal,
             )
             counts["publications_synced"] = int(result.get("publications_synced") or 0)
         except Exception as exc:
@@ -1232,6 +1263,18 @@ async def sync_studio_connections_for_user(
         )
         tracked_linked += 1
 
+    if tracked_linked:
+        # Best-effort: seed /memories/creative_guidelines.md +
+        # account_profile.md when absent (never overwrites existing rows).
+        try:
+            from . import memory_bootstrapper
+
+            memory_bootstrapper.bootstrap_user_memories(user_id)
+        except Exception as exc:
+            logger.warning(
+                "[analytics] memory bootstrap failed for %s: %s", user_id, exc,
+            )
+
     for plat, nick in alive:
         platform_usernames[plat] = nick
 
@@ -1270,6 +1313,64 @@ async def run_studio_pipeline_background(
         )
     except Exception as exc:
         logger.warning("[analytics] background pipeline failed for %s: %s", user_id, exc)
+
+
+# ── Nightly sweep (triggered by the Modal cron via the internal endpoint) ────
+
+NIGHTLY_SWEEP_STAGGER_SECONDS = 3
+
+
+async def run_nightly_analytics_sweep() -> dict[str, int]:
+    """Run the full analytics pipeline for every user with active tracked
+    accounts — the autonomous path for users who never open the app.
+
+    Reuses ``sync_studio_connections_for_user`` per user (scrape sync →
+    metrics refresh → AI breakdowns → strategy report → chained reflection)
+    with ``require_new_signal=True`` so the LLM stages only run for accounts
+    whose data actually changed since the last reflection. Sequential with a
+    small stagger to avoid hammering Ayrshare/Gemini/OpenAI.
+    """
+    user_ids = analytics_db.list_user_ids_with_active_tracked_accounts()
+    counts = {"users_total": len(user_ids), "users_synced": 0, "users_failed": 0}
+    logger.info("[analytics] nightly sweep starting for %s users", len(user_ids))
+
+    for i, user_id in enumerate(user_ids):
+        if i:
+            await asyncio.sleep(NIGHTLY_SWEEP_STAGGER_SECONDS)
+        try:
+            await sync_studio_connections_for_user(
+                user_id,
+                force_metrics=False,
+                require_new_signal=True,
+            )
+            counts["users_synced"] += 1
+        except Exception as exc:
+            counts["users_failed"] += 1
+            logger.warning(
+                "[analytics] nightly sweep failed for %s: %s", user_id, exc
+            )
+
+    logger.info("[analytics] nightly sweep done: %s", counts)
+    return counts
+
+
+def start_nightly_sweep_thread() -> int:
+    """Spawn the sweep on a daemon thread (the internal cron endpoint must
+    return immediately). Returns the number of users that will be processed."""
+    user_ids = analytics_db.list_user_ids_with_active_tracked_accounts()
+
+    def _run() -> None:
+        try:
+            asyncio.run(run_nightly_analytics_sweep())
+        except Exception as exc:
+            logger.warning("[analytics] nightly sweep thread crashed: %s", exc)
+
+    threading.Thread(
+        target=_run,
+        daemon=True,
+        name="analytics-nightly-sweep",
+    ).start()
+    return len(user_ids)
 
 
 def claim_debounced_sync(user_id: str) -> bool:

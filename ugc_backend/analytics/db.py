@@ -2025,3 +2025,159 @@ def get_top_and_bottom_posts(
         # natural reading order of "what to fix".
         bottom = list(reversed(sorted_rows[-limit:]))
     return {"top": top, "bottom": bottom}
+
+
+# ── Self-improvement reflection loop (agent_memories) ───────────────────────
+#
+# These helpers feed the nightly reflection engine (`reflection_runner.py`)
+# and the memory bootstrapper (`memory_bootstrapper.py`). Like the strategy
+# report writer in `ai_analyzer.py` they touch `agent_memories` with the
+# service-role client + explicit user scoping; the unique `(user_id, path)`
+# index from migration 028 keeps upserts idempotent.
+
+def get_agent_memory(user_id: str, path: str) -> Optional[dict]:
+    """Fetch one `agent_memories` row (`id`, `content`, `updated_at`) or None."""
+    sb = get_supabase()
+    res = (
+        sb.table("agent_memories")
+        .select("id,content,updated_at")
+        .eq("user_id", user_id)
+        .eq("path", path)
+        .limit(1)
+        .execute()
+    )
+    return (res.data or [None])[0]
+
+
+def upsert_agent_memory(user_id: str, path: str, content: str) -> None:
+    """Insert-or-overwrite a memory file for one user.
+
+    Same upsert shape as `ai_analyzer._save_strategy_to_memory` but raises on
+    failure like the rest of this module — callers decide how to degrade.
+    """
+    sb = get_supabase()
+    sb.table("agent_memories").upsert(
+        {
+            "user_id": user_id,
+            "path": path,
+            "content": content,
+            "updated_at": _now(),
+        },
+        on_conflict="user_id,path",
+    ).execute()
+
+
+def list_breakdowns_for_posts(user_id: str, posts: list[dict]) -> dict[str, dict]:
+    """Return {analytics_post_id: breakdown} for completed breakdowns only.
+
+    Mirrors `list_breakdown_statuses_for_posts` (post-id pass, then
+    video_job_id fallback for Studio rows) but returns the content columns
+    the reflection prompt needs instead of just the status.
+    """
+    if not posts:
+        return {}
+    post_ids = [str(p["id"]) for p in posts if p.get("id")]
+    video_job_ids = [str(p["video_job_id"]) for p in posts if p.get("video_job_id")]
+    sb = get_supabase()
+    columns = "analytics_post_id,video_job_id,status,summary,hook,takeaways"
+    out: dict[str, dict] = {}
+
+    if post_ids:
+        res = (
+            sb.table("analytics_video_breakdowns")
+            .select(columns)
+            .eq("user_id", user_id)
+            .in_("analytics_post_id", post_ids)
+            .execute()
+        )
+        for row in res.data or []:
+            pid = row.get("analytics_post_id")
+            if pid and row.get("status") == "completed":
+                out[str(pid)] = row
+
+    if video_job_ids:
+        res = (
+            sb.table("analytics_video_breakdowns")
+            .select(columns)
+            .eq("user_id", user_id)
+            .in_("video_job_id", video_job_ids)
+            .execute()
+        )
+        job_rows = {
+            str(row["video_job_id"]): row
+            for row in (res.data or [])
+            if row.get("video_job_id") and row.get("status") == "completed"
+        }
+        for post in posts:
+            pid = str(post.get("id") or "")
+            if not pid or pid in out:
+                continue
+            jid = post.get("video_job_id")
+            if jid and str(jid) in job_rows:
+                out[pid] = job_rows[str(jid)]
+
+    return out
+
+
+def list_job_models_for_posts(user_id: str, posts: list[dict]) -> dict[str, str]:
+    """Return {analytics_post_id: model_api} for Studio-published posts.
+
+    Attribution comes from the linked `video_jobs.model_api` column (e.g.
+    "seedance-2.0", "kling-3.0/video", "veo-3.1-fast"). Scraped/external
+    posts have no `video_job_id` and are simply absent from the result.
+    Tolerates schemas that predate `model_api` by returning {}.
+    """
+    job_ids = sorted({str(p["video_job_id"]) for p in posts if p.get("video_job_id")})
+    if not job_ids:
+        return {}
+    sb = get_supabase()
+    try:
+        res = (
+            sb.table("video_jobs")
+            .select("id,model_api")
+            .eq("user_id", user_id)
+            .in_("id", job_ids)
+            .execute()
+        )
+    except Exception as err:
+        if _missing_column_from_error(err):
+            return {}
+        raise
+    job_models = {
+        str(row["id"]): str(row["model_api"])
+        for row in (res.data or [])
+        if row.get("id") and row.get("model_api")
+    }
+    return {
+        str(p["id"]): job_models[str(p["video_job_id"])]
+        for p in posts
+        if p.get("id")
+        and p.get("video_job_id")
+        and str(p["video_job_id"]) in job_models
+    }
+
+
+def list_user_ids_with_active_tracked_accounts() -> list[str]:
+    """Distinct user_ids that have at least one active tracked account.
+
+    The one intentionally cross-user read in this module — it feeds the
+    secret-guarded nightly sweep, which then processes each user strictly
+    per-user through the existing pipeline.
+    """
+    sb = get_supabase()
+    res = (
+        sb.table("analytics_tracked_accounts")
+        .select("user_id,is_active")
+        .limit(10_000)
+        .execute()
+    )
+    seen: list[str] = []
+    for row in res.data or []:
+        # Match the module-wide convention: only an explicit False is
+        # inactive (legacy rows may carry NULL).
+        if row.get("is_active") is False:
+            continue
+        uid = str(row.get("user_id") or "")
+        if uid and uid not in seen:
+            seen.append(uid)
+    return seen
