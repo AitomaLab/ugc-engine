@@ -77,8 +77,11 @@ confirm them in the JSON.
    - A `growth` block — period-over-period deltas computed for you:
      `overall` and `by_account`, each with `views_delta_pct`,
      `engagement_delta_pct`, `posts_delta_pct` (current `window_days` vs the
-     previous same-length window). **Use these deltas verbatim; never compute
-     your own growth figures.**
+     previous same-length window); `significant_pct` (the swing threshold);
+     and `overall.top_current_posts` — the highest-engagement posts of the
+     current window (caption, engagement, views, er_pct), i.e. the posts that
+     drove the numbers. **Use these deltas verbatim; never compute your own
+     growth figures.**
 3. **`/memories/analytics_strategy.md`** (RICH SOURCE) — the latest "Do More /
    Do Less" prose report, with this account's top/bottom performers and the
    ER figures behind them. Read-only. This is a legitimate source of
@@ -126,12 +129,19 @@ create better content for THIS account.
 - Duration (`duration_seconds` buckets).
 - Posting time / day-of-week / cadence (`posted_at`, `growth.posts_delta_pct`).
 - Tone / subject / environment (from `breakdown.summary` and takeaways).
-- **Engagement growth/decline** (`growth` block): a large positive or negative
-  `engagement_delta_pct` / `views_delta_pct` is a headline learning on its own
-  ("engagement is up X% this window vs last — the current window leaned into
-  …"). Use the precomputed deltas verbatim. Growth is also a devil's-advocate
-  input: do not crown a "winner" if the whole account's engagement moved for
-  an unrelated reason.
+- **Engagement growth/decline** (`growth` block) — **MANDATORY when it moves.**
+  If `abs(engagement_delta_pct)` OR `abs(views_delta_pct)` is at or above
+  `growth.significant_pct`, you MUST write a growth hypothesis as the FIRST
+  hypothesis, and it must do two things: (1) state the delta verbatim
+  ("Engagement rate is up 165.1% over the last 30 days vs the prior 30"), and
+  (2) **attribute it — name the specific posts that drove it** using
+  `growth.overall.top_current_posts` (quote a short caption snippet + its
+  engagement/er), e.g. "…driven mainly by '✨ Just wrapped up an epic
+  AI-generated video…' (252 engagements) and '…latest AI drop…' (251)". Also
+  note the cadence context (`posts_delta_pct`) — e.g. fewer posts but higher
+  engagement. A sharp DECLINE is equally mandatory to surface, framed as a
+  watch-out. Growth is also a devil's-advocate input: do not crown a content
+  "winner" if the account-wide engagement moved for an unrelated reason.
 
 Each pattern is either a **Confirmed Rule** or a **Hypothesis** (Step 4). To
 test a candidate for confirmation: split the posts into the two sides of the

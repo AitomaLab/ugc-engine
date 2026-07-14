@@ -378,17 +378,62 @@ def aggregate_by_content_type(
 _GROWTH_DELTA_KEYS = ("views_delta_pct", "engagement_delta_pct", "posts_delta_pct")
 
 
+_GROWTH_SIGNIFICANT_PCT = 25.0  # |delta| at/above this is a headline swing
+_GROWTH_TOP_POSTS = 3
+
+
+def _top_current_posts(
+    rows: list[dict],
+    period_days: int,
+    follower_counts: dict[tuple[str, str], int],
+    *,
+    n: int = _GROWTH_TOP_POSTS,
+) -> list[dict]:
+    """The highest-engagement posts of the CURRENT period — i.e. the posts
+    that drove this window's numbers — so the reflection can attribute a
+    growth swing to specific content instead of asserting it abstractly."""
+    current = analytics_db._filter_posts_by_period(rows, period_days)
+    ranked = sorted(current, key=analytics_db.post_engagement, reverse=True)[:n]
+    out: list[dict] = []
+    for p in ranked:
+        eng = analytics_db.post_engagement(p)
+        views = int(p.get("views") or 0)
+        plat = (p.get("platform") or "").strip().lower()
+        nick = (p.get("username") or "").strip().lower().lstrip("@")
+        fc = int((follower_counts or {}).get((plat, nick)) or 0)
+        if views > 0:
+            er = round(eng / views * 100.0, 2)
+        elif fc > 0:
+            er = round(eng / fc * 100.0, 2)
+        else:
+            er = None
+        out.append(
+            {
+                "caption": str(p.get("caption") or "")[:80],
+                "posted_at": p.get("posted_at"),
+                "engagement": eng,
+                "views": views,
+                "er_pct": er,
+            }
+        )
+    return out
+
+
 def compute_growth_block(
     comparison_posts: list[dict],
     *,
     period_days: int = 30,
+    follower_counts: Optional[dict[tuple[str, str], int]] = None,
 ) -> dict:
-    """Period-over-period growth deltas, overall and per account.
+    """Period-over-period growth deltas, overall and per account, plus the
+    specific current-period posts that drove the numbers.
 
     Reuses the already-fetched wide (90d) post slice — zero extra queries.
-    Delegates the math to ``stats_extras_from_rows`` (the same helper behind
-    the dashboard sparklines) and keeps only the three delta percentages;
-    the daily series would bloat the prompt without adding decision value.
+    Delegates the delta math to ``stats_extras_from_rows`` (the same helper
+    behind the dashboard sparklines) and keeps only the three delta
+    percentages; the daily series would bloat the prompt without adding
+    decision value. ``significant_pct`` tells the reflection the threshold at
+    which a swing is worth surfacing as a headline learning.
     """
 
     def _deltas(rows: list[dict]) -> dict:
@@ -408,10 +453,16 @@ def compute_growth_block(
     for label, rows in grouped.items():
         by_account[label] = _deltas(rows)
 
+    overall = _deltas(comparison_posts)
+    overall["top_current_posts"] = _top_current_posts(
+        comparison_posts, period_days, follower_counts or {}
+    )
+
     return {
         "window_days": period_days,
         "vs": f"previous {period_days} days",
-        "overall": _deltas(comparison_posts),
+        "significant_pct": _GROWTH_SIGNIFICANT_PCT,
+        "overall": overall,
         "by_account": by_account,
     }
 
@@ -1005,7 +1056,10 @@ def run_reflection_session(user_id: str) -> Optional[str]:
                 wide_by_type
             )
             payload["content_type_window_days"] = _comparison_days()
-        payload["growth"] = compute_growth_block(context["comparison_posts"])
+        payload["growth"] = compute_growth_block(
+            context["comparison_posts"],
+            follower_counts=context["follower_counts"],
+        )
         today = now.date().isoformat()
         user_prompt = _build_user_prompt(context, payload, today=today)
 
