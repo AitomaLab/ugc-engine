@@ -664,6 +664,35 @@ def apply_static_sections(guidelines: str) -> str:
     return body + "\n\n" + _AGENT_GUIDANCE + "\n\n" + _MODEL_ROUTING_REFERENCE + "\n"
 
 
+_MAX_HYPOTHESES = 6
+
+
+def cap_hypotheses(guidelines: str, *, max_n: int = _MAX_HYPOTHESES) -> str:
+    """Deterministically bound the ``## Hypotheses`` list to ``max_n`` bullets.
+
+    gpt-4o reliably places the mandatory growth line first but resists the
+    "merge/cap" instruction when rewriting a file full of prior hypotheses, so
+    it accumulates near-duplicates over runs. Keeping only the first ``max_n``
+    bullets (growth stays first) drops the redundant tail regardless of the
+    model. Confirmed Rules and every non-hypothesis section are untouched.
+    """
+    out: list[str] = []
+    in_hyp = False
+    kept = 0
+    for line in guidelines.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            in_hyp = "hypotheses" in stripped.lower()
+            out.append(line)
+            continue
+        if in_hyp and stripped.startswith("- "):
+            kept += 1
+            if kept > max_n:
+                continue  # drop overflow hypotheses
+        out.append(line)
+    return "\n".join(out)
+
+
 def strip_guidelines_for_display(markdown: Optional[str]) -> Optional[str]:
     """Clean the raw guidelines file for the read-only frontend panel.
 
@@ -1087,6 +1116,7 @@ def run_reflection_session(user_id: str) -> Optional[str]:
             return None
 
         guidelines = normalize_last_updated(guidelines, today=today)
+        guidelines = cap_hypotheses(guidelines)
         guidelines = apply_static_sections(guidelines)
         analytics_db.upsert_agent_memory(user_id, GUIDELINES_PATH, guidelines)
         logger.info("[reflection] guidelines updated for user %s", user_id)

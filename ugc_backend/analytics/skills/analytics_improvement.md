@@ -230,13 +230,29 @@ Writing rules:
   (e.g. "20.29% ER") and attribute it. Every line carries at least one real
   account figure. Never invent a number and never reuse one from these
   instructions (see "Data integrity").
-- Write several lines, not one. When the data supports it, a healthy file has
-  a few Confirmed Rules (if any clear the gates) and 3–6 Hypotheses spanning
-  different levers (theme, caption/hook, content type, cadence, growth) — each
-  distinct, each with its own account figure.
-- Each pattern appears EXACTLY ONCE, under EXACTLY ONE header — either
-  `## Confirmed Rules` or `## Hypotheses`, never both. Never place a line
-  tagged "(hypothesis)" under Confirmed Rules; put it under Hypotheses.
+- **Consolidate before you write (do this FIRST).** Pool the existing
+  hypotheses with any new ones, then MERGE every group that describes the same
+  underlying lever into a single line — keeping the version with the strongest
+  or most recent evidence. One lever = one line. Examples of what MUST be
+  merged, not listed separately:
+  - "posts with emojis and questions" + "captions with engaging language and
+    emojis" → ONE caption-style line.
+  - "AI-generated content gets high ER" + a growth line already attributed to
+    AI-generated posts → fold the theme into the stronger line.
+  - two timing observations → ONE cadence/timing line.
+  Before finalizing, re-read your list: if two lines could be said in one
+  sentence, they are duplicates — merge them.
+- **Hard cap: at most 6 Hypotheses.** If more candidates survive, keep the 6
+  with the strongest account-specific evidence (prefer larger deltas, more
+  posts, more recent dates) and drop the rest. A tight, distinct list beats a
+  long redundant one. (The mandatory growth line, when present, is one of the 6
+  and comes first.)
+- Each lever appears EXACTLY ONCE, under EXACTLY ONE header — either
+  `## Confirmed Rules` or `## Hypotheses`, never both, never twice. Never place
+  a line tagged "(hypothesis)" under Confirmed Rules; put it under Hypotheses.
+- **Drop stale hypotheses**: a hypothesis carried >30 days with no new
+  supporting data and not reinforced by the current run should be removed
+  (it was a dead end), not carried forward indefinitely.
 - Date every rule with today's date, e.g. `(confirmed <today>)`.
 - Scope to this account and platform when the evidence is account-specific.
 - Keep the whole file at or under 60 lines. Consolidate or drop the weakest
