@@ -371,3 +371,97 @@ def sync_brevo(list_id: int = 3, user: dict = Depends(get_current_user)) -> dict
             time.sleep(0.1)
 
     return {"synced": synced, "failed": failed}
+
+
+# ---------------------------------------------------------------------------
+# Reflection loop viewer (self-improvement observability)
+# ---------------------------------------------------------------------------
+
+class ReflectionUserOut(BaseModel):
+    user_id: str
+    email: Optional[str] = None
+    handles: List[str] = Field(default_factory=list)
+
+
+class ReflectionMemoryOut(BaseModel):
+    user_id: str
+    reflection_log: Optional[str] = None
+    creative_guidelines: Optional[str] = None
+    account_profile: Optional[str] = None
+    last_sweep: dict = Field(default_factory=dict)
+
+
+def _auth_email_map(sb, user_ids: set[str]) -> dict[str, str]:
+    """Best-effort {user_id: email} via the Supabase auth admin API."""
+    emails: dict[str, str] = {}
+    try:
+        res = sb.auth.admin.list_users()
+        users = res if isinstance(res, list) else getattr(res, "users", []) or []
+        for u in users:
+            uid = str(getattr(u, "id", "") or "")
+            if uid in user_ids:
+                emails[uid] = getattr(u, "email", None)
+    except Exception:  # noqa: BLE001 — email is a nicety, never fatal
+        pass
+    return emails
+
+
+@router.get("/reflection/last-sweep")
+def api_reflection_last_sweep(user: dict = Depends(get_current_user)):
+    """The most recent nightly-sweep summary (in-memory, per web process)."""
+    _require_admin(user)
+    from ugc_backend.analytics import studio_service
+
+    return studio_service.get_last_sweep()
+
+
+@router.get("/reflection/users", response_model=List[ReflectionUserOut])
+def api_reflection_users(user: dict = Depends(get_current_user)):
+    """Active users with tracked accounts, for the admin viewer's picker."""
+    _require_admin(user)
+    sb = get_supabase()
+    rows = (
+        sb.table("analytics_tracked_accounts")
+        .select("user_id,platform,username,is_active")
+        .limit(10_000)
+        .execute()
+    ).data or []
+    handles: dict[str, list[str]] = {}
+    for r in rows:
+        if r.get("is_active") is False:
+            continue
+        uid = str(r.get("user_id") or "")
+        if not uid:
+            continue
+        plat = (r.get("platform") or "").strip().lower()
+        nick = (r.get("username") or "").strip().lower().lstrip("@")
+        handles.setdefault(uid, [])
+        label = f"{plat} @{nick}"
+        if label not in handles[uid]:
+            handles[uid].append(label)
+    emails = _auth_email_map(sb, set(handles))
+    return [
+        ReflectionUserOut(user_id=uid, email=emails.get(uid), handles=hs)
+        for uid, hs in sorted(handles.items())
+    ]
+
+
+@router.get("/reflection/{user_id}", response_model=ReflectionMemoryOut)
+def api_reflection_for_user(user_id: str, user: dict = Depends(get_current_user)):
+    """A single user's reflection memory files + the last sweep summary."""
+    _require_admin(user)
+    from ugc_backend.analytics import db as analytics_db
+    from ugc_backend.analytics import reflection_runner as rr
+    from ugc_backend.analytics import studio_service
+
+    def _content(path: str) -> Optional[str]:
+        row = analytics_db.get_agent_memory(user_id, path)
+        return (row or {}).get("content")
+
+    return ReflectionMemoryOut(
+        user_id=user_id,
+        reflection_log=_content(rr.REFLECTION_LOG_PATH),
+        creative_guidelines=_content(rr.GUIDELINES_PATH),
+        account_profile=_content(rr.ACCOUNT_PROFILE_PATH),
+        last_sweep=studio_service.get_last_sweep(),
+    )

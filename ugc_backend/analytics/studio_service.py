@@ -1319,6 +1319,42 @@ async def run_studio_pipeline_background(
 
 NIGHTLY_SWEEP_STAGGER_SECONDS = 3
 
+# Most recent sweep summary, surfaced by the admin reflection viewer. Held in
+# memory for the current process AND mirrored to Supabase Storage so the admin
+# box reflects production regardless of which host/process serves the request
+# (a plain Railway restart would otherwise wipe the in-memory copy).
+_LAST_SWEEP: dict[str, Any] = {}
+_LAST_SWEEP_BUCKET = "user-uploads"          # existing system-JSON bucket
+_LAST_SWEEP_PATH = "system/reflection_last_sweep.json"
+
+
+def _persist_last_sweep(record: dict) -> None:
+    """Best-effort durable write of the sweep summary. Never raises."""
+    try:
+        import json as _json
+
+        body = _json.dumps(record, sort_keys=True).encode("utf-8")
+        get_supabase().storage.from_(_LAST_SWEEP_BUCKET).upload(
+            _LAST_SWEEP_PATH, body,
+            {"content-type": "application/json", "upsert": "true"},
+        )
+    except Exception as exc:
+        logger.warning("[analytics] last-sweep persist failed: %s", exc)
+
+
+def get_last_sweep() -> dict[str, Any]:
+    """Latest nightly-sweep summary. Prefers the durable Storage copy (survives
+    restarts / cross-process) and falls back to the in-memory record."""
+    try:
+        import json as _json
+
+        buf = get_supabase().storage.from_(_LAST_SWEEP_BUCKET).download(_LAST_SWEEP_PATH)
+        if buf:
+            return _json.loads(buf.decode("utf-8"))
+    except Exception:
+        pass  # not-found on first run, or storage hiccup — use in-memory
+    return dict(_LAST_SWEEP)
+
 
 async def run_nightly_analytics_sweep() -> dict[str, int]:
     """Run the full analytics pipeline for every user with active tracked
@@ -1332,6 +1368,11 @@ async def run_nightly_analytics_sweep() -> dict[str, int]:
     """
     user_ids = analytics_db.list_user_ids_with_active_tracked_accounts()
     counts = {"users_total": len(user_ids), "users_synced": 0, "users_failed": 0}
+    started_at = datetime.now(timezone.utc).isoformat()
+    _LAST_SWEEP.update(
+        {"status": "running", "started_at": started_at, "finished_at": None, **counts}
+    )
+    await asyncio.to_thread(_persist_last_sweep, dict(_LAST_SWEEP))
     logger.info("[analytics] nightly sweep starting for %s users", len(user_ids))
 
     for i, user_id in enumerate(user_ids):
@@ -1350,6 +1391,15 @@ async def run_nightly_analytics_sweep() -> dict[str, int]:
                 "[analytics] nightly sweep failed for %s: %s", user_id, exc
             )
 
+    _LAST_SWEEP.update(
+        {
+            "status": "done",
+            "started_at": started_at,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+            **counts,
+        }
+    )
+    await asyncio.to_thread(_persist_last_sweep, dict(_LAST_SWEEP))
     logger.info("[analytics] nightly sweep done: %s", counts)
     return counts
 

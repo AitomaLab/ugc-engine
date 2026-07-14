@@ -28,6 +28,7 @@ from ugc_backend import ayrshare_client
 from . import db as analytics_db
 from . import jobs as analytics_jobs
 from . import locale_content as analytics_locale
+from . import reflection_runner
 from . import scraper_service
 from . import studio_service
 from .models import (
@@ -41,6 +42,7 @@ from .models import (
     AnalyzeVideoRequest,
     AnalyzeVideoResponse,
     BreakdownOut,
+    CreativeGuidelinesResponse,
     CumulativeStatsResponse,
     EnsureThumbnailsRequest,
     EnsureThumbnailsResponse,
@@ -1104,6 +1106,30 @@ def api_account_strategy_report(
         account_id=account_id,
         report=report,
         generated_at=data.get("generated_at"),
+    )
+
+
+@router.get("/creative-guidelines", response_model=CreativeGuidelinesResponse)
+def api_creative_guidelines(user: dict = Depends(get_current_user)):
+    """The user-level "What Your AI Has Learned" guidelines panel.
+
+    Reads the reflection loop's ``/memories/creative_guidelines.md`` from
+    ``agent_memories`` and returns it cleaned for display. ``guidelines=null``
+    means the AI hasn't learned enough yet (no reflection has run), which the
+    UI treats as a "still learning" state — mirrors the null-is-pending
+    contract of the account strategy report above.
+    """
+    row = analytics_db.get_agent_memory(
+        user["id"], reflection_runner.GUIDELINES_PATH
+    )
+    cleaned = (
+        reflection_runner.strip_guidelines_for_display(row.get("content"))
+        if row
+        else None
+    )
+    return CreativeGuidelinesResponse(
+        guidelines=cleaned,
+        updated_at=row.get("updated_at") if row else None,
     )
 
 

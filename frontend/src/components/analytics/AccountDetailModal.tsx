@@ -15,6 +15,7 @@ import {
     useAccountTopPosts,
     useAccountTrend,
     useAnalyticsPostThumbnails,
+    useCreativeGuidelines,
     type TrackedAccountAggregate,
     type TrackedAccountWithJob,
 } from './analytics-types';
@@ -139,6 +140,7 @@ export default function AccountDetailModal({ account, onClose, onOpenPost, onRef
     const { data: trend, loading: trendLoading } = useAccountTrend(account.id, 30, refreshKey);
     const { data: top, loading: topLoading } = useAccountTopPosts(account.id, fetchLimit, refreshKey);
     const { data: strategy, loading: strategyLoading } = useAccountStrategyReport(account.id, refreshKey, lang);
+    const { data: guidelines, loading: guidelinesLoading } = useCreativeGuidelines(refreshKey);
 
     useEffect(() => {
         setLastScrapedAt(account.last_scraped_at ?? null);
@@ -438,6 +440,52 @@ export default function AccountDetailModal({ account, onClose, onOpenPost, onRef
                             {strategyLoading
                                 ? t('analytics.accounts.strategy.loading')
                                 : t('analytics.accounts.strategy.pending')}
+                        </div>
+                    )
+                }
+            </Section>
+
+            {/* What Your AI Has Learned — user-level creative guidelines the
+                nightly self-improvement reflection maintains. Creator-wide
+                (spans all connected accounts), rendered read-only. */}
+            <Section
+                title={t('analytics.accounts.guidelines.title')}
+                action={
+                    guidelines?.updated_at ? (
+                        <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
+                            {t('analytics.accounts.guidelines.updated').replace('{when}', timeAgo(guidelines.updated_at))}
+                        </span>
+                    ) : null
+                }
+            >
+                {guidelines?.guidelines
+                    ? (
+                        <div
+                            style={{
+                                background: 'white',
+                                border: '1px solid var(--border)',
+                                borderRadius: 12,
+                                padding: '16px 18px',
+                            }}
+                        >
+                            <StrategyReportMarkdown source={guidelines.guidelines} />
+                        </div>
+                    )
+                    : (
+                        <div
+                            style={{
+                                background: 'var(--blue-light)',
+                                border: '1px dashed var(--border)',
+                                borderRadius: 12,
+                                padding: '16px 18px',
+                                fontSize: 13,
+                                color: 'var(--text-2)',
+                                lineHeight: 1.5,
+                            }}
+                        >
+                            {guidelinesLoading
+                                ? t('analytics.accounts.guidelines.loading')
+                                : t('analytics.accounts.guidelines.empty')}
                         </div>
                     )
                 }

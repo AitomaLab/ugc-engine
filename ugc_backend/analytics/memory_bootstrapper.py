@@ -35,8 +35,17 @@ _MODEL_ROUTING_REFERENCE = """## Model Routing Reference
 - `nano banana pro` — images
 - `kling 3.0` — cinematic videos (no speech)
 - `veo3.1` — UGC videos with speech
-- `seedance 2.0` — app-promo / motion-graphics videos
+- `seedance 2.0` — animated app-promo / motion-graphics videos
 - `infinitalk + elevenlabs` — AI clone videos"""
+
+_AGENT_GUIDANCE = """## How to apply (agent guidance)
+
+These learnings are suggestions, not routing rules. When the user explicitly
+asks for a specific asset type, honor that request — never redirect them to
+the best-performing content type. When a request is open-ended, lean toward
+the account's best-performing content type and briefly say why, e.g. "your
+cinematic videos have been earning the most engagement lately — want me to go
+that direction?"."""
 
 
 def build_guidelines_template(now: datetime) -> str:
@@ -56,6 +65,8 @@ analytics reflection cycle.
 ## Hypotheses
 
 (none yet)
+
+{_AGENT_GUIDANCE}
 
 {_MODEL_ROUTING_REFERENCE}
 """

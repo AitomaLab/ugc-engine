@@ -6,11 +6,14 @@ import { supabase } from '@/lib/supabaseClient';
 import InvitesTab from './InvitesTab';
 import FeedbackTab from './FeedbackTab';
 import OnboardingTab from './OnboardingTab';
+import ReflectionTab from './ReflectionTab';
 
-const ADMIN_EMAIL = 'max@aitoma.ai';
+// Frontend gate is UX only — the backend re-checks ADMIN_EMAIL on every call.
+// Kept as an allowlist so it matches whichever address the backend enforces.
+const ADMIN_EMAILS = ['max@aitoma.ai', 'saas@aitoma.ai'];
 const PRIMARY = '#337AFF';
 
-type AdminTab = 'invites' | 'feedback' | 'onboarding';
+type AdminTab = 'invites' | 'feedback' | 'onboarding' | 'reflection';
 
 export default function AdminPage() {
     const router = useRouter();
@@ -22,7 +25,7 @@ export default function AdminPage() {
         (async () => {
             const { data } = await supabase.auth.getSession();
             const email = data.session?.user?.email?.toLowerCase() ?? null;
-            if (email !== ADMIN_EMAIL) {
+            if (!email || !ADMIN_EMAILS.includes(email)) {
                 router.replace('/');
                 return;
             }
@@ -44,7 +47,7 @@ export default function AdminPage() {
             <header>
                 <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: '#0F172A' }}>Admin</h1>
                 <p style={{ margin: '6px 0 0', color: '#64748B', fontSize: 14 }}>
-                    Manage beta invites, review tester feedback, and view onboarding responses. Admin-only.
+                    Manage beta invites, review tester feedback, view onboarding responses, and inspect the AI reflection loop. Admin-only.
                 </p>
             </header>
 
@@ -53,6 +56,7 @@ export default function AdminPage() {
                     { id: 'invites' as const, label: 'Invites' },
                     { id: 'feedback' as const, label: 'Feedback' },
                     { id: 'onboarding' as const, label: 'Onboarding' },
+                    { id: 'reflection' as const, label: 'Reflection' },
                 ]).map(({ id, label }) => (
                     <button
                         key={id}
@@ -78,6 +82,7 @@ export default function AdminPage() {
             {tab === 'invites' && <InvitesTab />}
             {tab === 'feedback' && <FeedbackTab />}
             {tab === 'onboarding' && <OnboardingTab />}
+            {tab === 'reflection' && <ReflectionTab />}
         </div>
     );
 }

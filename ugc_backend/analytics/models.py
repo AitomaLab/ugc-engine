@@ -380,6 +380,18 @@ class AccountStrategyReportResponse(BaseModel):
     )
 
 
+class CreativeGuidelinesResponse(BaseModel):
+    """User-level self-improvement guidelines the reflection loop maintains."""
+    guidelines: Optional[str] = Field(
+        default=None,
+        description="Cleaned Markdown guidelines, or null when the AI has not "
+        "learned enough yet (no reflection has run).",
+    )
+    updated_at: Optional[str] = Field(
+        default=None, description="ISO timestamp of the last reflection.",
+    )
+
+
 class EnsureThumbnailsRequest(BaseModel):
     post_ids: List[str] = Field(default_factory=list)
 

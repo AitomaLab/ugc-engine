@@ -1171,6 +1171,42 @@ export function useAccountStrategyReport(
     return { data, loading };
 }
 
+export interface CreativeGuidelinesResponse {
+    guidelines: string | null;
+    updated_at: string | null;
+}
+
+/** The user-level "What Your AI Has Learned" guidelines the reflection loop
+ *  maintains. A null `guidelines` means the AI hasn't learned enough yet (no
+ *  reflection has run) — callers render a "still learning" state. User-scoped,
+ *  so no accountId: the same creator-wide guidelines show in every account
+ *  modal. Mirrors `useAccountStrategyReport`. */
+export function useCreativeGuidelines(refreshKey = 0) {
+    const [data, setData] = useState<CreativeGuidelinesResponse | null>(null);
+    const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        setLoading(true);
+        analyticsFetch<CreativeGuidelinesResponse>(
+            '/api/analytics/creative-guidelines',
+            { skipProjectScope: true },
+        )
+            .then((res) => {
+                if (!cancelled) setData(res);
+            })
+            .catch(() => {
+                if (!cancelled) setData({ guidelines: null, updated_at: null });
+            })
+            .finally(() => {
+                if (!cancelled) setLoading(false);
+            });
+        return () => { cancelled = true; };
+    }, [refreshKey]);
+
+    return { data, loading };
+}
+
 /** Remove a single analytics post from the user's tracked set. Best-effort:
  *  swallows the error so the calling component can roll back its
  *  optimistic state without leaking a stack trace. */
