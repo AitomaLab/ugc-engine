@@ -467,6 +467,11 @@ def _metrics_patch_from_row(row: dict) -> dict:
     return patch
 
 
+# Engagement metrics BrightData account scrapes DO return for IG — these flow
+# external→internal so Studio rows stay live even with Ayrshare down.
+_TWIN_ENGAGEMENT_KEYS = ("likes", "comments", "shares", "saves")
+
+
 def _internal_has_permalink(post: dict) -> bool:
     raw = post.get("raw_payload")
     if isinstance(raw, dict) and raw.get("permalink"):
@@ -487,12 +492,27 @@ def propagate_studio_metrics_to_scraped_posts(
     platform: str,
     username: str,
 ) -> int:
-    """Copy metrics external←internal and permalinks internal←external.
+    """Two-way sync between the twin rows of one physical post.
 
-    BrightData account scrapes create ``source=external`` rows with the public
-    IG URL, while Schedule creates ``source=internal`` rows keyed by
-    ``studio://``. Users see both in account detail — this keeps views and
-    permalinks in sync.
+    Every Studio-published post exists twice: an ``internal`` mirror keyed by
+    ``studio://`` (metrics from Ayrshare) and an ``external`` scraped row
+    keyed by the public IG URL (metrics from BrightData). Per-metric rules:
+
+    - **external → internal**: likes/comments/shares/saves. BrightData scrapes
+      keep flowing after an Ayrshare outage/expiry, so the scraped values are
+      the live ones — this un-freezes the Studio rows that "By Video" shows.
+    - **internal → external**: ``views`` only, fill-missing only. IG account
+      scrapes never return a view count, so the last Ayrshare-known views are
+      the only view signal for the external row. NEVER copy internal
+      likes/comments onto the external row (the old behaviour — it reverted
+      fresh scraped values to a stale Ayrshare snapshot on every run).
+    - **external → internal**: permalink/external_post_id raw-payload fill
+      (unchanged) so Studio rows learn their public URL.
+
+    Matching is case-insensitive on the IG shortcode (internal
+    ``external_post_id`` is stored lowercased; scraped rows keep IG casing),
+    with a single-candidate caption fallback. Idempotent — safe on every
+    modal open and pipeline run.
     """
     plat = platform.strip().lower()
     nick = username.strip().lower().lstrip("@")
@@ -500,19 +520,16 @@ def propagate_studio_metrics_to_scraped_posts(
         user_id, platform=plat, username=nick, limit=500,
     )
     internal_by_code: dict[str, dict] = {}
-    internal_by_ext: dict[str, dict] = {}
     internal_by_caption: dict[str, list[dict]] = {}
     for post in posts:
         if (post.get("source") or "") != "internal":
             continue
-        patch = _metrics_patch_from_row(post)
-        if patch:
-            code = _instagram_shortcode(post.get("post_url"))
-            if code:
-                internal_by_code[code] = post
-            ext_id = post.get("external_post_id")
-            if ext_id:
-                internal_by_ext[str(ext_id)] = post
+        code = _instagram_shortcode(post.get("post_url"))
+        if code:
+            internal_by_code[code.lower()] = post
+        ext_id = post.get("external_post_id")
+        if ext_id:
+            internal_by_code[str(ext_id).lower()] = post
         cap = _caption_match_key(post)
         if cap:
             internal_by_caption.setdefault(cap, []).append(post)
@@ -522,27 +539,36 @@ def propagate_studio_metrics_to_scraped_posts(
         if (post.get("source") or "") != "external":
             continue
 
-        ext_code = _instagram_shortcode(
-            scraper_service.permalink_from_post(post) or post.get("post_url"),
-        )
         ext_permalink = scraper_service.permalink_from_post(post)
+        ext_code = _instagram_shortcode(ext_permalink or post.get("post_url"))
 
-        # Metrics: Studio → scraped duplicate
-        if (post.get("views") or 0) <= 0:
-            match: Optional[dict] = None
-            if ext_code and ext_code in internal_by_code:
-                match = internal_by_code[ext_code]
-            elif post.get("external_post_id"):
-                match = internal_by_ext.get(str(post.get("external_post_id")))
-            if not match:
-                cap = _caption_match_key(post)
-                candidates = internal_by_caption.get(cap) or []
-                match = candidates[0] if len(candidates) == 1 else None
-            if match:
-                patch = _metrics_patch_from_row(match)
-                if patch:
-                    analytics_db.patch_post_metrics(post["id"], patch)
-                    updated += 1
+        match: Optional[dict] = None
+        if ext_code:
+            match = internal_by_code.get(ext_code.lower())
+        if not match and post.get("external_post_id"):
+            match = internal_by_code.get(str(post.get("external_post_id")).lower())
+        if not match:
+            cap = _caption_match_key(post)
+            candidates = internal_by_caption.get(cap) or []
+            match = candidates[0] if len(candidates) == 1 else None
+
+        if match:
+            # Fresh engagement: scraped external → internal Studio mirror.
+            int_patch: dict = {}
+            for key in _TWIN_ENGAGEMENT_KEYS:
+                ext_val = post.get(key)
+                if ext_val is not None and ext_val != match.get(key):
+                    int_patch[key] = ext_val
+            if int_patch:
+                analytics_db.patch_post_metrics(match["id"], int_patch)
+                updated += 1
+
+            # Views: internal → external, fill-missing ONLY.
+            if (post.get("views") or 0) <= 0 and (match.get("views") or 0) > 0:
+                analytics_db.patch_post_metrics(
+                    post["id"], {"views": match["views"]}
+                )
+                updated += 1
 
         # Permalink: scraped duplicate → Studio row
         if ext_permalink and ext_code:
@@ -552,12 +578,10 @@ def propagate_studio_metrics_to_scraped_posts(
                 if _internal_has_permalink(internal):
                     continue
                 raw_merge = {"permalink": ext_permalink}
-                ext_patch: dict = {}
-                if ext_code:
-                    ext_patch["external_post_id"] = ext_code
                 analytics_db.merge_post_raw_payload(internal["id"], raw_merge)
-                if ext_patch:
-                    analytics_db.patch_post_metrics(internal["id"], ext_patch)
+                analytics_db.patch_post_metrics(
+                    internal["id"], {"external_post_id": ext_code}
+                )
                 updated += 1
                 break
 

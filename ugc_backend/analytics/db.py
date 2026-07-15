@@ -151,6 +151,115 @@ def _filter_posts_by_period(
     return filtered
 
 
+_IG_SHORTCODE_RE = re.compile(r"instagram\.com/(?:p|reel|reels|tv)/([^/?#]+)", re.I)
+
+# Metric columns overridden from the external (fresh BrightData) twin when
+# collapsing duplicate rows of one physical post.
+_TWIN_METRIC_KEYS = (
+    "views", "likes", "comments", "shares", "saves", "total_engagement",
+)
+
+
+def _post_twin_key(post: dict) -> Optional[str]:
+    """Stable identity of the PHYSICAL post across its internal/external twin
+    rows: platform + lowercased IG shortcode (from any public URL on the row)
+    or external_post_id. None when no identity exists (row passes through)."""
+    plat = (post.get("platform") or "").strip().lower()
+    raw = post.get("raw_payload")
+    candidates = [post.get("post_url")]
+    if isinstance(raw, dict):
+        candidates.append(raw.get("permalink"))
+    for cand in candidates:
+        if isinstance(cand, str) and cand:
+            m = _IG_SHORTCODE_RE.search(cand)
+            if m:
+                return f"{plat}:{m.group(1).lower()}"
+    ext = post.get("external_post_id")
+    if ext:
+        return f"{plat}:{str(ext).strip().lower()}"
+    return None
+
+
+def _merge_twin_rows(a: dict, b: dict) -> dict:
+    """Collapse an internal+external twin pair into one display row.
+
+    Base = the INTERNAL row (stable id for breakdown links, source badge,
+    video_job/social_post attribution); metrics = the EXTERNAL row's (fresh
+    BrightData), with ``views`` falling back to internal when the scrape has
+    none (IG account scrapes never return views). Same-source duplicates
+    (shouldn't happen) keep the first row.
+    """
+    internal = a if (a.get("source") or "") == "internal" else (
+        b if (b.get("source") or "") == "internal" else None
+    )
+    external = a if (a.get("source") or "") == "external" else (
+        b if (b.get("source") or "") == "external" else None
+    )
+    if internal is None or external is None:
+        return a
+    merged = dict(internal)
+    for key in _TWIN_METRIC_KEYS:
+        ext_val = external.get(key)
+        if key == "views":
+            if ext_val is not None and int(ext_val or 0) > 0:
+                merged[key] = ext_val
+        elif ext_val is not None:
+            merged[key] = ext_val
+    merged["posted_at"] = internal.get("posted_at") or external.get("posted_at")
+    return merged
+
+
+def find_internal_twin(user_id: str, scraped_row: dict) -> Optional[dict]:
+    """Locate the internal Studio mirror of a freshly scraped row.
+
+    Matches case-insensitively on the IG shortcode (internal rows store it
+    lowercased in ``external_post_id`` / ``raw_payload.permalink``; scraped
+    URLs keep IG casing). Replaces the dead ``find_social_post_by_url`` link
+    (social_posts has no post_url/permalink column, so that match can never
+    fire). Used to stamp Studio attribution (social_post_id / video_job_id)
+    onto scraped rows — WITHOUT flipping their source.
+    """
+    key = _post_twin_key(scraped_row)
+    if not key:
+        return None
+    sb = get_supabase()
+    rows = (
+        sb.table("analytics_posts")
+        .select("id,social_post_id,video_job_id,external_post_id,post_url,raw_payload,platform")
+        .eq("user_id", user_id)
+        .eq("source", "internal")
+        .eq("platform", (scraped_row.get("platform") or "").strip().lower())
+        .limit(500)
+        .execute()
+    ).data or []
+    for row in rows:
+        if _post_twin_key(row) == key:
+            return row
+    return None
+
+
+def dedupe_physical_posts(rows: list[dict]) -> list[dict]:
+    """Collapse internal+external twin rows into one logical post per
+    physical post, preserving input order. Rows without a twin identity pass
+    through untouched. Used by every mixed-source read surface (dashboard,
+    account aggregates/trend/top-posts, reflection context) so a Studio post
+    scraped by BrightData is never counted twice."""
+    index_by_key: dict[str, int] = {}
+    out: list[dict] = []
+    for row in rows:
+        key = _post_twin_key(row)
+        if not key:
+            out.append(row)
+            continue
+        if key in index_by_key:
+            idx = index_by_key[key]
+            out[idx] = _merge_twin_rows(out[idx], row)
+        else:
+            index_by_key[key] = len(out)
+            out.append(row)
+    return out
+
+
 def _fetch_dashboard_posts(
     user_id: str,
     *,
@@ -187,6 +296,11 @@ def _fetch_dashboard_posts(
             tracked_only=True,
             tracked_slugs=tracked_slugs,
         )
+    # Collapse internal+external twin rows so a Studio post scraped by
+    # BrightData isn't double-counted in KPIs/sparklines. Skip when the
+    # caller pinned a single source (twin pairs can't both be present then).
+    if not source or source == "all":
+        all_rows = dedupe_physical_posts(all_rows)
     period_rows = _filter_posts_by_period(all_rows, period_days)
     return period_rows, all_rows
 
@@ -1364,18 +1478,26 @@ def list_account_posts(
 
 
 def fetch_all_posts_for_account_aggregates(user_id: str, *, limit: int = 2000) -> list[dict]:
-    """Single fetch for per-account dashboard aggregates."""
+    """Single fetch for per-account dashboard aggregates.
+
+    Twin rows (internal Studio mirror + external scrape of the same physical
+    post) are collapsed so account headers/ER never double-count. The extra
+    identity columns (source/post_url/external_post_id) exist only for that
+    dedupe pass.
+    """
     sb = get_supabase()
     res = (
         sb.table("analytics_posts")
         .select(
-            "platform,username,views,total_engagement,posted_at,added_at,scraped_at",
+            "platform,username,views,likes,comments,shares,saves,"
+            "total_engagement,posted_at,added_at,scraped_at,"
+            "source,post_url,external_post_id",
         )
         .eq("user_id", user_id)
         .limit(min(max(int(limit or 2000), 1), 2000))
         .execute()
     )
-    return res.data or []
+    return dedupe_physical_posts(res.data or [])
 
 
 def group_posts_by_account(posts: list[dict]) -> dict[tuple[str, str], list[dict]]:

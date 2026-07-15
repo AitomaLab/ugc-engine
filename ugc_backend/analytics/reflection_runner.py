@@ -944,8 +944,10 @@ def _collect_context(user_id: str) -> Optional[dict]:
         logger.info("[reflection] no strategy report for %s — skipping", user_id)
         return None
 
-    posts = analytics_db.list_posts(
-        user_id, period_days=30, sort="recent", limit=_max_posts()
+    posts = analytics_db.dedupe_physical_posts(
+        analytics_db.list_posts(
+            user_id, period_days=30, sort="recent", limit=_max_posts()
+        )
     )
     if not posts:
         logger.info("[reflection] no recent posts for %s — skipping", user_id)
@@ -978,8 +980,10 @@ def _collect_context(user_id: str) -> Optional[dict]:
     # Wider slice for the content-type comparison only — attribution exists
     # solely on Studio posts, so 30 days is often too thin to clear the
     # >=5-post confirm gate while 90 days is not. Metrics are live either way.
-    comparison_posts = analytics_db.list_posts(
-        user_id, period_days=_comparison_days(), sort="recent", limit=200
+    comparison_posts = analytics_db.dedupe_physical_posts(
+        analytics_db.list_posts(
+            user_id, period_days=_comparison_days(), sort="recent", limit=200
+        )
     )
     comparison_job_models = analytics_db.list_job_models_for_posts(
         user_id, comparison_posts
@@ -1005,8 +1009,10 @@ def has_new_signal(user_id: str) -> bool:
     fingerprint against the one recorded on the previous reflection. Fails
     open (True) so a broken gate can never silently starve the loop."""
     try:
-        posts = analytics_db.list_posts(
-            user_id, period_days=30, sort="recent", limit=_max_posts()
+        posts = analytics_db.dedupe_physical_posts(
+            analytics_db.list_posts(
+                user_id, period_days=30, sort="recent", limit=_max_posts()
+            )
         )
         if not posts:
             return False

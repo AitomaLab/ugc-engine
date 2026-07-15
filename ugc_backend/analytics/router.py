@@ -327,11 +327,16 @@ async def api_scrape(
             if av and not avatar_url:
                 avatar_url = str(av)[:8000]
             row = {**row, "user_id": user_id}
-            link = analytics_db.find_social_post_by_url(user_id, row.get("post_url") or "")
-            if link:
-                row["source"] = "internal"
-                row["social_post_id"] = link.get("id")
-                row["video_job_id"] = link.get("video_job_id")
+            # Studio attribution from the internal twin (source stays
+            # external; twins are collapsed at read time). See
+            # persist_scrape_job_result for the rationale.
+            try:
+                twin = analytics_db.find_internal_twin(user_id, row)
+            except Exception:
+                twin = None
+            if twin:
+                row.setdefault("social_post_id", twin.get("social_post_id"))
+                row.setdefault("video_job_id", twin.get("video_job_id"))
             rows.append(row)
         saved = analytics_db.upsert_posts(rows)
         # Best-effort mirror of each post's video URL (and/or thumbnail) to
@@ -422,6 +427,10 @@ def api_list_posts(
         limit=limit,
         cursor=cursor,
     )
+    # Mixed-source listings collapse internal+external twins (one card per
+    # physical post, fresh scraped metrics). Source-pinned views keep raw rows.
+    if not source or source == "all":
+        rows = analytics_db.dedupe_physical_posts(rows)
     annotated = _annotate_breakdown_status(user["id"], rows)
     next_cursor = annotated[-1]["scraped_at"] if len(annotated) == limit else None
     return PostsListResponse(
@@ -1369,6 +1378,9 @@ def api_account_trend(
         period_days=days,
         source=post_source,
     )
+    # Collapse internal+external twins so a Studio post scraped by BrightData
+    # isn't summed twice into the daily buckets.
+    posts = analytics_db.dedupe_physical_posts(posts)
     # Bucket posts by their posted_at (falling back to scraped_at) date so the
     # chart matches the user's mental model of "what got posted that day". Any
     # post missing both timestamps is dropped from the chart.
@@ -1435,6 +1447,12 @@ def api_account_top_posts(
             sort=sort,
             limit=500,
         )
+
+    # Collapse internal+external twins: one card per physical post, fresh
+    # scraped metrics on Studio rows. Also makes the Studio-vs-organic delta
+    # below honest — it now compares Studio posts against genuinely-organic
+    # posts instead of against stale copies of themselves.
+    all_posts = analytics_db.dedupe_physical_posts(all_posts)
 
     # Studio-vs-external delta for the modal header (computed from full set).
     internal_eng = [int(p.get("total_engagement") or 0) for p in all_posts if p.get("source") == "internal"]

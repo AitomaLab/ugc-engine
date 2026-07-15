@@ -2083,11 +2083,19 @@ def persist_scrape_job_result(
             if av and not avatar_url:
                 avatar_url = str(av)[:8000]
             row = {**row, "user_id": user_id}
-            link = analytics_db.find_social_post_by_url(user_id, row.get("post_url") or "")
-            if link:
-                row["source"] = "internal"
-                row["social_post_id"] = link.get("id")
-                row["video_job_id"] = link.get("video_job_id")
+            # Stamp Studio attribution (video_job → generation-model mapping
+            # for the reflection loop) from the internal twin, if any. Source
+            # stays 'external' — the studio:// mirror remains the internal
+            # row; the twin pair is collapsed at read time by
+            # dedupe_physical_posts. (The old find_social_post_by_url link
+            # matched columns social_posts doesn't have and never fired.)
+            try:
+                twin = analytics_db.find_internal_twin(user_id, row)
+            except Exception:
+                twin = None
+            if twin:
+                row.setdefault("social_post_id", twin.get("social_post_id"))
+                row.setdefault("video_job_id", twin.get("video_job_id"))
             saved.append(row)
         saved = analytics_db.upsert_posts(saved)
         _mirror_posts_in_background(saved)
