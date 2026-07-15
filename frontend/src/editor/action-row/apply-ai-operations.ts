@@ -1,4 +1,5 @@
 import {addCaptionAsset} from '../state/actions/add-caption-asset';
+import {buildCaptionsItem} from '../captioning/build-captions-item';
 import {createTextItem} from '../items/text/create-text-item';
 import {EditorStarterItem} from '../items/item-type';
 import {addAssetToState} from '../state/actions/add-asset-to-state';
@@ -336,8 +337,6 @@ type SetStateLike = (options: {
 	commitToUndoStack: boolean;
 }) => void;
 
-const DEFAULT_CAPTION_HIGHLIGHT_COLOR = '#39E508';
-
 const volumeToDecibel = (volume: number) => {
 	if (volume <= 0) {
 		return MIN_VOLUME_DB;
@@ -573,22 +572,14 @@ export async function applyAiEditOps(
 
 			const style = op.style ?? 'default';
 			const placement = op.position ?? 'bottom';
-			const highlightWords = op.highlight_words ?? false;
-			const compositionWidth = s.undoableState.compositionWidth;
-			const compositionHeight = s.undoableState.compositionHeight;
-			const width = Math.min(compositionWidth, 900) - 40;
-			const baseColor = '#FFFFFF';
+			// Only size/weight/stroke vary by style. Font, colours, highlight and
+			// page duration stay canonical — see build-captions-item.ts.
 			const stylePreset =
 				style === 'bold'
-					? {fontSize: 88, weight: '800', strokeWidth: 5}
+					? {fontSize: 88, fontWeight: '800', strokeWidth: 10}
 					: style === 'minimal'
-						? {fontSize: 62, weight: '500', strokeWidth: 2}
-						: {fontSize: 80, weight: '600', strokeWidth: 4};
-			const topByPlacement: Record<'bottom' | 'top' | 'center', number> = {
-				top: Math.round(compositionHeight * 0.15),
-				center: Math.round(compositionHeight * 0.45),
-				bottom: Math.round(compositionHeight * 0.75),
-			};
+						? {fontSize: 62, fontWeight: '500', strokeWidth: 4}
+						: {fontSize: 72, fontWeight: '400', strokeWidth: 8};
 			const captionStartInSeconds = primaryVideo.videoStartFromInSeconds ?? 0;
 			const lastCaption = captions[captions.length - 1];
 			const captionEndInSeconds = (lastCaption?.endMs ?? 0) / 1000;
@@ -605,41 +596,18 @@ export async function applyAiEditOps(
 
 			s = addItem({
 				state: captionResult.state,
-				item: {
-					type: 'captions',
-					assetId: captionResult.asset.id,
-					durationInFrames,
-					from: primaryVideo.from,
-					height: Math.round(stylePreset.fontSize * 1.2 * 2),
+				item: buildCaptionsItem({
 					id: captionItemId,
-					isDraggingInTimeline: false,
-					left: (compositionWidth - width) / 2,
-					top: topByPlacement[placement],
-					width,
-					opacity: 1,
-					fontFamily: 'TikTok Sans',
-					fontStyle: {
-						variant: 'normal',
-						weight: stylePreset.weight,
-					},
-					rotation: 0,
-					lineHeight: 1.2,
-					letterSpacing: 0,
-					fontSize: stylePreset.fontSize,
-					align: 'center',
-					color: baseColor,
-					highlightColor: highlightWords
-						? DEFAULT_CAPTION_HIGHLIGHT_COLOR
-						: baseColor,
-					direction: 'ltr',
-					pageDurationInMilliseconds: 2000,
+					assetId: captionResult.asset.id,
+					from: primaryVideo.from,
+					durationInFrames,
 					captionStartInSeconds,
-					strokeWidth: stylePreset.strokeWidth,
-					strokeColor: 'black',
-					maxLines: 2,
-					fadeInDurationInSeconds: 0,
-					fadeOutDurationInSeconds: 0,
-				},
+					compositionWidth: s.undoableState.compositionWidth,
+					compositionHeight: s.undoableState.compositionHeight,
+					placement,
+					highlight: op.highlight_words ?? true,
+					...stylePreset,
+				}),
 				select: true,
 				position: {
 					type: 'insert-track-before',
@@ -990,7 +958,7 @@ export function summarizeAiEditOpsForPreview(
 					{
 						field: 'highlight_words',
 						before: '(default)',
-						after: String(op.highlight_words ?? false),
+						after: String(op.highlight_words ?? true),
 					},
 				],
 			};

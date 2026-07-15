@@ -12,12 +12,12 @@ import {AudioItem} from '../items/audio/audio-item-type';
 import {VideoItem} from '../items/video/video-item-type';
 import {addCaptionAsset} from '../state/actions/add-caption-asset';
 import {addItem} from '../state/actions/add-item';
+import {buildCaptionsItem} from './build-captions-item';
 import {usePreferredLocalUrl} from '../utils/find-asset-by-id';
 import {generateRandomId} from '../utils/generate-random-id';
 import {
 	useAssetFromItem,
 	useCaptionState,
-	useDimensions,
 	useFps,
 	useTracks,
 	useWriteContext,
@@ -36,7 +36,6 @@ export const GenerateCaptionSection: React.FC<{
 	const captionState = useCaptionState();
 	const {setState} = useWriteContext();
 	const {tracks} = useTracks();
-	const {compositionWidth} = useDimensions();
 
 	const src = usePreferredLocalUrl(asset);
 
@@ -71,12 +70,6 @@ export const GenerateCaptionSection: React.FC<{
 			throw new Error('Could not find track for video item');
 		}
 
-		const defaultLineHeight = 1.2;
-		const defaultLetterSpacing = 0;
-		const defaultFontSize = 72;
-		const defaultMaxLines = 2;
-
-		const width = Math.min(compositionWidth, 900) - 40;
 		// Place the caption item in the newly created track
 		setState({
 			commitToUndoStack: true,
@@ -89,49 +82,25 @@ export const GenerateCaptionSection: React.FC<{
 
 				return addItem({
 					state: stateWithAsset,
-					item: {
-						type: 'captions',
+					item: buildCaptionsItem({
+						id: captionItemId,
 						assetId: captionAsset.id,
+						from: item.from,
 						durationInFrames: Math.round(
 							(getDurationInSecondsOfCaptionAsset(captionAsset) -
 								(startInSeconds ?? 0)) *
 								fps,
 						),
-						from: item.from,
-						height: defaultFontSize * defaultLineHeight * defaultMaxLines,
-						id: captionItemId,
-						isDraggingInTimeline: false,
-						left: (state.undoableState.compositionWidth - width) / 2,
-						top: state.undoableState.compositionHeight * 0.45,
-						width: width,
-						opacity: 1,
-						fontFamily: 'Anton',
-						fontStyle: {
-							variant: 'normal',
-							weight: '400',
-						},
-						rotation: 0,
-						lineHeight: defaultLineHeight,
-						letterSpacing: defaultLetterSpacing,
-						fontSize: defaultFontSize,
-						align: 'center',
-						color: '#FFFFFF',
-						highlightColor: '#FFFF00',
-						direction: 'ltr',
-						pageDurationInMilliseconds: 800,
 						captionStartInSeconds: startInSeconds ?? 0,
-						strokeWidth: 8,
-						strokeColor: '#000000',
-						maxLines: defaultMaxLines,
-						fadeInDurationInSeconds: 0,
-						fadeOutDurationInSeconds: 0,
-					},
+						compositionWidth: state.undoableState.compositionWidth,
+						compositionHeight: state.undoableState.compositionHeight,
+					}),
 					select: true,
 					position: {type: 'directly-above', trackIndex: videoTrackIndex},
 				});
 			},
 		});
-	}, [item, setState, compositionWidth, tracks, src, fps, asset]);
+	}, [item, setState, tracks, src, fps, asset]);
 
 	const existingCaptioningTask = captionState.find(
 		(task) => task.assetId === asset.id,

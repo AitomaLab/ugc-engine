@@ -1,8 +1,16 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { NextRequest, NextResponse } from 'next/server';
 
-const MODEL =
-  process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514';
+const MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-5';
+
+// Sonnet 5 runs adaptive thinking when `thinking` is omitted, and thinking
+// shares the max_tokens budget with the AI_EDIT_OPS JSON this route parses out
+// of the reply — a truncated array silently reads as "no ops". Disable it
+// explicitly rather than inheriting that default.
+const REQUEST_DEFAULTS = {
+  max_tokens: 4096,
+  thinking: {type: 'disabled'},
+} as const;
 
 const SYSTEM = `You are a concise assistant for a Remotion-based video editor. You receive a JSON snapshot of the timeline including fps, composition size, duration, tracks, and items (with ids, type, timing, fades, volume and text previews when available). Never invent item IDs — only use ids from CURRENT_TIMELINE_JSON.
 
@@ -165,7 +173,7 @@ ${timelineContext || '{}'}`;
   try {
     const response = await anthropic.messages.create({
       model: MODEL,
-      max_tokens: 4096,
+      ...REQUEST_DEFAULTS,
       system: systemWithTimeline,
       messages: messages.map((m) => ({
         role: m.role,
@@ -185,7 +193,7 @@ ${timelineContext || '{}'}`;
     ) {
       const repair = await anthropic.messages.create({
         model: MODEL,
-        max_tokens: 4096,
+        ...REQUEST_DEFAULTS,
         system: systemWithTimeline,
         messages: [
           ...messages.map((m) => ({
