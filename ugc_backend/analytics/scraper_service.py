@@ -137,6 +137,35 @@ def _coerce_float(v: Any) -> Optional[float]:
         return None
 
 
+# Post-publish date key varies across BrightData datasets/platforms — IG uses
+# `datetime` (the bug: it wasn't checked, so every scraped IG post landed with
+# posted_at=NULL and got windowed by its ingest date). Check the known keys in
+# priority order across the row and any nested meta dict.
+_POSTED_AT_KEYS = (
+    "datetime",
+    "date_posted",
+    "posted_at",
+    "taken_at",
+    "create_time",
+    "create_date",
+    "created_time",
+    "published_at",
+    "timestamp",
+)
+
+
+def _pick_posted_at(*sources: Any) -> Optional[str]:
+    """First present post date across ``_POSTED_AT_KEYS`` over the given dicts."""
+    for src in sources:
+        if not isinstance(src, dict):
+            continue
+        for key in _POSTED_AT_KEYS:
+            val = src.get(key)
+            if val:
+                return val
+    return None
+
+
 # ── Normalization ───────────────────────────────────────────────────────────
 
 def _normalize_tiktok(raw: dict, parsed: ParsedInput) -> dict:
@@ -161,7 +190,7 @@ def _normalize_tiktok(raw: dict, parsed: ParsedInput) -> dict:
         "media_urls": [{"url": raw.get("video_url"), "type": "video"}] if raw.get("video_url") else [],
         "thumbnail_url": raw.get("cover_url") or raw.get("thumbnail") or raw.get("display_url"),
         "duration_seconds": _coerce_float(raw.get("duration") or raw.get("video_duration")),
-        "posted_at": raw.get("created_time") or raw.get("posted_at") or raw.get("date_posted"),
+        "posted_at": _pick_posted_at(raw),
         "views": _coerce_int(
             raw.get("view_count") or raw.get("play_count") or raw.get("playcount")
             or raw.get("video_view_count") or raw.get("plays") or raw.get("views")
@@ -256,7 +285,7 @@ def _normalize_instagram(raw: dict, parsed: ParsedInput) -> dict:
         "media_urls": media_urls,
         "thumbnail_url": thumb_url,
         "duration_seconds": _coerce_float(raw.get("video_duration") or raw.get("duration")),
-        "posted_at": raw.get("date_posted") or raw.get("posted_at") or raw.get("taken_at"),
+        "posted_at": _pick_posted_at(raw),
         # IG view counts are surfaced under at least four different keys
         # depending on whether BrightData scraped the post via the public
         # web (`video_play_count`), the IG private API mirror
@@ -407,7 +436,7 @@ def _explode_tiktok_profile(raw: dict, parsed: ParsedInput) -> list[dict]:
             "media_urls": [],
             "thumbnail_url": v.get("cover_image") or v.get("cover_url"),
             "duration_seconds": None,
-            "posted_at": v.get("create_date") or meta.get("create_time"),
+            "posted_at": _pick_posted_at(v, meta),
             "views": _coerce_int(
                 v.get("playcount") or v.get("play_count")
                 or v.get("view_count") or v.get("views")
@@ -486,8 +515,7 @@ def _explode_instagram_profile(raw: dict, parsed: ParsedInput) -> list[dict]:
             "duration_seconds": _coerce_float(
                 item.get("video_duration") or item.get("duration")
             ),
-            "posted_at": item.get("date_posted") or item.get("posted_at")
-                         or item.get("taken_at") or item.get("create_time"),
+            "posted_at": _pick_posted_at(item),
             # IG profile-dataset post sub-shapes use one of several keys for
             # plays — `video_play_count` is the canonical web shape,
             # `video_view_count` is the IG-private mirror, `play_count` /
@@ -555,7 +583,7 @@ def _normalize_record(raw: dict, parsed: ParsedInput) -> Optional[dict]:
         "media_urls": [{"url": raw.get("video_url"), "type": "video"}] if raw.get("video_url") else [],
         "thumbnail_url": raw.get("thumbnail") or raw.get("display_url"),
         "duration_seconds": _coerce_float(raw.get("duration")),
-        "posted_at": raw.get("published_at") or raw.get("created_time"),
+        "posted_at": _pick_posted_at(raw),
         "views": _coerce_int(raw.get("views") or raw.get("view_count")),
         "likes": _coerce_int(raw.get("likes") or raw.get("like_count")),
         "comments": _coerce_int(raw.get("comments") or raw.get("comment_count")),

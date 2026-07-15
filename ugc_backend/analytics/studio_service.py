@@ -1208,62 +1208,86 @@ async def sync_studio_connections_for_user(
         except Exception as exc:
             logger.warning("[analytics] connected accounts pipeline failed: %s", exc)
 
-    if not profile_key:
-        return counts
-
+    # ── Base scrape targets from tracked accounts (Ayrshare-INDEPENDENT) ──
+    # Scraping a public handle needs nothing from Ayrshare, so seed the target
+    # set from the accounts we already track. This keeps BrightData scraping,
+    # breakdowns, strategy reports and the reflection loop running even when
+    # Ayrshare is down (e.g. an expired plan) — previously the whole function
+    # early-returned on any Ayrshare failure, freezing analytics.
     try:
-        socials_raw = await ayrshare_client.get_user_socials(profile_key)
-    except ayrshare_client.InvalidProfileKey:
-        return counts
+        for acct in analytics_db.list_tracked_accounts(user_id):
+            if acct.get("is_active") is False:
+                continue
+            plat = (acct.get("platform") or "").strip().lower()
+            nick = (acct.get("username") or "").strip().lower().lstrip("@")
+            if plat in ANALYTICS_PLATFORMS and nick:
+                platform_usernames[plat] = nick
     except Exception as exc:
-        logger.warning("[analytics] sync-studio-connections Ayrshare error: %s", exc)
-        return counts
-
-    alive: set[tuple[str, str]] = set()
-    for blob in socials_raw:
-        plat = (blob.get("platform") or "").strip().lower()
-        if plat not in ANALYTICS_PLATFORMS:
-            continue
-        nick = str(blob.get("username") or "").strip().lower().lstrip("@")
-        if nick:
-            alive.add((plat, nick))
-
-    analytics_db.clear_studio_link_flags_missing(user_id, alive)
-
-    settings = analytics_db.get_analytics_settings(user_id)
-    default_freq = settings.get("default_scrape_frequency") or "daily"
-    default_top = int(settings.get("default_top_n") or analytics_db.DEFAULT_TOP_N)
-
-    tracked_linked = 0
-    for blob in socials_raw:
-        plat = (blob.get("platform") or "").strip().lower()
-        if plat not in ANALYTICS_PLATFORMS:
-            continue
-        username = str(blob.get("username") or "").strip().lower().lstrip("@")
-        if not username:
-            continue
-
-        extras: dict = {"linked_via_connections": True}
-        pic = blob.get("profilePic")
-        if pic:
-            extras["avatar_url"] = scraper_service.mirror_avatar_to_storage(
-                image_url=str(pic)[:8000],
-                user_id=user_id,
-                slug=f"{plat}_{username}",
-            ) or str(pic)[:8000]
-
-        pre = analytics_db.get_tracked_account_by_slug(user_id, platform=plat, username=username)
-        if pre is None:
-            extras.setdefault("scrape_frequency", default_freq)
-            extras.setdefault("top_n_retention", default_top)
-            extras.setdefault("is_active", True)
-
-        analytics_db.upsert_tracked_account(
-            user_id, platform=plat, username=username, extras=extras,
+        logger.warning(
+            "[analytics] tracked-account enumerate failed for %s: %s", user_id, exc
         )
-        tracked_linked += 1
 
-    if tracked_linked:
+    # ── Best-effort Ayrshare enrichment (never aborts the scrape) ──
+    # Adds newly OAuth-linked handles, avatars, and clears stale link flags.
+    alive: set[tuple[str, str]] = set()
+    tracked_linked = 0
+    if profile_key:
+        try:
+            socials_raw = await ayrshare_client.get_user_socials(profile_key)
+        except Exception as exc:
+            logger.warning(
+                "[analytics] Ayrshare enrichment unavailable for %s: %s", user_id, exc
+            )
+            socials_raw = []
+
+        for blob in socials_raw:
+            plat = (blob.get("platform") or "").strip().lower()
+            if plat not in ANALYTICS_PLATFORMS:
+                continue
+            nick = str(blob.get("username") or "").strip().lower().lstrip("@")
+            if nick:
+                alive.add((plat, nick))
+
+        if socials_raw:
+            analytics_db.clear_studio_link_flags_missing(user_id, alive)
+
+        settings = analytics_db.get_analytics_settings(user_id)
+        default_freq = settings.get("default_scrape_frequency") or "daily"
+        default_top = int(settings.get("default_top_n") or analytics_db.DEFAULT_TOP_N)
+
+        for blob in socials_raw:
+            plat = (blob.get("platform") or "").strip().lower()
+            if plat not in ANALYTICS_PLATFORMS:
+                continue
+            username = str(blob.get("username") or "").strip().lower().lstrip("@")
+            if not username:
+                continue
+
+            extras: dict = {"linked_via_connections": True}
+            pic = blob.get("profilePic")
+            if pic:
+                extras["avatar_url"] = scraper_service.mirror_avatar_to_storage(
+                    image_url=str(pic)[:8000],
+                    user_id=user_id,
+                    slug=f"{plat}_{username}",
+                ) or str(pic)[:8000]
+
+            pre = analytics_db.get_tracked_account_by_slug(user_id, platform=plat, username=username)
+            if pre is None:
+                extras.setdefault("scrape_frequency", default_freq)
+                extras.setdefault("top_n_retention", default_top)
+                extras.setdefault("is_active", True)
+
+            analytics_db.upsert_tracked_account(
+                user_id, platform=plat, username=username, extras=extras,
+            )
+            tracked_linked += 1
+
+        # Merge Ayrshare-discovered handles into the scrape target set.
+        for plat, nick in alive:
+            platform_usernames[plat] = nick
+
+    if platform_usernames:
         # Best-effort: seed /memories/creative_guidelines.md +
         # account_profile.md when absent (never overwrites existing rows).
         try:
@@ -1275,15 +1299,19 @@ async def sync_studio_connections_for_user(
                 "[analytics] memory bootstrap failed for %s: %s", user_id, exc,
             )
 
-    for plat, nick in alive:
-        platform_usernames[plat] = nick
-
     counts["linked_profiles"] = len(alive)
     counts["tracked_rows_linked"] = tracked_linked
+
+    # Pipeline + scrape run regardless of Ayrshare state.
     await _finish_pipeline()
     counts["scrape_jobs_enqueued"] = enqueue_auto_analyze_linked_accounts(
         user_id, profile_key, platform_usernames,
     )
+    # Advance the "Metrics as of" label whenever a refresh cycle actually
+    # kicks off — independent of the Ayrshare branch (studio_service:906).
+    if counts["scrape_jobs_enqueued"] or platform_usernames:
+        analytics_db.touch_metrics_refreshed(user_id)
+
     return counts
 
 
