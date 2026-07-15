@@ -1367,6 +1367,7 @@
   "analytics.dashboard.received.views": "views",
   "analytics.dashboard.received.engagement": "engagement",
   "analytics.dashboard.received.collecting": "Collecting engagement-over-time data — available in a few days.",
+  "analytics.dashboard.received.since": "since {date}",
   "analytics.dashboard.kpi.engagementBenchmark": "Healthy ≥ 5%",
   "analytics.dashboard.growth.label": "Trend",
   "analytics.dashboard.growth.title": "Daily Trend",

@@ -88,6 +88,8 @@ confirm them in the JSON.
      what's *currently* getting traction. **Only trust this when
      `has_history: true`** — until then (`has_history: false`, snapshots still
      accruing) ignore it; never infer received-traction from other fields.
+     When `partial_window: true`, the span is shorter than 30 days — cite it
+     as "since <measured_since date>", never as "in the last 30 days".
 3. **`/memories/analytics_strategy.md`** (RICH SOURCE) — the latest "Do More /
    Do Less" prose report, with this account's top/bottom performers and the
    ER figures behind them. Read-only. This is a legitimate source of

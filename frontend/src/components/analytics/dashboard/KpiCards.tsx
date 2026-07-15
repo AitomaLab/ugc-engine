@@ -92,6 +92,12 @@ function ReceivedStrip({ stats }: { stats: AnalyticsStats }) {
     const rv = stats.received_views ?? 0;
     const re = stats.received_engagement ?? 0;
     const collecting = !stats.received_has_history;
+    const sinceLabel = stats.received_partial && stats.received_since
+        ? t('analytics.dashboard.received.since').replace(
+            '{date}',
+            new Date(stats.received_since).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+        )
+        : null;
 
     return (
         <div
@@ -121,6 +127,11 @@ function ReceivedStrip({ stats }: { stats: AnalyticsStats }) {
                     <span style={{ color: '#CBD5E1', margin: '0 8px' }}>·</span>
                     <strong style={{ color: '#059669' }}>+{formatCount(re)}</strong>{' '}
                     {t('analytics.dashboard.received.engagement')}
+                    {sinceLabel && (
+                        <span style={{ color: '#94A3B8', marginLeft: 8, fontSize: 12 }}>
+                            {sinceLabel}
+                        </span>
+                    )}
                 </span>
             )}
         </div>

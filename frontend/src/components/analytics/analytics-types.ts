@@ -314,6 +314,8 @@ export interface AnalyticsStats {
     received_engagement?: number;
     received_has_history?: boolean;
     received_posts_pending?: number;
+    received_partial?: boolean;
+    received_since?: string | null;
 }
 
 export interface CumulativePoint {

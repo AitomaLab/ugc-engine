@@ -1367,6 +1367,7 @@
   "analytics.dashboard.received.views": "visualizaciones",
   "analytics.dashboard.received.engagement": "interacciones",
   "analytics.dashboard.received.collecting": "Recopilando datos de evolución — disponible en unos días.",
+  "analytics.dashboard.received.since": "desde {date}",
   "analytics.dashboard.kpi.engagementBenchmark": "Saludable ≥ 5%",
   "analytics.dashboard.growth.label": "Tendencia",
   "analytics.dashboard.growth.title": "Tendencia diaria",

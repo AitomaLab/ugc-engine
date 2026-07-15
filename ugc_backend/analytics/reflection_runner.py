@@ -508,6 +508,8 @@ def build_received_block(
     return {
         "period_days": period_days,
         "has_history": rm.get("has_history", False),
+        "partial_window": rm.get("partial_window", False),
+        "measured_since": rm.get("measured_since"),
         "posts_measured": rm.get("posts_measured", 0),
         "posts_pending": rm.get("posts_pending", 0),
         "totals": rm.get("totals", {"views_received": 0, "engagement_received": 0}),

@@ -1199,6 +1199,8 @@ def api_stats(
         received_engagement=int(received.get("totals", {}).get("engagement_received") or 0),
         received_has_history=bool(received.get("has_history")),
         received_posts_pending=int(received.get("posts_pending") or 0),
+        received_partial=bool(received.get("partial_window")),
+        received_since=received.get("measured_since"),
     )
 
 

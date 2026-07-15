@@ -320,6 +320,10 @@ class StatsResponse(BaseModel):
     received_engagement: int = 0
     received_has_history: bool = False
     received_posts_pending: int = 0
+    # True when snapshot history doesn't span the full window yet — deltas are
+    # measured from `received_since` (ISO) instead of the window start.
+    received_partial: bool = False
+    received_since: Optional[str] = None
 
 
 class CumulativePoint(BaseModel):

@@ -2278,18 +2278,48 @@ def _baseline_snapshots(user_id: str, cutoff_iso: str) -> dict[str, dict]:
     return baseline
 
 
+def _earliest_snapshots(user_id: str) -> dict[str, dict]:
+    """{analytics_post_id: EARLIEST snapshot} — the partial-window fallback
+    baseline for posts whose history doesn't span the requested period yet."""
+    sb = get_supabase()
+    try:
+        rows = (
+            sb.table(_SNAPSHOT_TABLE)
+            .select("analytics_post_id,views,total_engagement,captured_at,captured_date")
+            .eq("user_id", user_id)
+            .order("captured_at", desc=False)
+            .limit(5000)
+            .execute()
+        ).data or []
+    except Exception as exc:
+        if not _snapshot_table_missing(exc):
+            logger.warning("[analytics] earliest snapshot fetch failed: %s", exc)
+        return {}
+    earliest: dict[str, dict] = {}
+    for r in rows:  # asc order → first seen per post is the earliest
+        pid = str(r.get("analytics_post_id") or "")
+        if pid and pid not in earliest:
+            earliest[pid] = r
+    return earliest
+
+
 def period_received_metrics(user_id: str, period_days: int) -> dict:
     """Engagement / views RECEIVED in the last ``period_days``.
 
-    Per post: ``current − baseline`` where baseline is the snapshot at or
-    before ``now − period_days`` (clamped at 0 to ignore metric corrections).
-    Posts with no baseline snapshot yet don't contribute and are counted under
-    ``posts_pending`` so the UI can show a "collecting data" state until
-    history exists. Returns totals + per-post + per-account deltas.
+    Per post: ``current − baseline`` (clamped at 0 to ignore metric
+    corrections). Baseline is the snapshot at or before ``now − period_days``
+    when history spans the window; otherwise the EARLIEST snapshot — but only
+    if it's from a previous UTC day (a same-day baseline would just measure
+    zeros). ``partial_window``/``measured_since`` report the actual span so
+    the UI can say "since <date>" instead of over-claiming the full period.
+    Posts with no usable baseline count under ``posts_pending`` ("collecting
+    data" state). Returns totals + per-post + per-account deltas.
     """
     now = datetime.now(timezone.utc)
     cutoff_iso = (now - timedelta(days=period_days)).isoformat()
+    today_utc = now.date().isoformat()
     baseline = _baseline_snapshots(user_id, cutoff_iso)
+    earliest = _earliest_snapshots(user_id)
 
     sb = get_supabase()
     current = (
@@ -2304,12 +2334,26 @@ def period_received_metrics(user_id: str, period_days: int) -> dict:
     by_account: dict[str, dict] = {}
     tot_v = tot_e = 0
     pending = 0
+    partial = False
+    measured_since: Optional[str] = None
     for p in current:
         pid = str(p.get("id") or "")
         base = baseline.get(pid)
         if not base:
-            pending += 1
-            continue
+            # Partial-window fallback: earliest snapshot, if from a prior day.
+            cand = earliest.get(pid)
+            cand_date = str((cand or {}).get("captured_date") or "")[:10] or str(
+                (cand or {}).get("captured_at") or ""
+            )[:10]
+            if cand and cand_date and cand_date < today_utc:
+                base = cand
+                partial = True
+            else:
+                pending += 1
+                continue
+        base_at = str(base.get("captured_at") or "")
+        if base_at and (measured_since is None or base_at < measured_since):
+            measured_since = base_at
         dv = max(0, int(p.get("views") or 0) - int(base.get("views") or 0))
         de = max(0, int(p.get("total_engagement") or 0) - int(base.get("total_engagement") or 0))
         by_post[pid] = {"views_received": dv, "engagement_received": de}
@@ -2324,7 +2368,9 @@ def period_received_metrics(user_id: str, period_days: int) -> dict:
 
     return {
         "period_days": period_days,
-        "has_history": bool(baseline),
+        "has_history": bool(by_post),
+        "partial_window": partial,
+        "measured_since": measured_since,
         "posts_measured": len(by_post),
         "posts_pending": pending,
         "totals": {"views_received": tot_v, "engagement_received": tot_e},
