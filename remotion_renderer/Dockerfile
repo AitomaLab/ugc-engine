@@ -37,8 +37,12 @@ RUN npm install
 COPY . .
 
 # Pre-download Chrome Headless Shell at build time (not at runtime)
-# This prevents the 108MB download during rendering and saves memory
-RUN npx remotion browser ensure
+# This prevents the 108MB download during rendering and saves memory.
+# Not `npx remotion browser ensure`: the `remotion` package ships no bin (the CLI
+# is @remotion/cli, which isn't a dependency), so npx exits "could not determine
+# executable to run" and fails the build. @remotion/renderer is a dependency and
+# exposes the same thing programmatically.
+RUN node -e "require('@remotion/renderer').ensureBrowser().then(()=>console.log('[browser] ensured')).catch(e=>{console.error(e);process.exit(1)})"
 
 # Expose the port (Railway will inject PORT env var)
 EXPOSE 8090

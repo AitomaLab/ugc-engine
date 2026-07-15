@@ -171,7 +171,7 @@ From the project root:
 modal deploy modal_worker.py
 ```
 
-> **Important:** `modal deploy` is required after **every** change to worker pipeline code (`core_engine.py`, `generate_scenes.py`, `scene_builder.py`, `ugc_worker/`). A git push alone does **not** update the Modal image — Python sources are bundled at deploy time via `add_local_python_source`.
+> **Important:** `modal deploy` is required after **every** change to worker pipeline code (`core_engine.py`, `generate_scenes.py`, `scene_builder.py`, `ugc_worker/`) **and to the editor-render surface** (`remotion_renderer/`, `frontend/src/{editor,remotion,lib,components}`, `modal_worker.py` — the editor bundle is built into the image). A git push alone does **not** update the Modal image — sources are bundled at deploy time.
 
 This will print a webhook URL like:
 ```

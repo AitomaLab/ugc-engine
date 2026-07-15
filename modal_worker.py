@@ -86,7 +86,12 @@ worker_image = (
         " && npm i -g pnpm@10"
         " && cd /root/frontend && pnpm install --frozen-lockfile --ignore-scripts"
         " && cd /root/remotion_renderer && FRONTEND_SRC=/root/frontend node build-editor-bundle.js"
-        " && npx remotion browser ensure"
+        # Pre-download Chrome at build time so it isn't fetched (~108MB) per cold
+        # render. Not `npx remotion browser ensure`: the `remotion` package ships no
+        # bin — that CLI lives in @remotion/cli, which isn't a dependency here — so
+        # npx exits "could not determine executable to run". @remotion/renderer is a
+        # dependency and exposes the same thing programmatically.
+        ' && node -e "require(\'@remotion/renderer\').ensureBrowser().then(()=>console.log(\'[browser] ensured\')).catch(e=>{console.error(e);process.exit(1)})"'
         " && rm -rf /root/frontend/node_modules /root/frontend/src",
     )
     # Root-level Python modules the pipeline needs
