@@ -36,7 +36,7 @@ export async function editorFetchUploadUrl(body: {
  */
 export async function editorFetchCaptions(body: {
 	fileKey: string;
-	language?: string;
+	jobId?: string;
 }): Promise<Response> {
 	const API_URL = getApiUrl();
 	const { supabase } = await import('@/lib/supabaseClient');

@@ -10,6 +10,7 @@ import {TrackType} from '../state/types';
 import {editorFetchRender, editorFetchProgress} from '../utils/editor-api';
 import {getEditorExportFileName} from '../utils/export-file-name';
 import {generateRandomId} from '../utils/generate-random-id';
+import {getJobIdFromUrl} from '../utils/job-id-from-url';
 import {CodecOption} from './codec-selector';
 import {
 	GetProgressPayload,
@@ -176,9 +177,7 @@ export const triggerLambdaRender = async ({
 		});
 		taskIndicatorRef.current?.open();
 
-		// Aitoma: Extract job_id from the editor URL path (/editor/[jobId])
-		const pathParts = window.location.pathname.split('/');
-		const jobIdFromUrl = pathParts[pathParts.indexOf('editor') + 1] || '';
+		const jobIdFromUrl = getJobIdFromUrl();
 
 		const body: RenderVideoPayload = {
 			compositionHeight,

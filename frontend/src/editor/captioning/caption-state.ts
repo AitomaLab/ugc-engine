@@ -9,6 +9,7 @@ import {
 } from '../state/actions/set-caption-state';
 import {editorFetchUploadUrl, editorFetchCaptions} from '../utils/editor-api';
 import {generateRandomId} from '../utils/generate-random-id';
+import {getJobIdFromUrl} from '../utils/job-id-from-url';
 import {uploadWithProgress} from '../utils/upload';
 import {extractAudio} from './audio-buffer-to-wav';
 import {GetCaptionsResponse} from './types';
@@ -134,9 +135,11 @@ export const getCaptions = async ({
 			},
 		});
 
-		// Request captions using the file key
+		// Request captions using the file key. jobId lets the backend bias Whisper
+		// with the job's known script and language — without it, accuracy drops.
 		const res = await editorFetchCaptions({
 			fileKey: presignData.fileKey,
+			jobId: getJobIdFromUrl() || undefined,
 		});
 		if (!res.ok) {
 			throw new Error('Failed to get captions');

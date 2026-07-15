@@ -238,8 +238,9 @@ def _build_editor_state(job: dict) -> dict:
                 start = float(getattr(word_data, "start", 0))
                 end = float(getattr(word_data, "end", 0))
 
-            # Ensure each word has proper spacing (Whisper includes leading space)
-            # Strip and re-add a single trailing space for clean rendering
+            # The LEADING space is load-bearing: Remotion's createTikTokStyleCaptions
+            # only starts a new caption page on a token where text.startsWith(' ').
+            # A trailing space instead collapses the whole transcript into one page.
             word = word.strip()
             if not word:
                 continue
@@ -659,6 +660,30 @@ def _save_transcription(
 
 class CaptionsRequest(BaseModel):
     fileKey: str
+    jobId: Optional[str] = None
+
+
+def _caption_hints_for_job(job_id: Optional[str], user: dict) -> tuple[Optional[str], Optional[str]]:
+    """Whisper (script_prompt, language) for a job the caller owns.
+
+    Both None when there's no job id, no such job, or it belongs to someone
+    else — the caller then transcribes without hints rather than failing.
+    """
+    if not job_id:
+        return None, None
+    try:
+        job, _table = _get_job_any(job_id)
+        if not job or str(job.get("user_id")) != str(user["id"]):
+            return None, None
+        metadata = job.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        script_prompt = _script_prompt_from_job(job, metadata)
+        return script_prompt, _resolve_caption_language(job, metadata, script_prompt)
+    except Exception as e:
+        print(f"[EDITOR] Caption hints unavailable for {job_id} (non-fatal): {e}")
+        return None, None
+
 
 @router.post("/captions")
 def generate_captions(req: CaptionsRequest, user: dict = Depends(get_current_user)):
@@ -683,14 +708,23 @@ def generate_captions(req: CaptionsRequest, user: dict = Depends(get_current_use
             response.raise_for_status()
             audio_path.write_bytes(response.content)
 
-            # Transcribe with Whisper
+            # Transcribe with Whisper. When the editor tells us which job this
+            # audio belongs to, bias decoding with the known script and force the
+            # language — same hints the agent's caption-video path uses.
+            script_prompt, language = _caption_hints_for_job(req.jobId, user)
             client = TranscriptionClient()
-            transcription = client.transcribe_audio(str(audio_path))
+            transcription = client.transcribe_audio(
+                str(audio_path),
+                script_prompt=script_prompt,
+                language=language,
+            )
 
             if not transcription or not transcription.get("words"):
                 return {"captions": []}
 
-            # Convert Whisper output to the format the editor expects
+            # Convert Whisper output to the format the editor expects.
+            # Note the LEADING space on `text` — Remotion's createTikTokStyleCaptions
+            # only breaks a caption page on a token where text.startsWith(' ').
             captions = []
             for w in transcription["words"]:
                 if isinstance(w, dict):
@@ -706,7 +740,7 @@ def generate_captions(req: CaptionsRequest, user: dict = Depends(get_current_use
                 if not stripped:
                     continue
                 captions.append({
-                    "text": stripped + " ",
+                    "text": " " + stripped,
                     "startMs": round(start * 1000),
                     "endMs": round(end * 1000),
                     "timestampMs": round(start * 1000),
