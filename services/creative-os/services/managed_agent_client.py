@@ -8491,6 +8491,20 @@ async def _tool_list_caption_styles(ctx: ToolContext, **kwargs: Any) -> str:
     })
 
 
+def _caption_facts(caption_result: dict) -> dict:
+    """Pick the caption facts that are safe to hand back to the model.
+
+    Deliberately drops `burned_video_url` and `burn_error`: those describe which
+    *renderer* ran, not whether captioning worked. Passing them through made the
+    agent read a successful Remotion render as a failure and retry it.
+    """
+    return {
+        k: caption_result[k]
+        for k in ("word_count", "duration_seconds", "style", "placement", "stroke_mode")
+        if k in caption_result
+    }
+
+
 async def _tool_caption_video(ctx: ToolContext, **kwargs: Any) -> str:
     """Add captions via server-side Whisper, then re-render so the job's
     final_video_url reflects the burned-in captions.
@@ -8532,7 +8546,7 @@ async def _tool_caption_video(ctx: ToolContext, **kwargs: Any) -> str:
         print(f"[caption_video] Fast burn complete — video URL: {burned_url}")
         _record_artifact(ctx, {"type": "video", "url": burned_url, "job_id": job_id})
         return json.dumps({
-            **caption_result,
+            **_caption_facts(caption_result),
             "status": "success",
             "video_url": burned_url,
         })
@@ -8547,7 +8561,7 @@ async def _tool_caption_video(ctx: ToolContext, **kwargs: Any) -> str:
     except Exception as e:
         print(f"[caption_video] editor_state load FAILED: {e}")
         return json.dumps({
-            **caption_result,
+            **_caption_facts(caption_result),
             "status": "captions_saved_render_skipped",
             "warning": f"editor_state load failed — captions saved but not rendered: {e}",
         })
@@ -8560,7 +8574,7 @@ async def _tool_caption_video(ctx: ToolContext, **kwargs: Any) -> str:
     except Exception as e:
         print(f"[caption_video] Render dispatch FAILED: {e}")
         return json.dumps({
-            **caption_result,
+            **_caption_facts(caption_result),
             "status": "captions_saved_render_skipped",
             "warning": f"render dispatch failed: {e}",
         })
@@ -8569,24 +8583,39 @@ async def _tool_caption_video(ctx: ToolContext, **kwargs: Any) -> str:
     if not render_id:
         print(f"[caption_video] No renderId in response — skipping render")
         return json.dumps({
-            **caption_result,
+            **_caption_facts(caption_result),
             "status": "captions_saved_render_skipped",
             "warning": "render dispatched but no renderId returned",
-            "raw": render_dispatch,
         })
 
     print(f"[caption_video] Polling render {render_id} (max 180s, every 4s)...")
     waited = 0
     max_wait_s = 180
     poll_interval_s = 4
+    # A poll that keeps raising is not "slow progress" — an expired/revoked user
+    # JWT 401s identically every time. Bail out instead of riding the full 180s
+    # and then telling the user it's still processing.
+    consecutive_errors = 0
+    max_consecutive_errors = 3
     progress_payload: dict | None = None
     while waited < max_wait_s:
         await asyncio.sleep(poll_interval_s)
         waited += poll_interval_s
         try:
             progress_payload = await ctx.core().get_editor_render_progress(render_id)
+            consecutive_errors = 0
         except Exception as e:
-            print(f"[caption_video] render poll error @{waited}s (retrying): {e}")
+            consecutive_errors += 1
+            print(f"[caption_video] render poll error @{waited}s "
+                  f"({consecutive_errors}/{max_consecutive_errors}): {e}")
+            if consecutive_errors >= max_consecutive_errors:
+                print(f"[caption_video] Poll failing repeatedly — giving up")
+                return json.dumps({
+                    **_caption_facts(caption_result),
+                    "status": "captions_saved_render_failed",
+                    "render_id": render_id,
+                    "error": f"Could not read render progress: {e}",
+                })
             continue
         ptype = progress_payload.get("type")
         progress_pct = progress_payload.get("progress", "?")
@@ -8605,7 +8634,7 @@ async def _tool_caption_video(ctx: ToolContext, **kwargs: Any) -> str:
                     print(f"[caption_video] final_video_url persist failed (non-fatal): {e}")
                 _record_artifact(ctx, {"type": "video", "url": new_url, "job_id": job_id})
             return json.dumps({
-                **caption_result,
+                **_caption_facts(caption_result),
                 "status": "success",
                 "render_id": render_id,
                 "video_url": new_url,
@@ -8613,7 +8642,7 @@ async def _tool_caption_video(ctx: ToolContext, **kwargs: Any) -> str:
         if ptype == "error":
             print(f"[caption_video] Render FAILED: {progress_payload.get('error')}")
             return json.dumps({
-                **caption_result,
+                **_caption_facts(caption_result),
                 "status": "captions_saved_render_failed",
                 "render_id": render_id,
                 "error": progress_payload.get("error", "render failed"),
@@ -8621,7 +8650,7 @@ async def _tool_caption_video(ctx: ToolContext, **kwargs: Any) -> str:
 
     print(f"[caption_video] Render TIMED OUT after {max_wait_s}s — returning partial result")
     return json.dumps({
-        **caption_result,
+        **_caption_facts(caption_result),
         "status": "captions_saved_render_still_processing",
         "render_id": render_id,
         "warning": "Render is still processing — the captioned video will appear in the Videos tab automatically when it finishes.",

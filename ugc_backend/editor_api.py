@@ -795,17 +795,39 @@ def _generate_ass_subtitles(
     placement: str,
     width: int = 1080,
     height: int = 1920,
+    stroke_mode: str = "solid",
+    shadow_color: Optional[str] = None,
+    shadow_blur: int = 8,
 ) -> str:
     """Generate ASS subtitle content from word-level caption data with
-    word-level highlighting (current word in highlight color)."""
+    word-level highlighting (current word in highlight color).
 
-    font_family = style_props.get("fontFamily", "Anton")
+    PlayResX/PlayResY are set to the real video dimensions and
+    ScaledBorderAndShadow is on, so fontSize/strokeWidth are applied in source
+    pixels — no manual scaling needed.
+    """
+
+    # fontFamily is a CSS stack ("Anton, Impact, sans-serif"); libass matches a
+    # single family name, so take the first and let fontsdir resolve it.
+    font_family = str(style_props.get("fontFamily", "Anton")).split(",")[0].strip().strip("'\"")
     font_size = style_props.get("fontSize", 72)
     primary_color = _hex_to_ass_color(style_props.get("color", "#FFFFFF"))
     highlight_color = _hex_to_ass_color(style_props.get("highlightColor", "#FFFF00"))
     outline_color = _hex_to_ass_color(style_props.get("strokeColor", "#000000"))
     outline_width = style_props.get("strokeWidth", 8)
     max_lines = style_props.get("maxLines", 2)
+
+    # stroke_mode -> ASS border/shadow. "solid" is a plain outline; "shadow"
+    # drops an offset shadow in shadow_color; "glow" blurs the outline out into
+    # a halo (inline \blur, since the Style block has no blur column).
+    back_color = _hex_to_ass_color(shadow_color or style_props.get("strokeColor", "#000000"))
+    shadow_depth = 0
+    inline_prefix = ""
+    if stroke_mode == "shadow":
+        shadow_depth = max(1, int(shadow_blur / 2))
+    elif stroke_mode == "glow":
+        outline_color = back_color
+        inline_prefix = f"{{\\blur{max(1, int(shadow_blur))}}}"
 
     # Placement -> ASS alignment (numpad: 2=bottom, 5=middle, 8=top)
     alignment_map = {"bottom": 2, "middle": 5, "top": 8}
@@ -843,8 +865,8 @@ def _generate_ass_subtitles(
         "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
         f"Style: Default,{font_family},{font_size},{primary_color},"
-        f"{highlight_color},{outline_color},&H00000000&,"
-        f"1,0,0,0,100,100,0,0,1,{outline_width},0,"
+        f"{highlight_color},{outline_color},{back_color},"
+        f"1,0,0,0,100,100,0,0,1,{outline_width},{shadow_depth},"
         f"{alignment},40,40,{margin_v},1\n"
         "\n"
         "[Events]\n"
@@ -893,7 +915,7 @@ def _generate_ass_subtitles(
             start_t = _ms_to_ass_time(word_start)
             end_t = _ms_to_ass_time(word_end)
             events.append(
-                f"Dialogue: 0,{start_t},{end_t},Default,,0,0,0,,{line_text}"
+                f"Dialogue: 0,{start_t},{end_t},Default,,0,0,0,,{inline_prefix}{line_text}"
             )
 
     return header + "\n".join(events) + "\n"
@@ -942,39 +964,53 @@ def _probe_local_video_dimensions(video_path: Path, ffmpeg_path: str) -> tuple[i
     return width, height
 
 
+def _subtitles_filter_available(ffmpeg_path: str) -> bool:
+    """True if this ffmpeg build has libass (the `subtitles` filter).
+
+    imageio-ffmpeg's bundled binaries ship without libass, so the burn has to
+    check rather than assume — otherwise it shells out to a command that can
+    never work and the caller silently falls back to a slow Remotion render.
+    """
+    try:
+        probe = subprocess.run(
+            [ffmpeg_path, "-hide_banner", "-filters"],
+            capture_output=True, text=True, timeout=15,
+        )
+        return re.search(r"^\s*\S*\s+subtitles\s", probe.stdout or "", re.MULTILINE) is not None
+    except Exception:
+        return False
+
+
 def _ffmpeg_burn_captions(
     video_url: str,
     captions: list[dict],
     style_props: dict,
     placement: str,
     job_id: str,
+    stroke_mode: str = "solid",
+    shadow_color: Optional[str] = None,
+    shadow_blur: int = 8,
 ) -> tuple[Optional[str], Optional[str]]:
-    """Download video, render caption overlay PNGs with Pillow, burn with
-    ffmpeg overlay filter. Works with any ffmpeg (no libass required).
-    Returns (public_url, error_message)."""
+    """Download video, burn word-timed captions with libass, upload the result.
+
+    Returns (public_url, error_message). A None url means "fall back to the
+    Remotion render", so every failure path returns an error string rather
+    than raising.
+    """
     import requests as req_lib
     from datetime import datetime as _dt
-
-    try:
-        from PIL import Image, ImageDraw, ImageFont
-    except ImportError:
-        print("[CAPTION BURN] Pillow not installed — skipping ffmpeg burn")
-        return None, "Pillow not installed"
 
     ffmpeg_path = _ffmpeg_binary()
     if not ffmpeg_path:
         print("[CAPTION BURN] ffmpeg not found — skipping ffmpeg burn")
         return None, "ffmpeg not found (install ffmpeg or imageio-ffmpeg)"
 
-    # ── Resolve bundled font directory ──
-    _fonts_dir = Path(__file__).parent / "fonts"
+    if not _subtitles_filter_available(ffmpeg_path):
+        print("[CAPTION BURN] ffmpeg has no libass/subtitles filter — skipping ffmpeg burn")
+        return None, "libass unavailable (ffmpeg built without the subtitles filter)"
 
-    # Map font family names to bundled .ttf files
-    _FONT_MAP = {
-        "Anton": _fonts_dir / "Anton-Regular.ttf",
-        "Bebas Neue": _fonts_dir / "BebasNeue-Regular.ttf",
-        "Inter": _fonts_dir / "Inter.ttf",
-    }
+    if not captions:
+        return None, "No captions to burn"
 
     with tempfile.TemporaryDirectory() as tmpdir:
         try:
@@ -985,211 +1021,67 @@ def _ffmpeg_burn_captions(
             resp.raise_for_status()
             video_path.write_bytes(resp.content)
 
-            # 2. Probe video dimensions
+            # 2. Probe dimensions — ASS PlayResX/Y must match the real frame so
+            #    fontSize/strokeWidth land at their intended pixel size.
             probe_width, probe_height = _probe_local_video_dimensions(video_path, ffmpeg_path)
-
             print(f"[CAPTION BURN] Video: {probe_width}x{probe_height}")
 
-            # 3. Load font — prioritize bundled fonts, fallback to system
-            font_family = style_props.get("fontFamily", "Anton")
-            font_size = style_props.get("fontSize", 72)
-            # Scale font relative to 1080-width reference
-            font_scale = probe_width / 1080.0
-            scaled_font_size = int(font_size * font_scale)
+            # 3. Build the ASS subtitle file
+            ass_content = _generate_ass_subtitles(
+                captions=captions,
+                style_props=style_props,
+                placement=placement,
+                width=probe_width,
+                height=probe_height,
+                stroke_mode=stroke_mode,
+                shadow_color=shadow_color,
+                shadow_blur=shadow_blur,
+            )
+            ass_path = Path(tmpdir) / "captions.ass"
+            ass_path.write_text(ass_content, encoding="utf-8")
+            print(f"[CAPTION BURN] ASS written ({len(ass_content)} bytes, {len(captions)} words)")
 
-            # Try bundled font first
-            font = None
-            # Extract first font name from CSS font stack (e.g. "Anton, Impact, ...")
-            primary_font = font_family.split(",")[0].strip().strip("'\"")
-            bundled_path = _FONT_MAP.get(primary_font)
-            if bundled_path and bundled_path.exists():
-                try:
-                    font = ImageFont.truetype(str(bundled_path), scaled_font_size)
-                    print(f"[CAPTION BURN] Loaded bundled font: {primary_font}")
-                except Exception:
-                    pass
+            # 4. libass resolves fonts by family name via fontconfig, which does
+            #    not know about our bundled .ttf files. Copy them next to the
+            #    .ass and point fontsdir at them, or every style silently renders
+            #    in a fallback font.
+            bundled_fonts = Path(__file__).parent / "fonts"
+            local_fonts = Path(tmpdir) / "fonts"
+            try:
+                shutil.copytree(str(bundled_fonts), str(local_fonts))
+            except Exception as font_err:
+                local_fonts.mkdir(exist_ok=True)
+                print(f"[CAPTION BURN] WARNING: bundled fonts unavailable ({font_err}) — "
+                      f"libass will fall back to a system font")
 
-            # Fallback to system fonts
-            if font is None:
-                for fp in [
-                    f"/System/Library/Fonts/{primary_font}.ttf",
-                    f"/System/Library/Fonts/Supplemental/{primary_font}.ttf",
-                    f"/usr/share/fonts/truetype/{primary_font.lower()}/{primary_font}-Regular.ttf",
-                    "/System/Library/Fonts/Helvetica.ttc",
-                ]:
-                    try:
-                        font = ImageFont.truetype(fp, scaled_font_size)
-                        print(f"[CAPTION BURN] Loaded system font: {fp}")
-                        break
-                    except (IOError, OSError):
-                        continue
-
-            if font is None:
-                font = ImageFont.load_default()
-                print("[CAPTION BURN] WARNING: Using default font (caption styling will differ)")
-
-            # 4. Parse colors
-            def _hex_to_rgb(h: str) -> tuple:
-                h = h.lstrip("#")
-                if len(h) == 6:
-                    return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
-                return (255, 255, 255)
-
-            primary_rgb = _hex_to_rgb(style_props.get("color", "#FFFFFF"))
-            highlight_rgb = _hex_to_rgb(style_props.get("highlightColor", "#FFFF00"))
-            stroke_rgb = _hex_to_rgb(style_props.get("strokeColor", "#000000"))
-            stroke_width_px = max(1, int(style_props.get("strokeWidth", 8) * font_scale))
-            max_lines = style_props.get("maxLines", 2)
-            uppercase = style_props.get("uppercase", True)
-
-            # 5. Placement -> vertical position ratio
-            placement_y = {"top": 0.10, "middle": 0.45, "bottom": 0.78}
-            y_ratio = placement_y.get(placement, 0.45)
-
-            # 6. Group captions into pages and render overlay PNGs
-            words_per_page = max(max_lines * 3, 3)
-            pages = _group_captions_into_pages(captions, max_words_per_page=words_per_page)
-
-            overlay_segments = []  # list of (png_path, start_s, end_s)
-
-            for page_idx, page in enumerate(pages):
-                if not page:
-                    continue
-
-                for word_idx, word_cap in enumerate(page):
-                    word_start_s = word_cap["startMs"] / 1000.0
-                    word_end_s = (page[word_idx + 1]["startMs"] / 1000.0
-                                  if word_idx + 1 < len(page)
-                                  else page[-1]["endMs"] / 1000.0)
-                    if word_end_s <= word_start_s:
-                        word_end_s = word_start_s + 0.1
-
-                    # Render transparent PNG for this time slice
-                    img = Image.new("RGBA", (probe_width, probe_height), (0, 0, 0, 0))
-                    draw = ImageDraw.Draw(img)
-
-                    # Build page text
-                    page_words = []
-                    for w in page:
-                        txt = w["text"].strip()
-                        if uppercase:
-                            txt = txt.upper()
-                        if txt:
-                            page_words.append(txt)
-                    if not page_words:
-                        continue
-
-                    # Split into lines at midpoint for multi-line
-                    if max_lines >= 2 and len(page_words) >= 4:
-                        mid = len(page_words) // 2
-                        lines_words = [page_words[:mid], page_words[mid:]]
-                    else:
-                        lines_words = [page_words]
-
-                    # Current highlighted word
-                    hl_word = word_cap["text"].strip()
-                    if uppercase:
-                        hl_word = hl_word.upper()
-
-                    # Calculate line positions
-                    line_height = int(scaled_font_size * 1.4)
-                    total_text_height = line_height * len(lines_words)
-                    base_y = int(probe_height * y_ratio) - total_text_height // 2
-
-                    for line_idx, line_words in enumerate(lines_words):
-                        line_text = " ".join(line_words)
-                        line_y = base_y + line_idx * line_height
-
-                        # Center the line
-                        try:
-                            bbox = font.getbbox(line_text)
-                            text_width = bbox[2] - bbox[0]
-                        except Exception:
-                            text_width = int(len(line_text) * scaled_font_size * 0.6)
-                        line_x = max(20, (probe_width - text_width) // 2)
-
-                        # Draw word by word with stroke + highlight
-                        x_cursor = line_x
-                        for word in line_words:
-                            is_highlighted = (word == hl_word)
-                            fill_color = (*highlight_rgb, 255) if is_highlighted else (*primary_rgb, 255)
-                            stroke_color = (*stroke_rgb, 255)
-
-                            # Draw text with built-in stroke support
-                            draw.text(
-                                (x_cursor, line_y), word, font=font,
-                                fill=fill_color,
-                                stroke_width=stroke_width_px,
-                                stroke_fill=stroke_color,
-                            )
-
-                            # Advance cursor
-                            try:
-                                wbbox = font.getbbox(word + " ")
-                                x_cursor += wbbox[2] - wbbox[0]
-                            except Exception:
-                                x_cursor += int(len(word) * scaled_font_size * 0.6 + scaled_font_size * 0.25)
-
-                    # Save PNG
-                    png_path = Path(tmpdir) / f"cap_{page_idx:03d}_{word_idx:03d}.png"
-                    img.save(str(png_path), "PNG")
-                    overlay_segments.append((str(png_path), word_start_s, word_end_s))
-
-            if not overlay_segments:
-                print("[CAPTION BURN] No overlay segments generated")
-                return None, "No caption overlay segments generated"
-
-            print(f"[CAPTION BURN] Rendered {len(overlay_segments)} caption overlay frames")
-
-            # 7. Build ffmpeg command with overlay chain
+            # 5. Burn. Run from tmpdir and reference everything by bare relative
+            #    name — the subtitles filter parses ':' and '\' as syntax, which
+            #    every absolute Windows path would break.
             output_path = Path(tmpdir) / "output.mp4"
-
-            # Cap overlays at 30 to avoid filter graph complexity
-            if len(overlay_segments) > 30:
-                step = max(1, len(overlay_segments) // 30)
-                merged = []
-                for i in range(0, len(overlay_segments), step):
-                    batch = overlay_segments[i:i + step]
-                    mid_seg = batch[len(batch) // 2]
-                    merged.append((mid_seg[0], batch[0][1], batch[-1][2]))
-                overlay_segments = merged
-
-            inputs = ["-i", str(video_path)]
-            for seg_path, _, _ in overlay_segments:
-                inputs.extend(["-i", seg_path])
-
-            # Build filter graph
-            filter_parts = []
-            prev_label = "[0:v]"
-            for idx, (_, start_s, end_s) in enumerate(overlay_segments):
-                input_label = f"[{idx + 1}:v]"
-                out_label = f"[v{idx}]"
-                enable = f"between(t,{start_s:.3f},{end_s:.3f})"
-                filter_parts.append(
-                    f"{prev_label}{input_label}overlay=0:0:enable='{enable}'{out_label}"
-                )
-                prev_label = out_label
-
-            filter_graph = ";".join(filter_parts)
-
-            cmd = [ffmpeg_path] + inputs + [
-                "-filter_complex", filter_graph,
-                "-map", prev_label,
-                "-map", "0:a?",
+            cmd = [
+                ffmpeg_path,
+                "-i", "input.mp4",
+                "-vf", "subtitles=captions.ass:fontsdir=fonts",
                 "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                "-pix_fmt", "yuv420p",
                 "-c:a", "copy",
-                "-y", str(output_path),
+                "-y", "output.mp4",
             ]
-            print(f"[CAPTION BURN] Running ffmpeg ({len(overlay_segments)} overlays)...")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            print(f"[CAPTION BURN] Running ffmpeg (libass)...")
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=300, cwd=tmpdir,
+            )
             if result.returncode != 0:
                 err_tail = (result.stderr or result.stdout or "")[-800:]
                 print(f"[CAPTION BURN] ffmpeg failed: {err_tail}")
                 return None, f"ffmpeg failed: {err_tail}"
 
+            if not output_path.exists() or output_path.stat().st_size == 0:
+                return None, "ffmpeg produced no output"
+
             print(f"[CAPTION BURN] ffmpeg done, output {output_path.stat().st_size} bytes")
 
-            # 8. Upload to Supabase
+            # 6. Upload to Supabase
             timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
             storage_filename = f"captioned_{job_id[:8]}_{timestamp}.mp4"
             try:
@@ -1525,6 +1417,9 @@ def caption_video(job_id: str, body: CaptionVideoRequest = CaptionVideoRequest()
                 style_props=style_props,
                 placement=placement,
                 job_id=job_id,
+                stroke_mode=stroke_mode,
+                shadow_color=shadow_color,
+                shadow_blur=shadow_blur,
             )
             if burned_url:
                 # Persist as final_video_url so Videos tab shows captioned version

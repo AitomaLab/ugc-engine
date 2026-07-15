@@ -26,6 +26,19 @@ def _get_ffmpeg_path() -> str:
     return "ffmpeg"
 
 
+def _get_storage_client():
+    """Supabase client for storage reads/writes — service key so uploads bypass RLS.
+
+    Deliberately not `ugc_db.db_manager.get_supabase`: that package is not
+    vendored into the Creative OS image (see nixpacks.toml).
+    """
+    from supabase import create_client
+    return create_client(
+        os.getenv("SUPABASE_URL"),
+        os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY"),
+    )
+
+
 async def generate_thumbnail(video_url: str, job_id: str) -> str | None:
     """Extract the first frame of a video and upload as a JPEG thumbnail.
 
@@ -45,8 +58,7 @@ async def generate_thumbnail(video_url: str, job_id: str) -> str | None:
     # Check if thumbnail already exists in storage (deterministic filename)
     storage_filename = f"thumb_{job_id[:8]}.jpg"
     try:
-        from ugc_db.db_manager import get_supabase
-        sb = get_supabase()
+        sb = _get_storage_client()
         import httpx
         thumb_url = sb.storage.from_("generated-videos").get_public_url(storage_filename)
         async with httpx.AsyncClient(timeout=5.0) as http:
@@ -88,8 +100,7 @@ async def generate_thumbnail(video_url: str, job_id: str) -> str | None:
             return None
 
         # Upload to Supabase Storage
-        from ugc_db.db_manager import get_supabase
-        sb = get_supabase()
+        sb = _get_storage_client()
         with open(thumb_path, "rb") as f:
             try:
                 sb.storage.from_("generated-videos").upload(
