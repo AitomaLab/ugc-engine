@@ -308,6 +308,12 @@ export interface AnalyticsStats {
     daily_posts: number[];
     platform_distribution: DistributionEntry[];
     content_type_distribution: DistributionEntry[];
+    // Received-in-window (engagement/views gained during the period, incl. on
+    // older posts). received_has_history=false → "collecting data" state.
+    received_views?: number;
+    received_engagement?: number;
+    received_has_history?: boolean;
+    received_posts_pending?: number;
 }
 
 export interface CumulativePoint {
@@ -723,6 +729,10 @@ function emptyStats(): AnalyticsStats {
         daily_posts: [],
         platform_distribution: [],
         content_type_distribution: [],
+        received_views: 0,
+        received_engagement: 0,
+        received_has_history: false,
+        received_posts_pending: 0,
     };
 }
 

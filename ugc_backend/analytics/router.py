@@ -1176,6 +1176,13 @@ def api_stats(
         period_rows, all_rows, period_days=days,
     )
     dist = analytics_db.stats_distribution_from_rows(period_rows)
+    # Received-in-window deltas (engagement gained during the period, incl. on
+    # older posts). Best-effort — empty until snapshot history exists.
+    try:
+        received = analytics_db.period_received_metrics(user["id"], days)
+    except Exception:
+        received = {"has_history": False, "posts_pending": 0,
+                    "totals": {"views_received": 0, "engagement_received": 0}}
     _elapsed_ms = (_time.perf_counter() - _t0) * 1000
     if _elapsed_ms > 1500:
         print(
@@ -1188,6 +1195,10 @@ def api_stats(
         **extras,
         platform_distribution=dist["platform_distribution"],
         content_type_distribution=dist["content_type_distribution"],
+        received_views=int(received.get("totals", {}).get("views_received") or 0),
+        received_engagement=int(received.get("totals", {}).get("engagement_received") or 0),
+        received_has_history=bool(received.get("has_history")),
+        received_posts_pending=int(received.get("posts_pending") or 0),
     )
 
 

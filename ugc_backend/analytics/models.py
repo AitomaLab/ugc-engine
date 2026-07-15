@@ -313,6 +313,13 @@ class StatsResponse(BaseModel):
     # Distribution payloads — sorted descending by `value`.
     platform_distribution: List[DistributionEntry] = Field(default_factory=list)
     content_type_distribution: List[DistributionEntry] = Field(default_factory=list)
+    # Received-in-window (engagement/views GAINED during the period, incl. on
+    # older posts) — from metric snapshots. `received_has_history` is False
+    # until snapshots span the window (UI shows a "collecting data" state).
+    received_views: int = 0
+    received_engagement: int = 0
+    received_has_history: bool = False
+    received_posts_pending: int = 0
 
 
 class CumulativePoint(BaseModel):

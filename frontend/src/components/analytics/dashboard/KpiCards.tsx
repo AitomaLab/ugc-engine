@@ -36,6 +36,7 @@ export default function KpiCards({ stats, loading }: Props) {
         : undefined;
 
     return (
+        <>
         <div className="dash-kpi-grid">
             <DashCard>
                 <CardLabel icon={<EyeIcon />}>{t('analytics.dashboard.kpi.totalViews')}</CardLabel>
@@ -75,6 +76,62 @@ export default function KpiCards({ stats, loading }: Props) {
                 <CardSpark values={data.daily_posts} comparisonSplit={comparisonSplit} />
             </DashCard>
         </div>
+        <ReceivedStrip stats={data} />
+        </>
+    );
+}
+
+/**
+ * "Received this period" strip — engagement/views the account GAINED during
+ * the window (from metric snapshots), including on older posts. Distinct from
+ * the KPI cards, which count posts published in the window. Shows a
+ * "collecting data" note until snapshot history spans the window.
+ */
+function ReceivedStrip({ stats }: { stats: AnalyticsStats }) {
+    const { t } = useTranslation();
+    const rv = stats.received_views ?? 0;
+    const re = stats.received_engagement ?? 0;
+    const collecting = !stats.received_has_history;
+
+    return (
+        <div
+            style={{
+                marginTop: 12,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 14,
+                flexWrap: 'wrap',
+                background: '#FFFFFF',
+                border: '1px solid #E2E8F0',
+                borderRadius: 14,
+                padding: '12px 16px',
+                fontSize: 13,
+            }}
+        >
+            <span style={{ color: '#337AFF', display: 'inline-flex' }}><PulseIcon /></span>
+            <span style={{ fontWeight: 700, color: '#0F172A' }}>
+                {t('analytics.dashboard.received.label')}
+            </span>
+            {collecting ? (
+                <span style={{ color: '#94A3B8' }}>{t('analytics.dashboard.received.collecting')}</span>
+            ) : (
+                <span style={{ color: '#334155', fontVariantNumeric: 'tabular-nums' }}>
+                    <strong style={{ color: '#059669' }}>+{formatCount(rv)}</strong>{' '}
+                    {t('analytics.dashboard.received.views')}
+                    <span style={{ color: '#CBD5E1', margin: '0 8px' }}>·</span>
+                    <strong style={{ color: '#059669' }}>+{formatCount(re)}</strong>{' '}
+                    {t('analytics.dashboard.received.engagement')}
+                </span>
+            )}
+        </div>
+    );
+}
+
+function PulseIcon() {
+    return (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+        </svg>
     );
 }
 
