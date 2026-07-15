@@ -1,4 +1,4 @@
-import {DropPosition} from '../assets/add-asset';
+import type {DropPosition} from '../assets/add-asset';
 import {fitElementSizeInContainer} from './fit-element-size-in-container';
 
 interface CalculateMediaDimensionsForCanvasParams {

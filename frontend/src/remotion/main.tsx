@@ -1,6 +1,6 @@
-import {FontInfo} from '@remotion/google-fonts';
+import type {FontInfo} from '@remotion/google-fonts';
 import React, {useMemo} from 'react';
-import {EditorStarterAsset} from '../editor/assets/assets';
+import type {EditorStarterAsset} from '../editor/assets/assets';
 import {MainComposition} from '../editor/canvas/composition';
 import {
 	ActiveCanvasSnap,
@@ -10,8 +10,8 @@ import {
 	AssetStatusContext,
 	TracksContext,
 } from '../editor/context-provider';
-import {EditorStarterItem} from '../editor/items/item-type';
-import {TrackType} from '../editor/state/types';
+import type {EditorStarterItem} from '../editor/items/item-type';
+import type {TrackType} from '../editor/state/types';
 import {FontInfoContext} from '../editor/utils/text/font-info';
 
 export type CompositionWithContextsProps = {
@@ -21,6 +21,9 @@ export type CompositionWithContextsProps = {
 	compositionWidth: number;
 	compositionHeight: number;
 	fontInfos: Record<string, FontInfo>;
+	// Server-built editor states carry an explicit fps (ugc_backend/editor_api.py);
+	// states saved from the browser may not.
+	fps?: number;
 };
 
 export const CompositionWithContexts: React.FC<

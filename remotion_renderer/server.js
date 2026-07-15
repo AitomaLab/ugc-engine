@@ -238,16 +238,32 @@ app.post('/render', async (req, res) => {
 
 let editorBundlePromise = null;
 
+// Prebuilt by build-editor-bundle.js (see that file). It bundles the REAL editor
+// composition — frontend/src/remotion → MainComposition — so a render can't
+// diverge from what the editor previews. It is NOT built here at runtime because
+// the module graph needs frontend/node_modules, which the deploy images don't carry.
+function getEditorBundleDir() {
+  return process.env.EDITOR_BUNDLE_DIR || path.join(__dirname, 'editor-bundle');
+}
+
 async function getEditorBundle() {
   if (!editorBundlePromise) {
-    console.log('[Remotion] Bundling editor composition (first-time)...');
-    const { bundle } = await import('@remotion/bundler');
-    const entryPoint = path.join(__dirname, 'src/editor-entry.ts');
-    if (!fs.existsSync(entryPoint)) {
-      throw new Error(`Editor entry point not found: ${entryPoint}. Copy it from the editor-starter.`);
+    const dir = getEditorBundleDir();
+    if (fs.existsSync(path.join(dir, 'index.html'))) {
+      console.log('[Remotion] Using prebuilt editor bundle:', dir);
+      editorBundlePromise = Promise.resolve(dir);
+    } else {
+      editorBundlePromise = Promise.reject(
+        new Error(
+          `Editor bundle not found at ${dir}. Build it with ` +
+            `\`node build-editor-bundle.js\` (needs frontend/ with node_modules installed), ` +
+            `or set EDITOR_BUNDLE_DIR. Refusing to render rather than silently ` +
+            `producing a video that doesn't match the editor.`,
+        ),
+      );
+      // Don't leave an unhandled rejection if nothing awaits this yet.
+      editorBundlePromise.catch(() => {});
     }
-    editorBundlePromise = bundle({ entryPoint });
-    editorBundlePromise.then(url => console.log('[Remotion] Editor bundle ready:', url));
   }
   return editorBundlePromise;
 }
@@ -265,51 +281,43 @@ app.post('/render-editor', async (req, res) => {
     const bundleUrl = await getEditorBundle();
     const { renderMedia, selectComposition } = await import('@remotion/renderer');
 
-    const fps = editorState.fps || 24;
-    const width = editorState.compositionWidth || 1080;
-    const height = editorState.compositionHeight || 1920;
-
-    // Calculate total duration from tracks
-    let maxFrame = 0;
-    const tracks = editorState.tracks || [];
-    const items = editorState.items || {};
-    for (const track of tracks) {
-      for (const itemId of (track.items || [])) {
-        const item = items[itemId];
-        if (item) {
-          const end = (item.from || 0) + (item.durationInFrames || 0);
-          if (end > maxFrame) maxFrame = end;
-        }
-      }
-    }
-    if (maxFrame === 0) maxFrame = fps * 30; // fallback: 30 seconds
-
     const outputLocation = path.join('/tmp', `editor_render_${Date.now()}.mp4`);
 
+    // 'Main' is COMP_NAME in frontend/src/remotion/constants.ts.
     const composition = await selectComposition({
       serveUrl: bundleUrl,
-      id: 'EditorComposition',
+      id: 'Main',
       inputProps: editorState,
       chromiumOptions: { gl: 'angle' },
     });
 
-    // Override composition dimensions/duration
-    composition.width = width;
-    composition.height = height;
-    composition.fps = fps;
-    composition.durationInFrames = maxFrame;
+    // No dimension/duration overrides here on purpose: Root.tsx's
+    // calculateMetadata derives width/height/fps/durationInFrames from the same
+    // editor state the preview uses. Hand-rolled metadata competing with it is
+    // how the render drifted from the editor in the first place.
+    console.log(
+      `[Remotion] Composition: ${composition.width}x${composition.height} @ ` +
+        `${composition.fps}fps, ${composition.durationInFrames} frames`,
+    );
 
     await renderMedia({
       composition,
       serveUrl: bundleUrl,
       codec: codec === 'vp8' ? 'vp8' : 'h264',
       outputLocation,
+      inputProps: editorState,
       chromiumOptions: {
         gl: 'angle',
         enableMultiProcessOnLinux: true,
         headless: true,
       },
       offthreadVideoCacheSizeInBytes: OFFTHREAD_CACHE_SIZE,
+      // Without these a render that drops content reports success with no signal.
+      onBrowserLog: (log) => {
+        console.log(`[Remotion][browser:${log.type}] ${log.text}`);
+      },
+      logLevel: process.env.REMOTION_LOG_LEVEL || 'info',
+      timeoutInMilliseconds: 240000,
     });
 
     console.log(`[Remotion] Editor render complete: ${outputLocation}`);
@@ -332,9 +340,12 @@ app.post('/render-editor', async (req, res) => {
   }
 });
 
-// Start server and pre-warm the bundle
+// Start server and pre-warm the bundles
 app.listen(PORT, () => {
   console.log(`[Remotion] Renderer listening on port ${PORT}`);
-  // Pre-warm the bundle in the background so the first render is fast
+  // Pre-warm in the background so the first render is fast
   getBundle().catch(err => console.error('[Remotion] Pre-warm failed:', err.message));
+  getEditorBundle().catch(err =>
+    console.error('[Remotion] Editor bundle unavailable:', err.message),
+  );
 });

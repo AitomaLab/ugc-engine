@@ -6,17 +6,17 @@ import React, {
 	useRef,
 	useState,
 } from 'react';
-import {AssetState, EditorStarterAsset} from './assets/assets';
+import type {AssetState, EditorStarterAsset} from './assets/assets';
 import {getKeys} from './caching/indexeddb';
 import {loadToBlobUrlOnce} from './caching/load-to-blob-url';
-import {CanvasSnapPoint} from './canvas/snap/canvas-snap-types';
-import {CaptioningTask} from './captioning/caption-state';
+import type {CanvasSnapPoint} from './canvas/snap/canvas-snap-types';
+import type {CaptioningTask} from './captioning/caption-state';
 import {EditModeProvider} from './edit-mode';
 import {FEATURE_SAVE_BUTTON} from './flags';
-import {EditorStarterItem} from './items/item-type';
-import {TextItemHoverPreview} from './items/text/override-text-item-with-hover-preview';
-import {ItemBeingTrimmed} from './items/trim-indicator';
-import {RenderingTask} from './rendering/render-state';
+import type {EditorStarterItem} from './items/item-type';
+import type {TextItemHoverPreview} from './items/text/override-text-item-with-hover-preview';
+import type {ItemBeingTrimmed} from './items/trim-indicator';
+import type {RenderingTask} from './rendering/render-state';
 import {getInitialState} from './state/initial-state';
 import {loadLoop} from './state/loop-persistance';
 import {loadState} from './state/persistance';

@@ -1,4 +1,4 @@
-import {DropPosition} from '../../assets/add-asset';
+import type {DropPosition} from '../../assets/add-asset';
 import {VideoAsset} from '../../assets/assets';
 import {byDefaultKeepAspectRatioMap} from '../../utils/aspect-ratio';
 import {calculateMediaDimensionsForCanvas} from '../../utils/dimension-utils';

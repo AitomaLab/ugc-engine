@@ -1,5 +1,5 @@
 import {Dimensions} from '@remotion/layout-utils';
-import {DropPosition} from '../../assets/add-asset';
+import type {DropPosition} from '../../assets/add-asset';
 import {ImageAsset} from '../../assets/assets';
 import {cacheAssetLocally} from '../../caching/indexeddb';
 import {byDefaultKeepAspectRatioMap} from '../../utils/aspect-ratio';

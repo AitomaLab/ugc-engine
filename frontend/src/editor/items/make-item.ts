@@ -1,6 +1,6 @@
 import {PlayerRef} from '@remotion/player';
 import {ALL_FORMATS, BlobSource, Input} from 'mediabunny';
-import {DropPosition} from '../assets/add-asset';
+import type {DropPosition} from '../assets/add-asset';
 import {EditorStarterAsset} from '../assets/assets';
 import {cacheAssetLocally} from '../caching/indexeddb';
 import {setLocalUrl} from '../caching/load-to-blob-url';

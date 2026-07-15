@@ -1,5 +1,5 @@
 import {getGifDurationInSeconds} from '@remotion/gif';
-import {DropPosition} from '../../assets/add-asset';
+import type {DropPosition} from '../../assets/add-asset';
 import {GifAsset} from '../../assets/assets';
 import {cacheAssetLocally} from '../../caching/indexeddb';
 import {byDefaultKeepAspectRatioMap} from '../../utils/aspect-ratio';

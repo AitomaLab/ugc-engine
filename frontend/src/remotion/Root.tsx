@@ -25,7 +25,7 @@ export const Root: React.FC = () => {
 					width: props.compositionWidth,
 					height: props.compositionHeight,
 					durationInFrames: framesShown,
-					fps: DEFAULT_FPS,
+					fps: props.fps ?? DEFAULT_FPS,
 					props: {
 						...props,
 						fontInfos: collectFontInfoFromItems(Object.values(props.items)),

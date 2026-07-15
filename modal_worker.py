@@ -66,9 +66,28 @@ worker_image = (
     # Remotion renderer: copy into image, install deps, pre-download Chrome
     # (must come before add_local_python_source because run_commands follows)
     .add_local_dir("remotion_renderer", remote_path="/root/remotion_renderer",
-                   ignore=["node_modules", "dist", "*.mp4", "output"], copy=True)
+                   ignore=["node_modules", "dist", "*.mp4", "output", "editor-bundle"],
+                   copy=True)
+    # The editor render bundles the real editor composition (frontend/src/remotion
+    # -> MainComposition), so the render matches what the editor previews. Only the
+    # subset the render graph reaches is copied — not all of frontend/ — so editing
+    # a page under src/app doesn't invalidate this layer.
+    .add_local_dir("frontend/src/editor", remote_path="/root/frontend/src/editor", copy=True)
+    .add_local_dir("frontend/src/remotion", remote_path="/root/frontend/src/remotion", copy=True)
+    .add_local_dir("frontend/src/lib", remote_path="/root/frontend/src/lib", copy=True)
+    .add_local_dir("frontend/src/components", remote_path="/root/frontend/src/components", copy=True)
+    .add_local_file("frontend/package.json", remote_path="/root/frontend/package.json", copy=True)
+    .add_local_file("frontend/pnpm-lock.yaml", remote_path="/root/frontend/pnpm-lock.yaml", copy=True)
+    .add_local_file("frontend/tsconfig.json", remote_path="/root/frontend/tsconfig.json", copy=True)
+    # One command on purpose: frontend/node_modules is ~600MB and is only needed to
+    # bundle. Chained with && so it never lands in a committed layer.
     .run_commands(
-        "cd /root/remotion_renderer && npm install",
+        "cd /root/remotion_renderer && npm install"
+        " && npm i -g pnpm@10"
+        " && cd /root/frontend && pnpm install --frozen-lockfile --ignore-scripts"
+        " && cd /root/remotion_renderer && FRONTEND_SRC=/root/frontend node build-editor-bundle.js"
+        " && npx remotion browser ensure"
+        " && rm -rf /root/frontend/node_modules /root/frontend/src",
     )
     # Root-level Python modules the pipeline needs
     .add_local_python_source(
@@ -388,6 +407,22 @@ def render_editor_video(render_id: str, editor_state: dict, codec: str = "h264")
         stderr=subprocess.STDOUT,
     )
 
+    # The renderer logs browser output during a render. Nothing else reads this
+    # pipe, so without a drainer node blocks once the 64KB buffer fills and the
+    # render hangs until the request timeout. Keep the tail for start failures.
+    import collections
+    import threading
+
+    startup_log = collections.deque(maxlen=200)
+
+    def _drain_renderer_output():
+        for raw in iter(proc.stdout.readline, b""):
+            line = raw.decode("utf-8", errors="replace").rstrip()
+            startup_log.append(line)
+            print(f"[renderer] {line}", flush=True)
+
+    threading.Thread(target=_drain_renderer_output, daemon=True).start()
+
     # Wait for server to be ready (up to 60s for first-time bundle)
     renderer_url = f"http://localhost:{port}"
     ready = False
@@ -404,8 +439,9 @@ def render_editor_video(render_id: str, editor_state: dict, codec: str = "h264")
 
     if not ready:
         proc.kill()
-        stdout = proc.stdout.read().decode() if proc.stdout else ""
-        raise RuntimeError(f"Remotion renderer failed to start. Output: {stdout[:2000]}")
+        raise RuntimeError(
+            "Remotion renderer failed to start. Output: " + "\n".join(startup_log)[-2000:]
+        )
 
     try:
         # Call the /render-editor endpoint
