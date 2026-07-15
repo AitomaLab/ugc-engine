@@ -2181,3 +2181,153 @@ def list_user_ids_with_active_tracked_accounts() -> list[str]:
         if uid and uid not in seen:
             seen.append(uid)
     return seen
+
+
+# ── Metric snapshots — engagement received over time (migration 070) ────────
+#
+# analytics_posts holds only the latest cumulative metrics. These helpers
+# append a daily snapshot and compute "received in the last N days" deltas
+# (current − snapshot at/before the window start), so the dashboard and the
+# reflection loop can see engagement that accrued on OLDER posts — not just
+# posts published inside the window. Ayrshare-independent (reads existing
+# analytics_posts). All degrade to no-op/empty if the table is absent.
+
+_SNAPSHOT_TABLE = "analytics_post_metric_snapshots"
+_SNAPSHOT_METRICS = ("views", "likes", "comments", "shares", "saves", "total_engagement")
+
+
+def _snapshot_table_missing(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "analytics_post_metric_snapshots" in text and (
+        "does not exist" in text or "not find" in text or "42p01" in text
+        or "pgrst205" in text or "could not find the table" in text
+    )
+
+
+def capture_metric_snapshots(user_id: str) -> int:
+    """Append today's snapshot of every post's cumulative metrics.
+
+    Deduped to one row per post per UTC day by the table's UNIQUE
+    (analytics_post_id, captured_date). Returns rows offered for insert (0 on
+    no posts or when the table doesn't exist yet). Best-effort — never raises.
+    """
+    sb = get_supabase()
+    try:
+        posts = (
+            sb.table("analytics_posts")
+            .select("id,views,likes,comments,shares,saves,total_engagement")
+            .eq("user_id", user_id)
+            .limit(2000)
+            .execute()
+        ).data or []
+    except Exception as exc:
+        logger.warning("[analytics] snapshot post fetch failed for %s: %s", user_id, exc)
+        return 0
+    if not posts:
+        return 0
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    rows = [
+        {
+            "user_id": user_id,
+            "analytics_post_id": p["id"],
+            "captured_date": today,
+            **{m: p.get(m) for m in _SNAPSHOT_METRICS},
+        }
+        for p in posts
+        if p.get("id")
+    ]
+    try:
+        sb.table(_SNAPSHOT_TABLE).upsert(
+            rows,
+            on_conflict="analytics_post_id,captured_date",
+            ignore_duplicates=True,
+        ).execute()
+    except Exception as exc:
+        if _snapshot_table_missing(exc):
+            logger.info("[analytics] snapshot table not present yet — skipping capture")
+        else:
+            logger.warning("[analytics] snapshot write failed for %s: %s", user_id, exc)
+        return 0
+    return len(rows)
+
+
+def _baseline_snapshots(user_id: str, cutoff_iso: str) -> dict[str, dict]:
+    """{analytics_post_id: latest snapshot with captured_at <= cutoff} — the
+    baseline against which "received in period" is measured."""
+    sb = get_supabase()
+    try:
+        rows = (
+            sb.table(_SNAPSHOT_TABLE)
+            .select("analytics_post_id,views,total_engagement,captured_at")
+            .eq("user_id", user_id)
+            .lte("captured_at", cutoff_iso)
+            .order("captured_at", desc=True)
+            .limit(5000)
+            .execute()
+        ).data or []
+    except Exception as exc:
+        if not _snapshot_table_missing(exc):
+            logger.warning("[analytics] baseline snapshot fetch failed: %s", exc)
+        return {}
+    baseline: dict[str, dict] = {}
+    for r in rows:  # desc order → first seen per post is the latest before cutoff
+        pid = str(r.get("analytics_post_id") or "")
+        if pid and pid not in baseline:
+            baseline[pid] = r
+    return baseline
+
+
+def period_received_metrics(user_id: str, period_days: int) -> dict:
+    """Engagement / views RECEIVED in the last ``period_days``.
+
+    Per post: ``current − baseline`` where baseline is the snapshot at or
+    before ``now − period_days`` (clamped at 0 to ignore metric corrections).
+    Posts with no baseline snapshot yet don't contribute and are counted under
+    ``posts_pending`` so the UI can show a "collecting data" state until
+    history exists. Returns totals + per-post + per-account deltas.
+    """
+    now = datetime.now(timezone.utc)
+    cutoff_iso = (now - timedelta(days=period_days)).isoformat()
+    baseline = _baseline_snapshots(user_id, cutoff_iso)
+
+    sb = get_supabase()
+    current = (
+        sb.table("analytics_posts")
+        .select("id,platform,username,views,total_engagement")
+        .eq("user_id", user_id)
+        .limit(2000)
+        .execute()
+    ).data or []
+
+    by_post: dict[str, dict] = {}
+    by_account: dict[str, dict] = {}
+    tot_v = tot_e = 0
+    pending = 0
+    for p in current:
+        pid = str(p.get("id") or "")
+        base = baseline.get(pid)
+        if not base:
+            pending += 1
+            continue
+        dv = max(0, int(p.get("views") or 0) - int(base.get("views") or 0))
+        de = max(0, int(p.get("total_engagement") or 0) - int(base.get("total_engagement") or 0))
+        by_post[pid] = {"views_received": dv, "engagement_received": de}
+        tot_v += dv
+        tot_e += de
+        plat = (p.get("platform") or "").strip().lower()
+        nick = (p.get("username") or "").strip().lower().lstrip("@")
+        key = f"{plat} @{nick}"
+        acc = by_account.setdefault(key, {"views_received": 0, "engagement_received": 0})
+        acc["views_received"] += dv
+        acc["engagement_received"] += de
+
+    return {
+        "period_days": period_days,
+        "has_history": bool(baseline),
+        "posts_measured": len(by_post),
+        "posts_pending": pending,
+        "totals": {"views_received": tot_v, "engagement_received": tot_e},
+        "by_post": by_post,
+        "by_account": by_account,
+    }

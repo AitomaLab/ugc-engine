@@ -467,6 +467,54 @@ def compute_growth_block(
     }
 
 
+def build_received_block(
+    user_id: str,
+    posts_for_captions: list[dict],
+    *,
+    period_days: int = 30,
+    top_n: int = 3,
+) -> dict:
+    """Compact "engagement received in the window" block for the prompt.
+
+    Wraps ``analytics_db.period_received_metrics`` and joins the top gaining
+    posts to their captions so the reflection can attribute currently-gaining
+    traction to specific content. Best-effort — returns a `has_history: False`
+    stub until snapshot history exists (or on any error)."""
+    try:
+        rm = analytics_db.period_received_metrics(user_id, period_days)
+    except Exception as exc:
+        logger.warning("[reflection] received-metrics failed for %s: %s", user_id, exc)
+        return {"period_days": period_days, "has_history": False}
+
+    caption_by_id = {
+        str(p.get("id")): str(p.get("caption") or "")[:80]
+        for p in posts_for_captions
+        if p.get("id")
+    }
+    gaining = sorted(
+        rm.get("by_post", {}).items(),
+        key=lambda kv: kv[1].get("engagement_received", 0),
+        reverse=True,
+    )
+    top = [
+        {
+            "caption": caption_by_id.get(pid, "(older post)"),
+            "engagement_received": d.get("engagement_received", 0),
+            "views_received": d.get("views_received", 0),
+        }
+        for pid, d in gaining[:top_n]
+        if d.get("engagement_received", 0) > 0 or d.get("views_received", 0) > 0
+    ]
+    return {
+        "period_days": period_days,
+        "has_history": rm.get("has_history", False),
+        "posts_measured": rm.get("posts_measured", 0),
+        "posts_pending": rm.get("posts_pending", 0),
+        "totals": rm.get("totals", {"views_received": 0, "engagement_received": 0}),
+        "top_gaining_posts": top,
+    }
+
+
 def compute_content_type_comparison(by_type: dict[str, dict]) -> Optional[dict]:
     """Pre-compute the content-type ranking + leader delta deterministically.
 
@@ -1088,6 +1136,12 @@ def run_reflection_session(user_id: str) -> Optional[str]:
         payload["growth"] = compute_growth_block(
             context["comparison_posts"],
             follower_counts=context["follower_counts"],
+        )
+        # Received-in-window (engagement/views GAINED in the last 30 days,
+        # incl. on older posts) — distinct from "high at publish". Empty until
+        # snapshot history accrues (migration 070); the skill handles that.
+        payload["received_last_30d"] = build_received_block(
+            user_id, context["comparison_posts"], period_days=30
         )
         today = now.date().isoformat()
         user_prompt = _build_user_prompt(context, payload, today=today)

@@ -2124,4 +2124,13 @@ def persist_scrape_job_result(
             extras=account_extras,
         )
 
+    # Append today's metric snapshot with the freshly-scraped values (deduped
+    # to one row per post per UTC day). Powers the "engagement received in the
+    # last N days" time-series. Best-effort — never affects the scrape result.
+    if saved:
+        try:
+            analytics_db.capture_metric_snapshots(user_id)
+        except Exception as exc:
+            logger.warning("[analytics] snapshot capture failed for %s: %s", user_id, exc)
+
     return saved

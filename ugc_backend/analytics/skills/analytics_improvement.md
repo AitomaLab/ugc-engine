@@ -82,6 +82,12 @@ confirm them in the JSON.
      current window (caption, engagement, views, er_pct), i.e. the posts that
      drove the numbers. **Use these deltas verbatim; never compute your own
      growth figures.**
+   - A `received_last_30d` block — engagement/views the account *gained in the
+     last 30 days*, INCLUDING on older posts (distinct from "high at publish").
+     `totals`, and `top_gaining_posts` (caption + engagement/views received) =
+     what's *currently* getting traction. **Only trust this when
+     `has_history: true`** — until then (`has_history: false`, snapshots still
+     accruing) ignore it; never infer received-traction from other fields.
 3. **`/memories/analytics_strategy.md`** (RICH SOURCE) — the latest "Do More /
    Do Less" prose report, with this account's top/bottom performers and the
    ER figures behind them. Read-only. This is a legitimate source of
