@@ -305,16 +305,12 @@ export default function AccountDetailView({ account, onClose, onRefreshed, avata
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {tab === 'strategy' && (
-                    <Section
-                        title={t('analytics.accounts.strategy.title')}
-                        action={
-                            strategy?.generated_at ? (
-                                <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
-                                    {t('analytics.accounts.strategy.updated').replace('{when}', timeAgo(strategy.generated_at))}
-                                </span>
-                            ) : null
-                        }
-                    >
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {strategy?.generated_at && (
+                            <span style={{ fontSize: 11, color: 'var(--text-3)', alignSelf: 'flex-end' }}>
+                                {t('analytics.accounts.strategy.updated').replace('{when}', timeAgo(strategy.generated_at))}
+                            </span>
+                        )}
                         {strategy?.report
                             ? <StructuredStrategyReport source={strategy.report} />
                             : (
@@ -335,20 +331,16 @@ export default function AccountDetailView({ account, onClose, onRefreshed, avata
                                 </div>
                             )
                         }
-                    </Section>
+                    </div>
                 )}
 
                 {tab === 'learnings' && (
-                    <Section
-                        title={t('analytics.accounts.guidelines.title')}
-                        action={
-                            guidelines?.updated_at ? (
-                                <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
-                                    {t('analytics.accounts.guidelines.updated').replace('{when}', timeAgo(guidelines.updated_at))}
-                                </span>
-                            ) : null
-                        }
-                    >
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {guidelines?.updated_at && (
+                            <span style={{ fontSize: 11, color: 'var(--text-3)', alignSelf: 'flex-end' }}>
+                                {t('analytics.accounts.guidelines.updated').replace('{when}', timeAgo(guidelines.updated_at))}
+                            </span>
+                        )}
                         {guidelines?.guidelines
                             ? <StructuredStrategyReport source={guidelines.guidelines} learnings />
                             : (
@@ -369,7 +361,7 @@ export default function AccountDetailView({ account, onClose, onRefreshed, avata
                                 </div>
                             )
                         }
-                    </Section>
+                    </div>
                 )}
             </div>
         </div>
@@ -433,21 +425,5 @@ function AccountDetailTabs({
                 );
             })}
         </div>
-    );
-}
-
-function Section({
-    title, action, children,
-}: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
-    return (
-        <section style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <h3 style={{ margin: 0, fontSize: '12px', fontWeight: 700, color: 'var(--text-2)', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                    {title}
-                </h3>
-                {action}
-            </div>
-            {children}
-        </section>
     );
 }

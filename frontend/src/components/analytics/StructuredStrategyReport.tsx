@@ -166,12 +166,12 @@ function parseOrderedItems(body: string): Array<{ title: string; detail: string 
         const bullet = /^[-*•]\s+(.*)$/.exec(trimmed);
         if (bullet && current) {
             current.detail = current.detail
-                ? `${current.detail} ${bullet[1].trim()}`
+                ? `${current.detail}\n${bullet[1].trim()}`
                 : bullet[1].trim();
             continue;
         }
         if (current) {
-            current.detail = current.detail ? `${current.detail} ${trimmed}` : trimmed;
+            current.detail = current.detail ? `${current.detail}\n${trimmed}` : trimmed;
         }
     }
     flushItem();
@@ -377,78 +377,290 @@ function TitleIcon({ kind, size = 14 }: { kind: TitleIconKind; size?: number }) 
     }
 }
 
-function FactorGrid({
+const METRIC_FIELD_RE = /^(engagement(?:\s*rate)?|views?|likes?|comments?|shares?|saves?|followers?)$/i;
+/** Short attributes shown as pills in the collapsed row. */
+const META_FIELD_RE = /^(format|timing|topic|theme|media|type|length|duration)$/i;
+/** Longer copy kept behind expand. */
+const BODY_FIELD_RE = /^(caption|hook|video hook|why|insight|note|analysis|reason)$/i;
+
+function shortMetricLabel(label: string): string {
+    const l = label.toLowerCase();
+    if (/engagement/.test(l)) return 'Eng';
+    if (/views?/.test(l)) return 'Views';
+    if (/likes?/.test(l)) return 'Likes';
+    if (/comments?/.test(l)) return 'Comments';
+    if (/shares?/.test(l)) return 'Shares';
+    if (/saves?/.test(l)) return 'Saves';
+    return label;
+}
+
+/** Split a performer detail blob into metrics / meta pills / body fields. */
+function parseDetailFields(detail: string): {
+    metrics: Array<{ label: string; value: string }>;
+    meta: Array<{ label: string; value: string }>;
+    body: Array<{ label: string; value: string }>;
+    prose: string;
+} {
+    const metrics: Array<{ label: string; value: string }> = [];
+    const meta: Array<{ label: string; value: string }> = [];
+    const body: Array<{ label: string; value: string }> = [];
+    const proseParts: string[] = [];
+
+    const chunks = detail
+        .split(/\n|(?=\*\*[^*]+\*\*\s*[:—-])|(?<=[.!?])\s+(?=[A-Z][a-z]+\s*[:—-])/)
+        .flatMap((chunk) => chunk.split(/\s+[·•]\s+/))
+        .map((c) => c.trim())
+        .filter(Boolean);
+
+    for (const chunk of chunks) {
+        const m = /^(?:\*\*)?([^*:\n—-]{1,40})(?:\*\*)?\s*[:—-]\s*(.+)$/.exec(chunk);
+        if (!m) {
+            proseParts.push(chunk);
+            continue;
+        }
+        const label = stripInlineMd(m[1]);
+        const value = m[2].trim();
+        if (!label || !value) {
+            proseParts.push(chunk);
+            continue;
+        }
+        if (METRIC_FIELD_RE.test(label)) {
+            metrics.push({ label, value: stripInlineMd(value) });
+        } else if (META_FIELD_RE.test(label)) {
+            meta.push({ label, value: stripInlineMd(value) });
+        } else if (BODY_FIELD_RE.test(label)) {
+            body.push({ label, value });
+        } else {
+            // Unknown labeled fields: short → meta pill, long → body
+            if (stripInlineMd(value).length <= 48) {
+                meta.push({ label, value: stripInlineMd(value) });
+            } else {
+                body.push({ label, value });
+            }
+        }
+    }
+
+    return { metrics, meta, body, prose: proseParts.join(' ').trim() };
+}
+
+/**
+ * Compact accordion for Top / Bottom performers.
+ * Collapsed: rank + title + inline metrics + meta pills.
+ * Expanded: caption / hook / longer analysis only.
+ */
+function PerformerStack({
     items,
     tone,
 }: {
     items: Array<{ title: string; detail: string }>;
     tone: 'blue' | 'amber';
 }) {
+    const [openIndex, setOpenIndex] = useState<number | null>(0);
     const badgeBg = tone === 'blue' ? 'var(--blue)' : '#D97706';
-    const cardBg = tone === 'blue' ? 'rgba(51,122,255,0.06)' : 'rgba(217,119,6,0.07)';
+    const cardBg = tone === 'blue' ? 'rgba(51,122,255,0.04)' : 'rgba(217,119,6,0.05)';
     const border = tone === 'blue' ? 'rgba(51,122,255,0.14)' : 'rgba(217,119,6,0.18)';
+    const openBorder = tone === 'blue' ? 'rgba(51,122,255,0.28)' : 'rgba(217,119,6,0.32)';
 
     return (
-        <div
-            style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-                gap: 10,
-            }}
-        >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {items.map((item, i) => {
                 const title = stripInlineMd(item.title);
-                const iconKind = resolveTitleIcon(title);
+                const { metrics, meta, body, prose } = parseDetailFields(item.detail || '');
+                const open = openIndex === i;
+                const hasDetails = body.length > 0 || Boolean(prose) || (!metrics.length && !meta.length && Boolean(item.detail));
+
                 return (
                     <div
                         key={`${item.title}-${i}`}
                         style={{
-                            display: 'flex',
-                            gap: 10,
-                            padding: '12px 12px',
-                            background: cardBg,
-                            border: `1px solid ${border}`,
+                            background: open ? cardBg : '#FFFFFF',
+                            border: `1px solid ${open ? openBorder : border}`,
                             borderRadius: 10,
                             minWidth: 0,
+                            overflow: 'hidden',
                         }}
                     >
-                        <div
-                            aria-hidden
-                            title={`${i + 1}`}
+                        <button
+                            type="button"
+                            onClick={() => setOpenIndex(open ? null : i)}
+                            aria-expanded={open}
                             style={{
-                                width: 28,
-                                height: 28,
-                                borderRadius: 8,
-                                background: badgeBg,
-                                color: '#fff',
+                                width: '100%',
                                 display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                flexShrink: 0,
+                                alignItems: 'flex-start',
+                                gap: 10,
+                                padding: '10px 12px',
+                                border: 'none',
+                                background: 'transparent',
+                                cursor: hasDetails ? 'pointer' : 'default',
+                                textAlign: 'left',
+                                color: 'inherit',
                             }}
                         >
-                            <TitleIcon kind={iconKind} size={14} />
-                        </div>
-                        <div style={{ minWidth: 0 }}>
                             <div
+                                aria-hidden
                                 style={{
-                                    fontSize: 12,
-                                    fontWeight: 700,
-                                    color: 'var(--text-1)',
-                                    marginBottom: item.detail ? 4 : 0,
+                                    width: 22,
+                                    height: 22,
+                                    borderRadius: 6,
+                                    background: badgeBg,
+                                    color: '#fff',
+                                    fontSize: 11,
+                                    fontWeight: 800,
                                     display: 'flex',
                                     alignItems: 'center',
-                                    gap: 6,
+                                    justifyContent: 'center',
+                                    flexShrink: 0,
+                                    marginTop: 1,
                                 }}
                             >
-                                {title}
+                                {i + 1}
                             </div>
-                            {item.detail && (
-                                <div style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--text-2)' }}>
-                                    {renderInline(item.detail, `f-${i}`)}
+
+                            <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 5 }}>
+                                <div
+                                    style={{
+                                        display: 'flex',
+                                        alignItems: 'baseline',
+                                        justifyContent: 'space-between',
+                                        gap: 10,
+                                        flexWrap: 'wrap',
+                                    }}
+                                >
+                                    <span
+                                        style={{
+                                            fontSize: 13,
+                                            fontWeight: 700,
+                                            color: 'var(--text-1)',
+                                            lineHeight: 1.3,
+                                        }}
+                                    >
+                                        {title}
+                                    </span>
+                                    {metrics.length > 0 && (
+                                        <span
+                                            style={{
+                                                fontSize: 11,
+                                                fontWeight: 700,
+                                                color: '#475569',
+                                                whiteSpace: 'nowrap',
+                                                letterSpacing: 0.1,
+                                            }}
+                                        >
+                                            {metrics.map((m, mi) => (
+                                                <React.Fragment key={m.label}>
+                                                    {mi > 0 && (
+                                                        <span style={{ color: '#CBD5E1', fontWeight: 500 }}> · </span>
+                                                    )}
+                                                    <span style={{ color: 'var(--text-1)' }}>{m.value}</span>
+                                                    <span style={{ color: '#94A3B8', fontWeight: 600 }}> {shortMetricLabel(m.label)}</span>
+                                                </React.Fragment>
+                                            ))}
+                                        </span>
+                                    )}
                                 </div>
-                            )}
-                        </div>
+
+                                {(meta.length > 0 || hasDetails) && (
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 5 }}>
+                                        {meta.map((m) => (
+                                            <span
+                                                key={`${i}-${m.label}`}
+                                                style={{
+                                                    fontSize: 10,
+                                                    fontWeight: 600,
+                                                    color: '#64748B',
+                                                    background: 'rgba(148,163,184,0.12)',
+                                                    borderRadius: 999,
+                                                    padding: '2px 7px',
+                                                    maxWidth: 220,
+                                                    overflow: 'hidden',
+                                                    textOverflow: 'ellipsis',
+                                                    whiteSpace: 'nowrap',
+                                                }}
+                                                title={`${m.label}: ${m.value}`}
+                                            >
+                                                <span style={{ color: '#94A3B8' }}>{m.label}</span>
+                                                {' '}
+                                                {m.value}
+                                            </span>
+                                        ))}
+                                        {hasDetails && (
+                                            <span
+                                                style={{
+                                                    marginLeft: 'auto',
+                                                    fontSize: 10,
+                                                    fontWeight: 700,
+                                                    color: open ? badgeBg : '#94A3B8',
+                                                    display: 'inline-flex',
+                                                    alignItems: 'center',
+                                                    gap: 3,
+                                                }}
+                                            >
+                                                {open ? 'Hide' : 'Details'}
+                                                <svg
+                                                    width="10"
+                                                    height="10"
+                                                    viewBox="0 0 24 24"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    strokeWidth={2.5}
+                                                    style={{
+                                                        transform: open ? 'rotate(180deg)' : 'none',
+                                                        transition: 'transform 0.15s ease',
+                                                    }}
+                                                    aria-hidden
+                                                >
+                                                    <polyline points="6 9 12 15 18 9" />
+                                                </svg>
+                                            </span>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        </button>
+
+                        {open && hasDetails && (
+                            <div
+                                style={{
+                                    padding: '0 12px 12px 44px',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: 8,
+                                }}
+                            >
+                                {body.map((f) => (
+                                    <div key={`${i}-${f.label}`} style={{ minWidth: 0 }}>
+                                        <div
+                                            style={{
+                                                fontSize: 10,
+                                                fontWeight: 700,
+                                                color: '#94A3B8',
+                                                textTransform: 'uppercase',
+                                                letterSpacing: 0.35,
+                                                marginBottom: 2,
+                                            }}
+                                        >
+                                            {f.label}
+                                        </div>
+                                        <div style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--text-2)' }}>
+                                            {renderInline(f.value, `pf-${i}-${f.label}`)}
+                                        </div>
+                                    </div>
+                                ))}
+
+                                {!body.length && !metrics.length && !meta.length && item.detail && (
+                                    <div style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--text-2)' }}>
+                                        {renderInline(item.detail, `f-${i}`)}
+                                    </div>
+                                )}
+
+                                {prose && (
+                                    <div style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--text-2)' }}>
+                                        {renderInline(prose, `fp-${i}`)}
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
                 );
             })}
@@ -700,16 +912,16 @@ function renderSection(
     if (section.kind === 'top' || section.kind === 'bottom') {
         if (!section.body.trim()) return null;
         const factors = parseOrderedItems(section.body);
-        if (factors.length >= 2) {
+        if (factors.length >= 1) {
             return (
                 <SectionShell key={key} title={section.heading} omitTitle={omitTitle}>
-                    <FactorGrid items={factors} tone={section.kind === 'top' ? 'blue' : 'amber'} />
+                    <PerformerStack items={factors} tone={section.kind === 'top' ? 'blue' : 'amber'} />
                 </SectionShell>
             );
         }
         return (
             <SectionShell key={key} title={section.heading} omitTitle={omitTitle}>
-                <StrategyReportMarkdown source={section.body} dense />
+                <StrategyReportMarkdown source={section.body} />
             </SectionShell>
         );
     }
@@ -806,52 +1018,19 @@ interface NavPanel {
 }
 
 export default function StructuredStrategyReport({ source, learnings = false }: Props) {
-    const { preamble, sections } = useMemo(() => parseSections(source), [source]);
+    const { sections } = useMemo(() => parseSections(source), [source]);
 
     const panels = useMemo(() => {
         const list: NavPanel[] = [];
 
-        if (preamble) {
-            const chips = extractStatChips(preamble);
-            list.push({
-                id: 'preamble',
-                label: 'Overview',
-                fullLabel: 'Overview',
-                kind: 'preamble',
-                icon: 'overview',
-                content: chips.length ? (
-                    <SectionShell omitTitle>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                            {chips.map((chip) => (
-                                <div
-                                    key={chip.label}
-                                    style={{
-                                        padding: '8px 12px',
-                                        borderRadius: 8,
-                                        background: 'rgba(148,163,184,0.08)',
-                                        border: '1px solid #E8EEF4',
-                                        minWidth: 100,
-                                    }}
-                                >
-                                    <div style={{ fontSize: 14, fontWeight: 700, color: '#475569' }}>{chip.value}</div>
-                                    <div style={{ fontSize: 10, fontWeight: 600, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.3, marginTop: 2 }}>
-                                        {chip.label}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </SectionShell>
-                ) : (
-                    <SectionShell omitTitle>
-                        <StrategyReportMarkdown source={preamble} dense />
-                    </SectionShell>
-                ),
-            });
-        }
-
         for (let i = 0; i < sections.length; i++) {
             const sec = sections[i];
             if (isEmptySection(sec)) continue;
+
+            // Drop Overview / stats summary panels from the side nav.
+            if (sec.kind === 'stats' || shortNavLabel(sec.heading) === 'Overview') {
+                continue;
+            }
 
             if (sec.kind === 'title') {
                 // Account handle is already in the sticky header — skip redundant H1.
@@ -946,7 +1125,7 @@ export default function StructuredStrategyReport({ source, learnings = false }: 
         }
 
         return list;
-    }, [preamble, sections, learnings, source]);
+    }, [sections, learnings, source]);
 
     const [activeId, setActiveId] = useState(panels[0]?.id ?? 'fallback');
 
@@ -1010,22 +1189,22 @@ export default function StructuredStrategyReport({ source, learnings = false }: 
                 </nav>
 
                 <div className="strategy-dash-pane" key={active?.id}>
-                    {active?.fullLabel && (
+                    {active?.label && (
                         <div
                             style={{
-                                fontSize: 12,
+                                fontSize: 11,
                                 fontWeight: 700,
                                 color: '#64748B',
                                 textTransform: 'uppercase',
                                 letterSpacing: 0.4,
-                                marginBottom: 10,
+                                marginBottom: 8,
                                 display: 'inline-flex',
                                 alignItems: 'center',
-                                gap: 7,
+                                gap: 6,
                             }}
                         >
-                            <TitleIcon kind={active.icon} size={13} />
-                            {active.fullLabel}
+                            <TitleIcon kind={active.icon} size={12} />
+                            {active.label}
                         </div>
                     )}
                     {active?.content}
@@ -1040,22 +1219,22 @@ export default function StructuredStrategyReport({ source, learnings = false }: 
                 }
                 .strategy-dash-body {
                     display: grid;
-                    grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
-                    gap: 12px;
+                    grid-template-columns: minmax(160px, 200px) minmax(0, 1fr);
+                    gap: 10px;
                     align-items: start;
-                    min-height: min(62vh, 560px);
+                    min-height: min(70vh, 640px);
                 }
                 .strategy-dash-nav {
                     display: flex;
                     flex-direction: column;
-                    gap: 4px;
-                    padding: 6px;
+                    gap: 3px;
+                    padding: 5px;
                     background: #F8FAFC;
                     border: 1px solid #E8EEF4;
                     border-radius: 12px;
                     position: sticky;
                     top: 72px;
-                    max-height: min(62vh, 560px);
+                    max-height: min(70vh, 640px);
                     overflow: auto;
                 }
                 .strategy-dash-nav-item {
@@ -1078,8 +1257,8 @@ export default function StructuredStrategyReport({ source, learnings = false }: 
                 }
                 .strategy-dash-pane {
                     min-width: 0;
-                    min-height: min(62vh, 560px);
-                    max-height: min(62vh, 560px);
+                    min-height: min(70vh, 640px);
+                    max-height: min(70vh, 640px);
                     overflow: auto;
                     padding-right: 2px;
                 }
