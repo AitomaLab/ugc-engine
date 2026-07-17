@@ -15,6 +15,7 @@ const TABS: { key: PublishTabKey; labelKey: string }[] = [
     { key: 'analytics', labelKey: 'publish.tabs.analytics' },
 ];
 
+/** Compact top-left segmented control for Calendar / Analytics. */
 export default function AnalyticsTabs({ value, onChange }: Props) {
     const { t } = useTranslation();
 
@@ -23,14 +24,14 @@ export default function AnalyticsTabs({ value, onChange }: Props) {
             role="tablist"
             style={{
                 display: 'inline-flex',
-                gap: '4px',
-                padding: '4px',
-                borderRadius: '12px',
+                alignSelf: 'flex-start',
+                width: 'fit-content',
+                gap: 2,
+                padding: 2,
+                borderRadius: 8,
                 background: 'white',
                 border: '1px solid var(--border)',
                 boxShadow: '0 1px 2px rgba(13,27,62,0.04)',
-                overflowX: 'auto',
-                maxWidth: '100%',
             }}
         >
             {TABS.map((tab) => {
@@ -42,12 +43,12 @@ export default function AnalyticsTabs({ value, onChange }: Props) {
                         aria-selected={active}
                         onClick={() => onChange(tab.key)}
                         style={{
-                            padding: '8px 18px',
-                            borderRadius: '8px',
+                            padding: '5px 12px',
+                            borderRadius: 6,
                             border: 'none',
                             background: active ? ANALYTICS_PRIMARY : 'transparent',
                             color: active ? 'white' : 'var(--text-2)',
-                            fontSize: '13px',
+                            fontSize: 12,
                             fontWeight: 600,
                             cursor: 'pointer',
                             transition: 'all 0.15s ease',

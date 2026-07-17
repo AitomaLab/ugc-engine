@@ -23,6 +23,8 @@ interface Props {
      * stays hidden.
      */
     mode?: 'posts' | 'accounts';
+    /** Denser single-line styling when nested inside the dashboard toolbar. */
+    compact?: boolean;
 }
 
 const ACCOUNT_PLATFORMS: AnalyticsPlatform[] = ['tiktok', 'instagram', 'youtube', 'facebook'];
@@ -43,7 +45,7 @@ function needsPlatformHint(raw: string): boolean {
     return true;
 }
 
-export default function AnalyzeSearchBar({ onAnalyzed, mode = 'posts' }: Props) {
+export default function AnalyzeSearchBar({ onAnalyzed, mode = 'posts', compact = false }: Props) {
     const { t } = useTranslation();
     const placeholderKey =
         mode === 'accounts' ? 'analytics.search.placeholderAccounts' : 'analytics.search.placeholderPosts';
@@ -105,8 +107,6 @@ export default function AnalyzeSearchBar({ onAnalyzed, mode = 'posts' }: Props) 
         }
     };
 
-    // Memo'd so the chips don't re-render on every keystroke when only the
-    // input value changes — meaningful when the user is typing fast.
     const platformChips = useMemo(
         () =>
             ACCOUNT_PLATFORMS.map((p) => ({
@@ -116,10 +116,6 @@ export default function AnalyzeSearchBar({ onAnalyzed, mode = 'posts' }: Props) 
         [t],
     );
 
-    // Whether the user is capturing an account (handle / profile URL) or a
-    // single post. Mode is a strong hint; we override it when the input
-    // clearly looks like a post URL even while on the Accounts tab so the
-    // user doesn't see "Capturing account…" for a TikTok video link.
     const trimmedLower = value.trim().toLowerCase();
     const looksLikePostUrl =
         /^https?:\/\//.test(trimmedLower) &&
@@ -136,139 +132,60 @@ export default function AnalyzeSearchBar({ onAnalyzed, mode = 'posts' }: Props) 
         error:     null,
     };
 
-    return (
-        <form
-            onSubmit={handleSubmit}
+    const platformPicker = showPlatformPicker ? (
+        <div
+            role="radiogroup"
+            aria-label={t('analytics.search.platform.label')}
             style={{
-                background: '#F8FAFC',
-                borderRadius: 'var(--radius)',
+                display: 'inline-flex',
+                padding: 2,
+                gap: 2,
+                borderRadius: 8,
+                background: 'white',
                 border: '1px solid var(--border)',
-                padding: '16px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '12px',
+                flexShrink: 0,
+                flexWrap: compact ? 'nowrap' : 'wrap',
             }}
         >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', position: 'relative' }}>
-                <svg
-                    viewBox="0 0 24 24"
-                    style={{
-                        width: 18, height: 18,
-                        position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)',
-                        stroke: 'var(--text-3)', fill: 'none', strokeWidth: 2,
-                    }}
-                >
-                    <circle cx="11" cy="11" r="7" />
-                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                </svg>
-                <input
-                    type="text"
-                    value={value}
-                    onChange={(e) => setValue(e.target.value)}
-                    placeholder={t(placeholderKey)}
-                    disabled={submitting}
-                    style={{
-                        flex: 1,
-                        padding: '12px 14px 12px 42px',
-                        border: '1px solid var(--border)',
-                        borderRadius: '10px',
-                        background: 'white',
-                        color: 'var(--text-1)',
-                        fontSize: '14px',
-                        outline: 'none',
-                        transition: 'border-color 0.15s ease',
-                    }}
-                />
-                <button
-                    type="submit"
-                    disabled={submitting || !value.trim()}
-                    style={{
-                        padding: '10px 20px',
-                        borderRadius: '10px',
-                        border: 'none',
-                        background: submitting || !value.trim() ? 'var(--text-3)' : ANALYTICS_PRIMARY,
-                        color: 'white',
-                        fontSize: '13px',
-                        fontWeight: 600,
-                        cursor: submitting || !value.trim() ? 'not-allowed' : 'pointer',
-                        whiteSpace: 'nowrap',
-                        transition: 'background 0.15s ease',
-                    }}
-                >
-                    {submitting ? '…' : t('analytics.search.cta')}
-                </button>
-            </div>
-
-            {showPlatformPicker && (
-                <div
-                    style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        flexWrap: 'wrap',
-                    }}
-                >
-                    <span
+            {platformChips.map((p) => {
+                const selected = platform === p.value;
+                return (
+                    <button
+                        key={p.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        onClick={() => setPlatform(p.value)}
+                        disabled={submitting}
                         style={{
-                            fontSize: '11px',
+                            padding: compact ? '5px 10px' : '6px 14px',
+                            borderRadius: 6,
+                            border: 'none',
+                            background: selected ? ANALYTICS_PRIMARY : 'transparent',
+                            color: selected ? 'white' : 'var(--text-2)',
+                            fontSize: compact ? 11 : 12,
                             fontWeight: 700,
-                            color: 'var(--text-3)',
-                            textTransform: 'uppercase',
-                            letterSpacing: 0.4,
+                            cursor: submitting ? 'not-allowed' : 'pointer',
+                            transition: 'background 0.15s ease, color 0.15s ease',
+                            whiteSpace: 'nowrap',
                         }}
                     >
-                        {t('analytics.search.platform.label')}
-                    </span>
-                    <div
-                        role="radiogroup"
-                        aria-label={t('analytics.search.platform.label')}
-                        style={{
-                            display: 'inline-flex',
-                            padding: 3,
-                            gap: 2,
-                            borderRadius: 10,
-                            background: 'white',
-                            border: '1px solid var(--border)',
-                            flexWrap: 'wrap',
-                        }}
-                    >
-                        {platformChips.map((p) => {
-                            const selected = platform === p.value;
-                            return (
-                                <button
-                                    key={p.value}
-                                    type="button"
-                                    role="radio"
-                                    aria-checked={selected}
-                                    onClick={() => setPlatform(p.value)}
-                                    disabled={submitting}
-                                    style={{
-                                        padding: '6px 14px',
-                                        borderRadius: '8px',
-                                        border: 'none',
-                                        background: selected ? ANALYTICS_PRIMARY : 'transparent',
-                                        color: selected ? 'white' : 'var(--text-2)',
-                                        fontSize: '12px',
-                                        fontWeight: 700,
-                                        cursor: submitting ? 'not-allowed' : 'pointer',
-                                        transition: 'background 0.15s ease, color 0.15s ease',
-                                    }}
-                                >
-                                    {p.label}
-                                </button>
-                            );
-                        })}
-                    </div>
-                </div>
-            )}
+                        {p.label}
+                    </button>
+                );
+            })}
+        </div>
+    ) : null;
 
+    const statusBlock = (
+        <>
             {(stage !== 'idle' && stageLabel[stage]) && (
                 <div
                     style={{
                         display: 'flex',
                         alignItems: 'center',
-                        gap: '8px',
-                        fontSize: '12px',
+                        gap: 8,
+                        fontSize: 12,
                         color: stage === 'done' ? '#34C759' : ANALYTICS_PRIMARY,
                         fontWeight: 600,
                     }}
@@ -291,10 +208,190 @@ export default function AnalyzeSearchBar({ onAnalyzed, mode = 'posts' }: Props) 
                     {stageLabel[stage]}
                 </div>
             )}
-
             {stage === 'error' && message && (
-                <div style={{ fontSize: '12px', color: '#FF3B30', fontWeight: 600 }}>{message}</div>
+                <div style={{ fontSize: 12, color: '#FF3B30', fontWeight: 600 }}>{message}</div>
             )}
+        </>
+    );
+
+    if (compact) {
+        return (
+            <form
+                onSubmit={handleSubmit}
+                style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                    width: '100%',
+                }}
+            >
+                <div
+                    className="analyze-search-compact-row"
+                    style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        width: '100%',
+                        flexWrap: 'nowrap',
+                    }}
+                >
+                    <div style={{ position: 'relative', flex: '1 1 auto', minWidth: 0 }}>
+                        <svg
+                            viewBox="0 0 24 24"
+                            style={{
+                                width: 16,
+                                height: 16,
+                                position: 'absolute',
+                                left: 12,
+                                top: '50%',
+                                transform: 'translateY(-50%)',
+                                stroke: 'var(--text-3)',
+                                fill: 'none',
+                                strokeWidth: 2,
+                                pointerEvents: 'none',
+                            }}
+                        >
+                            <circle cx="11" cy="11" r="7" />
+                            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                        </svg>
+                        <input
+                            type="text"
+                            value={value}
+                            onChange={(e) => setValue(e.target.value)}
+                            placeholder={t(placeholderKey)}
+                            disabled={submitting}
+                            style={{
+                                width: '100%',
+                                padding: '8px 12px 8px 36px',
+                                border: '1px solid var(--border)',
+                                borderRadius: 8,
+                                background: 'white',
+                                color: 'var(--text-1)',
+                                fontSize: 13,
+                                outline: 'none',
+                                boxSizing: 'border-box',
+                            }}
+                        />
+                    </div>
+                    {platformPicker}
+                    <button
+                        type="submit"
+                        disabled={submitting || !value.trim()}
+                        style={{
+                            padding: '8px 14px',
+                            borderRadius: 8,
+                            border: 'none',
+                            background: submitting || !value.trim() ? 'var(--text-3)' : ANALYTICS_PRIMARY,
+                            color: 'white',
+                            fontSize: 12,
+                            fontWeight: 600,
+                            cursor: submitting || !value.trim() ? 'not-allowed' : 'pointer',
+                            whiteSpace: 'nowrap',
+                            flexShrink: 0,
+                        }}
+                    >
+                        {submitting ? '…' : t('analytics.search.cta')}
+                    </button>
+                </div>
+                {statusBlock}
+                <style>{`
+                    @media (max-width: 720px) {
+                        .analyze-search-compact-row {
+                            flex-wrap: wrap !important;
+                        }
+                    }
+                `}</style>
+            </form>
+        );
+    }
+
+    return (
+        <form
+            onSubmit={handleSubmit}
+            style={{
+                background: '#F8FAFC',
+                borderRadius: 'var(--radius)',
+                border: '1px solid var(--border)',
+                padding: 16,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 12,
+            }}
+        >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, position: 'relative' }}>
+                <svg
+                    viewBox="0 0 24 24"
+                    style={{
+                        width: 18,
+                        height: 18,
+                        position: 'absolute',
+                        left: 14,
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        stroke: 'var(--text-3)',
+                        fill: 'none',
+                        strokeWidth: 2,
+                    }}
+                >
+                    <circle cx="11" cy="11" r="7" />
+                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+                <input
+                    type="text"
+                    value={value}
+                    onChange={(e) => setValue(e.target.value)}
+                    placeholder={t(placeholderKey)}
+                    disabled={submitting}
+                    style={{
+                        flex: 1,
+                        padding: '12px 14px 12px 42px',
+                        border: '1px solid var(--border)',
+                        borderRadius: 10,
+                        background: 'white',
+                        color: 'var(--text-1)',
+                        fontSize: 14,
+                        outline: 'none',
+                        transition: 'border-color 0.15s ease',
+                    }}
+                />
+                <button
+                    type="submit"
+                    disabled={submitting || !value.trim()}
+                    style={{
+                        padding: '10px 20px',
+                        borderRadius: 10,
+                        border: 'none',
+                        background: submitting || !value.trim() ? 'var(--text-3)' : ANALYTICS_PRIMARY,
+                        color: 'white',
+                        fontSize: 13,
+                        fontWeight: 600,
+                        cursor: submitting || !value.trim() ? 'not-allowed' : 'pointer',
+                        whiteSpace: 'nowrap',
+                        transition: 'background 0.15s ease',
+                    }}
+                >
+                    {submitting ? '…' : t('analytics.search.cta')}
+                </button>
+            </div>
+
+            {showPlatformPicker && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span
+                        style={{
+                            fontSize: 11,
+                            fontWeight: 700,
+                            color: 'var(--text-3)',
+                            textTransform: 'uppercase',
+                            letterSpacing: 0.4,
+                        }}
+                    >
+                        {t('analytics.search.platform.label')}
+                    </span>
+                    {platformPicker}
+                </div>
+            )}
+
+            {statusBlock}
         </form>
     );
 }

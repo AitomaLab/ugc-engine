@@ -40,6 +40,12 @@ interface Props {
     isStudio?: boolean;
     /** Resolved profile photo — tracked account avatar or Connections profilePic. */
     avatarUrl?: string;
+    /**
+     * Full-width horizontal layout used when the Accounts list has ≤2 rows.
+     * With 3+ accounts the parent grid switches to compact cards and this
+     * stays false.
+     */
+    wide?: boolean;
 }
 
 function AccountAvatar({ url, platform }: { url?: string; platform: string }) {
@@ -92,7 +98,7 @@ function AccountAvatar({ url, platform }: { url?: string; platform: string }) {
     );
 }
 
-export default function AccountCard({ account, onOpen, onScraped, onDelete, isStudio, avatarUrl }: Props) {
+export default function AccountCard({ account, onOpen, onScraped, onDelete, isStudio, avatarUrl, wide = false }: Props) {
     const { t } = useTranslation();
     const [scraping, setScraping] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -167,25 +173,36 @@ export default function AccountCard({ account, onOpen, onScraped, onDelete, isSt
                 background: 'white',
                 border: '1px solid var(--border)',
                 borderRadius: 'var(--radius)',
-                padding: '16px',
+                padding: wide ? '14px 18px' : '16px',
                 cursor: 'pointer',
                 display: 'flex',
-                flexDirection: 'column',
-                gap: '14px',
-                transition: 'transform 0.18s ease, box-shadow 0.18s ease',
+                flexDirection: wide ? 'row' : 'column',
+                alignItems: wide ? 'center' : 'stretch',
+                gap: wide ? 20 : 14,
+                transition: 'transform 0.18s ease, box-shadow 0.18s ease, border-color 0.15s ease',
                 boxShadow: '0 1px 2px rgba(13,27,62,0.04)',
+                width: '100%',
+                minWidth: 0,
             }}
             onMouseEnter={(e) => {
+                if (wide) {
+                    e.currentTarget.style.borderColor = '#CBD5E1';
+                    return;
+                }
                 e.currentTarget.style.transform = 'translateY(-2px)';
                 e.currentTarget.style.boxShadow = 'var(--shadow)';
             }}
             onMouseLeave={(e) => {
+                if (wide) {
+                    e.currentTarget.style.borderColor = '';
+                    return;
+                }
                 e.currentTarget.style.transform = 'translateY(0)';
                 e.currentTarget.style.boxShadow = '0 1px 2px rgba(13,27,62,0.04)';
             }}
         >
-            {/* Header — avatar + platform + handle + remove */}
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '10px' }}>
+            {/* Header — avatar + platform + handle */}
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '10px', flex: wide ? '1 1 240px' : undefined, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', minWidth: 0, flex: 1 }}>
                     <AccountAvatar url={avatarUrl || account.avatar_url} platform={account.platform} />
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0, flex: 1 }}>
@@ -224,40 +241,28 @@ export default function AccountCard({ account, onOpen, onScraped, onDelete, isSt
                     >
                         @{account.username}
                     </span>
-                    </div>
-                </div>
-                <div style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
-                    {onDelete && (
-                        <span
-                            role="button"
-                            tabIndex={0}
-                            aria-label={t('analytics.accounts.removeAria').replace('{handle}', `@${account.username}`)}
-                            title={t('analytics.accounts.removeAria').replace('{handle}', `@${account.username}`)}
-                            onClick={handleRemove}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter' || e.key === ' ') handleRemove(e);
-                            }}
-                            onMouseEnter={() => setRemoveHover(true)}
-                            onMouseLeave={() => setRemoveHover(false)}
-                            style={{
-                                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                                width: 24, height: 24, borderRadius: '6px',
-                                color: removeHover ? '#b3261e' : 'var(--text-3)',
-                                background: removeHover ? 'rgba(255,59,48,0.10)' : 'transparent',
-                                cursor: 'pointer',
-                                transition: 'background 0.15s ease, color 0.15s ease',
-                            }}
-                        >
-                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                                <polyline points="3 6 5 6 21 6" />
-                                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                                <path d="M10 11v6" />
-                                <path d="M14 11v6" />
-                                <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-                            </svg>
+                    {wide && (
+                        <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
+                            {isStudio
+                                ? (account.last_scraped_at
+                                    ? `${t('analytics.tracked.lastScraped')} ${timeAgo(account.last_scraped_at)}`
+                                    : t('analytics.accounts.studioAutoAnalyzing'))
+                                : (account.last_scraped_at
+                                    ? `${t('analytics.tracked.lastScraped')} ${timeAgo(account.last_scraped_at)}`
+                                    : t('analytics.accounts.neverScraped'))}
                         </span>
                     )}
+                    </div>
                 </div>
+                {/* Compact cards: delete stays top-right of the header */}
+                {!wide && onDelete && (
+                    <DeleteButton
+                        removeHover={removeHover}
+                        setRemoveHover={setRemoveHover}
+                        onRemove={handleRemove}
+                        label={t('analytics.accounts.removeAria').replace('{handle}', `@${account.username}`)}
+                    />
+                )}
             </div>
 
             {/* Stat grid */}
@@ -266,8 +271,10 @@ export default function AccountCard({ account, onOpen, onScraped, onDelete, isSt
                     display: 'grid',
                     gridTemplateColumns: showViews ? 'repeat(3, 1fr)' : 'repeat(2, 1fr)',
                     gap: '8px',
-                    paddingTop: '8px',
-                    borderTop: '1px solid var(--border)',
+                    paddingTop: wide ? 0 : '8px',
+                    borderTop: wide ? 'none' : '1px solid var(--border)',
+                    flex: wide ? '1.2 1 280px' : undefined,
+                    minWidth: wide ? 200 : 0,
                 }}
             >
                 {showViews && (
@@ -280,16 +287,19 @@ export default function AccountCard({ account, onOpen, onScraped, onDelete, isSt
                 />
             </div>
 
-            {/* Footer — last scraped; external accounts get manual Analyze */}
+            {/* Footer — last scraped (compact only); external accounts get manual Analyze */}
+            {(!wide || !isStudio) && (
             <div
                 style={{
                     display: 'flex',
                     alignItems: 'center',
-                    justifyContent: isStudio ? 'flex-start' : 'space-between',
+                    justifyContent: wide ? 'flex-end' : (isStudio ? 'flex-start' : 'space-between'),
                     gap: '10px',
-                    marginTop: 'auto',
+                    marginTop: wide ? 0 : 'auto',
+                    flexShrink: 0,
                 }}
             >
+                {!wide && (
                 <span style={{ fontSize: '11px', color: 'var(--text-3)' }}>
                     {isStudio
                         ? (account.last_scraped_at
@@ -299,6 +309,7 @@ export default function AccountCard({ account, onOpen, onScraped, onDelete, isSt
                             ? `${t('analytics.tracked.lastScraped')} ${timeAgo(account.last_scraped_at)}`
                             : t('analytics.accounts.neverScraped'))}
                 </span>
+                )}
                 {!isStudio && (
                 <button
                     type="button"
@@ -329,13 +340,73 @@ export default function AccountCard({ account, onOpen, onScraped, onDelete, isSt
                 </button>
                 )}
             </div>
+            )}
 
             {error && (
                 <div style={{ fontSize: '11px', color: '#FF3B30' }}>
                     {error}
                 </div>
             )}
+
+            {/* Wide cards: delete sits on the far right, after metrics */}
+            {wide && onDelete && (
+                <DeleteButton
+                    removeHover={removeHover}
+                    setRemoveHover={setRemoveHover}
+                    onRemove={handleRemove}
+                    label={t('analytics.accounts.removeAria').replace('{handle}', `@${account.username}`)}
+                />
+            )}
         </div>
+    );
+}
+
+function DeleteButton({
+    removeHover,
+    setRemoveHover,
+    onRemove,
+    label,
+}: {
+    removeHover: boolean;
+    setRemoveHover: (next: boolean) => void;
+    onRemove: (e: React.MouseEvent | React.KeyboardEvent) => void;
+    label: string;
+}) {
+    return (
+        <span
+            role="button"
+            tabIndex={0}
+            aria-label={label}
+            title={label}
+            onClick={onRemove}
+            onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') onRemove(e);
+            }}
+            onMouseEnter={() => setRemoveHover(true)}
+            onMouseLeave={() => setRemoveHover(false)}
+            style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 28,
+                height: 28,
+                borderRadius: 6,
+                color: removeHover ? '#b3261e' : 'var(--text-3)',
+                background: removeHover ? 'rgba(255,59,48,0.10)' : 'transparent',
+                cursor: 'pointer',
+                transition: 'background 0.15s ease, color 0.15s ease',
+                flexShrink: 0,
+                marginLeft: 'auto',
+            }}
+        >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                <path d="M10 11v6" />
+                <path d="M14 11v6" />
+                <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+            </svg>
+        </span>
     );
 }
 

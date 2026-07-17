@@ -35,15 +35,16 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
     });
 }
 
-function renderOrderedList(items: OrderedItem[], key: string): React.ReactNode {
+function renderOrderedList(items: OrderedItem[], key: string, dense?: boolean): React.ReactNode {
     return (
         <div
             key={key}
             style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 10,
-                margin: '8px 0 14px',
+                display: dense ? 'grid' : 'flex',
+                gridTemplateColumns: dense ? 'repeat(auto-fill, minmax(220px, 1fr))' : undefined,
+                flexDirection: dense ? undefined : 'column',
+                gap: dense ? 8 : 10,
+                margin: dense ? '4px 0 10px' : '8px 0 14px',
             }}
         >
             {items.map((item, i) => (
@@ -51,22 +52,22 @@ function renderOrderedList(items: OrderedItem[], key: string): React.ReactNode {
                     key={`${key}-${i}`}
                     style={{
                         display: 'flex',
-                        gap: 12,
-                        padding: '12px 14px',
-                        background: 'var(--blue-light)',
-                        border: '1px solid var(--border)',
+                        gap: dense ? 10 : 12,
+                        padding: dense ? '10px 12px' : '12px 14px',
+                        background: 'rgba(51,122,255,0.06)',
+                        border: '1px solid rgba(51,122,255,0.12)',
                         borderRadius: 10,
                     }}
                 >
                     <div
                         aria-hidden
                         style={{
-                            width: 28,
-                            height: 28,
+                            width: dense ? 24 : 28,
+                            height: dense ? 24 : 28,
                             borderRadius: '50%',
                             background: 'var(--blue)',
                             color: '#fff',
-                            fontSize: 13,
+                            fontSize: dense ? 11 : 13,
                             fontWeight: 700,
                             display: 'flex',
                             alignItems: 'center',
@@ -79,7 +80,7 @@ function renderOrderedList(items: OrderedItem[], key: string): React.ReactNode {
                     <div style={{ flex: 1, minWidth: 0 }}>
                         <div
                             style={{
-                                fontSize: 13,
+                                fontSize: dense ? 12.5 : 13,
                                 fontWeight: 600,
                                 color: 'var(--text-1)',
                                 lineHeight: 1.45,
@@ -96,8 +97,8 @@ function renderOrderedList(items: OrderedItem[], key: string): React.ReactNode {
                                     display: 'flex',
                                     flexDirection: 'column',
                                     gap: 4,
-                                    fontSize: 13,
-                                    lineHeight: 1.55,
+                                    fontSize: dense ? 12 : 13,
+                                    lineHeight: 1.5,
                                     color: 'var(--text-2)',
                                 }}
                             >
@@ -137,7 +138,14 @@ function renderUnorderedList(items: string[], key: string): React.ReactNode {
     );
 }
 
-export default function StrategyReportMarkdown({ source }: { source: string }) {
+export default function StrategyReportMarkdown({
+    source,
+    dense = false,
+}: {
+    source: string;
+    /** Tighter spacing + 2-col ordered lists for account detail tabs. */
+    dense?: boolean;
+}) {
     const lines = source.replace(/\r\n/g, '\n').split('\n');
     const blocks: React.ReactNode[] = [];
     let listBuffer: ListBuffer | null = null;
@@ -146,7 +154,7 @@ export default function StrategyReportMarkdown({ source }: { source: string }) {
         if (!listBuffer) return;
         const key = `list-${blocks.length}`;
         if (listBuffer.ordered) {
-            blocks.push(renderOrderedList(listBuffer.items, key));
+            blocks.push(renderOrderedList(listBuffer.items, key, dense));
         } else {
             blocks.push(renderUnorderedList(listBuffer.items, key));
         }
@@ -184,15 +192,19 @@ export default function StrategyReportMarkdown({ source }: { source: string }) {
             flushList();
             const level = heading[1].length;
             const content = heading[2].replace(/^\*\*|\*\*$/g, '');
-            const sizes: Record<number, number> = { 1: 18, 2: 15, 3: 13, 4: 12, 5: 12, 6: 12 };
+            const sizes: Record<number, number> = dense
+                ? { 1: 16, 2: 13, 3: 12, 4: 11, 5: 11, 6: 11 }
+                : { 1: 18, 2: 15, 3: 13, 4: 12, 5: 12, 6: 12 };
             blocks.push(
                 <div
                     key={`h-${idx}`}
                     style={{
                         fontSize: sizes[level] || 13,
-                        fontWeight: 800,
-                        color: 'var(--text-1)',
-                        margin: level <= 2 ? '14px 0 6px' : '10px 0 4px',
+                        fontWeight: dense ? 700 : 800,
+                        color: dense ? '#475569' : 'var(--text-1)',
+                        margin: dense
+                            ? (level <= 2 ? '8px 0 4px' : '6px 0 3px')
+                            : (level <= 2 ? '14px 0 6px' : '10px 0 4px'),
                         letterSpacing: level <= 2 ? -0.2 : 0,
                     }}
                 >
@@ -231,7 +243,12 @@ export default function StrategyReportMarkdown({ source }: { source: string }) {
         blocks.push(
             <p
                 key={`p-${idx}`}
-                style={{ margin: '0 0 8px', fontSize: 13, lineHeight: 1.55, color: 'var(--text-2)' }}
+                style={{
+                    margin: dense ? '0 0 6px' : '0 0 8px',
+                    fontSize: dense ? 12.5 : 13,
+                    lineHeight: 1.5,
+                    color: 'var(--text-2)',
+                }}
             >
                 {renderInline(trimmed, `p-${idx}`)}
             </p>,

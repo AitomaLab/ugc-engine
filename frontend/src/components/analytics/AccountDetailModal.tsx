@@ -2,19 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from '@/lib/i18n';
-import Modal from './Modal';
-import PostCard from './PostCard';
-import TrendChart from './TrendChart';
-import StrategyReportMarkdown from './StrategyReportMarkdown';
+import StructuredStrategyReport from './StructuredStrategyReport';
 import {
     analyticsFetch,
-    formatCount,
     pollScrapeJob,
     timeAgo,
     useAccountStrategyReport,
-    useAccountTopPosts,
-    useAccountTrend,
-    useAnalyticsPostThumbnails,
     useCreativeGuidelines,
     type TrackedAccountAggregate,
     type TrackedAccountWithJob,
@@ -23,9 +16,8 @@ import {
 interface Props {
     account: TrackedAccountAggregate;
     onClose: () => void;
-    /** Open a specific post in the existing PostDetailModal (driven by the
-     *  parent so both modals don't try to render on top of each other). */
-    onOpenPost: (postId: string) => void;
+    /** Kept for call-site compatibility (By Video / post deep-links). */
+    onOpenPost?: (postId: string) => void;
     /** Called after a fresh scrape/sync completes so parent KPIs update. */
     onRefreshed?: () => void;
     /**
@@ -38,17 +30,13 @@ interface Props {
 }
 
 /**
- * Account detail panel — the "card click" destination from the Accounts grid.
+ * Full-page account detail — destination from the Accounts grid (`?account=`).
  *
- *   • 30-day engagement trend (TrendChart)
- *   • Top 5 posts (re-uses PostCard for visual consistency with the Posts feed)
- *   • Scrape config summary (frequency + top-N)
- *   • Lightweight Scrape Jobs log (recent runs, expandable drawer)
- *   • Studio-vs-External delta header when both kinds of posts exist
- *
- * The trend + top-posts panes are independently fetched so a slow top-posts
- * query doesn't block the chart from rendering.
+ *   • Sticky Back bar + identity / refresh
+ *   • Inner tabs: AI Strategy · AI Learnings
  */
+type AccountDetailTab = 'strategy' | 'learnings';
+
 const PLATFORM_ACCENT: Record<string, string> = {
     instagram: '#E1306C',
     tiktok:    '#000000',
@@ -125,26 +113,27 @@ function RefreshSpinner() {
     );
 }
 
-export default function AccountDetailModal({ account, onClose, onOpenPost, onRefreshed, avatarUrl }: Props) {
+/** Full-page account detail (filename kept for import stability). */
+export default function AccountDetailView({ account, onClose, onRefreshed, avatarUrl }: Props) {
     const { t, lang } = useTranslation();
     const [refreshKey, setRefreshKey] = useState(0);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [lastScrapedAt, setLastScrapedAt] = useState<string | null>(account.last_scraped_at ?? null);
     const [justUpdated, setJustUpdated] = useState(false);
-    const [displayCount, setDisplayCount] = useState(24);
+    const [tab, setTab] = useState<AccountDetailTab>('strategy');
     const justUpdatedTimer = useRef<number | null>(null);
     const refreshInFlight = useRef(false);
 
-    const fetchLimit = displayCount === 0 ? 200 : Math.max(displayCount, 48);
-
-    const { data: trend, loading: trendLoading } = useAccountTrend(account.id, 30, refreshKey);
-    const { data: top, loading: topLoading } = useAccountTopPosts(account.id, fetchLimit, refreshKey);
     const { data: strategy, loading: strategyLoading } = useAccountStrategyReport(account.id, refreshKey, lang);
     const { data: guidelines, loading: guidelinesLoading } = useCreativeGuidelines(refreshKey);
 
     useEffect(() => {
         setLastScrapedAt(account.last_scraped_at ?? null);
     }, [account.id, account.last_scraped_at]);
+
+    useEffect(() => {
+        setTab('strategy');
+    }, [account.id]);
 
     const markJustUpdated = useCallback(() => {
         setJustUpdated(true);
@@ -192,12 +181,6 @@ export default function AccountDetailModal({ account, onClose, onOpenPost, onRef
     // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh once per account open
     }, [account.id]);
 
-    const followers = account.follower_count ?? account.followers;
-    const delta = top?.studio_vs_external_pct;
-    const allPosts = top?.posts ?? [];
-    const visiblePosts = displayCount > 0 ? allPosts.slice(0, displayCount) : allPosts;
-    const thumbMap = useAnalyticsPostThumbnails(visiblePosts);
-
     const resolvedAvatar = avatarUrl || account.avatar_url || undefined;
 
     const refreshStatusLabel = (() => {
@@ -210,11 +193,7 @@ export default function AccountDetailModal({ account, onClose, onOpenPost, onRef
     })();
 
     return (
-        <Modal
-            title={`@${account.username} · ${account.platform}`}
-            onClose={onClose}
-            maxWidth={920}
-        >
+        <div className="analytics-account-detail">
             <style>{`
                 @keyframes accountRefreshSpin {
                     to { transform: rotate(360deg); }
@@ -225,295 +204,234 @@ export default function AccountDetailModal({ account, onClose, onOpenPost, onRef
                 }
             `}</style>
 
-            {/* Avatar header — visible profile identity for both Studio &
-                External accounts. Sits above the summary metric row so the
-                user doesn't have to read the modal title bar to know which
-                handle they're inspecting. */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                <AvatarPuck url={resolvedAvatar} platform={account.platform} pulsing={isRefreshing} />
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0, flex: 1 }}>
-                    <span style={{
-                        fontSize: 16, fontWeight: 800, color: 'var(--text-1)',
-                        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                    }}>
-                        @{account.username}
-                    </span>
-                    <span style={{
-                        fontSize: 11, fontWeight: 700,
-                        color: PLATFORM_ACCENT[account.platform] || 'var(--text-3)',
-                        textTransform: 'uppercase', letterSpacing: 0.4,
-                    }}>
-                        {account.platform}
-                        {account.linked_via_connections && (
-                            <span style={{
-                                marginLeft: 8,
-                                color: 'var(--blue)',
-                                background: 'rgba(51,122,255,0.12)',
-                                padding: '2px 8px', borderRadius: 999,
-                                fontSize: 10,
-                            }}>
-                                {t('analytics.accounts.ownership.studioBadge')}
-                            </span>
-                        )}
-                    </span>
-                    <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        flexWrap: 'wrap',
-                        marginTop: 2,
-                    }}>
-                        {isRefreshing && <RefreshSpinner />}
-                        <span style={{ fontSize: 12, color: 'var(--text-3)', fontWeight: 500 }}>
-                            {refreshStatusLabel}
-                        </span>
-                        <button
-                            type="button"
-                            onClick={() => startBackgroundRefresh()}
-                            disabled={isRefreshing}
-                            style={{
-                                marginLeft: 'auto',
-                                padding: '4px 10px',
-                                borderRadius: 8,
-                                border: '1px solid var(--border)',
-                                background: isRefreshing ? 'var(--surface)' : 'white',
-                                color: 'var(--text-2)',
-                                fontSize: 11,
-                                fontWeight: 600,
-                                cursor: isRefreshing ? 'default' : 'pointer',
-                                opacity: isRefreshing ? 0.6 : 1,
-                            }}
-                        >
-                            {isRefreshing ? t('analytics.accounts.analyzing') : t('analytics.tracked.refresh')}
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            {/* Studio vs External delta — only when both sides have data */}
-            {delta !== null && delta !== undefined && (
-                <div
-                    style={{
-                        padding: '12px 14px',
-                        borderRadius: '10px',
-                        background: delta >= 0 ? 'rgba(52,199,89,0.10)' : 'rgba(255,159,10,0.10)',
-                        color: delta >= 0 ? '#1f7a3a' : '#a35a00',
-                        fontSize: '13px',
-                        fontWeight: 600,
-                    }}
-                >
-                    {delta >= 0
-                        ? t('analytics.accounts.delta.beats').replace('{pct}', String(Math.abs(delta)))
-                        : t('analytics.accounts.delta.behind').replace('{pct}', String(Math.abs(delta)))}
-                </div>
-            )}
-
-            {/* Summary metric row */}
             <div
                 style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
-                    gap: '8px',
+                    position: 'sticky',
+                    top: 0,
+                    zIndex: 5,
+                    background: 'rgba(255,255,255,0.96)',
+                    backdropFilter: 'blur(8px)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 12,
+                    padding: '10px 12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    flexWrap: 'wrap',
+                    marginBottom: 14,
                 }}
             >
-                {account.platform === 'tiktok' && (
-                    <SummaryCell label={t('analytics.accounts.metrics.views')} value={formatCount(account.total_views)} />
-                )}
-                <SummaryCell label={t('analytics.accounts.metrics.engagement')} value={formatCount(account.total_engagement)} accent />
-                <SummaryCell label={t('analytics.accounts.metrics.followers')} value={followers != null ? formatCount(followers) : '—'} />
-                <SummaryCell label={t('analytics.accounts.metrics.posts')} value={String(account.posts_in_period)} />
-                <SummaryCell label={t('analytics.accounts.metrics.engRate')} value={`${account.avg_engagement_rate.toFixed(2)}%`} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: 1 }}>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        aria-label="Back"
+                        style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 6,
+                            padding: '7px 12px',
+                            borderRadius: 8,
+                            border: '1px solid var(--border)',
+                            background: 'white',
+                            color: 'var(--text-1)',
+                            fontSize: 13,
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            flexShrink: 0,
+                        }}
+                    >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} aria-hidden>
+                            <path d="M15 18l-6-6 6-6" />
+                        </svg>
+                        Back
+                    </button>
+                    <AvatarPuck url={resolvedAvatar} platform={account.platform} pulsing={isRefreshing} />
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                        <span style={{
+                            fontSize: 16, fontWeight: 800, color: 'var(--text-1)',
+                            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                        }}>
+                            @{account.username}
+                        </span>
+                        <span style={{
+                            fontSize: 11, fontWeight: 700,
+                            color: PLATFORM_ACCENT[account.platform] || 'var(--text-3)',
+                            textTransform: 'uppercase', letterSpacing: 0.4,
+                        }}>
+                            {account.platform}
+                            {account.linked_via_connections && (
+                                <span style={{
+                                    marginLeft: 8,
+                                    color: 'var(--blue)',
+                                    background: 'rgba(51,122,255,0.12)',
+                                    padding: '2px 8px', borderRadius: 999,
+                                    fontSize: 10,
+                                }}>
+                                    {t('analytics.accounts.ownership.studioBadge')}
+                                </span>
+                            )}
+                        </span>
+                    </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    {isRefreshing && <RefreshSpinner />}
+                    <span style={{ fontSize: 12, color: 'var(--text-3)', fontWeight: 500 }}>
+                        {refreshStatusLabel}
+                    </span>
+                    <button
+                        type="button"
+                        onClick={() => startBackgroundRefresh()}
+                        disabled={isRefreshing}
+                        style={{
+                            padding: '6px 12px',
+                            borderRadius: 8,
+                            border: '1px solid var(--border)',
+                            background: isRefreshing ? 'var(--surface)' : 'white',
+                            color: 'var(--text-2)',
+                            fontSize: 12,
+                            fontWeight: 600,
+                            cursor: isRefreshing ? 'default' : 'pointer',
+                            opacity: isRefreshing ? 0.6 : 1,
+                        }}
+                    >
+                        {isRefreshing ? t('analytics.accounts.analyzing') : t('analytics.tracked.refresh')}
+                    </button>
+                </div>
             </div>
 
-            {/* Trend chart */}
-            <Section title={t('analytics.accounts.trend.title')}>
-                {trendLoading
-                    ? <div style={{ fontSize: '12px', color: 'var(--text-3)' }}>{t('common.loading')}</div>
-                    : <TrendChart points={trend?.points || []} />
-                }
-            </Section>
+            <AccountDetailTabs tab={tab} onChange={setTab} />
 
-            {/* Latest posts — cached data shown while background refresh runs */}
-            <Section
-                title={t('analytics.accounts.topPosts.title')}
-                action={
-                    allPosts.length > 0 ? (
-                        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-2)' }}>
-                            <span>{t('analytics.accounts.topPosts.show')}</span>
-                            <select
-                                value={displayCount}
-                                onChange={(e) => setDisplayCount(Number(e.target.value))}
-                                style={{
-                                    padding: '4px 8px',
-                                    borderRadius: 6,
-                                    border: '1px solid var(--border)',
-                                    fontSize: 12,
-                                    fontWeight: 600,
-                                    background: 'white',
-                                    color: 'var(--text-1)',
-                                }}
-                            >
-                                <option value={12}>12</option>
-                                <option value={24}>24</option>
-                                <option value={48}>48</option>
-                                <option value={0}>{t('analytics.accounts.topPosts.all')}</option>
-                            </select>
-                        </label>
-                    ) : null
-                }
-            >
-                {topLoading && allPosts.length === 0
-                    ? <div style={{ fontSize: '12px', color: 'var(--text-3)' }}>{t('common.loading')}</div>
-                    : allPosts.length > 0
-                        ? (
-                            <>
-                                <p style={{ margin: 0, fontSize: 11, color: 'var(--text-3)' }}>
-                                    {t('analytics.accounts.topPosts.loadedCount')
-                                        .replace('{shown}', String(visiblePosts.length))
-                                        .replace('{total}', String(allPosts.length))}
-                                    {isRefreshing ? ` · ${t('analytics.accounts.refreshingPostsStatus')}` : ''}
-                                </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {tab === 'strategy' && (
+                    <Section
+                        title={t('analytics.accounts.strategy.title')}
+                        action={
+                            strategy?.generated_at ? (
+                                <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
+                                    {t('analytics.accounts.strategy.updated').replace('{when}', timeAgo(strategy.generated_at))}
+                                </span>
+                            ) : null
+                        }
+                    >
+                        {strategy?.report
+                            ? <StructuredStrategyReport source={strategy.report} />
+                            : (
                                 <div
                                     style={{
-                                        display: 'grid',
-                                        gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
-                                        gap: '12px',
+                                        background: 'rgba(51,122,255,0.06)',
+                                        border: '1px dashed #E2E8F0',
+                                        borderRadius: 12,
+                                        padding: '16px 18px',
+                                        fontSize: 13,
+                                        color: 'var(--text-2)',
+                                        lineHeight: 1.5,
                                     }}
                                 >
-                                    {visiblePosts.map((p) => (
-                                        <PostCard
-                                            key={p.id}
-                                            post={p}
-                                            thumbnailUrl={thumbMap[p.id]}
-                                            onOpen={onOpenPost}
-                                        />
-                                    ))}
+                                    {strategyLoading
+                                        ? t('analytics.accounts.strategy.loading')
+                                        : t('analytics.accounts.strategy.pending')}
                                 </div>
-                            </>
-                        )
-                        : <div style={{ fontSize: '12px', color: 'var(--text-3)' }}>
-                            {isRefreshing
-                                ? t('analytics.accounts.refreshingPosts')
-                                : t('analytics.accounts.topPosts.empty')}
-                        </div>
-                }
-            </Section>
+                            )
+                        }
+                    </Section>
+                )}
 
-            {/* AI Strategy Report — "Do More / Do Less" diagnosis generated
-                asynchronously after each refresh. Pending until the analyzer
-                thread persists the first report. */}
-            <Section
-                title={t('analytics.accounts.strategy.title')}
-                action={
-                    strategy?.generated_at ? (
-                        <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
-                            {t('analytics.accounts.strategy.updated').replace('{when}', timeAgo(strategy.generated_at))}
-                        </span>
-                    ) : null
-                }
-            >
-                {strategy?.report
-                    ? (
-                        <div
-                            style={{
-                                background: 'white',
-                                border: '1px solid var(--border)',
-                                borderRadius: 12,
-                                padding: '16px 18px',
-                            }}
-                        >
-                            <StrategyReportMarkdown source={strategy.report} />
-                        </div>
-                    )
-                    : (
-                        <div
-                            style={{
-                                background: 'var(--blue-light)',
-                                border: '1px dashed var(--border)',
-                                borderRadius: 12,
-                                padding: '16px 18px',
-                                fontSize: 13,
-                                color: 'var(--text-2)',
-                                lineHeight: 1.5,
-                            }}
-                        >
-                            {strategyLoading
-                                ? t('analytics.accounts.strategy.loading')
-                                : t('analytics.accounts.strategy.pending')}
-                        </div>
-                    )
-                }
-            </Section>
-
-            {/* What Your AI Has Learned — user-level creative guidelines the
-                nightly self-improvement reflection maintains. Creator-wide
-                (spans all connected accounts), rendered read-only. */}
-            <Section
-                title={t('analytics.accounts.guidelines.title')}
-                action={
-                    guidelines?.updated_at ? (
-                        <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
-                            {t('analytics.accounts.guidelines.updated').replace('{when}', timeAgo(guidelines.updated_at))}
-                        </span>
-                    ) : null
-                }
-            >
-                {guidelines?.guidelines
-                    ? (
-                        <div
-                            style={{
-                                background: 'white',
-                                border: '1px solid var(--border)',
-                                borderRadius: 12,
-                                padding: '16px 18px',
-                            }}
-                        >
-                            <StrategyReportMarkdown source={guidelines.guidelines} />
-                        </div>
-                    )
-                    : (
-                        <div
-                            style={{
-                                background: 'var(--blue-light)',
-                                border: '1px dashed var(--border)',
-                                borderRadius: 12,
-                                padding: '16px 18px',
-                                fontSize: 13,
-                                color: 'var(--text-2)',
-                                lineHeight: 1.5,
-                            }}
-                        >
-                            {guidelinesLoading
-                                ? t('analytics.accounts.guidelines.loading')
-                                : t('analytics.accounts.guidelines.empty')}
-                        </div>
-                    )
-                }
-            </Section>
-        </Modal>
+                {tab === 'learnings' && (
+                    <Section
+                        title={t('analytics.accounts.guidelines.title')}
+                        action={
+                            guidelines?.updated_at ? (
+                                <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
+                                    {t('analytics.accounts.guidelines.updated').replace('{when}', timeAgo(guidelines.updated_at))}
+                                </span>
+                            ) : null
+                        }
+                    >
+                        {guidelines?.guidelines
+                            ? <StructuredStrategyReport source={guidelines.guidelines} learnings />
+                            : (
+                                <div
+                                    style={{
+                                        background: 'rgba(51,122,255,0.06)',
+                                        border: '1px dashed #E2E8F0',
+                                        borderRadius: 12,
+                                        padding: '16px 18px',
+                                        fontSize: 13,
+                                        color: 'var(--text-2)',
+                                        lineHeight: 1.5,
+                                    }}
+                                >
+                                    {guidelinesLoading
+                                        ? t('analytics.accounts.guidelines.loading')
+                                        : t('analytics.accounts.guidelines.empty')}
+                                </div>
+                            )
+                        }
+                    </Section>
+                )}
+            </div>
+        </div>
     );
 }
 
-function SummaryCell({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+function AccountDetailTabs({
+    tab,
+    onChange,
+}: {
+    tab: AccountDetailTab;
+    onChange: (next: AccountDetailTab) => void;
+}) {
+    const { t } = useTranslation();
+    const tabs: Array<{ id: AccountDetailTab; label: string }> = [
+        { id: 'strategy', label: t('analytics.accounts.tabs.strategy') },
+        { id: 'learnings', label: t('analytics.accounts.tabs.learnings') },
+    ];
+
     return (
         <div
+            role="tablist"
+            aria-label="Account sections"
             style={{
-                background: 'white',
-                border: '1px solid var(--border)',
-                borderRadius: '10px',
-                padding: '10px 12px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '2px',
-                minWidth: 0,
+                display: 'inline-flex',
+                flexWrap: 'wrap',
+                gap: 4,
+                padding: 4,
+                borderRadius: 12,
+                background: '#F1F5F9',
+                border: '1px solid #E2E8F0',
+                alignSelf: 'flex-start',
+                marginBottom: 14,
             }}
         >
-            <span style={{ fontSize: '15px', fontWeight: 700, color: accent ? 'var(--blue)' : 'var(--text-1)' }}>
-                {value}
-            </span>
-            <span style={{ fontSize: '10px', color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: 0.4 }}>
-                {label}
-            </span>
+            {tabs.map((item) => {
+                const active = item.id === tab;
+                return (
+                    <button
+                        key={item.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        onClick={() => onChange(item.id)}
+                        style={{
+                            padding: '6px 12px',
+                            borderRadius: 8,
+                            border: 'none',
+                            background: active ? '#337AFF' : 'transparent',
+                            color: active ? '#FFFFFF' : '#475569',
+                            fontSize: 12,
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            transition: 'background 0.15s ease, color 0.15s ease',
+                            boxShadow: active ? '0 1px 2px rgba(51,122,255,0.30)' : 'none',
+                            whiteSpace: 'nowrap',
+                        }}
+                    >
+                        {item.label}
+                    </button>
+                );
+            })}
         </div>
     );
 }

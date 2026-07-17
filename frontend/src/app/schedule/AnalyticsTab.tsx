@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import AccountDetailModal from '@/components/analytics/AccountDetailModal';
+import AccountDetailView from '@/components/analytics/AccountDetailModal';
 import AddAccountModal from '@/components/analytics/AddAccountModal';
-import AnalyzeSearchBar from '@/components/analytics/AnalyzeSearchBar';
-import DashboardView from '@/components/analytics/dashboard/DashboardView';
-import PostDetailModal from '@/components/analytics/PostDetailModal';
+import DashboardView, {
+    type DashboardSubview,
+} from '@/components/analytics/dashboard/DashboardView';
+import PostDetailView from '@/components/analytics/PostDetailModal';
 import {
     ANALYTICS_STUDIO_SYNCED_EVENT,
     DEFAULT_ANALYTICS_PERIOD,
@@ -20,45 +21,66 @@ import {
     type TrackedAccountAggregate,
 } from '@/components/analytics/analytics-types';
 
+interface Props {
+    /** Page-level refresh-all handler (hits /api/analytics/refresh-all). */
+    onRefreshAll?: () => void;
+    refreshing?: boolean;
+}
+
+function parseSubview(raw: string | null): DashboardSubview {
+    if (raw === 'videos' || raw === 'accounts' || raw === 'overview') return raw;
+    return 'overview';
+}
+
+function inferSubview(search: URLSearchParams): DashboardSubview {
+    const explicit = parseSubview(search.get('view'));
+    if (search.get('view')) return explicit;
+    // Deep links without ?view= — land on the relevant list after Back.
+    if (search.get('account')) return 'accounts';
+    return 'overview';
+}
+
 /**
- * Analytics tab — dashboard-only (v3 redesign).
- *
- * Replaces the previous segmented Accounts/Posts experience with a single
- * dashboard surface. Drilldown into individual posts is still supported via
- * `PostDetailModal` (driven by `?post=<id>` deep links from elsewhere in
- * the app, plus the dashboard's own "Use as Template" flow). External
- * account ingestion still routes through `AnalyzeSearchBar` and
- * `AddAccountModal` so the parser contract in `url_parser.py` is untouched.
- *
- * Per the architecture-reference doc:
- *   • Top-level `AnalyticsTabs` in `schedule/page.tsx` stays untouched
- *   • Intake parser contract via `AnalyzeSearchBar` is preserved
- *   • The `Period` state owns all child widgets through `DashboardView`
+ * Analytics tab — dashboard with full-page post (`?post=`) and account
+ * (`?account=`) detail. Opening a post from an account keeps `account` in
+ * the URL so Back returns to the account page. Subview is lifted + synced
+ * via `?view=` so Back restores By Video / Accounts instead of Overview.
  */
-export default function AnalyticsTab() {
+export default function AnalyticsTab({ onRefreshAll, refreshing = false }: Props) {
     const router = useRouter();
     const search = useSearchParams();
 
-    // ── Filter state owned by the dashboard ────────────────────────────
     const [period, setPeriod] = useState<Period>(DEFAULT_ANALYTICS_PERIOD);
 
-    // ── Modal state ────────────────────────────────────────────────────
-    // `?post=<id>` deep-link support — lets external surfaces (CTAs in the
-    // Calendar, AI suggestions, email links) jump straight into a post.
     const initialPostId = search.get('post');
+    const initialAccountId = search.get('account');
     const [activePostId, setActivePostId] = useState<string | null>(initialPostId);
-    const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
+    const [activeAccountId, setActiveAccountId] = useState<string | null>(initialAccountId);
+    const [subview, setSubview] = useState<DashboardSubview>(() => inferSubview(search));
     const [addOpen, setAddOpen] = useState(false);
     const [metricsEpoch, setMetricsEpoch] = useState(0);
     const [accountOwnership, setAccountOwnership] = useState<AccountOwnership>('all');
     const [overviewAccountId, setOverviewAccountId] = useState<string | null>(null);
-    const [aggregatesEnabled, setAggregatesEnabled] = useState(false);
+    const [aggregatesEnabled, setAggregatesEnabled] = useState(
+        () => inferSubview(search) === 'accounts' || Boolean(initialAccountId),
+    );
+
+    const writeParams = useCallback((mutate: (params: URLSearchParams) => void) => {
+        const params = new URLSearchParams(Array.from(search.entries()));
+        mutate(params);
+        const qs = params.toString();
+        router.replace(qs ? `?${qs}` : '?', { scroll: false });
+    }, [router, search]);
+
+    const persistSubview = useCallback((next: DashboardSubview, params: URLSearchParams) => {
+        if (next === 'overview') params.delete('view');
+        else params.set('view', next);
+    }, []);
 
     const bumpMetrics = useCallback(() => {
         setMetricsEpoch((n) => n + 1);
     }, []);
 
-    // ── Data hooks the dashboard surface needs ─────────────────────────
     const { accounts: trackedRaw, loading: trackedLoading, reload: reloadAccounts } = useTrackedAccounts();
     const {
         data: aggData,
@@ -70,9 +92,6 @@ export default function AnalyticsTab() {
         if (aggregateAccounts.length > 0) return aggregateAccounts;
         return trackedRaw.map(trackedAccountToAggregateStub);
     }, [aggregateAccounts, trackedRaw]);
-    const totalAccounts = aggData?.total_accounts ?? trackedRaw.length;
-    const totalScrapedPosts = aggData?.total_scraped_posts ?? 0;
-    const avgHealth = aggData?.avg_health_score ?? null;
 
     const { isStudio, profilePicFor, reload: reloadConnections } = useConnections();
 
@@ -88,34 +107,18 @@ export default function AnalyticsTab() {
         setAggregatesEnabled(true);
     }, []);
 
-    const handleSubviewChange = useCallback((subview: 'overview' | 'videos' | 'accounts') => {
-        if (subview === 'accounts') setAggregatesEnabled(true);
-    }, []);
+    const handleSubviewChange = useCallback((next: DashboardSubview) => {
+        setSubview(next);
+        if (next === 'accounts') setAggregatesEnabled(true);
+        writeParams((params) => {
+            persistSubview(next, params);
+        });
+    }, [persistSubview, writeParams]);
 
-    // ── Account detail modal + delete plumbing ─────────────────────────
     const activeAccount = activeAccountId
         ? displayAccounts.find((a) => a.id === activeAccountId) || null
         : null;
 
-    const openAccount = useCallback((id: string) => setActiveAccountId(id), []);
-    const closeAccount = useCallback(() => setActiveAccountId(null), []);
-
-    const handleDeleteAccount = useCallback(
-        async (accountId: string) => {
-            // Optimistic close if the trash was clicked from inside the modal.
-            if (activeAccountId === accountId) setActiveAccountId(null);
-            if (overviewAccountId === accountId) setOverviewAccountId(null);
-            const ok = await deleteTrackedAccount(accountId);
-            if (ok) reloadAllMetrics();
-        },
-        [activeAccountId, overviewAccountId, reloadAllMetrics],
-    );
-
-    // Hooks bootstrap their own fetch on mount — no duplicate reloadAllMetrics() here.
-    // Studio sync still runs debounced via GET /api/connections?cached=true.
-
-    // Refresh when sync completes elsewhere (connections, schedule, login)
-    // OR when the page-level "Refresh data" button fires.
     useEffect(() => {
         const onSynced = () => {
             reloadAllMetrics();
@@ -126,41 +129,158 @@ export default function AnalyticsTab() {
         };
     }, [reloadAllMetrics]);
 
-    // Keep `?post=<id>` ↔ modal in sync without forcing a route transition.
+    // Deep-linked account detail needs aggregates so we can resolve the row.
     useEffect(() => {
-        const next = search.get('post');
-        if (next !== activePostId) setActivePostId(next);
+        if (activeAccountId) setAggregatesEnabled(true);
+    }, [activeAccountId]);
+
+    // Sync URL → state for post, account, and dashboard subview.
+    useEffect(() => {
+        const nextPost = search.get('post');
+        const nextAccount = search.get('account');
+        const nextView = inferSubview(search);
+        if (nextPost !== activePostId) setActivePostId(nextPost);
+        if (nextAccount !== activeAccountId) setActiveAccountId(nextAccount);
+        if (nextView !== subview) {
+            setSubview(nextView);
+            if (nextView === 'accounts') setAggregatesEnabled(true);
+        }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [search]);
 
     const closePost = useCallback(() => {
         setActivePostId(null);
-        if (search.get('post')) {
-            const params = new URLSearchParams(Array.from(search.entries()));
+        writeParams((params) => {
             params.delete('post');
-            router.replace(`?${params.toString()}`, { scroll: false });
-        }
-    }, [router, search]);
+            persistSubview(subview, params);
+        });
+    }, [persistSubview, subview, writeParams]);
 
     const openPost = useCallback((postId: string) => {
+        // Coming from By Video → keep videos; from account → keep accounts.
+        const nextView: DashboardSubview = activeAccountId
+            ? 'accounts'
+            : subview === 'overview'
+                ? 'videos'
+                : subview;
+        setSubview(nextView);
         setActivePostId(postId);
-        const params = new URLSearchParams(Array.from(search.entries()));
-        params.set('post', postId);
-        router.replace(`?${params.toString()}`, { scroll: false });
-    }, [router, search]);
+        writeParams((params) => {
+            params.set('post', postId);
+            persistSubview(nextView, params);
+            // Keep existing ?account= so Back from post returns to account detail.
+        });
+    }, [activeAccountId, persistSubview, subview, writeParams]);
 
-    // ── Handlers ───────────────────────────────────────────────────────
-    const handleAnalyzed = () => { reloadAllMetrics(); };
+    const openAccount = useCallback((id: string) => {
+        setActiveAccountId(id);
+        setSubview('accounts');
+        setAggregatesEnabled(true);
+        writeParams((params) => {
+            params.set('account', id);
+            params.delete('post');
+            persistSubview('accounts', params);
+        });
+    }, [persistSubview, writeParams]);
 
+    const closeAccount = useCallback(() => {
+        setActiveAccountId(null);
+        setSubview('accounts');
+        writeParams((params) => {
+            params.delete('account');
+            params.delete('post');
+            persistSubview('accounts', params);
+        });
+    }, [persistSubview, writeParams]);
+
+    const handleDeleteAccount = useCallback(
+        async (accountId: string) => {
+            if (activeAccountId === accountId) {
+                setActiveAccountId(null);
+                writeParams((params) => {
+                    params.delete('account');
+                    params.delete('post');
+                    persistSubview('accounts', params);
+                });
+            }
+            if (overviewAccountId === accountId) setOverviewAccountId(null);
+            const ok = await deleteTrackedAccount(accountId);
+            if (ok) reloadAllMetrics();
+        },
+        [activeAccountId, overviewAccountId, persistSubview, reloadAllMetrics, writeParams],
+    );
+
+    const accountAvatar = activeAccount
+        ? (profilePicFor(activeAccount.platform, activeAccount.username)
+            || activeAccount.avatar_url
+            || undefined)
+        : undefined;
+
+    // 1) Post detail (may sit on top of an account deep-link)
+    if (activePostId) {
+        return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <PostDetailView
+                    postId={activePostId}
+                    onClose={closePost}
+                    refreshKey={metricsEpoch}
+                />
+            </div>
+        );
+    }
+
+    // 2) Account detail full page
+    if (activeAccountId) {
+        if (!activeAccount) {
+            // Account id in URL but list not loaded / missing — show loading or back.
+            if (trackedLoading || (aggregatesEnabled && aggLoading)) {
+                return (
+                    <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
+                        Loading account…
+                    </div>
+                );
+            }
+            return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: 24 }}>
+                    <button
+                        type="button"
+                        onClick={closeAccount}
+                        style={{
+                            alignSelf: 'flex-start',
+                            padding: '7px 12px',
+                            borderRadius: 8,
+                            border: '1px solid var(--border)',
+                            background: 'white',
+                            cursor: 'pointer',
+                            fontWeight: 600,
+                            fontSize: 13,
+                        }}
+                    >
+                        Back
+                    </button>
+                    <p style={{ margin: 0, color: 'var(--text-3)', fontSize: 13 }}>
+                        Account not found.
+                    </p>
+                </div>
+            );
+        }
+
+        return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <AccountDetailView
+                    account={activeAccount}
+                    onClose={closeAccount}
+                    onRefreshed={reloadAllMetrics}
+                    onOpenPost={openPost}
+                    avatarUrl={accountAvatar}
+                />
+            </div>
+        );
+    }
+
+    // 3) Dashboard
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {/* Intake — paste-to-track. Mode is fixed to `accounts` because
-                the dashboard's primary external workflow is "watch this
-                competitor handle"; pasting a bare post URL still routes
-                through the same parser thanks to `AnalyzeSearchBar`'s
-                URL detection logic. */}
-            <AnalyzeSearchBar onAnalyzed={handleAnalyzed} mode="accounts" />
-
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <DashboardView
                 period={period}
                 onPeriodChange={setPeriod}
@@ -168,13 +288,11 @@ export default function AnalyticsTab() {
                 onAddExternal={() => setAddOpen(true)}
                 onOpenPost={openPost}
                 onStatsReady={handleStatsReady}
+                subview={subview}
                 onSubviewChange={handleSubviewChange}
                 accounts={displayAccounts}
                 accountsLoading={aggregatesEnabled && aggLoading}
                 trackedAccountsLoading={trackedLoading}
-                totalAccounts={totalAccounts}
-                totalScrapedPosts={totalScrapedPosts}
-                avgHealth={avgHealth}
                 onOpenAccount={openAccount}
                 onAccountScraped={reloadAllMetrics}
                 onDeleteAccount={handleDeleteAccount}
@@ -184,38 +302,10 @@ export default function AnalyticsTab() {
                 onOwnershipChange={setAccountOwnership}
                 overviewAccountId={overviewAccountId}
                 onOverviewAccountChange={setOverviewAccountId}
+                onRefreshAll={onRefreshAll}
+                refreshing={refreshing}
             />
 
-            {/* Modals — kept mounted at the parent so deep-links and
-                cross-component triggers (e.g. a CTA inside the dashboard
-                opening a post detail) drive them deterministically. */}
-            {activePostId && (
-                <PostDetailModal
-                    postId={activePostId}
-                    onClose={closePost}
-                    refreshKey={metricsEpoch}
-                />
-            )}
-            {activeAccount && (
-                <AccountDetailModal
-                    account={activeAccount}
-                    onClose={closeAccount}
-                    onRefreshed={reloadAllMetrics}
-                    onOpenPost={(postId) => {
-                        closeAccount();
-                        openPost(postId);
-                    }}
-                    avatarUrl={
-                        // Prefer Connections' Ayrshare profilePic for Studio
-                        // accounts (always fresh, no scrape needed); fall
-                        // back to BrightData-sourced `avatar_url` on the
-                        // tracked-account row for External adds.
-                        profilePicFor(activeAccount.platform, activeAccount.username)
-                        || activeAccount.avatar_url
-                        || undefined
-                    }
-                />
-            )}
             {addOpen && (
                 <AddAccountModal
                     onClose={() => setAddOpen(false)}

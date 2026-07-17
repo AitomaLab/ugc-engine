@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslation } from '@/lib/i18n';
 import HookBreakdownPanel from './HookBreakdownPanel';
@@ -89,7 +89,8 @@ function MetricCell({ label, value, accent }: { label: string; value: string; ac
     );
 }
 
-export default function PostDetailModal({ postId, onClose, refreshKey = 0 }: Props) {
+/** Full-page post detail (video left, metrics right). Kept filename for import stability. */
+export default function PostDetailView({ postId, onClose, refreshKey = 0 }: Props) {
     const { t, lang } = useTranslation();
     const router = useRouter();
     const [post, setPost] = useState<AnalyticsPost | null>(null);
@@ -734,570 +735,404 @@ export default function PostDetailModal({ postId, onClose, refreshKey = 0 }: Pro
         }
     }, [post, breakdown, derivedDuration, router, t]);
 
-    return (
-        <div
-            onClick={onClose}
-            style={{
-                position: 'fixed', inset: 0,
-                background: 'rgba(13,27,62,0.55)',
-                backdropFilter: 'blur(6px)',
-                // 10000 — must sit above AccountDetailModal (9999, via
-                // shared `Modal` primitive). When a user drills down from
-                // the account modal into a post, the post needs to win
-                // the stacking battle regardless of render order.
-                zIndex: 10000,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '24px',
-                animation: 'analytics-modal-fade 0.18s ease-out',
-            }}
-        >
-            <div
-                onClick={(e) => e.stopPropagation()}
-                className="analytics-modal-shell"
-                style={{
-                    background: 'white',
-                    borderRadius: 'var(--radius)',
-                    boxShadow: 'var(--shadow-lg)',
-                    width: '100%',
-                    maxWidth: 980,
-                    maxHeight: '92vh',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    overflow: 'hidden',
-                }}
-            >
-                {/* Header */}
+    const mediaBlock = !loading && post ? (() => {
+        const posterUrl = resolvePostPosterUrl(post);
+        const platform = (post.platform || '').toLowerCase();
+        const isVertical = platform === 'tiktok' || platform === 'instagram';
+        const videoAspect = isVertical ? '9 / 16' : '16 / 9';
+        const embedAspect =
+            platform === 'instagram' ? '9 / 20' :
+            platform === 'tiktok'    ? '9 / 20' :
+            platform === 'facebook'  ? '1 / 1'  :
+            '16 / 9';
+
+        // Fit inside the viewport under the app header + detail toolbar so
+        // play controls stay visible without scrolling.
+        const viewportMediaMax: CSSProperties = {
+            maxHeight: 'calc(100vh - var(--header-h) - 120px)',
+            maxWidth: isVertical ? 'min(100%, 380px)' : '100%',
+            width: '100%',
+            height: 'auto',
+            margin: '0 auto',
+        };
+
+        const baseWrapper: CSSProperties = {
+            position: 'relative',
+            background: 'black',
+            borderRadius: 12,
+            overflow: 'hidden',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            ...viewportMediaMax,
+        };
+
+        if (directVideoUrl) {
+            return (
                 <div
+                    className="analytics-post-media-frame"
+                    style={{ ...baseWrapper, aspectRatio: videoAspect }}
+                >
+                    <video
+                        ref={videoRef}
+                        src={directVideoUrl}
+                        controls
+                        playsInline
+                        poster={posterUrl}
+                        crossOrigin="anonymous"
+                        onLoadedMetadata={handleVideoLoadedMetadata}
+                        style={{ width: '100%', height: '100%', maxHeight: 'inherit', objectFit: 'contain' }}
+                    />
+                </div>
+            );
+        }
+
+        const prepInProgress =
+            prep?.status === 'queued' ||
+            prep?.status === 'scraping' ||
+            prep?.status === 'downloading';
+
+        if (prepInProgress) {
+            const pct = Math.max(5, Math.min(100, prep?.progress_pct ?? 5));
+            const stageLabel =
+                prep?.status === 'scraping'    ? t('analytics.detail.prep.scraping')
+              : prep?.status === 'downloading' ? t('analytics.detail.prep.downloading')
+              :                                  t('analytics.detail.prep.queued');
+            return (
+                <div
+                    className="analytics-post-media-frame"
                     style={{
-                        padding: '14px 18px',
-                        borderBottom: '1px solid var(--border)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: '12px',
+                        ...baseWrapper,
+                        aspectRatio: videoAspect,
+                        background: `center / cover no-repeat ${posterUrl ? `url(${JSON.stringify(posterUrl)})` : 'black'}`,
                     }}
                 >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
-                        <span
-                            style={{
-                                fontSize: '11px', fontWeight: 700,
-                                padding: '3px 10px', borderRadius: '999px',
-                                background: `${platformAccent}1F`,
-                                color: platformAccent,
-                                textTransform: 'uppercase',
-                            }}
-                        >
-                            {post?.platform || '—'}
-                        </span>
-                        <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-1)', whiteSpace: 'nowrap' }}>
-                            @{post?.username || '—'}
-                        </span>
-                        <span style={{ fontSize: '12px', color: 'var(--text-3)' }}>
-                            {post && timeAgo(post.posted_at || post.scraped_at)}
-                        </span>
-                    </div>
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                        {post && !loading && (
-                            <button
-                                type="button"
-                                onClick={handleOpenTemplatePicker}
-                                disabled={!templateReady || templateLaunching}
-                                title={templateReady
-                                    ? t('analytics.detail.template.hint')
-                                    : t('analytics.detail.template.needsAnalysis')}
-                                style={{
-                                    fontSize: '12px',
-                                    fontWeight: 700,
-                                    color: 'white',
-                                    padding: '6px 12px',
-                                    borderRadius: '8px',
-                                    border: '1px solid #34D399',
-                                    background: templateReady && !templateLaunching
-                                        ? 'linear-gradient(135deg, #34D399 0%, #2DD4BF 100%)'
-                                        : 'rgba(138,147,176,0.45)',
-                                    cursor: templateReady && !templateLaunching ? 'pointer' : 'not-allowed',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '6px',
-                                    opacity: templateReady ? 1 : 0.85,
-                                }}
-                            >
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} aria-hidden>
-                                    <path d="M9 11l3 3L22 4" />
-                                    <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-                                </svg>
-                                {t('analytics.detail.template.cta')}
-                            </button>
-                        )}
-                        {post && !loading && (
-                            <button
-                                type="button"
-                                onClick={handleExportPdf}
-                                disabled={exportingPdf}
-                                title={t('analytics.detail.export.hint')}
-                                style={{
-                                    fontSize: '12px',
-                                    fontWeight: 600,
-                                    color: 'var(--text-1)',
-                                    padding: '6px 12px',
-                                    borderRadius: '8px',
-                                    border: '1px solid var(--border)',
-                                    background: 'white',
-                                    cursor: exportingPdf ? 'wait' : 'pointer',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '6px',
-                                    opacity: exportingPdf ? 0.7 : 1,
-                                }}
-                            >
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
-                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                    <polyline points="14 2 14 8 20 8" />
-                                    <line x1="12" y1="18" x2="12" y2="12" />
-                                    <polyline points="9 15 12 18 15 15" />
-                                </svg>
-                                {exportingPdf
-                                    ? t('analytics.detail.export.exporting')
-                                    : t('analytics.detail.export.pdf')}
-                            </button>
-                        )}
-                        {post?.post_url && (
-                            <a
-                                href={post.post_url}
-                                target="_blank"
-                                rel="noreferrer"
-                                style={{
-                                    fontSize: '12px',
-                                    fontWeight: 600,
-                                    color: 'var(--blue)',
-                                    textDecoration: 'none',
-                                    padding: '6px 12px',
-                                    borderRadius: '8px',
-                                    border: '1px solid var(--border)',
-                                    background: 'white',
-                                }}
-                            >
-                                {t('analytics.detail.viewOriginal')}
-                            </a>
-                        )}
-                        <button
-                            onClick={onClose}
-                            aria-label="Close"
-                            style={{
-                                width: 32, height: 32, borderRadius: '8px',
-                                border: '1px solid var(--border)',
-                                background: 'white', cursor: 'pointer',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                color: 'var(--text-2)',
-                            }}
-                        >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
-                                <line x1="18" y1="6" x2="6" y2="18" />
-                                <line x1="6" y1="6" x2="18" y2="18" />
-                            </svg>
-                        </button>
+                    <div style={{ position: 'absolute', inset: 0, background: 'rgba(13,27,62,0.55)', backdropFilter: 'blur(2px)' }} />
+                    <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, padding: '0 24px', width: '100%', maxWidth: 320 }}>
+                        <div style={{ color: 'white', fontSize: 13, fontWeight: 600, textAlign: 'center' }}>{stageLabel}</div>
+                        <div style={{ width: '100%', height: 6, borderRadius: 999, background: 'rgba(255,255,255,0.18)', overflow: 'hidden' }}>
+                            <div style={{ width: `${pct}%`, height: '100%', background: 'linear-gradient(90deg, #5B9CFF 0%, #337AFF 100%)', borderRadius: 999, transition: 'width 0.4s ease' }} />
+                        </div>
+                        <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11, textAlign: 'center' }}>
+                            {t('analytics.detail.prep.takes')}
+                        </div>
                     </div>
                 </div>
+            );
+        }
 
-                {/* Body.
-                 *
-                 * `flex: 1, minHeight: 0` is the classic flex+scroll pattern:
-                 * the body claims the remaining height inside the
-                 * column-flex shell, and `minHeight: 0` lets it shrink below
-                 * its intrinsic content height (without that, `overflowY:
-                 * auto` does nothing because the body just keeps growing).
-                 *
-                 * The `analytics-modal-body` class pairs with a global
-                 * `> * { flex-shrink: 0 }` rule below — that stops the
-                 * aspect-ratio video wrapper from getting compressed when
-                 * the AI breakdown content arrives and pushes total height
-                 * past 92vh. Without it, flex column distributes the
-                 * overflow across all children proportionally, which is
-                 * what was cropping the video to a thin strip.
-                 */}
+        if (embedUrl) {
+            return (
                 <div
-                    className="analytics-modal-body"
+                    className="analytics-post-media-frame"
                     style={{
-                        flex: 1,
-                        minHeight: 0,
-                        overflowY: 'auto',
-                        padding: '18px',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '18px',
+                        ...baseWrapper,
+                        background: 'var(--blue-light)',
+                        aspectRatio: embedAspect,
                     }}
                 >
-                    {loading || !post ? (
-                        <div style={{ color: 'var(--text-3)', fontSize: '13px', padding: '40px', textAlign: 'center' }}>
-                            {t('common.loading')}
-                        </div>
-                    ) : (
-                        <>
-                            {/* Hero video / embed.
-                             *
-                             * Two very different sizing regimes:
-                             *
-                             *  • <video> (mirrored / internal): pure video,
-                             *    use the natural 9:16 / 16:9 aspect ratio.
-                             *
-                             *  • <iframe> (platform embed): includes header
-                             *    (profile + audio) AND footer (action bar)
-                             *    on top of the video — using 9:16 here cuts
-                             *    off the bottom and forces an internal
-                             *    scrollbar. Each platform gets its own
-                             *    chrome-aware ratio so the entire post fits
-                             *    without scrolling.
-                             *
-                             *  We also clamp the wrapper height to the
-                             *  available modal body height (`92vh` minus
-                             *  approx. header/metrics/caption/breakdown) so
-                             *  even the tallest embed never exceeds the
-                             *  viewport.
-                             */}
-                            {(() => {
-                                const posterUrl = resolvePostPosterUrl(post);
-                                const platform = (post.platform || '').toLowerCase();
-                                const isVertical = platform === 'tiktok' || platform === 'instagram';
-                                const videoAspect = isVertical ? '9 / 16' : '16 / 9';
-                                // Embed aspect ratios account for chrome the
-                                // platform injects above/below the video.
-                                const embedAspect =
-                                    platform === 'instagram' ? '9 / 20' :
-                                    platform === 'tiktok'    ? '9 / 20' :
-                                    platform === 'facebook'  ? '1 / 1'  :
-                                    '16 / 9';
+                    <iframe
+                        src={embedUrl}
+                        title={`${post.platform} post preview`}
+                        allow="autoplay; encrypted-media; picture-in-picture; clipboard-write"
+                        allowFullScreen
+                        scrolling="no"
+                        referrerPolicy="strict-origin-when-cross-origin"
+                        style={{ width: '100%', height: '100%', border: 0, display: 'block' }}
+                    />
+                </div>
+            );
+        }
 
-                                const baseWrapper: React.CSSProperties = {
-                                    position: 'relative',
-                                    background: 'black',
-                                    borderRadius: '12px',
-                                    overflow: 'hidden',
-                                    width: '100%',
-                                    margin: isVertical ? '0 auto' : undefined,
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                };
+        return (
+            <div className="analytics-post-media-frame" style={{ ...baseWrapper, aspectRatio: videoAspect }}>
+                <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13 }}>No media URL captured.</div>
+            </div>
+        );
+    })() : null;
 
-                                // 1. Best case: we have a Supabase-mirrored
-                                //    URL (or a fresh BrightData CDN URL).
-                                //    Play it inline with <video>. This is
-                                //    the only way IG/TikTok previews work
-                                //    *inside* the app — the platform iframes
-                                //    refuse to play outside a logged-in
-                                //    session and just deep-link out.
-                                if (directVideoUrl) {
-                                    return (
-                                        <div
-                                            style={{
-                                                ...baseWrapper,
-                                                maxWidth: isVertical ? 380 : '100%',
-                                                aspectRatio: videoAspect,
-                                            }}
-                                        >
-                                            <video
-                                                ref={videoRef}
-                                                src={directVideoUrl}
-                                                controls
-                                                playsInline
-                                                poster={posterUrl}
-                                                crossOrigin="anonymous"
-                                                onLoadedMetadata={handleVideoLoadedMetadata}
-                                                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-                                            />
-                                        </div>
-                                    );
-                                }
+    const metricsBlock = !loading && post ? (() => {
+        const platformLc = (post.platform || '').toLowerCase();
+        const sharesHiddenByPlatform =
+            post.shares == null &&
+            (platformLc === 'instagram' || platformLc === 'youtube');
+        const sharesValue = sharesHiddenByPlatform
+            ? t('analytics.detail.hidden')
+            : formatCount(post.shares);
+        const isStaticPost =
+            post.media_type === 'image' ||
+            post.media_type === 'carousel';
+        const effectiveDuration = post.duration_seconds ?? derivedDuration;
+        const durationValue = effectiveDuration
+            ? `${Math.round(effectiveDuration)}s`
+            : t('analytics.detail.measuring');
 
-                                // 2. Prep in progress — show a thumbnail +
-                                //    progress bar instead of an iframe that
-                                //    would just deep-link to Instagram.
-                                const prepInProgress =
-                                    prep?.status === 'queued' ||
-                                    prep?.status === 'scraping' ||
-                                    prep?.status === 'downloading';
+        return (
+            <div>
+                <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, color: 'var(--text-3)', marginBottom: 8 }}>
+                    {t('analytics.detail.metrics')}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 8 }}>
+                    <MetricCell label={t('analytics.detail.export.views')} value={formatCount(resolveDisplayViews(post))} />
+                    <MetricCell label={t('analytics.detail.export.likes')} value={formatCount(post.likes)} />
+                    <MetricCell label={t('analytics.detail.export.comments')} value={formatCount(post.comments)} />
+                    <MetricCell label={t('analytics.detail.export.shares')} value={sharesValue} />
+                    <MetricCell label={t('analytics.detail.export.engagement')} value={formatCount(post.total_engagement)} accent />
+                    {!isStaticPost && (
+                        <MetricCell label={t('analytics.detail.export.duration')} value={durationValue} />
+                    )}
+                </div>
+            </div>
+        );
+    })() : null;
 
-                                if (prepInProgress) {
-                                    const pct = Math.max(5, Math.min(100, prep?.progress_pct ?? 5));
-                                    const stageLabel =
-                                        prep?.status === 'scraping'    ? t('analytics.detail.prep.scraping')
-                                      : prep?.status === 'downloading' ? t('analytics.detail.prep.downloading')
-                                      :                                  t('analytics.detail.prep.queued');
-                                    return (
-                                        <div
-                                            style={{
-                                                ...baseWrapper,
-                                                maxWidth: isVertical ? 380 : '100%',
-                                                aspectRatio: videoAspect,
-                                                background: `center / cover no-repeat ${posterUrl ? `url(${JSON.stringify(posterUrl)})` : 'black'}`,
-                                            }}
-                                        >
-                                            {/* Scrim so the progress UI is
-                                                always readable over the
-                                                poster image. */}
-                                            <div
-                                                style={{
-                                                    position: 'absolute',
-                                                    inset: 0,
-                                                    background: 'rgba(13,27,62,0.55)',
-                                                    backdropFilter: 'blur(2px)',
-                                                }}
-                                            />
-                                            <div
-                                                style={{
-                                                    position: 'relative',
-                                                    zIndex: 1,
-                                                    display: 'flex',
-                                                    flexDirection: 'column',
-                                                    alignItems: 'center',
-                                                    gap: '14px',
-                                                    padding: '0 24px',
-                                                    width: '100%',
-                                                    maxWidth: 320,
-                                                }}
-                                            >
-                                                <div
-                                                    style={{
-                                                        color: 'white',
-                                                        fontSize: '13px',
-                                                        fontWeight: 600,
-                                                        textAlign: 'center',
-                                                    }}
-                                                >
-                                                    {stageLabel}
-                                                </div>
-                                                <div
-                                                    style={{
-                                                        width: '100%',
-                                                        height: 6,
-                                                        borderRadius: 999,
-                                                        background: 'rgba(255,255,255,0.18)',
-                                                        overflow: 'hidden',
-                                                    }}
-                                                >
-                                                    <div
-                                                        style={{
-                                                            width: `${pct}%`,
-                                                            height: '100%',
-                                                            background: 'linear-gradient(90deg, #5B9CFF 0%, #337AFF 100%)',
-                                                            borderRadius: 999,
-                                                            transition: 'width 0.4s ease',
-                                                        }}
-                                                    />
-                                                </div>
-                                                <div
-                                                    style={{
-                                                        color: 'rgba(255,255,255,0.7)',
-                                                        fontSize: '11px',
-                                                        textAlign: 'center',
-                                                    }}
-                                                >
-                                                    {t('analytics.detail.prep.takes')}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    );
-                                }
-
-                                // 3. Prep failed *or* we don't even have a
-                                //    post URL to scrape from — fall back to
-                                //    the official platform embed so the
-                                //    user can at least open the original.
-                                if (embedUrl) {
-                                    return (
-                                        <div
-                                            style={{
-                                                ...baseWrapper,
-                                                background: 'var(--blue-light)',
-                                                maxWidth: isVertical ? 340 : '100%',
-                                                aspectRatio: embedAspect,
-                                                maxHeight: isVertical ? '78vh' : undefined,
-                                            }}
-                                        >
-                                            <iframe
-                                                src={embedUrl}
-                                                title={`${post.platform} post preview`}
-                                                allow="autoplay; encrypted-media; picture-in-picture; clipboard-write"
-                                                allowFullScreen
-                                                scrolling="no"
-                                                referrerPolicy="strict-origin-when-cross-origin"
-                                                style={{
-                                                    width: '100%',
-                                                    height: '100%',
-                                                    border: 0,
-                                                    display: 'block',
-                                                }}
-                                            />
-                                        </div>
-                                    );
-                                }
-                                return (
-                                    <div
-                                        style={{
-                                            ...baseWrapper,
-                                            maxWidth: isVertical ? 380 : '100%',
-                                            aspectRatio: videoAspect,
-                                        }}
-                                    >
-                                        <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: '13px' }}>
-                                            No media URL captured.
-                                        </div>
-                                    </div>
-                                );
-                            })()}
-
-                            {/* Metrics.
-                             *
-                             * Per-platform quirks baked in:
-                             *   • Shares — IG + YouTube don't expose share
-                             *     counts at all (BrightData returns null);
-                             *     render "Hidden" instead of "—" so users
-                             *     understand it's a platform limitation,
-                             *     not missing data on our end. TikTok and
-                             *     Facebook *do* expose them.
-                             *   • Duration — hidden for `image` / `carousel`
-                             *     posts since "0s" or "—" is meaningless on
-                             *     a static post. For video posts we prefer
-                             *     `post.duration_seconds` (from BrightData
-                             *     or our backfill endpoint), falling back
-                             *     to the value derived locally from the
-                             *     `<video>` element's loadedmetadata event.
-                             *   • Saves — removed entirely from the grid
-                             *     (still contributes to total_engagement
-                             *     server-side).
-                             */}
-                            {(() => {
-                                const platformLc = (post.platform || '').toLowerCase();
-                                const sharesHiddenByPlatform =
-                                    post.shares == null &&
-                                    (platformLc === 'instagram' || platformLc === 'youtube');
-                                const sharesValue = sharesHiddenByPlatform
-                                    ? t('analytics.detail.hidden')
-                                    : formatCount(post.shares);
-
-                                const isStaticPost =
-                                    post.media_type === 'image' ||
-                                    post.media_type === 'carousel';
-                                const effectiveDuration =
-                                    post.duration_seconds ?? derivedDuration;
-                                const durationValue = effectiveDuration
-                                    ? `${Math.round(effectiveDuration)}s`
-                                    : t('analytics.detail.measuring');
-
-                                return (
-                                    <div>
-                                        <div
-                                            style={{
-                                                fontSize: '11px',
-                                                fontWeight: 700,
-                                                textTransform: 'uppercase',
-                                                letterSpacing: 0.6,
-                                                color: 'var(--text-3)',
-                                                marginBottom: '8px',
-                                            }}
-                                        >
-                                            {t('analytics.detail.metrics')}
-                                        </div>
-                                        <div
-                                            style={{
-                                                display: 'grid',
-                                                gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))',
-                                                gap: '8px',
-                                            }}
-                                        >
-                                            <MetricCell label={t('analytics.detail.export.views')} value={formatCount(resolveDisplayViews(post))} />
-                                            <MetricCell label={t('analytics.detail.export.likes')} value={formatCount(post.likes)} />
-                                            <MetricCell label={t('analytics.detail.export.comments')} value={formatCount(post.comments)} />
-                                            <MetricCell label={t('analytics.detail.export.shares')} value={sharesValue} />
-                                            <MetricCell label={t('analytics.detail.export.engagement')} value={formatCount(post.total_engagement)} accent />
-                                            {!isStaticPost && (
-                                                <MetricCell label={t('analytics.detail.export.duration')} value={durationValue} />
-                                            )}
-                                        </div>
-                                    </div>
-                                );
-                            })()}
-
-                            {/* Caption */}
-                            {post.caption && (
-                                <div
-                                    style={{
-                                        background: 'var(--blue-light)',
-                                        borderRadius: '10px',
-                                        padding: '10px 12px',
-                                        fontSize: '12px',
-                                        color: 'var(--text-2)',
-                                        lineHeight: 1.5,
-                                    }}
-                                >
-                                    {post.caption}
-                                </div>
-                            )}
-
-                            {/* AI Breakdown */}
-                            <div>
-                                <div
-                                    style={{
-                                        fontSize: '11px',
-                                        fontWeight: 700,
-                                        textTransform: 'uppercase',
-                                        letterSpacing: 0.6,
-                                        color: 'var(--text-3)',
-                                        marginBottom: '8px',
-                                    }}
-                                >
-                                    {t('analytics.detail.aiBreakdown')}
-                                </div>
-                                <HookBreakdownPanel
-                                    breakdown={breakdown}
-                                    status={status}
-                                    videoRef={videoRef}
-                                    onGenerate={triggerGenerate}
-                                    canGenerate={canGenerate}
-                                    generating={generating}
-                                    prepStatus={prep?.status}
-                                    prepProgressPct={prep?.progress_pct}
-                                    prepError={prep?.error_message ?? undefined}
-                                    videoOnly={prep?.status === 'skipped' || !isVideoAnalyticsPost(post)}
-                                    targetLang={lang}
-                                    onRetryPrep={retryPrep}
-                                    onRetryLocale={retryLocale}
-                                />
-                            </div>
-                        </>
+    return (
+        <div className="analytics-post-detail">
+            {/* Sticky toolbar */}
+            <div
+                className="analytics-post-detail-bar"
+                style={{
+                    position: 'sticky',
+                    top: 0,
+                    zIndex: 5,
+                    background: 'rgba(255,255,255,0.96)',
+                    backdropFilter: 'blur(8px)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 12,
+                    padding: '8px 12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    flexWrap: 'wrap',
+                    marginBottom: 12,
+                }}
+            >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        aria-label="Back"
+                        style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 6,
+                            padding: '7px 12px',
+                            borderRadius: 8,
+                            border: '1px solid var(--border)',
+                            background: 'white',
+                            color: 'var(--text-1)',
+                            fontSize: 13,
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            flexShrink: 0,
+                        }}
+                    >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} aria-hidden>
+                            <path d="M15 18l-6-6 6-6" />
+                        </svg>
+                        Back
+                    </button>
+                    <span
+                        style={{
+                            fontSize: 11,
+                            fontWeight: 700,
+                            padding: '3px 10px',
+                            borderRadius: 999,
+                            background: `${platformAccent}1F`,
+                            color: platformAccent,
+                            textTransform: 'uppercase',
+                        }}
+                    >
+                        {post?.platform || '—'}
+                    </span>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)', whiteSpace: 'nowrap' }}>
+                        @{post?.username || '—'}
+                    </span>
+                    <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
+                        {post && timeAgo(post.posted_at || post.scraped_at)}
+                    </span>
+                </div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    {post && !loading && (
+                        <button
+                            type="button"
+                            onClick={handleOpenTemplatePicker}
+                            disabled={!templateReady || templateLaunching}
+                            title={templateReady
+                                ? t('analytics.detail.template.hint')
+                                : t('analytics.detail.template.needsAnalysis')}
+                            style={{
+                                fontSize: 12,
+                                fontWeight: 700,
+                                color: 'white',
+                                padding: '6px 12px',
+                                borderRadius: 8,
+                                border: '1px solid #34D399',
+                                background: templateReady && !templateLaunching
+                                    ? 'linear-gradient(135deg, #34D399 0%, #2DD4BF 100%)'
+                                    : 'rgba(138,147,176,0.45)',
+                                cursor: templateReady && !templateLaunching ? 'pointer' : 'not-allowed',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 6,
+                                opacity: templateReady ? 1 : 0.85,
+                            }}
+                        >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} aria-hidden>
+                                <path d="M9 11l3 3L22 4" />
+                                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+                            </svg>
+                            {t('analytics.detail.template.cta')}
+                        </button>
+                    )}
+                    {post && !loading && (
+                        <button
+                            type="button"
+                            onClick={handleExportPdf}
+                            disabled={exportingPdf}
+                            title={t('analytics.detail.export.hint')}
+                            style={{
+                                fontSize: 12,
+                                fontWeight: 600,
+                                color: 'var(--text-1)',
+                                padding: '6px 12px',
+                                borderRadius: 8,
+                                border: '1px solid var(--border)',
+                                background: 'white',
+                                cursor: exportingPdf ? 'wait' : 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 6,
+                                opacity: exportingPdf ? 0.7 : 1,
+                            }}
+                        >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                <polyline points="14 2 14 8 20 8" />
+                                <line x1="12" y1="18" x2="12" y2="12" />
+                                <polyline points="9 15 12 18 15 15" />
+                            </svg>
+                            {exportingPdf
+                                ? t('analytics.detail.export.exporting')
+                                : t('analytics.detail.export.pdf')}
+                        </button>
+                    )}
+                    {post?.post_url && (
+                        <a
+                            href={post.post_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{
+                                fontSize: 12,
+                                fontWeight: 600,
+                                color: 'var(--blue)',
+                                textDecoration: 'none',
+                                padding: '6px 12px',
+                                borderRadius: 8,
+                                border: '1px solid var(--border)',
+                                background: 'white',
+                            }}
+                        >
+                            {t('analytics.detail.viewOriginal')}
+                        </a>
                     )}
                 </div>
             </div>
 
+            {loading || !post ? (
+                <div style={{ color: 'var(--text-3)', fontSize: 13, padding: 48, textAlign: 'center' }}>
+                    {t('common.loading')}
+                </div>
+            ) : (
+                <div className="analytics-post-detail-grid">
+                    <aside className="analytics-post-detail-media">
+                        {mediaBlock}
+                    </aside>
+                    <section className="analytics-post-detail-metrics">
+                        {metricsBlock}
+                        {post.caption && (
+                            <div
+                                style={{
+                                    background: 'var(--blue-light)',
+                                    borderRadius: 10,
+                                    padding: '10px 12px',
+                                    fontSize: 12,
+                                    color: 'var(--text-2)',
+                                    lineHeight: 1.5,
+                                }}
+                            >
+                                {post.caption}
+                            </div>
+                        )}
+                        <div>
+                            <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, color: 'var(--text-3)', marginBottom: 8 }}>
+                                {t('analytics.detail.aiBreakdown')}
+                            </div>
+                            <HookBreakdownPanel
+                                breakdown={breakdown}
+                                status={status}
+                                videoRef={videoRef}
+                                onGenerate={triggerGenerate}
+                                canGenerate={canGenerate}
+                                generating={generating}
+                                prepStatus={prep?.status}
+                                prepProgressPct={prep?.progress_pct}
+                                prepError={prep?.error_message ?? undefined}
+                                videoOnly={prep?.status === 'skipped' || !isVideoAnalyticsPost(post)}
+                                targetLang={lang}
+                                onRetryPrep={retryPrep}
+                                onRetryLocale={retryLocale}
+                            />
+                        </div>
+                    </section>
+                </div>
+            )}
+
             <style>{`
-                @keyframes analytics-modal-fade {
-                    from { opacity: 0; transform: scale(0.98); }
-                    to { opacity: 1; transform: scale(1); }
+                .analytics-post-detail-grid {
+                    display: grid;
+                    grid-template-columns: minmax(240px, 38%) minmax(0, 1fr);
+                    gap: 16px;
+                    align-items: start;
                 }
-                /* Keep every direct child of the scroll container at its
-                   natural height. Without this, flex column would shrink
-                   children (including the aspect-ratio video wrapper) when
-                   total content exceeds the body's bounded height, which
-                   was cropping the video to ~80px once the breakdown
-                   loaded. */
-                .analytics-modal-body > * {
-                    flex-shrink: 0;
+                .analytics-post-detail-media {
+                    position: sticky;
+                    top: 56px;
+                    align-self: start;
+                    display: flex;
+                    justify-content: center;
                 }
-                /* Smaller, more polished scrollbar on the body */
-                .analytics-modal-body::-webkit-scrollbar { width: 8px; }
-                .analytics-modal-body::-webkit-scrollbar-thumb {
-                    background: rgba(13,27,62,0.18);
-                    border-radius: 999px;
+                /* When max-height binds, shrink width to keep aspect ratio so
+                   native video controls stay inside the viewport. */
+                .analytics-post-media-frame {
+                    max-height: calc(100vh - var(--header-h) - 120px) !important;
+                    width: auto !important;
+                    max-width: min(100%, 380px) !important;
                 }
-                .analytics-modal-body::-webkit-scrollbar-track {
-                    background: transparent;
+                .analytics-post-media-frame video,
+                .analytics-post-media-frame iframe {
+                    max-height: calc(100vh - var(--header-h) - 120px);
+                    width: 100%;
+                    height: 100%;
+                    object-fit: contain;
                 }
-                @media (max-width: 768px) {
-                    .analytics-modal-shell {
-                        max-height: 100vh !important;
-                        border-radius: 0 !important;
+                .analytics-post-detail-metrics {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 14px;
+                    min-width: 0;
+                }
+                @media (max-width: 900px) {
+                    .analytics-post-detail-grid {
+                        grid-template-columns: 1fr;
+                    }
+                    .analytics-post-detail-media {
+                        position: static;
+                    }
+                    .analytics-post-media-frame {
+                        max-height: min(70vh, calc(100vh - var(--header-h) - 160px)) !important;
+                        max-width: min(100%, 320px) !important;
                     }
                 }
             `}</style>

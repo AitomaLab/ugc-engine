@@ -4,6 +4,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from '@/lib/i18n';
 import type { AnalyticsPlatform } from '@/lib/types';
 import {
+    ANALYTICS_CTA_ORANGE,
+    ANALYTICS_CTA_ORANGE_HOVER,
+    ANALYTICS_PRIMARY,
     buildDailyTrendPoints,
     useAnalyticsStats,
     useMetricsFreshness,
@@ -29,15 +32,19 @@ interface Props {
     refreshKey?: number;
     /** Open the Add External Account modal in the parent. */
     onAddExternal: () => void;
-    /** Open the post detail modal in the parent (drives ?post=<id>). */
+    /** Open the post detail page in the parent (drives ?post=<id>). */
     onOpenPost?: (postId: string) => void;
     /** Fired once stats have loaded — parent can defer heavy secondary fetches. */
     onStatsReady?: () => void;
-    /** Fired when the user switches Overview / Videos / Accounts. */
-    onSubviewChange?: (subview: DashboardSubview) => void;
+    /** Controlled Overview / By Video / Accounts subview (lifted so detail Back restores it). */
+    subview: DashboardSubview;
+    onSubviewChange: (subview: DashboardSubview) => void;
     /** Selected account for the Overview subview (per-account metrics). */
     overviewAccountId: string | null;
     onOverviewAccountChange: (accountId: string) => void;
+    /** Page-level refresh-all (POST /api/analytics/refresh-all). */
+    onRefreshAll?: () => void;
+    refreshing?: boolean;
 
     /* ── Accounts subview wiring ─────────────────────────────────────── */
     /** Aggregated tracked accounts for the Accounts subview. */
@@ -45,10 +52,7 @@ interface Props {
     accountsLoading: boolean;
     /** True while the tracked-accounts list is still loading (gates stats fetch). */
     trackedAccountsLoading: boolean;
-    totalAccounts: number;
-    totalScrapedPosts: number;
-    avgHealth: number | null;
-    /** Open the AccountDetailModal in the parent. */
+    /** Open the account detail page in the parent. */
     onOpenAccount: (accountId: string) => void;
     /** Re-pull dashboard data after a per-card "Analyze Now" succeeds. */
     onAccountScraped: () => void;
@@ -66,7 +70,7 @@ interface Props {
 }
 
 type GrowthSeries = 'engagement' | 'views' | 'posts';
-type DashboardSubview = 'overview' | 'videos' | 'accounts';
+export type DashboardSubview = 'overview' | 'videos' | 'accounts';
 
 /**
  * Light-themed analytics dashboard.
@@ -95,13 +99,11 @@ export default function DashboardView({
     onAddExternal,
     onOpenPost,
     onStatsReady,
+    subview,
     onSubviewChange,
     accounts,
     accountsLoading,
     trackedAccountsLoading,
-    totalAccounts,
-    totalScrapedPosts,
-    avgHealth,
     onOpenAccount,
     onAccountScraped,
     onDeleteAccount,
@@ -111,10 +113,11 @@ export default function DashboardView({
     onOwnershipChange,
     overviewAccountId,
     onOverviewAccountChange,
+    onRefreshAll,
+    refreshing = false,
 }: Props) {
     const { t } = useTranslation();
     const [growthSeries, setGrowthSeries] = useState<GrowthSeries>('engagement');
-    const [subview, setSubview] = useState<DashboardSubview>('overview');
 
     const activeTabId = overviewAccountId ?? accounts[0]?.id ?? null;
     const selectedAccount = activeTabId
@@ -154,10 +157,6 @@ export default function DashboardView({
         if (statsReady) onStatsReady?.();
     }, [statsReady, onStatsReady]);
 
-    useEffect(() => {
-        onSubviewChange?.(subview);
-    }, [subview, onSubviewChange]);
-
     const dailyTrendPoints = useMemo(
         () => (stats ? buildDailyTrendPoints(stats, period) : []),
         [stats, period],
@@ -173,20 +172,18 @@ export default function DashboardView({
             className="analytics-dashboard"
             style={{
                 background: 'linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%)',
-                borderRadius: 24,
-                padding: 'clamp(20px, 4vw, 32px)',
-                color: '#0F172A',
+                borderRadius: 20,
+                padding: 'clamp(12px, 2.5vw, 18px)',
+                color: 'var(--text-1, #0F172A)',
                 display: 'flex',
                 flexDirection: 'column',
-                gap: 22,
-                border: '1px solid #E2E8F0',
+                gap: 10,
+                border: '1px solid var(--border, #E2E8F0)',
                 boxShadow: '0 1px 3px rgba(15,23,42,0.04), 0 8px 24px rgba(15,23,42,0.04)',
                 position: 'relative',
                 overflow: 'hidden',
             }}
         >
-            {/* Decorative accent — kept very subtle so it doesn't compete
-                with content for attention on the bright background. */}
             <div
                 aria-hidden
                 style={{
@@ -201,37 +198,85 @@ export default function DashboardView({
                 }}
             />
 
-            {/* Sub-navigation row — sub-tab switcher on the left, time-range
-                selector pinned to the far right. The page is already titled
-                "Publish" with the Analytics tab selected, so the previously
-                redundant inner "Analytics" title/subtitle has been removed. */}
-            <div
-                style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 16,
-                    flexWrap: 'wrap',
-                    position: 'relative',
-                }}
-            >
-                <SubviewToggle subview={subview} onChange={setSubview} />
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            {/* Toolbar — subviews | period (center) | refresh · Add account */}
+            <div className="dash-toolbar-nav">
+                <div className="dash-toolbar-left">
+                    <SubviewToggle subview={subview} onChange={onSubviewChange} />
+                </div>
+                <div className="dash-toolbar-center">
+                    <DashboardPeriodToggle period={period} onChange={onPeriodChange} />
+                </div>
+                <div className="dash-toolbar-right">
                     {lastRefreshedAt && (
-                        <span style={{ fontSize: 12, color: '#64748B', whiteSpace: 'nowrap' }}>
+                        <span style={{ fontSize: 12, color: 'var(--text-3, #64748B)', whiteSpace: 'nowrap' }}>
                             {t('analytics.refresh.asOf').replace('{when}', timeAgo(lastRefreshedAt))}
                         </span>
                     )}
-                    <DashboardPeriodToggle period={period} onChange={onPeriodChange} />
+                    {onRefreshAll && (
+                        <button
+                            type="button"
+                            onClick={onRefreshAll}
+                            disabled={refreshing}
+                            style={{
+                                padding: '7px 12px',
+                                borderRadius: 8,
+                                border: '1px solid var(--border, #E2E8F0)',
+                                background: refreshing ? ANALYTICS_PRIMARY : 'white',
+                                color: refreshing ? 'white' : 'var(--text-1, #0F172A)',
+                                fontSize: 12,
+                                fontWeight: 600,
+                                cursor: refreshing ? 'wait' : 'pointer',
+                                whiteSpace: 'nowrap',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 6,
+                            }}
+                        >
+                            <svg
+                                width="13"
+                                height="13"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth={2.2}
+                                style={refreshing ? { animation: 'analytics-spin 0.8s linear infinite' } : undefined}
+                                aria-hidden
+                            >
+                                <path d="M21 12a9 9 0 1 1-2.64-6.36" strokeLinecap="round" />
+                                <polyline points="21 3 21 9 15 9" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                            {refreshing ? t('analytics.refresh.refreshing') : t('analytics.refresh.cta')}
+                        </button>
+                    )}
+                    <button
+                        type="button"
+                        onClick={onAddExternal}
+                        style={{
+                            padding: '7px 14px',
+                            borderRadius: 8,
+                            border: 'none',
+                            background: ANALYTICS_CTA_ORANGE,
+                            color: 'white',
+                            fontSize: 12,
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            whiteSpace: 'nowrap',
+                            transition: 'background 0.15s ease',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 6,
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = ANALYTICS_CTA_ORANGE_HOVER; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = ANALYTICS_CTA_ORANGE; }}
+                    >
+                        <AddAccountPlusIcon /> {t('analytics.add.cta')}
+                    </button>
                 </div>
             </div>
 
             {subview === 'accounts' ? (
                 <AccountsView
                     accounts={accounts}
-                    totalAccounts={totalAccounts}
-                    totalPosts={totalScrapedPosts}
-                    avgHealth={avgHealth}
                     loading={accountsLoading}
                     period={period}
                     onOpenAccount={onOpenAccount}
@@ -261,10 +306,6 @@ export default function DashboardView({
                             accounts={accounts}
                             selectedId={activeTabId}
                             onSelect={onOverviewAccountChange}
-                            /* Studio (OAuth-linked) accounts are managed under
-                             * /connections — only External rows expose the
-                             * remove affordance here, matching the Accounts
-                             * subview's delete guard. */
                             canRemove={(acct) => !(
                                 Boolean(acct.linked_via_connections)
                                 || (isStudioAccount ? isStudioAccount(acct.platform, acct.username) : false)
@@ -272,7 +313,7 @@ export default function DashboardView({
                             onRemove={(acct) => onDeleteAccount(acct.id)}
                         />
                     )}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 22, position: 'relative' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, position: 'relative' }}>
                         {showKpiSkeleton ? (
                             <KpiCardsSkeleton />
                         ) : (
@@ -281,91 +322,79 @@ export default function DashboardView({
                             </div>
                         )}
 
-                        <section
-                            className="dash-panel"
-                            style={{
-                                background: '#FFFFFF',
-                                border: '1px solid #E2E8F0',
-                                borderRadius: 18,
-                                padding: 22,
-                                display: 'flex',
-                                flexDirection: 'column',
-                                gap: 16,
-                                boxShadow: '0 1px 2px rgba(15,23,42,0.03)',
-                                position: 'relative',
-                            }}
-                        >
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
-                                <div style={{ fontSize: 18, fontWeight: 700, color: '#0F172A' }}>
-                                    {t('analytics.dashboard.growth.title')}
+                        {/* Desktop: chart left + distribution panels right.
+                            Mobile (<900px): stack via CSS class. */}
+                        <div className="dash-overview-grid">
+                            <section
+                                className="dash-panel"
+                                style={{
+                                    background: '#FFFFFF',
+                                    border: '1px solid var(--border, #E2E8F0)',
+                                    borderRadius: 16,
+                                    padding: 16,
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: 12,
+                                    boxShadow: '0 1px 2px rgba(15,23,42,0.03)',
+                                    minWidth: 0,
+                                }}
+                            >
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                                    <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-1, #0F172A)' }}>
+                                        {t('analytics.dashboard.growth.title')}
+                                    </div>
+                                    <div role="tablist" style={{ display: 'inline-flex', borderRadius: 999, background: '#F1F5F9', padding: 3, gap: 2, border: '1px solid #E2E8F0' }}>
+                                        {(['engagement', 'views', 'posts'] as GrowthSeries[]).map((s) => {
+                                            const active = s === growthSeries;
+                                            return (
+                                                <button
+                                                    key={s}
+                                                    type="button"
+                                                    role="tab"
+                                                    aria-selected={active}
+                                                    onClick={() => setGrowthSeries(s)}
+                                                    style={{
+                                                        padding: '5px 12px',
+                                                        borderRadius: 999,
+                                                        border: 'none',
+                                                        background: active ? ANALYTICS_PRIMARY : 'transparent',
+                                                        color: active ? '#FFFFFF' : '#475569',
+                                                        fontSize: 11,
+                                                        fontWeight: 700,
+                                                        cursor: 'pointer',
+                                                        textTransform: 'capitalize',
+                                                        transition: 'background 0.15s ease, color 0.15s ease',
+                                                    }}
+                                                >
+                                                    {t(`analytics.dashboard.growth.series.${s}`)}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
                                 </div>
-                                <div role="tablist" style={{ display: 'inline-flex', borderRadius: 999, background: '#F1F5F9', padding: 3, gap: 2, border: '1px solid #E2E8F0' }}>
-                                    {(['engagement', 'views', 'posts'] as GrowthSeries[]).map((s) => {
-                                        const active = s === growthSeries;
-                                        return (
-                                            <button
-                                                key={s}
-                                                type="button"
-                                                role="tab"
-                                                aria-selected={active}
-                                                onClick={() => setGrowthSeries(s)}
-                                                style={{
-                                                    padding: '6px 14px',
-                                                    borderRadius: 999,
-                                                    border: 'none',
-                                                    background: active ? '#337AFF' : 'transparent',
-                                                    color: active ? '#FFFFFF' : '#475569',
-                                                    fontSize: 11,
-                                                    fontWeight: 700,
-                                                    cursor: 'pointer',
-                                                    textTransform: 'capitalize',
-                                                    transition: 'background 0.15s ease, color 0.15s ease',
-                                                }}
-                                            >
-                                                {t(`analytics.dashboard.growth.series.${s}`)}
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                            </div>
 
-                            {showChartSkeleton ? (
-                                <ChartSkeleton height={240} />
-                            ) : (
-                                <div style={{ opacity: statsLoading ? 0.65 : 1, transition: 'opacity 0.2s ease' }}>
-                                    <CumulativeGrowthChart
-                                        points={dailyTrendPoints}
-                                        series={growthSeries}
-                                    />
-                                </div>
-                            )}
-                        </section>
+                                {showChartSkeleton ? (
+                                    <ChartSkeleton height={180} />
+                                ) : (
+                                    <div style={{ opacity: statsLoading ? 0.65 : 1, transition: 'opacity 0.2s ease' }}>
+                                        <CumulativeGrowthChart
+                                            points={dailyTrendPoints}
+                                            series={growthSeries}
+                                            height={180}
+                                        />
+                                    </div>
+                                )}
+                            </section>
 
-                        <div
-                            style={{
-                                display: 'flex',
-                                flexWrap: 'wrap',
-                                alignItems: 'stretch',
-                                gap: 16,
-                            }}
-                        >
-                            <div style={{ flex: '1 1 320px', display: 'flex' }}>
+                            <div className="dash-overview-side">
                                 {showPanelSkeleton ? (
                                     <PanelSkeleton />
                                 ) : (
-                                    <div style={{ flex: 1, opacity: statsLoading ? 0.65 : 1, transition: 'opacity 0.2s ease' }}>
+                                    <div style={{ opacity: statsLoading ? 0.65 : 1, transition: 'opacity 0.2s ease', display: 'flex', flexDirection: 'column', gap: 12, height: '100%' }}>
                                         <PlatformDistributionPanel
                                             entries={stats?.platform_distribution || []}
                                             loading={false}
                                         />
-                                    </div>
-                                )}
-                            </div>
-                            <div style={{ flex: '1 1 320px', display: 'flex' }}>
-                                {showPanelSkeleton ? (
-                                    <PanelSkeleton />
-                                ) : (
-                                    <div style={{ flex: 1, opacity: statsLoading ? 0.65 : 1, transition: 'opacity 0.2s ease' }}>
                                         <ContentTypePanel
                                             entries={stats?.content_type_distribution || []}
                                             loading={false}
@@ -386,7 +415,7 @@ export default function DashboardView({
                                     height: 18,
                                     borderRadius: '50%',
                                     border: '2px solid rgba(51,122,255,0.25)',
-                                    borderTopColor: '#337AFF',
+                                    borderTopColor: ANALYTICS_PRIMARY,
                                     animation: 'accountRefreshSpin 0.8s linear infinite',
                                 }}
                             />
@@ -402,10 +431,64 @@ export default function DashboardView({
             ) : null}
 
             <style>{`
+                .dash-toolbar-nav {
+                    display: grid;
+                    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+                    align-items: center;
+                    gap: 12px;
+                    position: relative;
+                }
+                .dash-toolbar-left {
+                    justify-self: start;
+                    min-width: 0;
+                }
+                .dash-toolbar-center {
+                    justify-self: center;
+                }
+                .dash-toolbar-right {
+                    justify-self: end;
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                    flex-wrap: wrap;
+                    justify-content: flex-end;
+                }
                 .dash-kpi-grid {
                     display: grid;
-                    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-                    gap: 16px;
+                    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+                    gap: 12px;
+                }
+                .dash-overview-grid {
+                    display: grid;
+                    grid-template-columns: 1.4fr 1fr;
+                    gap: 12px;
+                    align-items: stretch;
+                }
+                .dash-overview-side {
+                    display: flex;
+                    flex-direction: column;
+                    min-width: 0;
+                }
+                @media (max-width: 900px) {
+                    .dash-toolbar-nav {
+                        grid-template-columns: 1fr;
+                        gap: 10px;
+                    }
+                    .dash-toolbar-left,
+                    .dash-toolbar-center,
+                    .dash-toolbar-right {
+                        justify-self: stretch;
+                    }
+                    .dash-toolbar-center {
+                        display: flex;
+                        justify-content: center;
+                    }
+                    .dash-toolbar-right {
+                        justify-content: space-between;
+                    }
+                    .dash-overview-grid {
+                        grid-template-columns: 1fr;
+                    }
                 }
                 .analytics-dashboard ::selection { background: rgba(51,122,255,0.22); color: #0F172A; }
                 @keyframes accountRefreshSpin {
@@ -438,11 +521,11 @@ function OverviewAccountTabs({
             style={{
                 display: 'flex',
                 flexWrap: 'wrap',
-                gap: 8,
-                padding: 4,
-                borderRadius: 12,
+                gap: 6,
+                padding: 3,
+                borderRadius: 10,
                 background: '#F8FAFC',
-                border: '1px solid #E2E8F0',
+                border: '1px solid var(--border, #E2E8F0)',
             }}
         >
             {accounts.map((acct) => {
@@ -454,11 +537,11 @@ function OverviewAccountTabs({
                         style={{
                             display: 'inline-flex',
                             alignItems: 'center',
-                            borderRadius: 8,
+                            borderRadius: 7,
                             border: active ? '1px solid #337AFF' : '1px solid #E2E8F0',
                             background: active ? '#FFFFFF' : 'transparent',
                             boxShadow: active ? '0 1px 2px rgba(51,122,255,0.20)' : 'none',
-                            paddingRight: removable ? 4 : 0,
+                            paddingRight: removable ? 2 : 0,
                         }}
                     >
                         <button
@@ -467,18 +550,18 @@ function OverviewAccountTabs({
                             aria-selected={active}
                             onClick={() => onSelect(acct.id)}
                             style={{
-                                padding: '8px 6px 8px 14px',
-                                borderRadius: 8,
+                                padding: '5px 6px 5px 10px',
+                                borderRadius: 7,
                                 border: 'none',
                                 background: 'transparent',
-                                color: active ? '#0F172A' : '#475569',
-                                fontSize: 13,
+                                color: active ? 'var(--text-1, #0F172A)' : '#475569',
+                                fontSize: 12,
                                 fontWeight: 700,
                                 cursor: 'pointer',
                             }}
                         >
                             @{acct.username}
-                            <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, opacity: 0.65, textTransform: 'uppercase' }}>
+                            <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 600, opacity: 0.65, textTransform: 'uppercase' }}>
                                 {acct.platform}
                             </span>
                         </button>
@@ -572,12 +655,12 @@ function SubviewToggle({
                             display: 'inline-flex',
                             alignItems: 'center',
                             gap: 8,
-                            padding: '8px 14px',
+                            padding: '6px 12px',
                             borderRadius: 8,
                             border: 'none',
                             background: active ? '#337AFF' : 'transparent',
                             color: active ? '#FFFFFF' : '#475569',
-                            fontSize: 13,
+                            fontSize: 12,
                             fontWeight: 700,
                             cursor: 'pointer',
                             transition: 'background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease',
@@ -619,6 +702,15 @@ function UsersIcon() {
             <circle cx="9" cy="7" r="4" />
             <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
             <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+        </svg>
+    );
+}
+
+function AddAccountPlusIcon() {
+    return (
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
         </svg>
     );
 }
