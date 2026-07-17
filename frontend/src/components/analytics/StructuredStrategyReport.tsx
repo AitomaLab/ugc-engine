@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import StrategyReportMarkdown from './StrategyReportMarkdown';
+import StrategyReportMarkdown, { InsightList } from './StrategyReportMarkdown';
 
 /**
  * Visual layout for AI Strategy / AI Learnings Markdown.
@@ -43,25 +43,29 @@ function classifyHeading(heading: string): SectionKind {
 function shortNavLabel(heading: string): string {
     const h = heading.toLowerCase().trim();
     if (/\boverview\b/.test(h) || /\bsummary\b/.test(h)) return 'Overview';
-    if (/\bkey factor/.test(h) && /\b(holding|back|under)\b/.test(h)) return 'Holding back';
-    if (/\bkey factor/.test(h) && /\b(driving|why|worked|engagement)\b/.test(h)) return 'Driving engagement';
-    if (/\bkey factor/.test(h)) return 'Key factors';
-    if (/\btop performer/.test(h) && /\b(data|metric)\b/.test(h)) return 'Top metrics';
-    if (/\bbottom performer/.test(h) && /\b(data|metric)\b/.test(h)) return 'Bottom metrics';
-    if (/\btop performer/.test(h) || /\bwhy they worked\b/.test(h)) return 'Top performers';
-    if (/\bbottom performer/.test(h) || /\bwent wrong\b/.test(h)) return 'Bottom performers';
-    if (/\brecommend/.test(h) || /\bwhat to do next\b/.test(h) || /\bpriority\b/.test(h)) return 'Recommendations';
+    if (/\bmetric/.test(h) && !/\b(top|bottom)\b/.test(h)) return 'Metrics';
+    if (/\bfactor/.test(h) && /\b(holding|back|under)\b/.test(h)) return 'Holding';
+    if (/\bfactor/.test(h) && /\b(driving|why|worked|engagement)\b/.test(h)) return 'Driving';
+    if (/\bfactor/.test(h)) return 'Factors';
+    if (/\bholding\b/.test(h) && /\bengagement\b/.test(h)) return 'Holding';
+    if (/\bdriving\b/.test(h) && /\bengagement\b/.test(h)) return 'Driving';
+    if (/\btop performer/.test(h) && /\b(data|metric)\b/.test(h)) return 'Top data';
+    if (/\bbottom performer/.test(h) && /\b(data|metric)\b/.test(h)) return 'Low data';
+    if (/\btop performer/.test(h) || /\bwhy they worked\b/.test(h)) return 'Top posts';
+    if (/\bbottom performer/.test(h) || /\bwent wrong\b/.test(h)) return 'Low posts';
+    if (/\bwhat worked\b/.test(h)) return 'What worked';
+    if (/\brecommend/.test(h) || /\bwhat to do next\b/.test(h) || /\bpriority\b/.test(h)) return 'Actions';
     if (/\bdo more\b/.test(h)) return 'Do more';
     if (/\bdo less\b/.test(h)) return 'Do less';
-    if (/\bmetric/.test(h) && /\btop\b/.test(h)) return 'Top metrics';
-    if (/\bmetric/.test(h) && /\bbottom\b/.test(h)) return 'Bottom metrics';
-    // Fallback: trim filler words and cap length
+    if (/\bmetric/.test(h) && /\btop\b/.test(h)) return 'Top data';
+    if (/\bmetric/.test(h) && /\bbottom\b/.test(h)) return 'Low data';
+    // Fallback: trim filler words and keep labels short enough for the nav column
     const cleaned = heading
-        .replace(/\b(analysis|report|section|the|for|and)\b/gi, ' ')
+        .replace(/\b(analysis|report|section|the|for|and|key|factors?|engagement)\b/gi, ' ')
         .replace(/\s+/g, ' ')
         .trim();
-    if (cleaned.length <= 22) return cleaned || heading;
-    return `${cleaned.slice(0, 20).trimEnd()}…`;
+    if (cleaned.length <= 14) return cleaned || heading;
+    return `${cleaned.slice(0, 12).trimEnd()}…`;
 }
 
 function parseSections(source: string): { preamble: string; sections: ReportSection[] } {
@@ -114,23 +118,6 @@ function parseSections(source: string): { preamble: string; sections: ReportSect
 
 function isEmptySection(section: ReportSection): boolean {
     return section.kind !== 'title' && !section.body.trim();
-}
-
-function extractStatChips(body: string): Array<{ label: string; value: string }> {
-    const chips: Array<{ label: string; value: string }> = [];
-    for (const raw of body.split('\n')) {
-        // Support "- **Followers:** 1,452" as well as plain "Followers: 1,452"
-        const line = raw.trim().replace(/^[-*•]\s+/, '');
-        const m = /^(?:\*\*)?([^*:\n]+?)(?:\*\*)?:\s*(.+)$/.exec(line);
-        if (!m) continue;
-        const label = m[1].trim();
-        const value = m[2].replace(/\*\*/g, '').trim();
-        if (!label || !value || value.length > 80) continue;
-        // Skip long prose "labels"
-        if (label.length > 40) continue;
-        chips.push({ label, value });
-    }
-    return chips;
 }
 
 function parseOrderedItems(body: string): Array<{ title: string; detail: string }> {
@@ -620,111 +607,19 @@ function PerformerStack({
                         </button>
 
                         {open && hasDetails && (
-                            <div
-                                style={{
-                                    padding: '0 12px 12px 44px',
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    gap: 8,
-                                }}
-                            >
-                                {body.map((f) => (
-                                    <div key={`${i}-${f.label}`} style={{ minWidth: 0 }}>
-                                        <div
-                                            style={{
-                                                fontSize: 10,
-                                                fontWeight: 700,
-                                                color: '#94A3B8',
-                                                textTransform: 'uppercase',
-                                                letterSpacing: 0.35,
-                                                marginBottom: 2,
-                                            }}
-                                        >
-                                            {f.label}
-                                        </div>
-                                        <div style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--text-2)' }}>
-                                            {renderInline(f.value, `pf-${i}-${f.label}`)}
-                                        </div>
-                                    </div>
-                                ))}
-
-                                {!body.length && !metrics.length && !meta.length && item.detail && (
-                                    <div style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--text-2)' }}>
-                                        {renderInline(item.detail, `f-${i}`)}
-                                    </div>
-                                )}
-
-                                {prose && (
-                                    <div style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--text-2)' }}>
-                                        {renderInline(prose, `fp-${i}`)}
-                                    </div>
-                                )}
+                            <div style={{ padding: '0 12px 12px 12px' }}>
+                                <InsightList
+                                    keyPrefix={`perf-${i}`}
+                                    items={[
+                                        ...body.map((f) => `**${f.label}:** ${f.value}`),
+                                        ...(!body.length && !metrics.length && !meta.length && item.detail
+                                            ? [item.detail]
+                                            : []),
+                                        ...(prose ? [prose] : []),
+                                    ]}
+                                />
                             </div>
                         )}
-                    </div>
-                );
-            })}
-        </div>
-    );
-}
-
-function BulletCards({
-    items,
-    tone,
-}: {
-    items: string[];
-    tone: 'green' | 'amber';
-}) {
-    const bg = tone === 'green' ? 'rgba(52,199,89,0.07)' : 'rgba(255,159,10,0.08)';
-    const border = tone === 'green' ? 'rgba(52,199,89,0.2)' : 'rgba(255,159,10,0.22)';
-    const mark = tone === 'green' ? '#1f7a3a' : '#a35a00';
-
-    return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {items.map((item, i) => {
-                const plain = stripInlineMd(item);
-                const split = /^([^:.—-]{2,48})\s*[:—-]\s*(.*)$/.exec(plain);
-                const label = split?.[1]?.trim();
-                const rest = split?.[2]?.trim();
-                const iconKind = resolveTitleIcon(label || plain);
-                return (
-                    <div
-                        key={i}
-                        style={{
-                            display: 'flex',
-                            gap: 10,
-                            padding: '10px 12px',
-                            background: bg,
-                            border: `1px solid ${border}`,
-                            borderRadius: 10,
-                        }}
-                    >
-                        <span
-                            aria-hidden
-                            style={{
-                                width: 26,
-                                height: 26,
-                                borderRadius: 7,
-                                background: mark,
-                                color: '#fff',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                flexShrink: 0,
-                            }}
-                        >
-                            <TitleIcon kind={iconKind} size={13} />
-                        </span>
-                        <div style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--text-2)', minWidth: 0 }}>
-                            {label && rest ? (
-                                <>
-                                    <strong style={{ color: 'var(--text-1)', fontWeight: 700 }}>{label}:</strong>{' '}
-                                    {rest}
-                                </>
-                            ) : (
-                                renderInline(item, `b-${i}`)
-                            )}
-                        </div>
                     </div>
                 );
             })}
@@ -796,40 +691,6 @@ function SectionShell({
     );
 }
 
-function Checklist({ items }: { items: string[] }) {
-    return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {items.map((item, i) => (
-                <div
-                    key={i}
-                    style={{
-                        display: 'flex',
-                        gap: 10,
-                        padding: '8px 10px',
-                        borderRadius: 8,
-                        background: 'rgba(148,163,184,0.08)',
-                    }}
-                >
-                    <span
-                        aria-hidden
-                        style={{
-                            width: 6,
-                            height: 6,
-                            borderRadius: '50%',
-                            background: '#94A3B8',
-                            marginTop: 6,
-                            flexShrink: 0,
-                        }}
-                    />
-                    <div style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--text-2)' }}>
-                        {renderInline(item, `c-${i}`)}
-                    </div>
-                </div>
-            ))}
-        </div>
-    );
-}
-
 function renderSection(
     section: ReportSection,
     index: number,
@@ -863,48 +724,42 @@ function renderSection(
     }
 
     if (section.kind === 'stats') {
-        const chips = extractStatChips(section.body);
-        const leftover = section.body
-            .split('\n')
-            .filter((line) => {
-                const t = line.trim().replace(/^[-*•]\s+/, '');
-                if (!t) return false;
-                return !/^(?:\*\*)?[^*:\n]+?(?:\*\*)?:\s*.+$/.test(t);
-            })
-            .join('\n')
-            .trim();
+        const bullets = parseBullets(section.body);
+        if (bullets.length >= 1) {
+            return (
+                <SectionShell key={key} title={section.heading} omitTitle={omitTitle}>
+                    <InsightList items={bullets} keyPrefix={`stats-${index}`} />
+                </SectionShell>
+            );
+        }
+
+        // Turn "Label: value" lines into the same insight rows (short or long).
+        const labeled: string[] = [];
+        const leftoverLines: string[] = [];
+        for (const raw of section.body.split('\n')) {
+            const line = raw.trim().replace(/^[-*•]\s+/, '');
+            if (!line) continue;
+            const m = /^(?:\*\*)?([^*:\n]+?)(?:\*\*)?:\s*(.+)$/.exec(line);
+            if (m && m[1].trim().length <= 40) {
+                labeled.push(`**${m[1].trim()}:** ${m[2].trim()}`);
+            } else {
+                leftoverLines.push(raw);
+            }
+        }
+        if (labeled.length) {
+            return (
+                <SectionShell key={key} title={section.heading} omitTitle={omitTitle}>
+                    <InsightList items={labeled} keyPrefix={`stats-l-${index}`} />
+                    {leftoverLines.length > 0 && (
+                        <StrategyReportMarkdown source={leftoverLines.join('\n')} dense />
+                    )}
+                </SectionShell>
+            );
+        }
 
         return (
             <SectionShell key={key} title={section.heading} omitTitle={omitTitle}>
-                {chips.length > 0 && (
-                    <div
-                        style={{
-                            display: 'flex',
-                            flexWrap: 'wrap',
-                            gap: 8,
-                        }}
-                    >
-                        {chips.map((chip) => (
-                            <div
-                                key={chip.label}
-                                style={{
-                                    padding: '8px 12px',
-                                    borderRadius: 8,
-                                    background: 'rgba(148,163,184,0.08)',
-                                    border: '1px solid #E8EEF4',
-                                    minWidth: 100,
-                                }}
-                            >
-                                <div style={{ fontSize: 14, fontWeight: 700, color: '#475569' }}>{chip.value}</div>
-                                <div style={{ fontSize: 10, fontWeight: 600, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.3, marginTop: 2 }}>
-                                    {chip.label}
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
-                {leftover && <StrategyReportMarkdown source={leftover} dense />}
-                {!chips.length && !leftover && <StrategyReportMarkdown source={section.body} dense />}
+                <StrategyReportMarkdown source={section.body} dense />
             </SectionShell>
         );
     }
@@ -912,16 +767,39 @@ function renderSection(
     if (section.kind === 'top' || section.kind === 'bottom') {
         if (!section.body.trim()) return null;
         const factors = parseOrderedItems(section.body);
-        if (factors.length >= 1) {
+        const isPerformers = /\bperformer/.test(section.heading.toLowerCase());
+        if (factors.length >= 1 && isPerformers) {
             return (
                 <SectionShell key={key} title={section.heading} omitTitle={omitTitle}>
                     <PerformerStack items={factors} tone={section.kind === 'top' ? 'blue' : 'amber'} />
                 </SectionShell>
             );
         }
+        if (factors.length >= 1) {
+            return (
+                <SectionShell key={key} title={section.heading} omitTitle={omitTitle}>
+                    <InsightList
+                        keyPrefix={`fac-${index}`}
+                        items={factors.map((f) => (
+                            f.detail
+                                ? `**${stripInlineMd(f.title)}:** ${f.detail}`
+                                : f.title
+                        ))}
+                    />
+                </SectionShell>
+            );
+        }
+        const bullets = parseBullets(section.body);
+        if (bullets.length) {
+            return (
+                <SectionShell key={key} title={section.heading} omitTitle={omitTitle}>
+                    <InsightList items={bullets} keyPrefix={`fac-b-${index}`} />
+                </SectionShell>
+            );
+        }
         return (
             <SectionShell key={key} title={section.heading} omitTitle={omitTitle}>
-                <StrategyReportMarkdown source={section.body} />
+                <StrategyReportMarkdown source={section.body} dense />
             </SectionShell>
         );
     }
@@ -936,7 +814,7 @@ function renderSection(
                     accent={section.kind === 'doMore' ? '#1f7a3a' : '#a35a00'}
                     omitTitle={omitTitle}
                 >
-                    <BulletCards items={bullets} tone={section.kind === 'doMore' ? 'green' : 'amber'} />
+                    <InsightList items={bullets} keyPrefix={`do-${index}`} />
                 </SectionShell>
             );
         }
@@ -949,46 +827,30 @@ function renderSection(
 
     if (section.kind === 'priority') {
         const bullets = parseBullets(section.body);
-        const prose = bullets.length
-            ? null
-            : section.body.trim().replace(/^[-*•]\s+/, '');
+        if (bullets.length) {
+            return (
+                <SectionShell key={key} title={section.heading} accent="#337AFF" omitTitle={omitTitle}>
+                    <InsightList items={bullets} keyPrefix={`pri-${index}`} />
+                </SectionShell>
+            );
+        }
         return (
             <SectionShell key={key} title={section.heading} accent="#337AFF" omitTitle={omitTitle}>
-                <div
-                    style={{
-                        padding: '12px 14px',
-                        borderRadius: 10,
-                        background: 'rgba(51,122,255,0.07)',
-                        border: '1px solid rgba(51,122,255,0.18)',
-                        fontSize: 13,
-                        lineHeight: 1.55,
-                        color: 'var(--text-1)',
-                        fontWeight: 600,
-                    }}
-                >
-                    {bullets.length
-                        ? (
-                            <ol style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                {bullets.map((b, i) => (
-                                    <li key={i} style={{ fontWeight: 500, color: 'var(--text-2)' }}>
-                                        {renderInline(b, `p-${i}`)}
-                                    </li>
-                                ))}
-                            </ol>
-                        )
-                        : renderInline(prose || section.body, 'priority')}
-                </div>
+                <InsightList
+                    items={[section.body.trim().replace(/^[-*•]\s+/, '')]}
+                    keyPrefix={`pri-p-${index}`}
+                />
             </SectionShell>
         );
     }
 
-    // Generic: checklist if mostly bullets, else markdown
+    // Generic: insight rows if mostly bullets, else markdown (lists still use InsightList)
     const bullets = parseBullets(section.body);
     const lineCount = section.body.split('\n').filter((l) => l.trim()).length;
     if (bullets.length >= 2 && bullets.length >= lineCount * 0.6) {
         return (
             <SectionShell key={key} title={section.heading} omitTitle={omitTitle}>
-                <Checklist items={bullets} />
+                <InsightList items={bullets} keyPrefix={`gen-${index}`} />
             </SectionShell>
         );
     }
@@ -1060,13 +922,7 @@ export default function StructuredStrategyReport({ source, learnings = false }: 
                     kind: 'doMore',
                     icon: 'doMore',
                     content: (
-                        <div
-                            style={{
-                                display: 'grid',
-                                gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-                                gap: 12,
-                            }}
-                        >
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                             {renderSection(sec, i, { omitTitle: true })}
                             {renderSection(next, i + 1, { omitTitle: true })}
                         </div>
@@ -1088,7 +944,7 @@ export default function StructuredStrategyReport({ source, learnings = false }: 
                         icon: resolveTitleIcon(learnLabel, 'generic'),
                         content: (
                             <SectionShell omitTitle>
-                                <Checklist items={bullets} />
+                                <InsightList items={bullets} keyPrefix={`learn-${i}`} />
                             </SectionShell>
                         ),
                     });

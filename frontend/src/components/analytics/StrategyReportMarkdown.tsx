@@ -35,80 +35,43 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
     });
 }
 
-function renderOrderedList(items: OrderedItem[], key: string, dense?: boolean): React.ReactNode {
+const INSIGHT_ROW: React.CSSProperties = {
+    display: 'flex',
+    gap: 10,
+    padding: '10px 12px',
+    borderRadius: 8,
+    background: 'rgba(148,163,184,0.08)',
+};
+
+/**
+ * Shared list row style for AI Strategy / Learnings — grey pill rows with a
+ * bullet and bold Label: description text.
+ */
+export function InsightList({
+    items,
+    keyPrefix = 'insight',
+}: {
+    items: string[];
+    keyPrefix?: string;
+}) {
+    if (!items.length) return null;
     return (
-        <div
-            key={key}
-            style={{
-                display: dense ? 'grid' : 'flex',
-                gridTemplateColumns: dense ? 'repeat(auto-fill, minmax(220px, 1fr))' : undefined,
-                flexDirection: dense ? undefined : 'column',
-                gap: dense ? 8 : 10,
-                margin: dense ? '4px 0 10px' : '8px 0 14px',
-            }}
-        >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {items.map((item, i) => (
-                <div
-                    key={`${key}-${i}`}
-                    style={{
-                        display: 'flex',
-                        gap: dense ? 10 : 12,
-                        padding: dense ? '10px 12px' : '12px 14px',
-                        background: 'rgba(51,122,255,0.06)',
-                        border: '1px solid rgba(51,122,255,0.12)',
-                        borderRadius: 10,
-                    }}
-                >
-                    <div
+                <div key={`${keyPrefix}-${i}`} style={INSIGHT_ROW}>
+                    <span
                         aria-hidden
                         style={{
-                            width: dense ? 24 : 28,
-                            height: dense ? 24 : 28,
+                            width: 6,
+                            height: 6,
                             borderRadius: '50%',
-                            background: 'var(--blue)',
-                            color: '#fff',
-                            fontSize: dense ? 11 : 13,
-                            fontWeight: 700,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
+                            background: '#94A3B8',
+                            marginTop: 6,
                             flexShrink: 0,
                         }}
-                    >
-                        {i + 1}
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                        <div
-                            style={{
-                                fontSize: dense ? 12.5 : 13,
-                                fontWeight: 600,
-                                color: 'var(--text-1)',
-                                lineHeight: 1.45,
-                                marginBottom: item.subItems.length ? 6 : 0,
-                            }}
-                        >
-                            {renderInline(item.content, `${key}-${i}-c`)}
-                        </div>
-                        {item.subItems.length > 0 && (
-                            <ul
-                                style={{
-                                    margin: 0,
-                                    paddingLeft: 18,
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    gap: 4,
-                                    fontSize: dense ? 12 : 13,
-                                    lineHeight: 1.5,
-                                    color: 'var(--text-2)',
-                                }}
-                            >
-                                {item.subItems.map((sub, j) => (
-                                    <li key={`${key}-${i}-s-${j}`}>
-                                        {renderInline(sub, `${key}-${i}-s-${j}`)}
-                                    </li>
-                                ))}
-                            </ul>
-                        )}
+                    />
+                    <div style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--text-2)', minWidth: 0 }}>
+                        {renderInline(item, `${keyPrefix}-${i}`)}
                     </div>
                 </div>
             ))}
@@ -116,25 +79,28 @@ function renderOrderedList(items: OrderedItem[], key: string, dense?: boolean): 
     );
 }
 
+function renderOrderedList(items: OrderedItem[], key: string): React.ReactNode {
+    const rows: string[] = [];
+    for (const item of items) {
+        if (item.subItems.length) {
+            rows.push(item.content);
+            for (const sub of item.subItems) rows.push(sub);
+        } else {
+            rows.push(item.content);
+        }
+    }
+    return (
+        <div key={key} style={{ margin: '4px 0 10px' }}>
+            <InsightList items={rows} keyPrefix={key} />
+        </div>
+    );
+}
+
 function renderUnorderedList(items: string[], key: string): React.ReactNode {
     return (
-        <ul
-            key={key}
-            style={{
-                margin: '4px 0 10px',
-                paddingLeft: 20,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 4,
-                fontSize: 13,
-                lineHeight: 1.55,
-                color: 'var(--text-2)',
-            }}
-        >
-            {items.map((it, i) => (
-                <li key={`${key}-i-${i}`}>{renderInline(it, `${key}-i-${i}`)}</li>
-            ))}
-        </ul>
+        <div key={key} style={{ margin: '4px 0 10px' }}>
+            <InsightList items={items} keyPrefix={key} />
+        </div>
     );
 }
 
@@ -154,7 +120,7 @@ export default function StrategyReportMarkdown({
         if (!listBuffer) return;
         const key = `list-${blocks.length}`;
         if (listBuffer.ordered) {
-            blocks.push(renderOrderedList(listBuffer.items, key, dense));
+            blocks.push(renderOrderedList(listBuffer.items, key));
         } else {
             blocks.push(renderUnorderedList(listBuffer.items, key));
         }
