@@ -129,13 +129,14 @@ export default function PostCard({ post, onOpen, thumbnailUrl, trackedAccounts, 
                 e.currentTarget.style.boxShadow = '0 1px 2px rgba(13,27,62,0.04)';
             }}
         >
-            {/* Thumbnail */}
+            {/* Thumbnail — 3:4 portrait everywhere so UGC (9:16) previews are
+                properly visible and every analytics surface shows the same
+                video format (Overview, By Video, AI Strategy). */}
             <div
                 style={{
                     position: 'relative',
                     width: '100%',
-                    paddingTop: compact ? undefined : '56.25%',
-                    height: compact ? 112 : undefined,
+                    aspectRatio: '3 / 4',
                     background: 'var(--blue-light)',
                 }}
             >

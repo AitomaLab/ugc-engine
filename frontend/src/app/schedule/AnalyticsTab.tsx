@@ -2,19 +2,29 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import AccountDetailView from '@/components/analytics/AccountDetailModal';
+import { useTranslation } from '@/lib/i18n';
+import AccountScopeBar from '@/components/analytics/AccountScopeBar';
+import AccountScopeView, {
+    useAccountBackgroundRefresh,
+    type AnalyticsViewKey,
+} from '@/components/analytics/account/AccountScopeView';
+import LearningsView from '@/components/analytics/account/LearningsView';
 import AddAccountModal from '@/components/analytics/AddAccountModal';
-import DashboardView, {
-    type DashboardSubview,
-} from '@/components/analytics/dashboard/DashboardView';
+import DashboardView from '@/components/analytics/dashboard/DashboardView';
+import DashboardPeriodToggle from '@/components/analytics/dashboard/DashboardPeriodToggle';
+import VideoPerformanceView from '@/components/analytics/dashboard/VideoPerformanceView';
 import PostDetailView from '@/components/analytics/PostDetailModal';
+import StrategyHub from '@/components/analytics/StrategyHub';
 import {
+    ANALYTICS_PRIMARY,
     ANALYTICS_STUDIO_SYNCED_EVENT,
     DEFAULT_ANALYTICS_PERIOD,
     deleteTrackedAccount,
+    timeAgo,
     trackedAccountToAggregateStub,
     useAccountAggregates,
     useConnections,
+    useMetricsFreshness,
     useTrackedAccounts,
     type AccountOwnership,
     type Period,
@@ -27,43 +37,39 @@ interface Props {
     refreshing?: boolean;
 }
 
-function parseSubview(raw: string | null): DashboardSubview {
-    if (raw === 'videos' || raw === 'accounts' || raw === 'overview') return raw;
-    return 'overview';
-}
-
-function inferSubview(search: URLSearchParams): DashboardSubview {
-    const explicit = parseSubview(search.get('view'));
-    if (search.get('view')) return explicit;
-    // Deep links without ?view= — land on the relevant list after Back.
-    if (search.get('account')) return 'accounts';
+/** Legacy `?view=accounts` maps to the All-scope overview (comparison lives there). */
+function parseView(raw: string | null): AnalyticsViewKey {
+    if (raw === 'videos' || raw === 'strategy' || raw === 'learnings') return raw;
     return 'overview';
 }
 
 /**
- * Analytics tab — dashboard with full-page post (`?post=`) and account
- * (`?account=`) detail. Opening a post from an account keeps `account` in
- * the URL so Back returns to the account page. Subview is lifted + synced
- * via `?view=` so Back restores By Video / Accounts instead of Overview.
+ * Analytics — one surface scoped by the persistent account scope bar
+ * ("All accounts" or a single connected/tracked account). Every view tab
+ * (Overview / Videos / AI Strategy / AI Learnings) follows the scope, so
+ * global blends and per-account drilldowns are the same page instead of
+ * separate navigations.
+ *
+ * URL: `?account=<id>` (absent ⇒ All) · `?view=videos|strategy|learnings`
+ * (absent ⇒ overview) · `?post=<id>` renders the full-page post detail on
+ * top; Back restores scope + view.
  */
 export default function AnalyticsTab({ onRefreshAll, refreshing = false }: Props) {
+    const { t } = useTranslation();
     const router = useRouter();
     const search = useSearchParams();
 
     const [period, setPeriod] = useState<Period>(DEFAULT_ANALYTICS_PERIOD);
 
-    const initialPostId = search.get('post');
     const initialAccountId = search.get('account');
-    const [activePostId, setActivePostId] = useState<string | null>(initialPostId);
-    const [activeAccountId, setActiveAccountId] = useState<string | null>(initialAccountId);
-    const [subview, setSubview] = useState<DashboardSubview>(() => inferSubview(search));
+    const [activePostId, setActivePostId] = useState<string | null>(search.get('post'));
+    const [scope, setScope] = useState<string>(initialAccountId ?? 'all');
+    const [view, setView] = useState<AnalyticsViewKey>(() => parseView(search.get('view')));
     const [addOpen, setAddOpen] = useState(false);
     const [metricsEpoch, setMetricsEpoch] = useState(0);
     const [accountOwnership, setAccountOwnership] = useState<AccountOwnership>('all');
-    const [overviewAccountId, setOverviewAccountId] = useState<string | null>(null);
-    const [aggregatesEnabled, setAggregatesEnabled] = useState(
-        () => inferSubview(search) === 'accounts' || Boolean(initialAccountId),
-    );
+    const [statsReady, setStatsReady] = useState(false);
+    const [aggregatesEnabled, setAggregatesEnabled] = useState(() => Boolean(initialAccountId));
 
     const writeParams = useCallback((mutate: (params: URLSearchParams) => void) => {
         const params = new URLSearchParams(Array.from(search.entries()));
@@ -72,7 +78,7 @@ export default function AnalyticsTab({ onRefreshAll, refreshing = false }: Props
         router.replace(qs ? `?${qs}` : '?', { scroll: false });
     }, [router, search]);
 
-    const persistSubview = useCallback((next: DashboardSubview, params: URLSearchParams) => {
+    const persistView = useCallback((next: AnalyticsViewKey, params: URLSearchParams) => {
         if (next === 'overview') params.delete('view');
         else params.set('view', next);
     }, []);
@@ -87,13 +93,15 @@ export default function AnalyticsTab({ onRefreshAll, refreshing = false }: Props
         loading: aggLoading,
         reload: reloadAggregates,
     } = useAccountAggregates(period, { enabled: aggregatesEnabled });
-    const aggregateAccounts = aggData?.accounts ?? [];
+    const aggregateAccounts = useMemo(() => aggData?.accounts ?? [], [aggData]);
     const displayAccounts: TrackedAccountAggregate[] = useMemo(() => {
         if (aggregateAccounts.length > 0) return aggregateAccounts;
         return trackedRaw.map(trackedAccountToAggregateStub);
     }, [aggregateAccounts, trackedRaw]);
 
     const { isStudio, profilePicFor, reload: reloadConnections } = useConnections();
+
+    const { lastRefreshedAt } = useMetricsFreshness(metricsEpoch, { enabled: statsReady });
 
     const reloadAllMetrics = useCallback(() => {
         setAggregatesEnabled(true);
@@ -104,20 +112,9 @@ export default function AnalyticsTab({ onRefreshAll, refreshing = false }: Props
     }, [reloadConnections, reloadAccounts, reloadAggregates, bumpMetrics]);
 
     const handleStatsReady = useCallback(() => {
+        setStatsReady(true);
         setAggregatesEnabled(true);
     }, []);
-
-    const handleSubviewChange = useCallback((next: DashboardSubview) => {
-        setSubview(next);
-        if (next === 'accounts') setAggregatesEnabled(true);
-        writeParams((params) => {
-            persistSubview(next, params);
-        });
-    }, [persistSubview, writeParams]);
-
-    const activeAccount = activeAccountId
-        ? displayAccounts.find((a) => a.id === activeAccountId) || null
-        : null;
 
     useEffect(() => {
         const onSynced = () => {
@@ -129,94 +126,117 @@ export default function AnalyticsTab({ onRefreshAll, refreshing = false }: Props
         };
     }, [reloadAllMetrics]);
 
-    // Deep-linked account detail needs aggregates so we can resolve the row.
+    // Scoped account needs aggregates to resolve its row.
     useEffect(() => {
-        if (activeAccountId) setAggregatesEnabled(true);
-    }, [activeAccountId]);
+        if (scope !== 'all') setAggregatesEnabled(true);
+    }, [scope]);
 
-    // Sync URL → state for post, account, and dashboard subview.
+    // Sync URL → state for post, scope, and view.
     useEffect(() => {
         const nextPost = search.get('post');
-        const nextAccount = search.get('account');
-        const nextView = inferSubview(search);
+        const nextScope = search.get('account') ?? 'all';
+        const nextView = parseView(search.get('view'));
         if (nextPost !== activePostId) setActivePostId(nextPost);
-        if (nextAccount !== activeAccountId) setActiveAccountId(nextAccount);
-        if (nextView !== subview) {
-            setSubview(nextView);
-            if (nextView === 'accounts') setAggregatesEnabled(true);
-        }
+        if (nextScope !== scope) setScope(nextScope);
+        if (nextView !== view) setView(nextView);
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [search]);
+
+    const activeAccount = scope !== 'all'
+        ? displayAccounts.find((a) => a.id === scope) || null
+        : null;
+
+    const activeAccountIsStudio = activeAccount
+        ? (Boolean(activeAccount.linked_via_connections)
+            || isStudio(activeAccount.platform, activeAccount.username))
+        : false;
+
+    // Per-account scrape refresh — surfaces in the toolbar when scoped, so
+    // the page has exactly one refresh affordance per scope.
+    const accountRefresh = useAccountBackgroundRefresh(activeAccount, reloadAllMetrics);
+
+    // AI Learnings is user-level — hidden for external (competitor) accounts.
+    const learningsAvailable = scope === 'all' || activeAccountIsStudio;
+
+    useEffect(() => {
+        if (!learningsAvailable && view === 'learnings') {
+            setView('overview');
+            writeParams((params) => {
+                persistView('overview', params);
+            });
+        }
+    }, [learningsAvailable, view, persistView, writeParams]);
+
+    // Scoped account vanished (deleted / bad deep link) after lists loaded → All.
+    const accountsResolved = !trackedLoading && (!aggregatesEnabled || !aggLoading);
+    useEffect(() => {
+        if (scope !== 'all' && !activeAccount && accountsResolved) {
+            setScope('all');
+            writeParams((params) => {
+                params.delete('account');
+            });
+        }
+    }, [scope, activeAccount, accountsResolved, writeParams]);
 
     const closePost = useCallback(() => {
         setActivePostId(null);
         writeParams((params) => {
             params.delete('post');
-            persistSubview(subview, params);
         });
-    }, [persistSubview, subview, writeParams]);
+    }, [writeParams]);
 
     const openPost = useCallback((postId: string) => {
-        // Coming from By Video → keep videos; from account → keep accounts.
-        const nextView: DashboardSubview = activeAccountId
-            ? 'accounts'
-            : subview === 'overview'
-                ? 'videos'
-                : subview;
-        setSubview(nextView);
+        // Scope + view stay in the URL so Back returns exactly here.
         setActivePostId(postId);
         writeParams((params) => {
             params.set('post', postId);
-            persistSubview(nextView, params);
-            // Keep existing ?account= so Back from post returns to account detail.
         });
-    }, [activeAccountId, persistSubview, subview, writeParams]);
+    }, [writeParams]);
 
-    const openAccount = useCallback((id: string) => {
-        setActiveAccountId(id);
-        setSubview('accounts');
+    const handleScopeChange = useCallback((next: string) => {
+        setScope(next);
+        if (next !== 'all') setAggregatesEnabled(true);
+        writeParams((params) => {
+            if (next === 'all') params.delete('account');
+            else params.set('account', next);
+            params.delete('post');
+        });
+    }, [writeParams]);
+
+    const handleViewChange = useCallback((next: AnalyticsViewKey) => {
+        setView(next);
+        writeParams((params) => {
+            persistView(next, params);
+        });
+    }, [persistView, writeParams]);
+
+    const openAccountStrategy = useCallback((accountId: string) => {
+        setScope(accountId);
+        setView('strategy');
         setAggregatesEnabled(true);
         writeParams((params) => {
-            params.set('account', id);
+            params.set('account', accountId);
+            persistView('strategy', params);
             params.delete('post');
-            persistSubview('accounts', params);
         });
-    }, [persistSubview, writeParams]);
-
-    const closeAccount = useCallback(() => {
-        setActiveAccountId(null);
-        setSubview('accounts');
-        writeParams((params) => {
-            params.delete('account');
-            params.delete('post');
-            persistSubview('accounts', params);
-        });
-    }, [persistSubview, writeParams]);
+    }, [persistView, writeParams]);
 
     const handleDeleteAccount = useCallback(
         async (accountId: string) => {
-            if (activeAccountId === accountId) {
-                setActiveAccountId(null);
+            if (scope === accountId) {
+                setScope('all');
                 writeParams((params) => {
                     params.delete('account');
                     params.delete('post');
-                    persistSubview('accounts', params);
                 });
             }
-            if (overviewAccountId === accountId) setOverviewAccountId(null);
             const ok = await deleteTrackedAccount(accountId);
             if (ok) reloadAllMetrics();
         },
-        [activeAccountId, overviewAccountId, persistSubview, reloadAllMetrics, writeParams],
+        [scope, reloadAllMetrics, writeParams],
     );
 
-    const accountAvatar = activeAccount
-        ? (profilePicFor(activeAccount.platform, activeAccount.username)
-            || activeAccount.avatar_url
-            || undefined)
-        : undefined;
-
-    // 1) Post detail (may sit on top of an account deep-link)
+    // 1) Full-page post detail (scope + view kept in URL for Back)
     if (activePostId) {
         return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -229,82 +249,178 @@ export default function AnalyticsTab({ onRefreshAll, refreshing = false }: Props
         );
     }
 
-    // 2) Account detail full page
-    if (activeAccountId) {
-        if (!activeAccount) {
-            // Account id in URL but list not loaded / missing — show loading or back.
-            if (trackedLoading || (aggregatesEnabled && aggLoading)) {
-                return (
-                    <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
-                        Loading account…
-                    </div>
-                );
-            }
-            return (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: 24 }}>
-                    <button
-                        type="button"
-                        onClick={closeAccount}
-                        style={{
-                            alignSelf: 'flex-start',
-                            padding: '7px 12px',
-                            borderRadius: 8,
-                            border: '1px solid var(--border)',
-                            background: 'white',
-                            cursor: 'pointer',
-                            fontWeight: 600,
-                            fontSize: 13,
-                        }}
-                    >
-                        Back
-                    </button>
-                    <p style={{ margin: 0, color: 'var(--text-3)', fontSize: 13 }}>
-                        Account not found.
-                    </p>
-                </div>
-            );
-        }
-
-        return (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                <AccountDetailView
-                    account={activeAccount}
-                    onClose={closeAccount}
-                    onRefreshed={reloadAllMetrics}
-                    onOpenPost={openPost}
-                    avatarUrl={accountAvatar}
-                />
-            </div>
-        );
-    }
-
-    // 3) Dashboard
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <DashboardView
-                period={period}
-                onPeriodChange={setPeriod}
-                refreshKey={metricsEpoch}
-                onAddExternal={() => setAddOpen(true)}
-                onOpenPost={openPost}
-                onStatsReady={handleStatsReady}
-                subview={subview}
-                onSubviewChange={handleSubviewChange}
-                accounts={displayAccounts}
-                accountsLoading={aggregatesEnabled && aggLoading}
-                trackedAccountsLoading={trackedLoading}
-                onOpenAccount={openAccount}
-                onAccountScraped={reloadAllMetrics}
-                onDeleteAccount={handleDeleteAccount}
-                isStudioAccount={isStudio}
-                profilePicFor={profilePicFor}
-                ownership={accountOwnership}
-                onOwnershipChange={setAccountOwnership}
-                overviewAccountId={overviewAccountId}
-                onOverviewAccountChange={setOverviewAccountId}
-                onRefreshAll={onRefreshAll}
-                refreshing={refreshing}
+        <div
+            className="analytics-dashboard"
+            style={{
+                background: 'linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%)',
+                borderRadius: 20,
+                padding: 'clamp(12px, 2.5vw, 18px)',
+                color: 'var(--text-1, #0F172A)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 12,
+                border: '1px solid var(--border, #E2E8F0)',
+                boxShadow: '0 1px 3px rgba(15,23,42,0.04), 0 8px 24px rgba(15,23,42,0.04)',
+                position: 'relative',
+                overflow: 'hidden',
+            }}
+        >
+            <div
+                aria-hidden
+                style={{
+                    position: 'absolute',
+                    top: -120,
+                    right: -120,
+                    width: 320,
+                    height: 320,
+                    borderRadius: '50%',
+                    background: 'radial-gradient(circle, rgba(51,122,255,0.10) 0%, rgba(51,122,255,0) 70%)',
+                    pointerEvents: 'none',
+                }}
             />
+
+            {/* Persistent account scope — the surface's core control. */}
+            <AccountScopeBar
+                accounts={displayAccounts}
+                scope={scope}
+                onScopeChange={handleScopeChange}
+                profilePicFor={profilePicFor}
+                isStudioAccount={isStudio}
+                onAddAccount={() => setAddOpen(true)}
+            />
+
+            {/* Toolbar — view tabs | period (center) | freshness · refresh */}
+            <div className="dash-toolbar-nav">
+                <div className="dash-toolbar-left">
+                    <ViewTabs
+                        view={view}
+                        onChange={handleViewChange}
+                        showLearnings={learningsAvailable}
+                    />
+                </div>
+                <div className="dash-toolbar-center">
+                    <DashboardPeriodToggle period={period} onChange={setPeriod} />
+                </div>
+                <div className="dash-toolbar-right">
+                    {scope === 'all' ? (
+                        <>
+                            {lastRefreshedAt && (
+                                <span style={{ fontSize: 12, color: 'var(--text-3, #64748B)', whiteSpace: 'nowrap' }}>
+                                    {t('analytics.refresh.asOf').replace('{when}', timeAgo(lastRefreshedAt))}
+                                </span>
+                            )}
+                            {onRefreshAll && (
+                                <button
+                                    type="button"
+                                    onClick={onRefreshAll}
+                                    disabled={refreshing}
+                                    style={{
+                                        padding: '7px 12px',
+                                        borderRadius: 8,
+                                        border: '1px solid var(--border, #E2E8F0)',
+                                        background: refreshing ? ANALYTICS_PRIMARY : 'white',
+                                        color: refreshing ? 'white' : 'var(--text-1, #0F172A)',
+                                        fontSize: 12,
+                                        fontWeight: 600,
+                                        cursor: refreshing ? 'wait' : 'pointer',
+                                        whiteSpace: 'nowrap',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: 6,
+                                    }}
+                                >
+                                    <RefreshIcon spinning={refreshing} />
+                                    {refreshing ? t('analytics.refresh.refreshing') : t('analytics.refresh.cta')}
+                                </button>
+                            )}
+                        </>
+                    ) : (
+                        <>
+                            <span style={{ fontSize: 12, color: 'var(--text-3, #64748B)', whiteSpace: 'nowrap' }}>
+                                {accountRefresh.statusLabel}
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => accountRefresh.refresh()}
+                                disabled={accountRefresh.isRefreshing}
+                                style={{
+                                    padding: '7px 12px',
+                                    borderRadius: 8,
+                                    border: '1px solid var(--border, #E2E8F0)',
+                                    background: accountRefresh.isRefreshing ? ANALYTICS_PRIMARY : 'white',
+                                    color: accountRefresh.isRefreshing ? 'white' : 'var(--text-1, #0F172A)',
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    cursor: accountRefresh.isRefreshing ? 'wait' : 'pointer',
+                                    whiteSpace: 'nowrap',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 6,
+                                }}
+                            >
+                                <RefreshIcon spinning={accountRefresh.isRefreshing} />
+                                {accountRefresh.isRefreshing
+                                    ? t('analytics.accounts.analyzing')
+                                    : t('analytics.tracked.refresh')}
+                            </button>
+                        </>
+                    )}
+                </div>
+            </div>
+
+            {/* ── Scoped body ─────────────────────────────────────────── */}
+            {scope === 'all' ? (
+                view === 'overview' ? (
+                    <DashboardView
+                        period={period}
+                        refreshKey={metricsEpoch}
+                        onStatsReady={handleStatsReady}
+                        trackedAccountsLoading={trackedLoading}
+                        accounts={displayAccounts}
+                        accountsLoading={aggregatesEnabled && aggLoading}
+                        onSelectAccount={(id) => handleScopeChange(id)}
+                        onAccountScraped={reloadAllMetrics}
+                        onDeleteAccount={handleDeleteAccount}
+                        isStudioAccount={isStudio}
+                        profilePicFor={profilePicFor}
+                        ownership={accountOwnership}
+                        onOwnershipChange={setAccountOwnership}
+                        onOpenAdd={() => setAddOpen(true)}
+                    />
+                ) : view === 'videos' ? (
+                    <VideoPerformanceView
+                        period={period}
+                        refreshKey={metricsEpoch}
+                        onOpenPost={openPost}
+                    />
+                ) : view === 'strategy' ? (
+                    <StrategyHub
+                        accounts={displayAccounts}
+                        profilePicFor={profilePicFor}
+                        isStudioAccount={isStudio}
+                        onOpenStrategy={openAccountStrategy}
+                        refreshKey={metricsEpoch}
+                        onOpenAdd={() => setAddOpen(true)}
+                    />
+                ) : (
+                    <LearningsView refreshKey={metricsEpoch} />
+                )
+            ) : activeAccount ? (
+                <AccountScopeView
+                    account={activeAccount}
+                    view={view}
+                    isStudio={activeAccountIsStudio}
+                    refreshKey={metricsEpoch + accountRefresh.epoch}
+                    isRefreshing={accountRefresh.isRefreshing}
+                    onOpenPost={openPost}
+                    onSwitchView={handleViewChange}
+                />
+            ) : (
+                <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
+                    Loading account…
+                </div>
+            )}
 
             {addOpen && (
                 <AddAccountModal
@@ -312,6 +428,179 @@ export default function AnalyticsTab({ onRefreshAll, refreshing = false }: Props
                     onAdded={reloadAllMetrics}
                 />
             )}
+
+            <style>{`
+                .dash-toolbar-nav {
+                    display: grid;
+                    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+                    align-items: center;
+                    gap: 12px;
+                    position: relative;
+                }
+                .dash-toolbar-left {
+                    justify-self: start;
+                    min-width: 0;
+                }
+                .dash-toolbar-center {
+                    justify-self: center;
+                }
+                .dash-toolbar-right {
+                    justify-self: end;
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                    flex-wrap: wrap;
+                    justify-content: flex-end;
+                }
+                @media (max-width: 900px) {
+                    .dash-toolbar-nav {
+                        grid-template-columns: 1fr;
+                        gap: 10px;
+                    }
+                    .dash-toolbar-left,
+                    .dash-toolbar-center,
+                    .dash-toolbar-right {
+                        justify-self: stretch;
+                    }
+                    .dash-toolbar-center {
+                        display: flex;
+                        justify-content: center;
+                    }
+                    .dash-toolbar-right {
+                        justify-content: space-between;
+                    }
+                }
+                .analytics-dashboard ::selection { background: rgba(51,122,255,0.22); color: #0F172A; }
+                @keyframes analytics-spin { to { transform: rotate(360deg); } }
+            `}</style>
         </div>
+    );
+}
+
+/* ── Toolbar view tabs (Overview / Videos / AI Strategy / AI Learnings) ── */
+
+function ViewTabs({
+    view,
+    onChange,
+    showLearnings,
+}: {
+    view: AnalyticsViewKey;
+    onChange: (next: AnalyticsViewKey) => void;
+    showLearnings: boolean;
+}) {
+    const { t } = useTranslation();
+    const tabs: Array<{ id: AnalyticsViewKey; label: string; icon: React.ReactNode }> = [
+        { id: 'overview', label: t('analytics.dashboard.subview.overview'), icon: <GridIcon /> },
+        { id: 'videos',   label: t('analytics.dashboard.subview.videos'),   icon: <PlayIcon /> },
+        { id: 'strategy', label: t('analytics.accounts.tabs.strategy'),     icon: <TargetIcon /> },
+        ...(showLearnings
+            ? [{ id: 'learnings' as const, label: t('analytics.accounts.tabs.learnings'), icon: <BrainIcon /> }]
+            : []),
+    ];
+
+    return (
+        <div
+            role="tablist"
+            aria-label="Analytics view"
+            style={{
+                display: 'inline-flex',
+                gap: 4,
+                padding: 4,
+                borderRadius: 12,
+                background: '#F1F5F9',
+                border: '1px solid #E2E8F0',
+                alignSelf: 'flex-start',
+                flexWrap: 'wrap',
+            }}
+        >
+            {tabs.map((tab) => {
+                const active = tab.id === view;
+                return (
+                    <button
+                        key={tab.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        onClick={() => onChange(tab.id)}
+                        style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 7,
+                            padding: '6px 12px',
+                            borderRadius: 8,
+                            border: 'none',
+                            background: active ? '#337AFF' : 'transparent',
+                            color: active ? '#FFFFFF' : '#475569',
+                            fontSize: 12,
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            transition: 'background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease',
+                            boxShadow: active ? '0 1px 2px rgba(51,122,255,0.30)' : 'none',
+                            whiteSpace: 'nowrap',
+                        }}
+                    >
+                        <span style={{ color: active ? '#FFFFFF' : '#94A3B8', display: 'inline-flex' }}>{tab.icon}</span>
+                        {tab.label}
+                    </button>
+                );
+            })}
+        </div>
+    );
+}
+
+function RefreshIcon({ spinning }: { spinning?: boolean }) {
+    return (
+        <svg
+            width="13"
+            height="13"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2.2}
+            style={spinning ? { animation: 'analytics-spin 0.8s linear infinite' } : undefined}
+            aria-hidden
+        >
+            <path d="M21 12a9 9 0 1 1-2.64-6.36" strokeLinecap="round" />
+            <polyline points="21 3 21 9 15 9" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+    );
+}
+
+function GridIcon() {
+    return (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2}>
+            <rect x="3" y="3" width="7" height="7" rx="1.5" />
+            <rect x="14" y="3" width="7" height="7" rx="1.5" />
+            <rect x="3" y="14" width="7" height="7" rx="1.5" />
+            <rect x="14" y="14" width="7" height="7" rx="1.5" />
+        </svg>
+    );
+}
+
+function PlayIcon() {
+    return (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinejoin="round">
+            <polygon points="6 4 20 12 6 20 6 4" />
+        </svg>
+    );
+}
+
+function TargetIcon() {
+    return (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2}>
+            <circle cx="12" cy="12" r="9" />
+            <circle cx="12" cy="12" r="5" />
+            <circle cx="12" cy="12" r="1" fill="currentColor" />
+        </svg>
+    );
+}
+
+function BrainIcon() {
+    return (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 4a3 3 0 0 0-3 3v10a3 3 0 0 0 6 0V7a3 3 0 0 0-3-3z" />
+            <path d="M9 8H7a3 3 0 0 0 0 6h2" />
+            <path d="M15 8h2a3 3 0 0 1 0 6h-2" />
+        </svg>
     );
 }

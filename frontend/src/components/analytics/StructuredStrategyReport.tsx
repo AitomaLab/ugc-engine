@@ -71,7 +71,7 @@ function shortNavLabel(heading: string): string {
 function parseSections(source: string): { preamble: string; sections: ReportSection[] } {
     const lines = source.replace(/\r\n/g, '\n').split('\n');
     const sections: ReportSection[] = [];
-    let preamble: string[] = [];
+    const preamble: string[] = [];
     let current: ReportSection | null = null;
 
     const flush = () => {
@@ -176,21 +176,6 @@ function parseBullets(body: string): string[] {
 
 function stripInlineMd(text: string): string {
     return text.replace(/\*\*([^*]+)\*\*/g, '$1').trim();
-}
-
-function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
-    const parts = text.split(/(\*\*[^*]+\*\*)/g);
-    return parts.map((part, i) => {
-        const bold = /^\*\*([^*]+)\*\*$/.exec(part);
-        if (bold) {
-            return (
-                <strong key={`${keyPrefix}-b-${i}`} style={{ color: 'var(--text-1)', fontWeight: 700 }}>
-                    {bold[1]}
-                </strong>
-            );
-        }
-        return <React.Fragment key={`${keyPrefix}-t-${i}`}>{part}</React.Fragment>;
-    });
 }
 
 type TitleIconKind =

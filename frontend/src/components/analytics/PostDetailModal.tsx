@@ -16,7 +16,6 @@ import {
     type AnalyzeVideoResponse,
     type PostDetailResponse,
     type VideoPrepResponse,
-    type VideoPrepStatus,
 } from './analytics-types';
 import { resolveInstagramEmbedShortcode } from './instagramPermalink';
 import { exportPostAnalysisPdf } from './exportPostAnalysisPdf';

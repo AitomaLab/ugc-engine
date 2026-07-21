@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { mergeLabelValuePairs } from './markdownText';
 
 /**
  * Minimal, dependency-free Markdown renderer for the AI Strategy Report.
@@ -91,7 +92,7 @@ function renderOrderedList(items: OrderedItem[], key: string): React.ReactNode {
     }
     return (
         <div key={key} style={{ margin: '4px 0 10px' }}>
-            <InsightList items={rows} keyPrefix={key} />
+            <InsightList items={mergeLabelValuePairs(rows)} keyPrefix={key} />
         </div>
     );
 }
@@ -99,7 +100,7 @@ function renderOrderedList(items: OrderedItem[], key: string): React.ReactNode {
 function renderUnorderedList(items: string[], key: string): React.ReactNode {
     return (
         <div key={key} style={{ margin: '4px 0 10px' }}>
-            <InsightList items={items} keyPrefix={key} />
+            <InsightList items={mergeLabelValuePairs(items)} keyPrefix={key} />
         </div>
     );
 }

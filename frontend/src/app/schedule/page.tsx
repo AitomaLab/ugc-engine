@@ -13,8 +13,14 @@ import AnalyticsTab from './AnalyticsTab';
 
 function SchedulePageInner() {
     const search = useSearchParams();
-    const viewingDetail = Boolean(search.get('post') || search.get('account'));
-    const [tab, setTab] = useState<PublishTabKey>('calendar');
+    // Only the full-page post detail hides the Calendar/Analytics tab bar —
+    // account scoping (?account=) is part of the main Analytics surface.
+    const viewingDetail = Boolean(search.get('post'));
+    const [tab, setTab] = useState<PublishTabKey>(() => (
+        search.get('post') || search.get('account') || search.get('view')
+            ? 'analytics'
+            : 'calendar'
+    ));
     const [refreshing, setRefreshing] = useState(false);
 
     const handleRefreshAll = useCallback(async () => {

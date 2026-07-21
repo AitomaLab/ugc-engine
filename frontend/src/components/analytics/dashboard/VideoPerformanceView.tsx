@@ -43,7 +43,6 @@ export default function VideoPerformanceView({ period, refreshKey = 0, onOpenPos
     const { t } = useTranslation();
     const [posts, setPosts] = useState<AnalyticsPost[]>([]);
     const [loading, setLoading] = useState(true);
-    const [isRefreshing, setIsRefreshing] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const postsRef = useRef<AnalyticsPost[]>([]);
 
@@ -51,7 +50,6 @@ export default function VideoPerformanceView({ period, refreshKey = 0, onOpenPos
         let cancelled = false;
         (async () => {
             if (!postsRef.current.length) setLoading(true);
-            setIsRefreshing(true);
             setError(null);
             const params = new URLSearchParams({
                 period: periodToApiParam(period),
@@ -76,7 +74,6 @@ export default function VideoPerformanceView({ period, refreshKey = 0, onOpenPos
             } finally {
                 if (!cancelled) {
                     setLoading(false);
-                    setIsRefreshing(false);
                 }
             }
         })();
@@ -203,7 +200,7 @@ function groupByUploadedVideo(posts: AnalyticsPost[]): VideoGroup[] {
     for (const p of posts) {
         // Studio-only safety check; backend filter already excludes externals
         // but protects future callers that pass mixed lists.
-        if ((p as any).source && (p as any).source !== 'internal') continue;
+        if (p.source && p.source !== 'internal') continue;
 
         // Group key: video_job_id (canonical), then fall back to
         // social_post_id (covers older rows pre-035 backfill), then to the
@@ -508,7 +505,10 @@ function Thumbnail({
             style={{
                 position: 'relative',
                 width: '100%',
-                height: 104,
+                // Portrait ratio — UGC uploads are vertical (9:16); a short
+                // strip crops them to a sliver of forehead. 3:4 shows the
+                // frame properly without making cards absurdly tall.
+                aspectRatio: '3 / 4',
                 overflow: 'hidden',
                 background: '#EEF2F6',
                 flexShrink: 0,
