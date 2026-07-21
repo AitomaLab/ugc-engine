@@ -31,7 +31,16 @@ interface Props {
      * call resolves so the card disappears immediately.
      */
     onDelete?: (postId: string) => void;
+    /** Denser layout for account Latest Posts grid. */
+    compact?: boolean;
 }
+
+const PLATFORM_SHORT: Record<string, string> = {
+    instagram: 'IG',
+    tiktok: 'TT',
+    youtube: 'YT',
+    facebook: 'FB',
+};
 
 /**
  * Looks up the tracked account that owns `post` (matched by `platform` +
@@ -61,7 +70,7 @@ function virialityScore(post: AnalyticsPost, followers: number | undefined): num
     return Math.round(score * 10) / 10;
 }
 
-export default function PostCard({ post, onOpen, thumbnailUrl, trackedAccounts, onDelete }: Props) {
+export default function PostCard({ post, onOpen, thumbnailUrl, trackedAccounts, onDelete, compact = false }: Props) {
     const { t } = useTranslation();
     const accent = PLATFORM_COLORS[post.platform] || 'var(--text-3)';
     const hasBreakdown = post.breakdown_status === 'completed';
@@ -74,6 +83,7 @@ export default function PostCard({ post, onOpen, thumbnailUrl, trackedAccounts, 
         thumbnailUrl ? { ...post, thumbnail_url: thumbnailUrl } : post,
     );
     const displayViews = resolveDisplayViews(post);
+    const platformShort = PLATFORM_SHORT[post.platform] || post.platform.slice(0, 2).toUpperCase();
 
     const handleRemove = (e: React.MouseEvent) => {
         e.preventDefault();
@@ -92,33 +102,50 @@ export default function PostCard({ post, onOpen, thumbnailUrl, trackedAccounts, 
             style={{
                 background: 'white',
                 border: '1px solid var(--border)',
-                borderRadius: 'var(--radius)',
+                borderRadius: compact ? 12 : 'var(--radius)',
                 padding: 0,
                 cursor: 'pointer',
                 textAlign: 'left',
                 display: 'flex',
                 flexDirection: 'column',
                 overflow: 'hidden',
-                transition: 'transform 0.18s ease, box-shadow 0.18s ease',
-                boxShadow: '0 1px 2px rgba(13,27,62,0.04)',
+                transition: compact ? 'border-color 0.15s ease' : 'transform 0.18s ease, box-shadow 0.18s ease',
+                boxShadow: compact ? 'none' : '0 1px 2px rgba(13,27,62,0.04)',
             }}
             onMouseEnter={(e) => {
+                if (compact) {
+                    e.currentTarget.style.borderColor = '#D5DEE8';
+                    return;
+                }
                 e.currentTarget.style.transform = 'translateY(-2px)';
                 e.currentTarget.style.boxShadow = 'var(--shadow)';
             }}
             onMouseLeave={(e) => {
+                if (compact) {
+                    e.currentTarget.style.borderColor = '';
+                    return;
+                }
                 e.currentTarget.style.transform = 'translateY(0)';
                 e.currentTarget.style.boxShadow = '0 1px 2px rgba(13,27,62,0.04)';
             }}
         >
-            {/* Thumbnail */}
-            <div style={{ position: 'relative', width: '100%', paddingTop: '56.25%', background: 'var(--blue-light)' }}>
+            {/* Thumbnail — 3:4 portrait everywhere so UGC (9:16) previews are
+                properly visible and every analytics surface shows the same
+                video format (Overview, By Video, AI Strategy). */}
+            <div
+                style={{
+                    position: 'relative',
+                    width: '100%',
+                    aspectRatio: '3 / 4',
+                    background: 'var(--blue-light)',
+                }}
+            >
                 <VideoThumbnail
                     previewUrl={preview.previewUrl}
                     videoUrl={preview.videoUrl}
                     alt={post.caption || ''}
                 />
-                {post.media_type === 'video' && (
+                {!compact && post.media_type === 'video' && (
                     <div
                         style={{
                             position: 'absolute', top: 10, left: 10,
@@ -132,28 +159,48 @@ export default function PostCard({ post, onOpen, thumbnailUrl, trackedAccounts, 
                         </svg>
                     </div>
                 )}
-                <span
-                    style={{
-                        position: 'absolute', top: 10, right: 10,
-                        fontSize: '10px', fontWeight: 700,
-                        padding: '3px 8px', borderRadius: '999px',
-                        background: `${accent}1F`,
-                        color: accent,
-                        textTransform: 'uppercase',
-                        backdropFilter: 'blur(4px)',
-                    }}
-                >
-                    {post.platform}
-                </span>
+                {compact ? (
+                    <span
+                        title={post.platform}
+                        style={{
+                            position: 'absolute', left: 8, bottom: 8,
+                            display: 'inline-flex', alignItems: 'center', gap: 4,
+                            fontSize: 10, fontWeight: 700,
+                            padding: '3px 7px', borderRadius: 999,
+                            background: 'rgba(15, 23, 42, 0.72)',
+                            color: '#FFFFFF',
+                            backdropFilter: 'blur(6px)',
+                        }}
+                    >
+                        <span style={{ width: 6, height: 6, borderRadius: 2, background: accent }} aria-hidden />
+                        {platformShort}
+                    </span>
+                ) : (
+                    <span
+                        style={{
+                            position: 'absolute', top: 10, right: 10,
+                            fontSize: '10px', fontWeight: 700,
+                            padding: '3px 8px', borderRadius: '999px',
+                            background: `${accent}1F`,
+                            color: accent,
+                            textTransform: 'uppercase',
+                            backdropFilter: 'blur(4px)',
+                        }}
+                    >
+                        {post.platform}
+                    </span>
+                )}
                 {hasBreakdown && (
                     <span
                         style={{
-                            position: 'absolute', bottom: 10, right: 10,
+                            position: 'absolute',
+                            bottom: compact ? 8 : 10,
+                            right: compact ? 8 : 10,
                             display: 'inline-flex', alignItems: 'center', gap: '4px',
                             fontSize: '10px', fontWeight: 700,
                             padding: '3px 8px', borderRadius: '999px',
-                            background: 'rgba(51,122,255,0.12)',
-                            color: 'var(--blue)',
+                            background: compact ? 'rgba(15,23,42,0.72)' : 'rgba(51,122,255,0.12)',
+                            color: compact ? '#FFFFFF' : 'var(--blue)',
                             backdropFilter: 'blur(4px)',
                         }}
                     >
@@ -163,7 +210,7 @@ export default function PostCard({ post, onOpen, thumbnailUrl, trackedAccounts, 
                         AI
                     </span>
                 )}
-                {post.source === 'internal' && (
+                {!compact && post.source === 'internal' && (
                     <span
                         style={{
                             position: 'absolute', bottom: 10, left: 10,
@@ -177,7 +224,7 @@ export default function PostCard({ post, onOpen, thumbnailUrl, trackedAccounts, 
                         UGC
                     </span>
                 )}
-                {(displayViews ?? 0) > 0 && (
+                {!compact && (displayViews ?? 0) > 0 && (
                     <span
                         style={{
                             position: 'absolute', bottom: 10, right: hasBreakdown ? 72 : 10,
@@ -191,7 +238,7 @@ export default function PostCard({ post, onOpen, thumbnailUrl, trackedAccounts, 
                         {formatCount(displayViews)} views
                     </span>
                 )}
-                {virality !== null && (
+                {!compact && virality !== null && (
                     <span
                         title={`Engagement ${post.total_engagement.toLocaleString()} vs ${followers!.toLocaleString()} followers`}
                         style={{
@@ -212,8 +259,6 @@ export default function PostCard({ post, onOpen, thumbnailUrl, trackedAccounts, 
                             backdropFilter: 'blur(4px)',
                         }}
                     >
-                        {/* Flame for "viral", spark for "healthy", dot otherwise — quick
-                            visual cue without needing a tooltip pass. */}
                         {virality >= 10 ? '🔥' : virality >= 3 ? '✨' : '•'}
                         {virality}%
                     </span>
@@ -233,57 +278,58 @@ export default function PostCard({ post, onOpen, thumbnailUrl, trackedAccounts, 
             <div
                 style={{
                     flex: 1,
-                    padding: '12px 14px 14px',
+                    padding: compact ? '10px 10px 12px' : '12px 14px 14px',
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: '8px',
+                    gap: compact ? 6 : 8,
                 }}
             >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px' }}>
-                    {/* Tiny owner avatar puck — visible identity for every
-                        post in a grid. Falls back to a coloured initial
-                        circle when the tracked account has no scraped
-                        photo yet (e.g. a YouTube handle whose profile
-                        dataset didn't surface `avatar`). */}
-                    {avatarUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                            src={avatarUrl}
-                            alt=""
-                            loading="lazy"
-                            style={{
-                                width: 22, height: 22, borderRadius: '50%',
-                                objectFit: 'cover', flexShrink: 0,
-                                border: '1px solid var(--border)',
-                                background: 'var(--blue-light)',
-                            }}
-                        />
-                    ) : post.username ? (
-                        <span
-                            aria-hidden
-                            style={{
-                                width: 22, height: 22, borderRadius: '50%',
-                                display: 'inline-flex', alignItems: 'center',
-                                justifyContent: 'center',
-                                fontSize: 10, fontWeight: 800,
-                                background: `${accent}1F`, color: accent,
-                                border: '1px solid var(--border)',
-                                flexShrink: 0,
-                            }}
-                        >
-                            {post.username.slice(0, 1).toUpperCase()}
-                        </span>
-                    ) : null}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
+                    {!compact && (
+                        avatarUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                                src={avatarUrl}
+                                alt=""
+                                loading="lazy"
+                                style={{
+                                    width: 22, height: 22, borderRadius: '50%',
+                                    objectFit: 'cover', flexShrink: 0,
+                                    border: '1px solid var(--border)',
+                                    background: 'var(--blue-light)',
+                                }}
+                            />
+                        ) : post.username ? (
+                            <span
+                                aria-hidden
+                                style={{
+                                    width: 22, height: 22, borderRadius: '50%',
+                                    display: 'inline-flex', alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: 10, fontWeight: 800,
+                                    background: `${accent}1F`, color: accent,
+                                    border: '1px solid var(--border)',
+                                    flexShrink: 0,
+                                }}
+                            >
+                                {post.username.slice(0, 1).toUpperCase()}
+                            </span>
+                        ) : null
+                    )}
                     <span
                         style={{
-                            fontSize: '13px', fontWeight: 700, color: 'var(--text-1)',
+                            fontSize: compact ? 12 : 13,
+                            fontWeight: 700,
+                            color: compact ? '#64748B' : 'var(--text-1)',
                             whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                             flex: 1, minWidth: 0,
                         }}
                     >
-                        @{post.username || '—'}
+                        {compact
+                            ? (post.caption?.trim() || `@${post.username || '—'}`)
+                            : `@${post.username || '—'}`}
                     </span>
-                    <span style={{ fontSize: '11px', color: 'var(--text-3)', whiteSpace: 'nowrap' }}>
+                    <span style={{ fontSize: 11, color: 'var(--text-3)', whiteSpace: 'nowrap', flexShrink: 0 }}>
                         {timeAgo(post.posted_at || post.scraped_at)}
                     </span>
                     {onDelete && (
@@ -322,48 +368,66 @@ export default function PostCard({ post, onOpen, thumbnailUrl, trackedAccounts, 
                     )}
                 </div>
 
-                <p
-                    style={{
-                        margin: 0,
-                        fontSize: '12px',
-                        color: 'var(--text-2)',
-                        lineHeight: 1.45,
-                        display: '-webkit-box',
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: 'vertical',
-                        overflow: 'hidden',
-                        minHeight: '34px',
-                    }}
-                >
-                    {post.caption || '\u00A0'}
-                </p>
+                {!compact && (
+                    <p
+                        style={{
+                            margin: 0,
+                            fontSize: '12px',
+                            color: 'var(--text-2)',
+                            lineHeight: 1.45,
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical',
+                            overflow: 'hidden',
+                            minHeight: '34px',
+                        }}
+                    >
+                        {post.caption || '\u00A0'}
+                    </p>
+                )}
 
                 <div
                     style={{
                         display: 'grid',
                         gridTemplateColumns: 'repeat(3, 1fr)',
-                        gap: '6px',
+                        gap: compact ? 4 : 6,
                         marginTop: 'auto',
-                        paddingTop: '10px',
-                        borderTop: '1px solid var(--border)',
+                        paddingTop: compact ? 8 : 10,
+                        borderTop: '1px solid #E8EEF4',
                     }}
                 >
-                    <Metric label="Views" value={formatCount(displayViews)} />
-                    <Metric label="Likes" value={formatCount(post.likes)} />
-                    <Metric label="Eng." value={formatCount(post.total_engagement)} accent />
+                    <Metric label="Views" value={formatCount(displayViews)} compact={compact} />
+                    <Metric label="Likes" value={formatCount(post.likes)} compact={compact} />
+                    <Metric label="Eng." value={formatCount(post.total_engagement)} accent compact={compact} />
                 </div>
             </div>
         </button>
     );
 }
 
-function Metric({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+function Metric({
+    label,
+    value,
+    accent,
+    compact,
+}: {
+    label: string;
+    value: string;
+    accent?: boolean;
+    compact?: boolean;
+}) {
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-            <span style={{ fontSize: '13px', fontWeight: 700, color: accent ? 'var(--blue)' : 'var(--text-1)' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
+            <span
+                style={{
+                    fontSize: compact ? 12 : 13,
+                    fontWeight: 700,
+                    color: accent ? '#5B86D6' : compact ? '#64748B' : 'var(--text-1)',
+                }}
+            >
                 {value}
             </span>
-            <span style={{ fontSize: '10px', color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: 0.4 }}>
+            <span style={{ fontSize: 9.5, color: '#A0AEC0', textTransform: 'uppercase', letterSpacing: 0.3 }}>
                 {label}
             </span>
         </div>

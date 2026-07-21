@@ -174,130 +174,48 @@ export default function CalendarTab() {
 
     const DAY_NAMES = t('schedule.dayNames').split(',');
 
+    const metricChip = (value: string, label: string, accent: string) => (
+        <div key={label} style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexShrink: 0 }}>
+            <span style={{ fontSize: 16, fontWeight: 700, color: accent, lineHeight: 1 }}>{value}</span>
+            <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-3)', whiteSpace: 'nowrap' }}>{label}</span>
+        </div>
+    );
+
     return (
         <>
-            {/* Page-level CTA buttons — visually anchored to the right of the tab bar */}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginBottom: '20px', flexWrap: 'wrap' }}>
-                <Link href="/connections" style={{
-                    display: 'flex', alignItems: 'center', gap: '6px',
-                    padding: '9px 16px', borderRadius: '10px',
-                    border: '1px solid var(--border)', background: 'white',
-                    color: 'var(--text-1)', fontSize: '13px', fontWeight: 600,
-                    textDecoration: 'none', transition: 'all 0.15s ease',
-                }}>
-                    <svg viewBox="0 0 24 24" style={{ width: 16, height: 16, stroke: 'currentColor', fill: 'none', strokeWidth: 2 }}>
-                        <circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                    </svg>
-                    {t('schedule.manageConnections')}
-                </Link>
-                <button onClick={() => setScheduleModalOpen(true)} style={{
-                    display: 'flex', alignItems: 'center', gap: '6px',
-                    padding: '9px 18px', borderRadius: '10px',
-                    border: 'none', background: 'var(--blue)',
-                    color: 'white', fontSize: '13px', fontWeight: 600,
-                    cursor: 'pointer', transition: 'all 0.15s ease',
-                }}>
-                    <svg viewBox="0 0 24 24" style={{ width: 14, height: 14, stroke: 'currentColor', fill: 'none', strokeWidth: 2.5 }}>
-                        <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-                    </svg>
-                    {t('schedule.schedulePosts')}
-                </button>
-            </div>
-
-            {/* Stats bar — matching design */}
-            <div style={{
-                display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px',
-                marginBottom: '28px',
-            }}>
-                {/* Scheduled this month */}
-                <div style={{
-                    background: 'white', borderRadius: '14px', padding: '18px 20px',
-                    border: '1px solid var(--border)',
-                    display: 'flex', alignItems: 'center', gap: '14px',
-                }}>
-                    <div style={{
-                        width: 42, height: 42, borderRadius: '12px',
-                        background: 'rgba(51,122,255,0.08)',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                    }}>
-                        <svg viewBox="0 0 24 24" style={{ width: 20, height: 20, stroke: 'var(--blue)', fill: 'none', strokeWidth: 2 }}>
-                            <rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
-                        </svg>
-                    </div>
-                    <div>
-                        <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-1)', lineHeight: 1.1 }}>{statValue(stats.total)}</div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-3)', fontWeight: 500, marginTop: '2px' }}>{t('schedule.totalThisMonth')}</div>
-                    </div>
+            {/* Compact toolbar: metrics left · actions right (fills the orphaned CTA row) */}
+            <div className="cal-toolbar">
+                <div className="cal-toolbar-metrics">
+                    {metricChip(statValue(stats.total), t('schedule.totalThisMonth'), 'var(--blue)')}
+                    <span className="cal-toolbar-sep" aria-hidden />
+                    {metricChip(statValue(stats.posted), t('schedule.postsPublished'), '#34C759')}
+                    <span className="cal-toolbar-sep" aria-hidden />
+                    {metricChip(statValue(stats.upcoming), t('schedule.upcoming'), '#FF9F0A')}
+                    <span className="cal-toolbar-sep" aria-hidden />
+                    {metricChip(
+                        connectionsLoading ? '—' : String(connectedCount),
+                        t('schedule.connectedPlatforms'),
+                        '#5E5CE6',
+                    )}
                 </div>
-
-                {/* Posts published */}
-                <div style={{
-                    background: 'white', borderRadius: '14px', padding: '18px 20px',
-                    border: '1px solid var(--border)',
-                    display: 'flex', alignItems: 'center', gap: '14px',
-                }}>
-                    <div style={{
-                        width: 42, height: 42, borderRadius: '12px',
-                        background: 'rgba(52,199,89,0.08)',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                    }}>
-                        <svg viewBox="0 0 24 24" style={{ width: 20, height: 20, stroke: '#34C759', fill: 'none', strokeWidth: 2 }}>
-                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" />
+                <div className="cal-toolbar-actions">
+                    <Link href="/connections" className="cal-btn cal-btn-secondary">
+                        <svg viewBox="0 0 24 24" style={{ width: 15, height: 15, stroke: 'currentColor', fill: 'none', strokeWidth: 2 }}>
+                            <circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
                         </svg>
-                    </div>
-                    <div>
-                        <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-1)', lineHeight: 1.1 }}>{statValue(stats.posted)}</div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-3)', fontWeight: 500, marginTop: '2px' }}>{t('schedule.postsPublished')}</div>
-                    </div>
-                </div>
-
-                {/* Pending approval */}
-                <div style={{
-                    background: 'white', borderRadius: '14px', padding: '18px 20px',
-                    border: '1px solid var(--border)',
-                    display: 'flex', alignItems: 'center', gap: '14px',
-                }}>
-                    <div style={{
-                        width: 42, height: 42, borderRadius: '12px',
-                        background: 'rgba(255,159,10,0.08)',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                    }}>
-                        <svg viewBox="0 0 24 24" style={{ width: 20, height: 20, stroke: '#FF9F0A', fill: 'none', strokeWidth: 2 }}>
-                            <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
+                        {t('schedule.manageConnections')}
+                    </Link>
+                    <button type="button" onClick={() => setScheduleModalOpen(true)} className="cal-btn cal-btn-primary">
+                        <svg viewBox="0 0 24 24" style={{ width: 14, height: 14, stroke: 'currentColor', fill: 'none', strokeWidth: 2.5 }}>
+                            <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
                         </svg>
-                    </div>
-                    <div>
-                        <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-1)', lineHeight: 1.1 }}>{statValue(stats.upcoming)}</div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-3)', fontWeight: 500, marginTop: '2px' }}>{t('schedule.upcoming')}</div>
-                    </div>
-                </div>
-
-                {/* Connected platforms */}
-                <div style={{
-                    background: 'white', borderRadius: '14px', padding: '18px 20px',
-                    border: '1px solid var(--border)',
-                    display: 'flex', alignItems: 'center', gap: '14px',
-                }}>
-                    <div style={{
-                        width: 42, height: 42, borderRadius: '12px',
-                        background: 'rgba(94,92,230,0.08)',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                    }}>
-                        <svg viewBox="0 0 24 24" style={{ width: 20, height: 20, stroke: '#5E5CE6', fill: 'none', strokeWidth: 2 }}>
-                            <rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" />
-                        </svg>
-                    </div>
-                    <div>
-                        <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-1)', lineHeight: 1.1 }}>
-                            {connectionsLoading ? '—' : connectedCount}
-                        </div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-3)', fontWeight: 500, marginTop: '2px' }}>{t('schedule.connectedPlatforms')}</div>
-                    </div>
+                        {t('schedule.schedulePosts')}
+                    </button>
                 </div>
             </div>
 
             {/* Main layout: calendar + sidebar */}
-            <div style={{ display: 'flex', gap: '24px', position: 'relative' }}>
+            <div style={{ display: 'flex', gap: '20px', position: 'relative' }}>
                 {isRefreshing && !scheduleLoading && (
                     <div
                         aria-hidden
@@ -325,22 +243,22 @@ export default function CalendarTab() {
                     {/* Month navigator */}
                     <div style={{
                         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                        marginBottom: '16px',
-                        background: 'white', borderRadius: '14px', border: '1px solid var(--border)',
-                        padding: '12px 16px',
+                        marginBottom: '12px',
+                        background: 'white', borderRadius: '12px', border: '1px solid var(--border)',
+                        padding: '8px 12px',
                     }}>
                         <button onClick={prevMonth} style={{
-                            width: 36, height: 36, borderRadius: '10px', border: '1px solid var(--border)',
+                            width: 32, height: 32, borderRadius: '8px', border: '1px solid var(--border)',
                             background: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
                         }}>
-                            <svg viewBox="0 0 24 24" style={{ width: 16, height: 16, stroke: 'var(--text-2)', fill: 'none', strokeWidth: 2 }}>
+                            <svg viewBox="0 0 24 24" style={{ width: 15, height: 15, stroke: 'var(--text-2)', fill: 'none', strokeWidth: 2 }}>
                                 <polyline points="15 18 9 12 15 6" />
                             </svg>
                         </button>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                            <span style={{ fontWeight: 700, fontSize: '18px' }}>{formatMonth(year, month)}</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <span style={{ fontWeight: 700, fontSize: '16px' }}>{formatMonth(year, month)}</span>
                             <button onClick={goToday} style={{
-                                padding: '6px 14px', borderRadius: '8px',
+                                padding: '5px 12px', borderRadius: '8px',
                                 border: '1px solid var(--border)', background: 'white',
                                 fontSize: '12px', fontWeight: 600, color: 'var(--blue)',
                                 cursor: 'pointer',
@@ -349,10 +267,10 @@ export default function CalendarTab() {
                             </button>
                         </div>
                         <button onClick={nextMonth} style={{
-                            width: 36, height: 36, borderRadius: '10px', border: '1px solid var(--border)',
+                            width: 32, height: 32, borderRadius: '8px', border: '1px solid var(--border)',
                             background: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
                         }}>
-                            <svg viewBox="0 0 24 24" style={{ width: 16, height: 16, stroke: 'var(--text-2)', fill: 'none', strokeWidth: 2 }}>
+                            <svg viewBox="0 0 24 24" style={{ width: 15, height: 15, stroke: 'var(--text-2)', fill: 'none', strokeWidth: 2 }}>
                                 <polyline points="9 18 15 12 9 6" />
                             </svg>
                         </button>
@@ -422,12 +340,12 @@ export default function CalendarTab() {
                 </div>
 
                 {/* Right sidebar */}
-                <div style={{ width: '280px', flexShrink: 0 }}>
+                <div style={{ width: '260px', flexShrink: 0 }}>
                     <div style={{
-                        background: 'white', borderRadius: '14px', border: '1px solid var(--border)',
-                        padding: '20px', position: 'sticky', top: '100px',
+                        background: 'white', borderRadius: '12px', border: '1px solid var(--border)',
+                        padding: '16px', position: 'sticky', top: '100px',
                     }}>
-                        <h3 style={{ fontSize: '15px', fontWeight: 700, marginBottom: '16px' }}>
+                        <h3 style={{ fontSize: '14px', fontWeight: 700, marginBottom: '12px' }}>
                             {t('schedule.upcoming7')}
                         </h3>
                         {cancelError && (
@@ -565,7 +483,76 @@ export default function CalendarTab() {
                     syncStudioConnections({ force: true }).catch(() => { /* backend also syncs */ });
                 }}
             />
-            <style>{`@keyframes calendarRefreshSpin { to { transform: rotate(360deg); } }`}</style>
+            <style>{`
+                .cal-toolbar {
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    gap: 12px;
+                    flex-wrap: wrap;
+                    margin-bottom: 12px;
+                    padding: 10px 12px;
+                    background: white;
+                    border: 1px solid var(--border);
+                    border-radius: 12px;
+                }
+                .cal-toolbar-metrics {
+                    display: flex;
+                    align-items: center;
+                    gap: 14px;
+                    flex-wrap: wrap;
+                    min-width: 0;
+                }
+                .cal-toolbar-sep {
+                    width: 1px;
+                    height: 16px;
+                    background: var(--border);
+                    flex-shrink: 0;
+                }
+                .cal-toolbar-actions {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    flex-shrink: 0;
+                    margin-left: auto;
+                }
+                .cal-btn {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    padding: 7px 12px;
+                    border-radius: 8px;
+                    font-size: 12px;
+                    font-weight: 600;
+                    text-decoration: none;
+                    cursor: pointer;
+                    transition: background 0.15s ease, border-color 0.15s ease;
+                    white-space: nowrap;
+                }
+                .cal-btn-secondary {
+                    border: 1px solid var(--border);
+                    background: white;
+                    color: var(--text-1);
+                }
+                .cal-btn-secondary:hover {
+                    background: var(--surface-hover);
+                    color: var(--text-1);
+                }
+                .cal-btn-primary {
+                    border: none;
+                    background: var(--blue);
+                    color: white;
+                }
+                .cal-btn-primary:hover {
+                    filter: brightness(1.05);
+                    color: white;
+                }
+                @media (max-width: 900px) {
+                    .cal-toolbar-sep { display: none; }
+                    .cal-toolbar-actions { width: 100%; justify-content: flex-end; }
+                }
+                @keyframes calendarRefreshSpin { to { transform: rotate(360deg); } }
+            `}</style>
         </>
     );
 }

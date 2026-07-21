@@ -102,16 +102,16 @@ function ReceivedStrip({ stats }: { stats: AnalyticsStats }) {
     return (
         <div
             style={{
-                marginTop: 12,
+                marginTop: 10,
                 display: 'flex',
                 alignItems: 'center',
-                gap: 14,
+                gap: 12,
                 flexWrap: 'wrap',
                 background: '#FFFFFF',
                 border: '1px solid #E2E8F0',
-                borderRadius: 14,
-                padding: '12px 16px',
-                fontSize: 13,
+                borderRadius: 12,
+                padding: '10px 14px',
+                fontSize: 12,
             }}
         >
             <span style={{ color: '#337AFF', display: 'inline-flex' }}><PulseIcon /></span>
@@ -153,8 +153,8 @@ function PulseIcon() {
  */
 function CardSpark({ values, comparisonSplit }: { values: number[]; comparisonSplit?: number }) {
     return (
-        <div style={{ marginTop: 'auto', paddingTop: 14 }}>
-            <Sparkline values={values} color="#337AFF" height={44} comparisonSplit={comparisonSplit} />
+        <div style={{ marginTop: 'auto', paddingTop: 10 }}>
+            <Sparkline values={values} color="#337AFF" height={36} comparisonSplit={comparisonSplit} />
         </div>
     );
 }
@@ -168,13 +168,13 @@ function DashCard({ children, accent }: { children: React.ReactNode; accent?: bo
                     ? 'linear-gradient(140deg, #FFFFFF 0%, #EBF1FF 100%)'
                     : '#FFFFFF',
                 border: '1px solid #E2E8F0',
-                borderRadius: '18px',
-                padding: '16px 18px',
+                borderRadius: 14,
+                padding: '12px 14px',
                 display: 'flex',
                 flexDirection: 'column',
                 position: 'relative',
                 overflow: 'hidden',
-                minHeight: 152,
+                minHeight: 128,
                 boxShadow: '0 1px 2px rgba(15,23,42,0.04)',
             }}
         >
@@ -194,7 +194,7 @@ function CardLabel({ icon, children }: { icon: React.ReactNode; children: React.
 
 function CardValue({ children }: { children: React.ReactNode }) {
     return (
-        <div style={{ marginTop: 6, fontSize: 34, lineHeight: 1.05, color: '#0F172A', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+        <div style={{ marginTop: 4, fontSize: 28, lineHeight: 1.05, color: '#0F172A', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
             {children}
         </div>
     );

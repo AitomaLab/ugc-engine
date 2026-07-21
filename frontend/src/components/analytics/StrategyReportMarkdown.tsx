@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { mergeLabelValuePairs } from './markdownText';
 
 /**
  * Minimal, dependency-free Markdown renderer for the AI Strategy Report.
@@ -35,79 +36,43 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
     });
 }
 
-function renderOrderedList(items: OrderedItem[], key: string): React.ReactNode {
+const INSIGHT_ROW: React.CSSProperties = {
+    display: 'flex',
+    gap: 10,
+    padding: '10px 12px',
+    borderRadius: 8,
+    background: 'rgba(148,163,184,0.08)',
+};
+
+/**
+ * Shared list row style for AI Strategy / Learnings — grey pill rows with a
+ * bullet and bold Label: description text.
+ */
+export function InsightList({
+    items,
+    keyPrefix = 'insight',
+}: {
+    items: string[];
+    keyPrefix?: string;
+}) {
+    if (!items.length) return null;
     return (
-        <div
-            key={key}
-            style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 10,
-                margin: '8px 0 14px',
-            }}
-        >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {items.map((item, i) => (
-                <div
-                    key={`${key}-${i}`}
-                    style={{
-                        display: 'flex',
-                        gap: 12,
-                        padding: '12px 14px',
-                        background: 'var(--blue-light)',
-                        border: '1px solid var(--border)',
-                        borderRadius: 10,
-                    }}
-                >
-                    <div
+                <div key={`${keyPrefix}-${i}`} style={INSIGHT_ROW}>
+                    <span
                         aria-hidden
                         style={{
-                            width: 28,
-                            height: 28,
+                            width: 6,
+                            height: 6,
                             borderRadius: '50%',
-                            background: 'var(--blue)',
-                            color: '#fff',
-                            fontSize: 13,
-                            fontWeight: 700,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
+                            background: '#94A3B8',
+                            marginTop: 6,
                             flexShrink: 0,
                         }}
-                    >
-                        {i + 1}
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                        <div
-                            style={{
-                                fontSize: 13,
-                                fontWeight: 600,
-                                color: 'var(--text-1)',
-                                lineHeight: 1.45,
-                                marginBottom: item.subItems.length ? 6 : 0,
-                            }}
-                        >
-                            {renderInline(item.content, `${key}-${i}-c`)}
-                        </div>
-                        {item.subItems.length > 0 && (
-                            <ul
-                                style={{
-                                    margin: 0,
-                                    paddingLeft: 18,
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    gap: 4,
-                                    fontSize: 13,
-                                    lineHeight: 1.55,
-                                    color: 'var(--text-2)',
-                                }}
-                            >
-                                {item.subItems.map((sub, j) => (
-                                    <li key={`${key}-${i}-s-${j}`}>
-                                        {renderInline(sub, `${key}-${i}-s-${j}`)}
-                                    </li>
-                                ))}
-                            </ul>
-                        )}
+                    />
+                    <div style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--text-2)', minWidth: 0 }}>
+                        {renderInline(item, `${keyPrefix}-${i}`)}
                     </div>
                 </div>
             ))}
@@ -115,29 +80,39 @@ function renderOrderedList(items: OrderedItem[], key: string): React.ReactNode {
     );
 }
 
-function renderUnorderedList(items: string[], key: string): React.ReactNode {
+function renderOrderedList(items: OrderedItem[], key: string): React.ReactNode {
+    const rows: string[] = [];
+    for (const item of items) {
+        if (item.subItems.length) {
+            rows.push(item.content);
+            for (const sub of item.subItems) rows.push(sub);
+        } else {
+            rows.push(item.content);
+        }
+    }
     return (
-        <ul
-            key={key}
-            style={{
-                margin: '4px 0 10px',
-                paddingLeft: 20,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 4,
-                fontSize: 13,
-                lineHeight: 1.55,
-                color: 'var(--text-2)',
-            }}
-        >
-            {items.map((it, i) => (
-                <li key={`${key}-i-${i}`}>{renderInline(it, `${key}-i-${i}`)}</li>
-            ))}
-        </ul>
+        <div key={key} style={{ margin: '4px 0 10px' }}>
+            <InsightList items={mergeLabelValuePairs(rows)} keyPrefix={key} />
+        </div>
     );
 }
 
-export default function StrategyReportMarkdown({ source }: { source: string }) {
+function renderUnorderedList(items: string[], key: string): React.ReactNode {
+    return (
+        <div key={key} style={{ margin: '4px 0 10px' }}>
+            <InsightList items={mergeLabelValuePairs(items)} keyPrefix={key} />
+        </div>
+    );
+}
+
+export default function StrategyReportMarkdown({
+    source,
+    dense = false,
+}: {
+    source: string;
+    /** Tighter spacing + 2-col ordered lists for account detail tabs. */
+    dense?: boolean;
+}) {
     const lines = source.replace(/\r\n/g, '\n').split('\n');
     const blocks: React.ReactNode[] = [];
     let listBuffer: ListBuffer | null = null;
@@ -184,15 +159,19 @@ export default function StrategyReportMarkdown({ source }: { source: string }) {
             flushList();
             const level = heading[1].length;
             const content = heading[2].replace(/^\*\*|\*\*$/g, '');
-            const sizes: Record<number, number> = { 1: 18, 2: 15, 3: 13, 4: 12, 5: 12, 6: 12 };
+            const sizes: Record<number, number> = dense
+                ? { 1: 16, 2: 13, 3: 12, 4: 11, 5: 11, 6: 11 }
+                : { 1: 18, 2: 15, 3: 13, 4: 12, 5: 12, 6: 12 };
             blocks.push(
                 <div
                     key={`h-${idx}`}
                     style={{
                         fontSize: sizes[level] || 13,
-                        fontWeight: 800,
-                        color: 'var(--text-1)',
-                        margin: level <= 2 ? '14px 0 6px' : '10px 0 4px',
+                        fontWeight: dense ? 700 : 800,
+                        color: dense ? '#475569' : 'var(--text-1)',
+                        margin: dense
+                            ? (level <= 2 ? '8px 0 4px' : '6px 0 3px')
+                            : (level <= 2 ? '14px 0 6px' : '10px 0 4px'),
                         letterSpacing: level <= 2 ? -0.2 : 0,
                     }}
                 >
@@ -231,7 +210,12 @@ export default function StrategyReportMarkdown({ source }: { source: string }) {
         blocks.push(
             <p
                 key={`p-${idx}`}
-                style={{ margin: '0 0 8px', fontSize: 13, lineHeight: 1.55, color: 'var(--text-2)' }}
+                style={{
+                    margin: dense ? '0 0 6px' : '0 0 8px',
+                    fontSize: dense ? 12.5 : 13,
+                    lineHeight: 1.5,
+                    color: 'var(--text-2)',
+                }}
             >
                 {renderInline(trimmed, `p-${idx}`)}
             </p>,

@@ -43,7 +43,6 @@ export default function VideoPerformanceView({ period, refreshKey = 0, onOpenPos
     const { t } = useTranslation();
     const [posts, setPosts] = useState<AnalyticsPost[]>([]);
     const [loading, setLoading] = useState(true);
-    const [isRefreshing, setIsRefreshing] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const postsRef = useRef<AnalyticsPost[]>([]);
 
@@ -51,7 +50,6 @@ export default function VideoPerformanceView({ period, refreshKey = 0, onOpenPos
         let cancelled = false;
         (async () => {
             if (!postsRef.current.length) setLoading(true);
-            setIsRefreshing(true);
             setError(null);
             const params = new URLSearchParams({
                 period: periodToApiParam(period),
@@ -76,7 +74,6 @@ export default function VideoPerformanceView({ period, refreshKey = 0, onOpenPos
             } finally {
                 if (!cancelled) {
                     setLoading(false);
-                    setIsRefreshing(false);
                 }
             }
         })();
@@ -138,11 +135,37 @@ export default function VideoPerformanceView({ period, refreshKey = 0, onOpenPos
         <Panel>
             <PanelHeader subtitle={subtitle} />
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div className="video-perf-grid">
                 {groups.map((g) => (
-                    <VideoRow key={g.key} group={g} onOpenPost={onOpenPost} />
+                    <VideoCard key={g.key} group={g} onOpenPost={onOpenPost} />
                 ))}
             </div>
+
+            <style>{`
+                .video-perf-grid {
+                    display: grid;
+                    grid-template-columns: repeat(4, minmax(0, 1fr));
+                    gap: 12px;
+                }
+                .video-perf-card:hover:not(:disabled) {
+                    border-color: #D5DEE8 !important;
+                    background: #FFFFFF !important;
+                }
+                .video-perf-card:hover:not(:disabled) .video-perf-arrow {
+                    border-color: #337AFF;
+                    color: #FFFFFF;
+                    background: #337AFF;
+                }
+                @media (max-width: 1200px) {
+                    .video-perf-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+                }
+                @media (max-width: 900px) {
+                    .video-perf-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+                }
+                @media (max-width: 560px) {
+                    .video-perf-grid { grid-template-columns: 1fr; }
+                }
+            `}</style>
         </Panel>
     );
 }
@@ -177,7 +200,7 @@ function groupByUploadedVideo(posts: AnalyticsPost[]): VideoGroup[] {
     for (const p of posts) {
         // Studio-only safety check; backend filter already excludes externals
         // but protects future callers that pass mixed lists.
-        if ((p as any).source && (p as any).source !== 'internal') continue;
+        if (p.source && p.source !== 'internal') continue;
 
         // Group key: video_job_id (canonical), then fall back to
         // social_post_id (covers older rows pre-035 backfill), then to the
@@ -280,9 +303,9 @@ function collapsePostsByPlatform(
         .sort((a, b) => b.engagement - a.engagement);
 }
 
-/* ── Row layout ───────────────────────────────────────────────────────── */
+/* ── Card layout ──────────────────────────────────────────────────────── */
 
-function VideoRow({
+function VideoCard({
     group,
     onOpenPost,
 }: {
@@ -291,127 +314,138 @@ function VideoRow({
 }) {
     const { t } = useTranslation();
     const topPost = group.platforms[0]?.post;
+    const clickable = Boolean(topPost && onOpenPost);
+
+    const open = () => {
+        if (topPost && onOpenPost) onOpenPost(topPost.id);
+    };
 
     return (
-        <div
+        <button
+            type="button"
+            onClick={open}
+            disabled={!clickable}
+            className="video-perf-card"
+            aria-label={clickable ? t('analytics.dashboard.videos.viewDetail') : undefined}
             style={{
                 display: 'flex',
-                gap: 16,
+                flexDirection: 'column',
                 alignItems: 'stretch',
-                padding: 16,
+                textAlign: 'left',
+                padding: 0,
+                margin: 0,
+                width: '100%',
+                minWidth: 0,
+                height: '100%',
                 background: '#FFFFFF',
-                border: '1px solid #E2E8F0',
-                borderRadius: 14,
-                boxShadow: '0 1px 2px rgba(15,23,42,0.03)',
-                transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
-            }}
-            onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = '#CBD5E1';
-                e.currentTarget.style.boxShadow = '0 2px 6px rgba(15,23,42,0.06)';
-            }}
-            onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = '#E2E8F0';
-                e.currentTarget.style.boxShadow = '0 1px 2px rgba(15,23,42,0.03)';
+                border: '1px solid #E8EEF4',
+                borderRadius: 12,
+                overflow: 'hidden',
+                cursor: clickable ? 'pointer' : 'default',
+                boxShadow: 'none',
+                transition: 'border-color 0.15s ease, background 0.15s ease',
+                color: 'inherit',
+                font: 'inherit',
             }}
         >
-            <Thumbnail previewUrl={group.previewUrl} videoUrl={group.videoUrl} alt={group.caption || group.title} />
+            <Thumbnail
+                previewUrl={group.previewUrl}
+                videoUrl={group.videoUrl}
+                alt={group.caption || group.title}
+                platforms={group.platforms.map((p) => p.platform)}
+            />
 
-            <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-                    <div style={{ minWidth: 0 }}>
+            <div
+                style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 8,
+                    padding: '10px 12px 12px',
+                    minWidth: 0,
+                    boxSizing: 'border-box',
+                }}
+            >
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, minWidth: 0 }}>
+                    <div style={{ minWidth: 0, flex: 1 }}>
                         <div
                             style={{
-                                fontSize: 14,
-                                fontWeight: 700,
-                                color: '#0F172A',
-                                lineHeight: 1.35,
+                                fontSize: 12.5,
+                                fontWeight: 600,
+                                color: '#64748B',
+                                lineHeight: 1.3,
                                 overflow: 'hidden',
                                 textOverflow: 'ellipsis',
-                                display: '-webkit-box',
-                                WebkitLineClamp: 2,
-                                WebkitBoxOrient: 'vertical',
+                                whiteSpace: 'nowrap',
                             }}
                             title={group.caption || group.title}
                         >
                             {group.title}
                         </div>
-                        <div style={{ marginTop: 4, fontSize: 11, color: '#94A3B8', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                            <span>{group.platforms.length} {t('analytics.dashboard.videos.platforms')}</span>
-                            {group.postedAt && <span>· {timeAgo(group.postedAt)}</span>}
+                        <div
+                            style={{
+                                marginTop: 3,
+                                fontSize: 10.5,
+                                color: '#A0AEC0',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 5,
+                                flexWrap: 'wrap',
+                            }}
+                        >
+                            <span>
+                                {group.platforms.length} {t('analytics.dashboard.videos.platforms')}
+                                {group.postedAt ? ` · ${timeAgo(group.postedAt)}` : ''}
+                            </span>
                             {group.hasBreakdown && (
-                                <span
-                                    style={{
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: 4,
-                                        color: '#337AFF',
-                                        fontWeight: 700,
-                                    }}
-                                >
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, color: '#94A3B8' }}>
                                     <SparklesIcon /> {t('analytics.dashboard.videos.aiAnalyzed')}
                                 </span>
                             )}
                         </div>
                     </div>
-
-                    {topPost && onOpenPost && (
-                        <button
-                            type="button"
-                            onClick={() => onOpenPost(topPost.id)}
+                    {clickable && (
+                        <span
+                            className="video-perf-arrow"
+                            aria-hidden
                             style={{
-                                padding: '7px 14px',
-                                borderRadius: 8,
-                                border: '1px solid #E2E8F0',
-                                background: '#FFFFFF',
-                                color: '#0F172A',
-                                fontSize: 12,
-                                fontWeight: 700,
-                                cursor: 'pointer',
-                                whiteSpace: 'nowrap',
+                                width: 26,
+                                height: 26,
+                                borderRadius: '50%',
+                                border: '1px solid rgba(51, 122, 255, 0.35)',
+                                background: 'rgba(51, 122, 255, 0.10)',
+                                color: '#337AFF',
                                 display: 'inline-flex',
                                 alignItems: 'center',
-                                gap: 6,
-                                transition: 'background 0.15s ease, border-color 0.15s ease',
-                            }}
-                            onMouseEnter={(e) => {
-                                e.currentTarget.style.background = '#EBF1FF';
-                                e.currentTarget.style.borderColor = '#337AFF';
-                                e.currentTarget.style.color = '#0F172A';
-                            }}
-                            onMouseLeave={(e) => {
-                                e.currentTarget.style.background = '#FFFFFF';
-                                e.currentTarget.style.borderColor = '#E2E8F0';
-                                e.currentTarget.style.color = '#0F172A';
+                                justifyContent: 'center',
+                                flexShrink: 0,
+                                marginTop: 1,
+                                transition: 'border-color 0.15s ease, color 0.15s ease, background 0.15s ease',
                             }}
                         >
-                            {t('analytics.dashboard.videos.viewDetail')} <ArrowIcon />
-                        </button>
+                            <CircleArrowIcon />
+                        </span>
                     )}
                 </div>
 
-                <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
+                {/* Subtle metrics — soft wash, no heavy boxes */}
+                <div
+                    style={{
+                        display: 'grid',
+                        gridTemplateColumns: '1fr 1fr',
+                        columnGap: 10,
+                        rowGap: 6,
+                        padding: '8px 10px',
+                        borderRadius: 8,
+                        background: 'rgba(148, 163, 184, 0.08)',
+                    }}
+                >
                     <Metric label={t('analytics.dashboard.videos.metrics.views')} value={group.totals.views} accent />
                     <Metric label={t('analytics.dashboard.videos.metrics.engagement')} value={group.totals.engagement} />
                     <Metric label={t('analytics.dashboard.videos.metrics.likes')} value={group.totals.likes} muted />
                     <Metric label={t('analytics.dashboard.videos.metrics.comments')} value={group.totals.comments} muted />
-                    {group.totals.shares > 0 && (
-                        <Metric label={t('analytics.dashboard.videos.metrics.shares')} value={group.totals.shares} muted />
-                    )}
-                </div>
-
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                    {group.platforms.map((p) => (
-                        <PlatformChip
-                            key={`${p.platform}-${p.post.id}`}
-                            platform={p.platform}
-                            views={p.views}
-                            engagement={p.engagement}
-                            onClick={onOpenPost ? () => onOpenPost(p.post.id) : undefined}
-                        />
-                    ))}
                 </div>
             </div>
-        </div>
+        </button>
     );
 }
 
@@ -421,14 +455,14 @@ function Panel({ children }: { children: React.ReactNode }) {
     return (
         <section
             style={{
-                background: '#FFFFFF',
-                border: '1px solid #E2E8F0',
-                borderRadius: 18,
-                padding: 22,
+                background: 'transparent',
+                border: 'none',
+                borderRadius: 0,
+                padding: 0,
                 display: 'flex',
                 flexDirection: 'column',
-                gap: 16,
-                boxShadow: '0 1px 2px rgba(15,23,42,0.03)',
+                gap: 14,
+                boxShadow: 'none',
             }}
         >
             {children}
@@ -441,14 +475,14 @@ function PanelHeader({ subtitle }: { subtitle?: string }) {
     return (
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
             <div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5 }}>
                     {t('analytics.dashboard.videos.label')}
                 </div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', marginTop: 4 }}>
+                <div style={{ fontSize: 17, fontWeight: 600, color: '#334155', marginTop: 3 }}>
                     {t('analytics.dashboard.videos.title')}
                 </div>
                 {subtitle && (
-                    <div style={{ fontSize: 12, color: '#64748B', marginTop: 4 }}>{subtitle}</div>
+                    <div style={{ fontSize: 12, color: '#94A3B8', marginTop: 3 }}>{subtitle}</div>
                 )}
             </div>
         </div>
@@ -459,25 +493,47 @@ function Thumbnail({
     previewUrl,
     videoUrl,
     alt,
+    platforms,
 }: {
     previewUrl?: string;
     videoUrl?: string;
     alt?: string;
+    platforms: string[];
 }) {
     return (
         <div
             style={{
                 position: 'relative',
-                width: 96,
-                height: 128,
-                borderRadius: 12,
+                width: '100%',
+                // Portrait ratio — UGC uploads are vertical (9:16); a short
+                // strip crops them to a sliver of forehead. 3:4 shows the
+                // frame properly without making cards absurdly tall.
+                aspectRatio: '3 / 4',
                 overflow: 'hidden',
-                background: '#F1F5F9',
-                border: '1px solid #E2E8F0',
+                background: '#EEF2F6',
                 flexShrink: 0,
             }}
         >
             <VideoThumbnail previewUrl={previewUrl} videoUrl={videoUrl} alt={alt || ''} />
+            {platforms.length > 0 && (
+                <div
+                    style={{
+                        position: 'absolute',
+                        left: 8,
+                        bottom: 8,
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: 4,
+                        maxWidth: 'calc(100% - 16px)',
+                        zIndex: 1,
+                        pointerEvents: 'none',
+                    }}
+                >
+                    {platforms.map((platform) => (
+                        <PlatformPill key={platform} platform={platform} overlay />
+                    ))}
+                </div>
+            )}
         </div>
     );
 }
@@ -494,17 +550,17 @@ function Metric({
     muted?: boolean;
 }) {
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 64 }}>
-            <span style={{ fontSize: 10, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
+            <span style={{ fontSize: 9.5, color: '#A0AEC0', textTransform: 'uppercase', letterSpacing: 0.3, fontWeight: 600 }}>
                 {label}
             </span>
             <span
                 style={{
-                    fontSize: muted ? 14 : 18,
-                    fontWeight: 700,
-                    color: accent ? '#337AFF' : muted ? '#475569' : '#0F172A',
+                    fontSize: muted ? 13 : 14.5,
+                    fontWeight: 600,
+                    color: accent ? '#5B86D6' : muted ? '#94A3B8' : '#64748B',
                     fontVariantNumeric: 'tabular-nums',
-                    lineHeight: 1.1,
+                    lineHeight: 1.15,
                 }}
             >
                 {formatCount(value)}
@@ -513,68 +569,38 @@ function Metric({
     );
 }
 
-const PLATFORM_COLORS: Record<string, string> = {
-    instagram: '#E1306C',
-    tiktok: '#0EA5E9',
-    youtube: '#EF4444',
-    facebook: '#2563EB',
+const PLATFORM_META: Record<string, { short: string; color: string }> = {
+    instagram: { short: 'IG', color: '#C13584' },
+    tiktok: { short: 'TT', color: '#0EA5E9' },
+    youtube: { short: 'YT', color: '#DC2626' },
+    facebook: { short: 'FB', color: '#2563EB' },
 };
 
-function PlatformChip({
-    platform,
-    views,
-    engagement,
-    onClick,
-}: {
-    platform: string;
-    views: number;
-    engagement: number;
-    onClick?: () => void;
-}) {
-    const color = PLATFORM_COLORS[platform] || '#64748B';
-    const isClickable = !!onClick;
+/** Compact platform pill — short label so names never clip in narrow cards. */
+function PlatformPill({ platform, overlay }: { platform: string; overlay?: boolean }) {
+    const meta = PLATFORM_META[platform] || { short: platform.slice(0, 2).toUpperCase(), color: '#64748B' };
     return (
-        <button
-            type="button"
-            onClick={onClick}
-            disabled={!isClickable}
+        <span
+            title={platform}
             style={{
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: 8,
-                padding: '6px 10px',
-                borderRadius: 8,
-                background: '#F8FAFC',
-                border: '1px solid #E2E8F0',
-                color: '#0F172A',
-                fontSize: 11,
-                fontWeight: 600,
-                cursor: isClickable ? 'pointer' : 'default',
-                transition: 'background 0.15s ease, border-color 0.15s ease',
-            }}
-            onMouseEnter={(e) => {
-                if (!isClickable) return;
-                e.currentTarget.style.background = '#EBF1FF';
-                e.currentTarget.style.borderColor = color;
-            }}
-            onMouseLeave={(e) => {
-                if (!isClickable) return;
-                e.currentTarget.style.background = '#F8FAFC';
-                e.currentTarget.style.borderColor = '#E2E8F0';
+                gap: 4,
+                flexShrink: 0,
+                padding: overlay ? '3px 7px' : '2px 6px',
+                borderRadius: 999,
+                background: overlay ? 'rgba(15, 23, 42, 0.72)' : 'rgba(148,163,184,0.1)',
+                backdropFilter: overlay ? 'blur(6px)' : undefined,
+                fontSize: 10,
+                fontWeight: 700,
+                color: overlay ? '#FFFFFF' : '#94A3B8',
+                letterSpacing: 0.2,
+                boxShadow: overlay ? '0 1px 3px rgba(0,0,0,0.25)' : undefined,
             }}
         >
-            <span style={{ width: 8, height: 8, borderRadius: 2, background: color }} aria-hidden />
-            <span style={{ textTransform: 'capitalize' }}>{platform}</span>
-            <span style={{ color: '#94A3B8', fontWeight: 500 }}>·</span>
-            <span style={{ fontVariantNumeric: 'tabular-nums', color: '#475569' }}>
-                {formatCount(views)}
-            </span>
-            <span style={{ color: '#94A3B8' }}>views</span>
-            <span style={{ color: '#94A3B8', fontWeight: 500 }}>·</span>
-            <span style={{ fontVariantNumeric: 'tabular-nums', color: '#337AFF', fontWeight: 700 }}>
-                {formatCount(engagement)}
-            </span>
-        </button>
+            <span style={{ width: 6, height: 6, borderRadius: 2, background: meta.color, flexShrink: 0 }} aria-hidden />
+            {meta.short}
+        </span>
     );
 }
 
@@ -600,9 +626,9 @@ function SparklesIcon() {
     );
 }
 
-function ArrowIcon() {
+function CircleArrowIcon() {
     return (
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
             <line x1="5" y1="12" x2="19" y2="12" />
             <polyline points="12 5 19 12 12 19" />
         </svg>

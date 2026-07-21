@@ -157,26 +157,52 @@ def _format_post_for_prompt(post: dict, rank: int) -> str:
 _ACCOUNT_SYSTEM_PROMPT = """You are a social media performance analyst.
 You analyze a single account's published posts and diagnose what is driving \
 engagement and what is holding it back. Output a clean, concise Markdown \
-report. Be specific and reference the actual post data provided. Do not invent \
-metrics that are not in the data."""
+report that follows the exact skeleton the user message specifies — the \
+product UI parses your headings programmatically, so any deviation breaks \
+rendering. Never list or quote individual posts, dates, captions, or \
+per-post metrics: the UI already shows the actual posts next to your \
+analysis. Describe patterns, not rows. Do not invent metrics that are not \
+in the data."""
 
-# Exact account-level prompt structure requested for the strategy report.
+# The strategy report the Account Detail UI parses. The output skeleton is
+# mandated verbatim: the frontend splits on these exact headings
+# (parseAccountReport.ts) and renders the real posts as cards beside the
+# prose — which is why per-post echoes are forbidden.
 _ACCOUNT_USER_PROMPT_TEMPLATE = """Analyze the following social media performance data and provide a specific, actionable diagnosis.
 
 **Account:** {account_username} on {platform}
 **Followers:** {follower_count}
 **Baseline Engagement Rate:** {baseline_er:.2f}%
 
-### Top Performers
+**Top-performing posts (input data — do not repeat in the report):**
 {top_posts_data_json}
-Diagnose why these worked (Hook, Topic, Timing, Format).
+
+**Bottom-performing posts (input data — do not repeat in the report):**
+{bottom_posts_data_json}
+
+Write the report using EXACTLY this Markdown skeleton — same headings, same order, nothing else at heading level:
+
+### Top Performers
+#### Insights
+- **<Factor>:** <one-sentence finding about why the top posts worked>
 
 ### Bottom Performers
-{bottom_posts_data_json}
-Diagnose what went wrong.
+#### Insights
+- **<Factor>:** <one-sentence finding about what held the bottom posts back>
+
+### Diagnosis
+- **What worked:** <one-sentence summary>
+- **What went wrong:** <one-sentence summary>
 
 ### What to Do Next
-Provide 3-5 specific, ranked actions based on these findings. Format the output as clean Markdown."""
+1. **<Action name>:** <specific, concrete instruction>
+
+Rules:
+- 3-5 insight bullets per Insights block; label each with the factor it describes (Hook, Topic, Timing, Format, or similar).
+- 3-5 numbered actions under What to Do Next, most impactful first.
+- Every bullet is a single line in the form **Label:** explanation — never a bare label on its own line.
+- Aggregate comparisons (e.g. the engagement-rate range across the group) may appear inside insight sentences, but never as standalone metric lines.
+- Do NOT add sections, sub-lists of posts, or any heading not in the skeleton."""
 
 
 def _post_to_json_row(post: dict) -> dict:

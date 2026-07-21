@@ -14,9 +14,6 @@ import {
 
 interface Props {
     accounts: TrackedAccountAggregate[];
-    totalAccounts: number;
-    totalPosts: number;
-    avgHealth: number | null;
     loading: boolean;
     period: Period;
     onOpenAccount: (accountId: string) => void;
@@ -39,26 +36,16 @@ interface Props {
 }
 
 /**
- * Accounts dashboard — the "Accounts" leg of the Accounts ⇄ Posts toggle.
- *
- *   • Aggregate strip: Total Accounts · Scraped Posts · Avg Health
- *   • Header CTAs: Add Account (orange primary) + Settings (secondary)
- *   • Responsive grid of AccountCard rows
- *
- * Mobile-first layout: on narrow viewports the CTAs sit beneath the
- * aggregate strip (info-first per v2 UX guidelines); on desktop they
- * float right of the header.
+ * Accounts dashboard — header, ownership filter, AccountCard grid.
  */
 export default function AccountsView({
-    accounts, totalAccounts, totalPosts, avgHealth, loading, period,
+    accounts, loading, period,
     onOpenAccount, onScraped, onOpenAdd, onDelete,
     isStudio, profilePicFor, ownership, setOwnership,
 }: Props) {
     const { t } = useTranslation();
     const periodLabel = t(`analytics.filters.period.${period === 'all' ? 'all' : period}`);
 
-    /** Pre-compute studio flags once per render so the filter + each card
-     *  don't have to call `isStudio` twice for the same account. */
     const tagged = useMemo(
         () =>
             accounts.map((a) => ({
@@ -82,56 +69,18 @@ export default function AccountsView({
     }, [tagged]);
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <header className="analytics-accounts-header">
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
-                    <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: 'var(--text-1)' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+                    <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: 'var(--text-1)' }}>
                         {t('analytics.accounts.title')}
                     </h2>
-                    <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-3)' }}>
+                    <p style={{ margin: 0, fontSize: 12, color: 'var(--text-3)' }}>
                         {t('analytics.accounts.subtitle').replace('{period}', periodLabel)}
                     </p>
                 </div>
-
-                <div className="analytics-accounts-actions">
-                    <button
-                        type="button"
-                        onClick={onOpenAdd}
-                        style={{
-                            padding: '9px 16px', borderRadius: '8px',
-                            border: 'none',
-                            background: ANALYTICS_CTA_ORANGE,
-                            color: 'white', fontSize: '13px', fontWeight: 700,
-                            cursor: 'pointer', whiteSpace: 'nowrap',
-                            transition: 'background 0.15s ease',
-                            display: 'inline-flex', alignItems: 'center', gap: '6px',
-                        }}
-                        onMouseEnter={(e) => { e.currentTarget.style.background = ANALYTICS_CTA_ORANGE_HOVER; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.background = ANALYTICS_CTA_ORANGE; }}
-                    >
-                        <PlusIcon /> {t('analytics.add.cta')}
-                    </button>
-                </div>
             </header>
 
-            {/* Aggregate strip */}
-            <div
-                style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-                    gap: '12px',
-                }}
-            >
-                <Agg label={t('analytics.accounts.aggregate.totalAccounts')} value={String(totalAccounts)} />
-                <Agg label={t('analytics.accounts.aggregate.scrapedPosts')} value={String(totalPosts)} />
-                <Agg
-                    label={t('analytics.accounts.aggregate.avgHealth')}
-                    value={avgHealth != null ? `${avgHealth}/100` : '—'}
-                    accent
-                />
-            </div>
-
-            {/* Ownership filter — only useful once we actually have accounts. */}
             {accounts.length > 0 && (
                 <div
                     role="tablist"
@@ -141,7 +90,7 @@ export default function AccountsView({
                         alignSelf: 'flex-start',
                         background: 'white',
                         border: '1px solid var(--border)',
-                        borderRadius: '999px',
+                        borderRadius: 999,
                         padding: 4,
                         gap: 2,
                         boxShadow: '0 1px 2px rgba(13,27,62,0.04)',
@@ -159,11 +108,11 @@ export default function AccountsView({
                                 onClick={() => setOwnership(opt)}
                                 style={{
                                     padding: '6px 14px',
-                                    borderRadius: '999px',
+                                    borderRadius: 999,
                                     border: 'none',
                                     background: selected ? 'var(--blue)' : 'transparent',
                                     color: selected ? 'white' : 'var(--text-2)',
-                                    fontSize: '12px',
+                                    fontSize: 12,
                                     fontWeight: 700,
                                     cursor: 'pointer',
                                     transition: 'background 0.15s ease, color 0.15s ease',
@@ -175,9 +124,9 @@ export default function AccountsView({
                                 {t(`analytics.accounts.ownership.${opt}`)}
                                 <span
                                     style={{
-                                        fontSize: '10px',
+                                        fontSize: 10,
                                         padding: '1px 7px',
-                                        borderRadius: '999px',
+                                        borderRadius: 999,
                                         background: selected ? 'rgba(255,255,255,0.22)' : 'var(--blue-light)',
                                         color: selected ? 'white' : 'var(--text-3)',
                                         fontWeight: 700,
@@ -191,14 +140,13 @@ export default function AccountsView({
                 </div>
             )}
 
-            {/* Account grid */}
             {loading && accounts.length === 0 ? (
                 <div
                     style={{
                         padding: '60px 20px',
                         textAlign: 'center',
                         color: 'var(--text-3)',
-                        fontSize: '13px',
+                        fontSize: 13,
                     }}
                 >
                     {t('common.loading')}
@@ -214,7 +162,7 @@ export default function AccountsView({
                         padding: '32px 24px',
                         textAlign: 'center',
                         color: 'var(--text-3)',
-                        fontSize: '13px',
+                        fontSize: 13,
                     }}
                 >
                     {t(`analytics.accounts.ownership.empty.${ownership}`)}
@@ -223,8 +171,11 @@ export default function AccountsView({
                 <div
                     style={{
                         display: 'grid',
-                        gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-                        gap: '14px',
+                        // ≤2 accounts: full-width rows; 3+: compact grid
+                        gridTemplateColumns: visible.length <= 2
+                            ? '1fr'
+                            : 'repeat(auto-fill, minmax(280px, 1fr))',
+                        gap: 14,
                     }}
                 >
                     {visible.map(({ account: a, studio }) => (
@@ -235,6 +186,7 @@ export default function AccountsView({
                             onScraped={onScraped}
                             onDelete={onDelete}
                             isStudio={studio}
+                            wide={visible.length <= 2}
                             avatarUrl={
                                 a.avatar_url
                                 || (studio && profilePicFor
@@ -250,51 +202,9 @@ export default function AccountsView({
                 .analytics-accounts-header {
                     display: flex;
                     align-items: flex-start;
-                    justify-content: space-between;
                     gap: 16px;
-                    flex-wrap: wrap;
-                }
-                .analytics-accounts-actions {
-                    display: flex;
-                    gap: 8px;
-                    flex-wrap: wrap;
-                }
-                @media (max-width: 640px) {
-                    .analytics-accounts-header {
-                        flex-direction: column;
-                    }
-                    .analytics-accounts-actions {
-                        width: 100%;
-                    }
-                    .analytics-accounts-actions > button {
-                        flex: 1;
-                        justify-content: center;
-                    }
                 }
             `}</style>
-        </div>
-    );
-}
-
-function Agg({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
-    return (
-        <div
-            style={{
-                background: 'white',
-                border: '1px solid var(--border)',
-                borderRadius: 'var(--radius)',
-                padding: '14px 16px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '4px',
-            }}
-        >
-            <span style={{ fontSize: '11px', color: 'var(--text-3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4 }}>
-                {label}
-            </span>
-            <span style={{ fontSize: '20px', fontWeight: 700, color: accent ? 'var(--blue)' : 'var(--text-1)' }}>
-                {value}
-            </span>
         </div>
     );
 }
@@ -311,13 +221,13 @@ function EmptyState({ onOpenAdd }: { onOpenAdd: () => void }) {
                 textAlign: 'center',
                 display: 'flex',
                 flexDirection: 'column',
-                gap: '12px',
+                gap: 12,
                 alignItems: 'center',
             }}
         >
             <div
                 style={{
-                    width: 48, height: 48, borderRadius: '12px',
+                    width: 48, height: 48, borderRadius: 12,
                     background: 'var(--blue-light)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     color: 'var(--blue)',
@@ -326,10 +236,10 @@ function EmptyState({ onOpenAdd }: { onOpenAdd: () => void }) {
                 <PlusIcon />
             </div>
             <div>
-                <p style={{ margin: 0, fontWeight: 700, color: 'var(--text-1)', fontSize: '14px' }}>
+                <p style={{ margin: 0, fontWeight: 700, color: 'var(--text-1)', fontSize: 14 }}>
                     {t('analytics.accounts.empty.title')}
                 </p>
-                <p style={{ margin: '4px 0 0', color: 'var(--text-3)', fontSize: '12px' }}>
+                <p style={{ margin: '4px 0 0', color: 'var(--text-3)', fontSize: 12 }}>
                     {t('analytics.accounts.empty.subtitle')}
                 </p>
             </div>
@@ -337,9 +247,9 @@ function EmptyState({ onOpenAdd }: { onOpenAdd: () => void }) {
                 type="button"
                 onClick={onOpenAdd}
                 style={{
-                    padding: '9px 18px', borderRadius: '8px',
+                    padding: '9px 18px', borderRadius: 8,
                     border: 'none', background: ANALYTICS_CTA_ORANGE,
-                    color: 'white', fontSize: '13px', fontWeight: 700,
+                    color: 'white', fontSize: 13, fontWeight: 700,
                     cursor: 'pointer',
                 }}
                 onMouseEnter={(e) => { e.currentTarget.style.background = ANALYTICS_CTA_ORANGE_HOVER; }}
