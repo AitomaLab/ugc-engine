@@ -4,12 +4,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from '@/lib/i18n';
 import {
     analyticsFetch,
+    isWithinTrailingDays,
+    periodToDays,
     pollScrapeJob,
     timeAgo,
     useAccountStrategyReport,
     useAccountTopPosts,
     useAccountTrend,
     useAnalyticsPostThumbnails,
+    type Period,
     type TrackedAccountAggregate,
     type TrackedAccountWithJob,
 } from '../analytics-types';
@@ -81,15 +84,16 @@ export function useAccountBackgroundRefresh(
         }
     }, [accountId, markJustUpdated, onRefreshed]);
 
-    /* Kick off a background refresh on scope-in — cached data renders immediately. */
-    useEffect(() => {
-        if (!accountId) return;
-        refresh();
-        return () => {
-            if (justUpdatedTimer.current) window.clearTimeout(justUpdatedTimer.current);
-        };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh once per account scope-in
-    }, [accountId]);
+    /*
+     * No auto-scrape on scope-in. A refresh runs the whole pipeline (scrape →
+     * metrics → a fresh LLM strategy report), so firing it on every mount cost
+     * 10-15s on each navigation and rewrote the report under the user. Data
+     * still self-updates via the nightly sweep and the page-level
+     * `analyticsStudioSynced` event; the toolbar Refresh button is the manual path.
+     */
+    useEffect(() => () => {
+        if (justUpdatedTimer.current) window.clearTimeout(justUpdatedTimer.current);
+    }, []);
 
     const statusLabel = !account
         ? ''
@@ -107,6 +111,8 @@ export function useAccountBackgroundRefresh(
 interface Props {
     account: TrackedAccountAggregate;
     view: AnalyticsViewKey;
+    /** Drives the trend window and filters the post grids. */
+    period: Period;
     /** Studio (OAuth-linked) — gates the AI Learnings body. */
     isStudio: boolean;
     /** Combined refresh epoch (parent metrics + per-account scrapes). */
@@ -127,6 +133,7 @@ interface Props {
 export default function AccountScopeView({
     account,
     view,
+    period,
     isStudio,
     refreshKey = 0,
     isRefreshing = false,
@@ -134,13 +141,25 @@ export default function AccountScopeView({
     onSwitchView,
 }: Props) {
     const { lang } = useTranslation();
+    const periodDays = periodToDays(period);
 
-    const { data: trend, loading: trendLoading } = useAccountTrend(account.id, 30, refreshKey);
+    const { data: trend, loading: trendLoading } = useAccountTrend(account.id, periodDays, refreshKey);
     const { data: top, loading: topLoading } = useAccountTopPosts(account.id, 48, refreshKey);
     const { data: strategy, loading: strategyLoading } = useAccountStrategyReport(account.id, refreshKey, lang);
 
     const posts = useMemo(() => top?.posts ?? [], [top]);
     const thumbMap = useAnalyticsPostThumbnails(posts);
+
+    /**
+     * `/accounts/{id}/top-posts` has no period filter, so scope the grids
+     * client-side. Keeps the post lists consistent with the period-driven
+     * KPI strip (which reads "posts in period") instead of always showing
+     * the full history regardless of the selected range.
+     */
+    const periodPosts = useMemo(
+        () => posts.filter((p) => isWithinTrailingDays(p.posted_at || p.scraped_at, periodDays)),
+        [posts, periodDays],
+    );
     const strategyParsed = useMemo(
         () => (strategy?.report ? parseStrategyReport(strategy.report) : null),
         [strategy],
@@ -151,7 +170,8 @@ export default function AccountScopeView({
             {view === 'overview' && (
                 <AccountOverviewTab
                     account={account}
-                    posts={posts}
+                    posts={periodPosts}
+                    periodDays={periodDays}
                     postsLoading={topLoading}
                     isRefreshing={isRefreshing}
                     thumbMap={thumbMap}
@@ -166,7 +186,7 @@ export default function AccountScopeView({
 
             {view === 'videos' && (
                 <AccountVideosGrid
-                    posts={posts}
+                    posts={periodPosts}
                     loading={topLoading}
                     isRefreshing={isRefreshing}
                     thumbMap={thumbMap}

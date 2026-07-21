@@ -15,6 +15,8 @@ import { Section, StatCell, renderInlineBold } from './AccountUiKit';
 interface Props {
     account: TrackedAccountAggregate;
     posts: AnalyticsPost[];
+    /** Selected period in days — drives the trend heading. */
+    periodDays: number;
     postsLoading: boolean;
     isRefreshing: boolean;
     thumbMap: Record<string, string>;
@@ -33,6 +35,7 @@ const GRID_STEP = 12;
 export default function AccountOverviewTab({
     account,
     posts,
+    periodDays,
     postsLoading,
     isRefreshing,
     thumbMap,
@@ -141,7 +144,7 @@ export default function AccountOverviewTab({
             )}
 
             {/* 30-day trend */}
-            <Section title={t('analytics.accounts.trend.title')}>
+            <Section title={t('analytics.accounts.trend.title').replace('{days}', String(periodDays))}>
                 {trendLoading && !(trend?.points?.length)
                     ? <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{t('common.loading')}</div>
                     : <TrendChart points={trend?.points || []} />

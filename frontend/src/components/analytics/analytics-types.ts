@@ -601,6 +601,34 @@ function writeStatsCache(scopeKey: string, data: AnalyticsStats) {
     }
 }
 
+/**
+ * Generic session-scoped JSON cache backing the account-detail hooks.
+ *
+ * These payloads (strategy report, per-account trend, creative guidelines)
+ * only change when a refresh or the nightly sweep runs, so re-fetching them
+ * on every mount made every tab/scope switch feel like a cold load. Cached
+ * values are served synchronously and revalidated in the background; the
+ * cache key carries `refreshKey`, so an explicit refresh always misses.
+ */
+function readSessionCache<T>(key: string): T | null {
+    if (typeof sessionStorage === 'undefined') return null;
+    try {
+        const raw = sessionStorage.getItem(key);
+        return raw ? (JSON.parse(raw) as T) : null;
+    } catch {
+        return null;
+    }
+}
+
+function writeSessionCache<T>(key: string, data: T) {
+    if (typeof sessionStorage === 'undefined') return;
+    try {
+        sessionStorage.setItem(key, JSON.stringify(data));
+    } catch {
+        /* quota — ignore */
+    }
+}
+
 export function useAnalyticsStats(
     period: Period,
     platform: PlatformFilter,
@@ -976,6 +1004,8 @@ export interface AccountTrendResponse {
     points: TrendPoint[];
 }
 
+const TREND_CACHE_PREFIX = 'analytics_acct_trend_v1:';
+
 /** 30-day (default) engagement / views / posts time-series for one account. */
 export function useAccountTrend(accountId: string | null, days = 30, refreshKey = 0) {
     const [data, setData] = useState<AccountTrendResponse | null>(null);
@@ -987,16 +1017,26 @@ export function useAccountTrend(accountId: string | null, days = 30, refreshKey 
             return;
         }
         let cancelled = false;
-        setLoading(true);
+        const cacheKey = `${TREND_CACHE_PREFIX}${accountId}|${days}|${refreshKey}`;
+        const cached = readSessionCache<AccountTrendResponse>(cacheKey);
+        if (cached) {
+            setData(cached);
+            setLoading(false);
+        } else {
+            setLoading(true);
+        }
         analyticsFetch<AccountTrendResponse>(
             `/api/analytics/accounts/${accountId}/trend?days=${days}`,
             { skipProjectScope: true },
         )
             .then((res) => {
-                if (!cancelled) setData(res);
+                if (!cancelled) {
+                    setData(res);
+                    writeSessionCache(cacheKey, res);
+                }
             })
             .catch(() => {
-                if (!cancelled) setData({ account_id: accountId, points: [] });
+                if (!cancelled && !cached) setData({ account_id: accountId, points: [] });
             })
             .finally(() => {
                 if (!cancelled) setLoading(false);
@@ -1029,9 +1069,12 @@ export function useAccountTopPosts(accountId: string | null, limit = 48, refresh
             return;
         }
         let cancelled = false;
-        const cacheKey = `${accountId}:${limit}`;
+        // `refreshKey` belongs in the key, not in a bypass — keying by it means
+        // an explicit refresh misses the cache while repeat visits at the same
+        // key (tab/scope switches) still hit it.
+        const cacheKey = `${accountId}:${limit}:${refreshKey}`;
         const cached = topPostsCache.get(cacheKey);
-        if (cached && refreshKey === 0 && Date.now() - cached.fetchedAt < TOP_POSTS_CACHE_MS) {
+        if (cached && Date.now() - cached.fetchedAt < TOP_POSTS_CACHE_MS) {
             setData(cached.data);
             setLoading(false);
             return;
@@ -1134,6 +1177,9 @@ export interface AccountStrategyReportResponse {
     generated_at: string | null;
 }
 
+const STRATEGY_CACHE_PREFIX = 'analytics_acct_strategy_v1:';
+const GUIDELINES_CACHE_PREFIX = 'analytics_guidelines_v1:';
+
 /** Latest AI "Do More / Do Less" strategy report for the account detail modal.
  *  A null `report` means it hasn't been generated yet (produced async after a
  *  refresh) — callers should treat that as a pending state. */
@@ -1158,7 +1204,14 @@ export function useAccountStrategyReport(
         const syncLocale = !skipSyncRef.current;
         skipSyncRef.current = false;
         let cancelled = false;
-        setLoading(true);
+        const cacheKey = `${STRATEGY_CACHE_PREFIX}${accountId}|${lang}|${refreshKey}`;
+        const cached = readSessionCache<AccountStrategyReportResponse>(cacheKey);
+        if (cached) {
+            setData(cached);
+            setLoading(false);
+        } else {
+            setLoading(true);
+        }
         analyticsFetch<AccountStrategyReportResponse>(
             `/api/analytics/tracked-accounts/${accountId}/strategy-report`,
             {
@@ -1167,10 +1220,16 @@ export function useAccountStrategyReport(
             },
         )
             .then((res) => {
-                if (!cancelled) setData(res);
+                if (!cancelled) {
+                    setData(res);
+                    // Only cache a generated report — a pending (null) report
+                    // would otherwise pin the "still analyzing" state for the
+                    // rest of the session.
+                    if (res?.report) writeSessionCache(cacheKey, res);
+                }
             })
             .catch(() => {
-                if (!cancelled) {
+                if (!cancelled && !cached) {
                     setData({ account_id: accountId, report: null, generated_at: null });
                 }
             })
@@ -1199,16 +1258,26 @@ export function useCreativeGuidelines(refreshKey = 0) {
 
     useEffect(() => {
         let cancelled = false;
-        setLoading(true);
+        const cacheKey = `${GUIDELINES_CACHE_PREFIX}${refreshKey}`;
+        const cached = readSessionCache<CreativeGuidelinesResponse>(cacheKey);
+        if (cached) {
+            setData(cached);
+            setLoading(false);
+        } else {
+            setLoading(true);
+        }
         analyticsFetch<CreativeGuidelinesResponse>(
             '/api/analytics/creative-guidelines',
             { skipProjectScope: true },
         )
             .then((res) => {
-                if (!cancelled) setData(res);
+                if (!cancelled) {
+                    setData(res);
+                    if (res?.guidelines) writeSessionCache(cacheKey, res);
+                }
             })
             .catch(() => {
-                if (!cancelled) setData({ guidelines: null, updated_at: null });
+                if (!cancelled && !cached) setData({ guidelines: null, updated_at: null });
             })
             .finally(() => {
                 if (!cancelled) setLoading(false);
@@ -1405,6 +1474,19 @@ export function formatCount(n: number | null | undefined): string {
     if (n >= 1_000_000) return (n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1) + 'M';
     if (n >= 1_000) return (n / 1_000).toFixed(n >= 10_000 ? 0 : 1) + 'K';
     return String(n);
+}
+
+/**
+ * True when `iso` falls inside the trailing `days` window. Undated rows
+ * count as inside so a missing timestamp never silently hides a post.
+ * Lives here beside `timeAgo` so callers keep wall-clock reads out of
+ * their render bodies.
+ */
+export function isWithinTrailingDays(iso: string | null | undefined, days: number): boolean {
+    if (!iso) return true;
+    const at = new Date(iso).getTime();
+    if (Number.isNaN(at)) return true;
+    return at >= Date.now() - days * 86_400_000;
 }
 
 export function timeAgo(iso: string | null | undefined): string {

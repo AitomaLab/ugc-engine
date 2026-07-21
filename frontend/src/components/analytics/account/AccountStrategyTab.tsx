@@ -115,13 +115,17 @@ export default function AccountStrategyTab({
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            <span style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: -8 }}>
+                {t('analytics.accounts.aiWindowNote')}
+            </span>
+
             {/* Top performers — insights left, ranked previews right */}
             {(topPosts.length > 0 || parsed.top) && (
                 <Section
                     title={t('analytics.accounts.strategy.topPerformers')}
                     subtitle={t('analytics.accounts.strategy.topSubtitle')}
                 >
-                    <div className="strategy-split">
+                    <div className={`strategy-split${parsed.top ? '' : ' strategy-split--solo'}`}>
                         {parsed.top && (
                             <Panel style={{ borderColor: 'rgba(52,199,89,0.30)', background: 'rgba(52,199,89,0.04)', minWidth: 0 }}>
                                 <div style={{ fontSize: 12, fontWeight: 700, color: '#1f7a3a', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
@@ -141,7 +145,7 @@ export default function AccountStrategyTab({
                     title={t('analytics.accounts.strategy.bottomPerformers')}
                     subtitle={t('analytics.accounts.strategy.bottomSubtitle')}
                 >
-                    <div className="strategy-split">
+                    <div className={`strategy-split${parsed.bottom ? '' : ' strategy-split--solo'}`}>
                         {parsed.bottom && (
                             <Panel style={{ borderColor: 'rgba(255,159,10,0.30)', background: 'rgba(255,159,10,0.05)', minWidth: 0 }}>
                                 <div style={{ fontSize: 12, fontWeight: 700, color: '#a35a00', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
@@ -213,6 +217,14 @@ export default function AccountStrategyTab({
                     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
                     gap: 14px;
                     align-items: start;
+                }
+                /* No diagnosis prose for this section — let the previews use
+                   the full width instead of stranding an empty column. */
+                .strategy-split--solo {
+                    grid-template-columns: 1fr;
+                }
+                .strategy-split--solo .strategy-posts {
+                    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
                 }
                 .strategy-posts {
                     display: grid;

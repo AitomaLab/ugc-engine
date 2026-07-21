@@ -78,6 +78,7 @@ export default function AccountLearningsTab({ guidelines, updatedAt, loading }: 
                     </span>
                     <span style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5 }}>
                         {t('analytics.accounts.learnings.loopNote')}
+                        {` · ${t('analytics.accounts.aiWindowNote')}`}
                         {updatedAt ? ` · ${t('analytics.accounts.guidelines.updated').replace('{when}', timeAgo(updatedAt))}` : ''}
                     </span>
                 </div>

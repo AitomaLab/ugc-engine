@@ -22,6 +22,8 @@ const LIST_ITEM = /^\s*(?:[-*•]|\d+[.)])\s+(.*)$/;
 
 interface HeadingRef {
     idx: number;
+    /** `#` depth — 3 for `### Top Performers`, 4 for a `#### Diagnosis` child. */
+    level: number;
     text: string;
 }
 
@@ -33,13 +35,30 @@ function collectHeadings(lines: string[]): HeadingRef[] {
     const out: HeadingRef[] = [];
     lines.forEach((raw, idx) => {
         const m = HEADING.exec(raw.trim());
-        if (m) out.push({ idx, text: m[2].replace(/\*\*/g, '').trim() });
+        if (m) out.push({ idx, level: m[1].length, text: m[2].replace(/\*\*/g, '').trim() });
     });
     return out;
 }
 
-function firstHeadingMatching(headings: HeadingRef[], re: RegExp): number | null {
-    const hit = headings.find((h) => re.test(h.text));
+/**
+ * Depth at which the report's top-level sections live, taken from the
+ * Top/Bottom Performers markers. Anything deeper is a child of a section,
+ * never a section itself — without this a nested `#### Diagnosis` under
+ * Top Performers gets hoisted into its own card and strips that section's
+ * prose out of the panel it belongs to.
+ */
+function sectionDepth(headings: HeadingRef[]): number {
+    const markers = headings.filter((h) => TOP_RE.test(h.text) || BOTTOM_RE.test(h.text));
+    const pool = markers.length ? markers : headings;
+    return pool.length ? Math.min(...pool.map((h) => h.level)) : 6;
+}
+
+function firstHeadingMatching(
+    headings: HeadingRef[],
+    re: RegExp,
+    maxLevel = 6,
+): number | null {
+    const hit = headings.find((h) => h.level <= maxLevel && re.test(h.text));
     return hit ? hit.idx : null;
 }
 
@@ -106,10 +125,28 @@ const METRIC_LINE = new RegExp(
     'i',
 );
 
-/** Belt-and-braces: drop residual per-post metric lines in any format. */
+/**
+ * Bare post enumerations that carry no analysis — "Video Post (UGC content)",
+ * "Image Post (Gratitude)", "Post 2". Reports often list the inputs before
+ * diagnosing them; the preview cards already identify those posts, so the
+ * bullets are noise. Requires the whole line to be the descriptor, so an
+ * insight like "**Format:** Image posts underperform" is untouched.
+ */
+const POST_DESCRIPTOR_LINE = new RegExp(
+    '^(?:[-*•]\\s*|\\d+[.)]\\s*)?(?:\\*\\*)?'
+    + '(?:(?:video|image|photo|carousel|reel|story|static|text)\\s+post|post\\s*\\d+'
+    + '|publicaci[oó]n(?:\\s+de)?\\s*(?:v[ií]deo|imagen|foto)?)'
+    + '\\s*(?:\\*\\*)?\\s*(?:\\([^)]*\\))?\\s*[.:]?\\s*$',
+    'i',
+);
+
+/** Belt-and-braces: drop residual per-post metric lines and bare listings. */
 function stripMetricLines(body: string): string {
     return splitLines(body)
-        .filter((l) => !METRIC_LINE.test(l.trim()))
+        .filter((l) => {
+            const t = l.trim();
+            return !METRIC_LINE.test(t) && !POST_DESCRIPTOR_LINE.test(t);
+        })
         .join('\n')
         .replace(/\n{3,}/g, '\n\n')
         .trim();
@@ -117,7 +154,13 @@ function stripMetricLines(body: string): string {
 
 /** Full cleanup for a diagnosis-prose body. */
 function cleanSectionBody(body: string): string {
-    return stripMetricLines(stripSubsection(body, SPECIFIC_POSTS_RE));
+    const cleaned = stripMetricLines(stripSubsection(body, SPECIFIC_POSTS_RE));
+    if (cleaned) return cleaned;
+    // Subsection stripping consumed the whole section — happens when a report
+    // nests all of its prose under a post-listing pseudo-heading. Fall back to
+    // scrubbing only the metric lines so the panel still has its insight
+    // instead of collapsing and leaving a half-empty layout.
+    return stripMetricLines(body);
 }
 
 function extractItems(body: string): string[] {
@@ -159,10 +202,13 @@ export function parseStrategyReport(source: string): StrategySections {
     const lines = splitLines(source);
     const headings = collectHeadings(lines);
 
-    const topIdx = firstHeadingMatching(headings, TOP_RE);
-    const bottomIdx = firstHeadingMatching(headings, BOTTOM_RE);
-    const diagnosisIdx = firstHeadingMatching(headings, DIAGNOSIS_RE);
-    const actionsIdx = firstHeadingMatching(headings, ACTIONS_RE);
+    // Only headings at the section depth can be boundaries; deeper ones stay
+    // inside their parent section's prose.
+    const depth = sectionDepth(headings);
+    const topIdx = firstHeadingMatching(headings, TOP_RE, depth);
+    const bottomIdx = firstHeadingMatching(headings, BOTTOM_RE, depth);
+    const diagnosisIdx = firstHeadingMatching(headings, DIAGNOSIS_RE, depth);
+    const actionsIdx = firstHeadingMatching(headings, ACTIONS_RE, depth);
 
     const anchors = [topIdx, bottomIdx, diagnosisIdx, actionsIdx]
         .filter((x): x is number => x !== null);

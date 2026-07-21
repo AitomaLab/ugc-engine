@@ -299,8 +299,13 @@ export default function AnalyticsTab({ onRefreshAll, refreshing = false }: Props
                         showLearnings={learningsAvailable}
                     />
                 </div>
+                {/* Period only drives Overview and By Video. The AI report is
+                    generated on a fixed 30-day window, so the toggle is hidden
+                    on those tabs rather than shown doing nothing. */}
                 <div className="dash-toolbar-center">
-                    <DashboardPeriodToggle period={period} onChange={setPeriod} />
+                    {(view === 'overview' || view === 'videos') && (
+                        <DashboardPeriodToggle period={period} onChange={setPeriod} />
+                    )}
                 </div>
                 <div className="dash-toolbar-right">
                     {scope === 'all' ? (
@@ -410,6 +415,7 @@ export default function AnalyticsTab({ onRefreshAll, refreshing = false }: Props
                 <AccountScopeView
                     account={activeAccount}
                     view={view}
+                    period={period}
                     isStudio={activeAccountIsStudio}
                     refreshKey={metricsEpoch + accountRefresh.epoch}
                     isRefreshing={accountRefresh.isRefreshing}
