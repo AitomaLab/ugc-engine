@@ -5,8 +5,8 @@ import { useTranslation } from '@/lib/i18n';
 import AccountCard from './AccountCard';
 import {
     ACCOUNT_OWNERSHIP_OPTIONS,
-    ANALYTICS_CTA_ORANGE,
-    ANALYTICS_CTA_ORANGE_HOVER,
+    ANALYTICS_PRIMARY,
+    ANALYTICS_PRIMARY_HOVER,
     type AccountOwnership,
     type Period,
     type TrackedAccountAggregate,
@@ -248,12 +248,12 @@ function EmptyState({ onOpenAdd }: { onOpenAdd: () => void }) {
                 onClick={onOpenAdd}
                 style={{
                     padding: '9px 18px', borderRadius: 8,
-                    border: 'none', background: ANALYTICS_CTA_ORANGE,
+                    border: 'none', background: ANALYTICS_PRIMARY,
                     color: 'white', fontSize: 13, fontWeight: 700,
                     cursor: 'pointer',
                 }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = ANALYTICS_CTA_ORANGE_HOVER; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = ANALYTICS_CTA_ORANGE; }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = ANALYTICS_PRIMARY_HOVER; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = ANALYTICS_PRIMARY; }}
             >
                 {t('analytics.add.cta')}
             </button>

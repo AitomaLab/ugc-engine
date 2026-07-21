@@ -492,9 +492,9 @@ function ViewTabs({
     const tabs: Array<{ id: AnalyticsViewKey; label: string; icon: React.ReactNode }> = [
         { id: 'overview', label: t('analytics.dashboard.subview.overview'), icon: <GridIcon /> },
         { id: 'videos',   label: t('analytics.dashboard.subview.videos'),   icon: <PlayIcon /> },
-        { id: 'strategy', label: t('analytics.accounts.tabs.strategy'),     icon: <TargetIcon /> },
+        { id: 'strategy', label: t('analytics.accounts.tabs.strategy'),     icon: <AiSparkIcon /> },
         ...(showLearnings
-            ? [{ id: 'learnings' as const, label: t('analytics.accounts.tabs.learnings'), icon: <BrainIcon /> }]
+            ? [{ id: 'learnings' as const, label: t('analytics.accounts.tabs.learnings'), icon: <LightbulbIcon /> }]
             : []),
     ];
 
@@ -585,22 +585,22 @@ function PlayIcon() {
     );
 }
 
-function TargetIcon() {
+/** The AI star used across the product to denote AI-generated analysis. */
+function AiSparkIcon() {
     return (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2}>
-            <circle cx="12" cy="12" r="9" />
-            <circle cx="12" cy="12" r="5" />
-            <circle cx="12" cy="12" r="1" fill="currentColor" />
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6z" />
+            <path d="M18.2 15.4l.7 1.9 1.9.7-1.9.7-.7 1.9-.7-1.9-1.9-.7 1.9-.7z" />
         </svg>
     );
 }
 
-function BrainIcon() {
+function LightbulbIcon() {
     return (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 4a3 3 0 0 0-3 3v10a3 3 0 0 0 6 0V7a3 3 0 0 0-3-3z" />
-            <path d="M9 8H7a3 3 0 0 0 0 6h2" />
-            <path d="M15 8h2a3 3 0 0 1 0 6h-2" />
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 18h6" />
+            <path d="M10 21.5h4" />
+            <path d="M15.1 14c.18-.98.65-1.74 1.4-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1.22.5 2.54 1.5 3.5.75.76 1.22 1.52 1.4 2.5" />
         </svg>
     );
 }
