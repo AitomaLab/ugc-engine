@@ -68,36 +68,103 @@ def _session_file(user_id: str) -> Path:
     return _user_dir(user_id) / "studio-session.json"
 
 
-def read_brand_state(user_id: str) -> dict | None:
-    path = _state_file(user_id)
+# ── Brand/session persistence ───────────────────────────────────────────────
+# Supabase-backed (brand_profiles table, migration 071). The old on-disk JSON
+# under data/brands/ lived on the container's ephemeral filesystem — no Railway
+# volume — so every redeploy wiped every user's brand. Disk is now only a
+# legacy import source (one-off, when no Supabase row exists yet) and a
+# last-resort fallback when Supabase is unreachable.
+
+_profiles_client = None
+
+
+def _profiles_sb():
+    """Cached service-role Supabase client for brand_profiles reads/writes."""
+    global _profiles_client
+    if _profiles_client is None:
+        from supabase import create_client
+
+        url = os.getenv("SUPABASE_URL")
+        key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+        if not url or not key:
+            raise RuntimeError("missing SUPABASE_URL or service key")
+        _profiles_client = create_client(url, key)
+    return _profiles_client
+
+
+def _read_json_file(path: Path) -> dict | None:
     try:
         with open(path, encoding="utf-8") as f:
-            return json.load(f)
-    except OSError:
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except (OSError, ValueError):
         return None
+
+
+def _read_profile_column(user_id: str, column: str, legacy_path: Path) -> dict | None:
+    try:
+        resp = (
+            _profiles_sb()
+            .table("brand_profiles")
+            .select(column)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        rows = resp.data or []
+        val = rows[0].get(column) if rows else None
+        if isinstance(val, dict):
+            return val
+        # No row (or column never written) — one-off import of any JSON that
+        # survived on this container's disk, so live users don't start from
+        # zero when this fix lands.
+        legacy = _read_json_file(legacy_path)
+        if legacy is not None:
+            _write_profile_column(user_id, column, legacy)
+        return legacy
+    except Exception as exc:
+        print(f"[brand_studio] Supabase read failed for {column} ({exc}); falling back to disk")
+        return _read_json_file(legacy_path)
+
+
+def _write_profile_column(user_id: str, column: str, payload: dict) -> None:
+    try:
+        _profiles_sb().table("brand_profiles").upsert(
+            {"user_id": user_id, column: payload, "updated_at": _utc_now_iso()},
+            on_conflict="user_id",
+        ).execute()
+    except Exception as exc:
+        # Last resort: write to disk so the user's work isn't lost outright,
+        # and the legacy-import path recovers it once Supabase is back.
+        print(f"[brand_studio] Supabase write FAILED for {column} ({exc}); writing disk fallback")
+        legacy_path = (
+            _state_file(user_id) if column == "brand_state" else _session_file(user_id)
+        )
+        legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(legacy_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+
+
+def _utc_now_iso() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
+
+def read_brand_state(user_id: str) -> dict | None:
+    return _read_profile_column(user_id, "brand_state", _state_file(user_id))
 
 
 def write_brand_state(user_id: str, brand: dict) -> None:
-    path = _state_file(user_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(brand, f, indent=2)
+    _write_profile_column(user_id, "brand_state", brand)
 
 
 def read_studio_session(user_id: str) -> dict | None:
-    path = _session_file(user_id)
-    try:
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
-    except OSError:
-        return None
+    return _read_profile_column(user_id, "studio_session", _session_file(user_id))
 
 
 def write_studio_session(user_id: str, session: dict) -> None:
-    path = _session_file(user_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(session, f, indent=2)
+    _write_profile_column(user_id, "studio_session", session)
 
 
 def _upload_render_bytes(data: bytes, storage_path: str) -> str:
