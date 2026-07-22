@@ -467,24 +467,64 @@ async def rename(user_token: str, user_id: str, *, old_path: str, new_path: str)
     return f"Successfully renamed {old_norm} to {new_norm}"
 
 
+# First-turn snapshot budget. Previously every /memories/* row rode into the
+# first turn of every session, uncapped (limits were 200KB/file, 2MB/user).
+# Now: a total ceiling with priority ordering — whole files dropped from the
+# bottom, never truncated mid-file — and reflection_log.md excluded outright
+# (append-only agent-run history that grows forever; it lives in the admin
+# viewer, not in every chat).
+_SNAPSHOT_MAX_BYTES = 16_000
+_SNAPSHOT_EXCLUDE = {"/memories/reflection_log.md"}
+_SNAPSHOT_PRIORITY = (  # first match wins; lower index = kept first
+    "/memories/creative_guidelines.md",
+    "/memories/brand_brief.md",
+    "/memories/account_profile.md",
+    "/memories/preferences/",
+    "/memories/brand/",
+    "/memories/analytics_strategy.md",
+)
+
+
+def _snapshot_rank(path: str) -> int:
+    for i, prefix in enumerate(_SNAPSHOT_PRIORITY):
+        if path == prefix or path.startswith(prefix):
+            return i
+    return len(_SNAPSHOT_PRIORITY)
+
+
 async def read_snapshot(user_token: str, user_id: str) -> str:
-    """Return a flat, agent-readable snapshot of every memory file for this user.
+    """Return a flat, agent-readable snapshot of memory files for this user,
+    within the snapshot budget.
 
     Used by the agent's brief preface so we can skip the silent `memory view`
     tool round-trip on first turn. Returns a placeholder string when the user
-    has no memories yet.
+    has no memories yet. Files that don't fit the budget are dropped whole,
+    lowest priority first — the agent can still read them via the memory tool.
     """
     rows = await _list_under(user_token, user_id, _MEM_ROOT + "/")
     if not rows:
         return "(no memories yet)"
-    chunks: list[str] = []
-    for r in rows:
+
+    candidates: list[tuple[int, int, str, str]] = []  # (rank, orig_idx, path, content)
+    for idx, r in enumerate(rows):
         path = r.get("path") or ""
         content = (r.get("content") or "").strip()
-        if not path:
+        if not path or path in _SNAPSHOT_EXCLUDE:
             continue
-        chunks.append(f"--- {path} ---\n{content}")
-    return "\n\n".join(chunks) if chunks else "(no memories yet)"
+        candidates.append((_snapshot_rank(path), idx, path, content))
+    candidates.sort(key=lambda t: (t[0], t[1]))
+
+    chosen: list[tuple[int, str]] = []  # (orig_idx, chunk)
+    used = 0
+    for _rank, idx, path, content in candidates:
+        chunk = f"--- {path} ---\n{content}"
+        cost = len(chunk.encode("utf-8")) + 2
+        if used + cost > _SNAPSHOT_MAX_BYTES:
+            continue  # whole-file drop; keep trying smaller lower-priority files
+        chosen.append((idx, chunk))
+        used += cost
+    chosen.sort(key=lambda t: t[0])  # stable reading order
+    return "\n\n".join(c for _, c in chosen) if chosen else "(no memories yet)"
 
 
 __all__ = ["view", "create", "str_replace", "insert", "delete", "rename", "read_snapshot"]

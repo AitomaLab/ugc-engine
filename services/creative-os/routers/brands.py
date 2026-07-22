@@ -6,7 +6,7 @@ import urllib.parse
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -180,7 +180,81 @@ async def scrape(req: ScrapeRequest, user: dict = Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"scrape failed: {e}") from e
     brand_studio.write_brand_state(user["id"], brand)
+    await asyncio.to_thread(_refresh_brief_safe, user["id"], brand)
     return {"brand": brand}
+
+
+_BRIEF_MAX_BYTES = 5 * 1024 * 1024  # 5 MB upload cap
+
+
+def _refresh_brief_safe(user_id: str, brand: dict) -> None:
+    """Recompose /memories/brand_brief.md after a brand edit. Best-effort:
+    a failure here must never break the user-facing save."""
+    try:
+        # local shadow — the standalone deploy has no ugc_backend
+        from services.brief_composer import refresh_brand_brief
+
+        out = refresh_brand_brief(user_id, brand)
+        print(f"[brands] brief refresh: {out}")
+    except Exception as e:
+        print(f"[brands] brief refresh failed (non-fatal): {e}")
+
+
+@router.get("/industries")
+async def industries(user: dict = Depends(get_current_user)):
+    """Taxonomy menu for the industry-confirmation UI (Slice 1)."""
+    from services.industry_taxonomy import INDUSTRIES, TAXONOMY_VERSION
+
+    return {
+        "version": TAXONOMY_VERSION,
+        "industries": [{"id": iid, "label": label} for iid, (label, _cues) in INDUSTRIES.items()],
+    }
+
+
+@router.post("/brief")
+async def upload_brief(
+    text: str | None = Form(None),
+    file: UploadFile | None = File(None),
+    user: dict = Depends(get_current_user),
+):
+    """Manual brand-brief ingestion (Slice 1): pasted text or a PDF.
+
+    Runs the same strategic extraction as the URL scrape and stores the
+    result as `strategy_manual` — manual input outranks scraped values on
+    conflict (the user's own guidelines beat our inference)."""
+    raw = (text or "").strip()
+    if file is not None:
+        data = await file.read()
+        if len(data) > _BRIEF_MAX_BYTES:
+            raise HTTPException(status_code=413, detail="brief file too large (5MB max)")
+        name = (file.filename or "").lower()
+        if name.endswith(".pdf") or (file.content_type or "") == "application/pdf":
+            try:
+                raw = await asyncio.to_thread(brand_studio.pdf_text, data)
+            except Exception as e:
+                raise HTTPException(status_code=422, detail=f"could not read PDF: {e}") from e
+        else:
+            raw = data.decode("utf-8", "ignore")
+    if len(raw.strip()) < 120:
+        raise HTTPException(
+            status_code=400,
+            detail="not enough text to extract from — paste the brief content or upload a text PDF",
+        )
+
+    brand = brand_studio.read_brand_state(user["id"]) or {}
+    try:
+        strategy = await asyncio.to_thread(
+            brand_studio.extract_strategy_from_brief, raw, brand
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"brief extraction failed: {e}") from e
+    if strategy is None:
+        raise HTTPException(status_code=422, detail="could not extract strategy from the brief")
+
+    brand["strategy_manual"] = strategy
+    brand_studio.write_brand_state(user["id"], brand)
+    await asyncio.to_thread(_refresh_brief_safe, user["id"], brand)
+    return {"strategy": strategy, "effective": brand_studio.effective_strategy(brand)}
 
 
 @router.post("/save")
@@ -194,6 +268,7 @@ async def save(req: SaveRequest, user: dict = Depends(get_current_user)):
             brand.get("name", "brand"),
         )
     brand_studio.write_brand_state(user["id"], brand)
+    await asyncio.to_thread(_refresh_brief_safe, user["id"], brand)
     return {"ok": True, "brand": brand}
 
 

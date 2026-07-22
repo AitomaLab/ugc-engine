@@ -27,6 +27,8 @@ const BRAND_API_PATHS = new Set([
   '/api/stored-renders',
   '/api/pick-logo',
   '/api/credits',
+  '/api/brief',
+  '/api/industries',
 ]);
 
 const localeDicts: Record<SupportedLang, Record<string, string>> = {
@@ -56,7 +58,8 @@ function timeoutForPath(path: string): number {
   if (path.endsWith('/generate')) return 300_000;
   if (path.endsWith('/store-image')) return 180_000;
   if (path.endsWith('/ideas')) return 180_000;
-  if (path.endsWith('/scrape')) return 45_000;
+  if (path.endsWith('/scrape')) return 75_000; // visual scrape + strategy extraction
+  if (path.endsWith('/brief')) return 90_000; // PDF parse + LLM extraction
   if (path.endsWith('/stored-renders')) return 30_000;
   if (path.endsWith('/brand') || path.endsWith('/session') || path.endsWith('/health')) return 30_000;
   return 120_000;

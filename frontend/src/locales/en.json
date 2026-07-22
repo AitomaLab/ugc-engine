@@ -1676,5 +1676,22 @@
   "brands.studio.toast.exported": "Exported <code>studio-state.json</code>",
   "brands.studio.toast.resetDone": "Reset to defaults - no brand, no rows",
   "brands.studio.toast.restored": "Restored your previous Brand Studio work",
-  "brands.studio.toast.recoveredRenders": "Recovered {count} saved carousel slide{plural} from storage"
+  "brands.studio.toast.recoveredRenders": "Recovered {count} saved carousel slide{plural} from storage",
+  "brands.studio.strategy.title": "Strategy",
+  "brands.studio.strategy.valueProp": "Value prop",
+  "brands.studio.strategy.audience": "Audience",
+  "brands.studio.strategy.price": "Positioning",
+  "brands.studio.strategy.industryAsk": "Your industry — please confirm:",
+  "brands.studio.strategy.industryIs": "Industry:",
+  "brands.studio.strategy.industryPick": "Choose industry…",
+  "brands.studio.strategy.industrySaved": "Industry saved",
+  "brands.studio.brief.title": "Brand brief",
+  "brands.studio.brief.uploadPdf": "+ PDF",
+  "brands.studio.brief.hint": "Paste your brand guidelines — your own brief outranks what we scraped.",
+  "brands.studio.brief.placeholder": "Paste brand guidelines, tone of voice, personas...",
+  "brands.studio.brief.analyze": "Analyze brief",
+  "brands.studio.brief.analyzing": "Analyzing…",
+  "brands.studio.brief.done": "Brief applied ✓",
+  "brands.studio.brief.failed": "Failed",
+  "brands.studio.brief.tooShort": "Paste at least a few paragraphs of real brief content"
 }

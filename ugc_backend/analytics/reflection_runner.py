@@ -1183,6 +1183,16 @@ def run_reflection_session(user_id: str) -> Optional[str]:
         analytics_db.upsert_agent_memory(user_id, GUIDELINES_PATH, guidelines)
         logger.info("[reflection] guidelines updated for user %s", user_id)
 
+        # Nightly brief recomposition — the brand brief embeds the top
+        # confirmed rules, so fresh guidelines mean a stale brief. Fingerprint
+        # gate inside makes this a no-op when nothing changed. Best-effort.
+        try:
+            from ugc_backend.research.brief_composer import refresh_brand_brief
+
+            refresh_brand_brief(user_id)
+        except Exception as exc:
+            logger.warning("[reflection] brief refresh failed (non-fatal): %s", exc)
+
         # Log write is best-effort — never roll back the guidelines.
         try:
             new_fp = compute_signal_fingerprint(

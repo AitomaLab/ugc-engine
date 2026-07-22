@@ -12,3 +12,4 @@ Pillow>=10.0.0
 numpy>=1.26.0
 imageio-ffmpeg>=0.5.1
 fal-client>=1.0.0
+pypdf>=4.0

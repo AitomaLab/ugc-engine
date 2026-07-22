@@ -1024,6 +1024,201 @@ def _shopify_products(origin: str) -> list[dict]:
     return out
 
 
+# ── Strategic brand extraction (Slice 1) ────────────────────────────────────
+
+_STRATEGY_VERSION = 1
+_STRATEGY_MIN_CONFIDENCE = 0.55  # below this the UI asks the user to pick
+
+
+def _visible_text(html: str, cap: int = 6000) -> str:
+    """Strip tags/scripts and return readable page text for extraction."""
+    t = re.sub(r"<(script|style|noscript|svg)[^>]*>.*?</\1>", " ", html, flags=re.I | re.S)
+    t = re.sub(r"<[^>]+>", " ", t)
+    t = unescape(re.sub(r"\s+", " ", t)).strip()
+    return t[:cap]
+
+
+def _strategy_prompt(page_text: str, brand: dict) -> list:
+    # Local shadow of ugc_backend/research/industry_taxonomy.py — the
+    # standalone creative-os deploy has no ugc_backend (see shadow-copy note
+    # in brief_composer.py).
+    from services.industry_taxonomy import classifier_menu
+
+    system = (
+        "You extract strategic brand facts from website text. Output ONLY valid JSON, "
+        "no prose, no code fences.\n\n"
+        "DATA INTEGRITY (overrides everything): report only what the source text supports. "
+        "Never invent facts, audiences, or positioning that are not present or directly implied. "
+        "Any field the text does not support must be null (or [] for lists). Do not copy any "
+        "number into a field unless that exact number appears in the source text.\n\n"
+        "Schema:\n"
+        "{\n"
+        '  "industry": <one id from the allowed list below, or null>,\n'
+        '  "industry_confidence": <0.0-1.0>,\n'
+        '  "industry_secondary": <a second id when the brand genuinely spans two, else null>,\n'
+        '  "value_prop": "<=180 chars, the core promise in plain words, or null>,\n'
+        '  "tone_of_voice": ["<=4 short adjectives observed in the copy"],\n'
+        '  "differentiators": ["<=4 short phrases the brand itself claims", ...],\n'
+        '  "product_categories": ["<=5 short category names", ...],\n'
+        '  "price_positioning": "budget" | "mid" | "premium" | "luxury" | null,\n'
+        '  "audience_hypothesis": "<=160 chars, who this is clearly for, or null>,\n'
+        '  "language_primary": "<ISO 639-1 of the site text>",\n'
+        '  "language_secondary": "<ISO 639-1 or null>",\n'
+        '  "region": "<ISO 3166-1 alpha-2 the brand clearly serves, else null>"\n'
+        "}\n\n"
+        "Allowed industry ids (choose EXACTLY one id string, or null if truly unclear):\n"
+        + classifier_menu()
+    )
+    user = (
+        f"Brand name: {brand.get('name') or 'unknown'}\n"
+        f"Meta description: {brand.get('voice') or '(none)'}\n"
+        f"Site headlines: {json.dumps(brand.get('taglines') or [], ensure_ascii=False)}\n\n"
+        f"Page text:\n{page_text}"
+    )
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+
+
+def _coerce_strategy(raw: str) -> dict | None:
+    """Parse + validate the extraction JSON; reject off-enum industries."""
+    from services.industry_taxonomy import (
+        TAXONOMY_VERSION,
+        normalize_industry,
+    )
+
+    m = re.search(r"\{.*\}", raw or "", re.S)
+    if not m:
+        return None
+    try:
+        data = json.loads(m.group(0))
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    def _s(v, cap):
+        return (str(v).strip()[:cap] or None) if isinstance(v, str) and v.strip() else None
+
+    def _lst(v, n, cap):
+        if not isinstance(v, list):
+            return []
+        return [str(x).strip()[:cap] for x in v if isinstance(x, str) and x.strip()][:n]
+
+    industry = normalize_industry(data.get("industry") if isinstance(data.get("industry"), str) else None)
+    try:
+        conf = max(0.0, min(1.0, float(data.get("industry_confidence") or 0.0)))
+    except (TypeError, ValueError):
+        conf = 0.0
+    if industry is None:
+        conf = 0.0  # off-enum or missing — confidence is meaningless
+    price = data.get("price_positioning")
+    if price not in ("budget", "mid", "premium", "luxury"):
+        price = None
+    return {
+        "industry": industry,
+        "industry_confidence": round(conf, 2),
+        "industry_secondary": normalize_industry(
+            data.get("industry_secondary") if isinstance(data.get("industry_secondary"), str) else None
+        ),
+        "industry_needs_confirmation": industry is None or conf < _STRATEGY_MIN_CONFIDENCE,
+        "value_prop": _s(data.get("value_prop"), 180),
+        "tone_of_voice": _lst(data.get("tone_of_voice"), 4, 24),
+        "differentiators": _lst(data.get("differentiators"), 4, 80),
+        "product_categories": _lst(data.get("product_categories"), 5, 40),
+        "price_positioning": price,
+        "audience_hypothesis": _s(data.get("audience_hypothesis"), 160),
+        "language_primary": _s(data.get("language_primary"), 5),
+        "language_secondary": _s(data.get("language_secondary"), 5),
+        "region": _s(data.get("region"), 2),
+        "taxonomy_version": TAXONOMY_VERSION,
+        "strategy_version": _STRATEGY_VERSION,
+    }
+
+
+def _extract_strategy_from_text(text: str, brand: dict, *, source: str, timeout: int) -> dict | None:
+    if len((text or "").strip()) < 120:  # not enough signal to extract from honestly
+        return None
+    raw = openrouter_chat(
+        _strategy_prompt(text, brand),
+        model=_ideas_model(),
+        temperature=0.1,
+        max_tokens=700,
+        timeout=timeout,
+    )
+    out = _coerce_strategy(raw)
+    if out is not None:
+        out["source"] = source
+    return out
+
+
+def extract_brand_strategy(html: str, brand: dict) -> dict | None:
+    """Strategic extraction over already-fetched HTML. Returns None on any
+    failure — the visual scrape must never break because strategy didn't."""
+    try:
+        text = _visible_text(html)
+        if len(text) < 300:
+            # JS-shell sites render almost no HTML text; the meta description
+            # and headlines the visual scrape already pulled are still real
+            # source text. The 120-char honesty floor still applies after.
+            extras = " ".join(
+                filter(None, [brand.get("voice") or "", " ".join(brand.get("taglines") or [])])
+            )
+            text = (text + "\n" + extras).strip()
+        return _extract_strategy_from_text(text, brand, source="url_scrape", timeout=25)
+    except Exception as exc:
+        print(f"[brand_studio] strategy extraction failed: {exc}")
+        return None
+
+
+def extract_strategy_from_brief(text: str, brand: dict) -> dict | None:
+    """Same extraction over a pasted/uploaded brand brief. Raises on LLM
+    failure so the endpoint can surface a real error (unlike the scrape
+    path, the user explicitly asked for this run)."""
+    return _extract_strategy_from_text(
+        text[:20000], brand, source="manual_brief", timeout=45
+    )
+
+
+def pdf_text(data: bytes, *, max_pages: int = 40, cap: int = 20000) -> str:
+    """Extract text from an uploaded PDF brief (page- and char-capped)."""
+    import io as _io
+
+    from pypdf import PdfReader
+
+    reader = PdfReader(_io.BytesIO(data))
+    chunks: list[str] = []
+    total = 0
+    for page in reader.pages[:max_pages]:
+        t = (page.extract_text() or "").strip()
+        if t:
+            chunks.append(t)
+            total += len(t)
+            if total >= cap:
+                break
+    return "\n\n".join(chunks)[:cap]
+
+
+def effective_strategy(brand: dict) -> dict | None:
+    """Merge scraped + manual strategy; manual wins per-field (the user's own
+    guidelines outrank our inference)."""
+    scraped = brand.get("strategy") if isinstance(brand.get("strategy"), dict) else None
+    manual = brand.get("strategy_manual") if isinstance(brand.get("strategy_manual"), dict) else None
+    if not scraped and not manual:
+        return None
+    if not manual:
+        return scraped
+    if not scraped:
+        return manual
+    merged = dict(scraped)
+    for k, v in manual.items():
+        if v not in (None, "", []):
+            merged[k] = v
+    merged["source"] = "merged"
+    return merged
+
+
 def scrape_brand(url: str) -> dict:
     url = url.strip()
     if not re.match(r"^https?://", url):
@@ -1061,7 +1256,7 @@ def scrape_brand(url: str) -> dict:
             if len(imagery) >= 4:
                 break
     logos = _extract_logos(html, origin)
-    return {
+    brand = {
         "name": name[:40],
         "url": p.netloc.replace("www.", ""),
         "scrapedReal": True,
@@ -1074,6 +1269,9 @@ def scrape_brand(url: str) -> dict:
         "imagery": imagery[:4],
         "productImages": products,
     }
+    # Strategic pass over the same fetched HTML (Slice 1). Never fatal.
+    brand["strategy"] = extract_brand_strategy(html, brand)
+    return brand
 
 
 def generate_images(

@@ -466,6 +466,25 @@ button{font-family:'Inter',sans-serif;cursor:pointer;}
           <div class="imgwrap" id="bProduct"></div>
           <input type="file" id="upProduct" accept="image/*" multiple hidden>
         </div>
+
+        <!-- Strategy (Slice 1): extracted positioning + industry confirmation -->
+        <div class="bsec" id="strategySec" style="display:none">
+          <span class="kick" data-i18n="brands.studio.strategy.title">Strategy</span>
+          <div class="hint" id="bIndustryConfirm" style="display:none;margin:0 0 8px"></div>
+          <div id="bStrategy"></div>
+        </div>
+
+        <!-- Brand brief (Slice 1): paste or PDF; manual outranks scraped -->
+        <div class="bsec" id="briefSec">
+          <div class="khead"><span class="kick" data-i18n="brands.studio.brief.title">Brand brief</span><button class="up" id="upBriefBtn" data-i18n="brands.studio.brief.uploadPdf">+ PDF</button></div>
+          <p class="hint" style="margin-top:0;margin-bottom:8px" data-i18n="brands.studio.brief.hint">Paste your brand guidelines — your own brief outranks what we scraped.</p>
+          <textarea id="briefText" rows="4" spellcheck="false" style="width:100%;resize:vertical;border:1px solid var(--line);background:var(--glass-input);color:var(--text);border-radius:8px;padding:8px;font-size:12px" data-i18n="brands.studio.brief.placeholder" data-i18n-attr="placeholder" placeholder="Paste brand guidelines, tone of voice, personas..."></textarea>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+            <button class="up" id="briefSubmit" data-i18n="brands.studio.brief.analyze">Analyze brief</button>
+            <span class="hint" id="briefStatus" style="margin:0"></span>
+          </div>
+          <input type="file" id="upBrief" accept="application/pdf,.pdf" hidden>
+        </div>
       </div>
     </div>
   </aside>
@@ -840,7 +859,75 @@ function renderBrand(b){
   renderLogos(b);
   renderImages('bImagery',b,'imagery');
   renderImages('bProduct',b,'productImages');
+  renderStrategy(b);
   $('#brandResult').classList.add('show');
+}
+
+/* ---------- strategy + brief (Slice 1) ---------- */
+let INDUSTRY_OPTS=null;
+async function industryOpts(){
+  if(INDUSTRY_OPTS)return INDUSTRY_OPTS;
+  try{const r=await fetch('/api/industries');if(r.ok){INDUSTRY_OPTS=((await r.json()).industries)||[];}}catch(e){}
+  return INDUSTRY_OPTS||[];
+}
+function effStrategy(b){
+  const s=b.strategy||null,m=b.strategy_manual||null;
+  if(!s&&!m)return null; if(!m)return s; if(!s)return m;
+  const out=Object.assign({},s);
+  for(const k in m){const v=m[k];if(v!==null&&v!==''&&!(Array.isArray(v)&&!v.length))out[k]=v;}
+  return out;
+}
+async function renderStrategy(b){
+  const sec=$('#strategySec');if(!sec)return;
+  const s=effStrategy(b);
+  if(!s){sec.style.display='none';return;}
+  sec.style.display='';
+  const opts=await industryOpts();
+  let h='';
+  if(s.value_prop)h+=`<div class="hint" style="margin:0 0 6px"><b>${t('brands.studio.strategy.valueProp')}:</b> ${esc(s.value_prop)}</div>`;
+  if(s.audience_hypothesis)h+=`<div class="hint" style="margin:0 0 6px"><b>${t('brands.studio.strategy.audience')}:</b> ${esc(s.audience_hypothesis)}</div>`;
+  if(s.price_positioning)h+=`<div class="hint" style="margin:0 0 6px"><b>${t('brands.studio.strategy.price')}:</b> ${esc(s.price_positioning)}</div>`;
+  if(Array.isArray(s.tone_of_voice)&&s.tone_of_voice.length)h+=`<div class="vtags">${s.tone_of_voice.map(x=>`<span class="vtag">${esc(x)}</span>`).join('')}</div>`;
+  $('#bStrategy').innerHTML=h;
+  const conf=$('#bIndustryConfirm');
+  conf.style.display='';
+  const needs=s.industry_needs_confirmation||!s.industry;
+  conf.innerHTML=`${needs?t('brands.studio.strategy.industryAsk'):t('brands.studio.strategy.industryIs')} `+
+    `<select id="industrySel" style="max-width:100%;border:1px solid var(--line);background:var(--glass-input);color:var(--text);border-radius:6px;padding:3px 6px;font-size:11px"></select>`;
+  const sel=document.getElementById('industrySel');
+  sel.innerHTML=`<option value="">${t('brands.studio.strategy.industryPick')}</option>`+
+    opts.map(o=>`<option value="${o.id}" ${o.id===s.industry?'selected':''}>${esc(o.label)}</option>`).join('');
+  sel.onchange=()=>{
+    const v=sel.value;if(!v)return;
+    brand.strategy_manual=Object.assign({},brand.strategy_manual||{},{industry:v,industry_confidence:1,industry_needs_confirmation:false,source:'manual_ui'});
+    state.brand=brand;saveBrand();renderStrategy(brand);
+    toast(t('brands.studio.strategy.industrySaved'));
+  };
+}
+async function submitBrief(fd){
+  const st=$('#briefStatus');st.textContent=t('brands.studio.brief.analyzing');
+  try{
+    const r=await fetch('/api/brief',{method:'POST',body:fd});
+    if(!r.ok){const d=await r.json().catch(()=>({}));throw new Error(d.detail||('HTTP '+r.status));}
+    const d=await r.json();
+    brand.strategy_manual=d.strategy;state.brand=brand;
+    try{localStorage.setItem(LS_KEY,JSON.stringify(brand));}catch(e){}
+    st.textContent=t('brands.studio.brief.done');
+    renderStrategy(brand);$('#strategySec').style.display='';$('#briefText').value='';
+  }catch(e){st.textContent=t('brands.studio.brief.failed')+': '+(e.message||'');}
+}
+{
+  const _bs=$('#briefSubmit'),_ub=$('#upBriefBtn'),_uf=$('#upBrief');
+  if(_bs)_bs.onclick=()=>{
+    const txt=($('#briefText').value||'').trim();
+    if(txt.length<120){$('#briefStatus').textContent=t('brands.studio.brief.tooShort');return;}
+    const fd=new FormData();fd.append('text',txt);submitBrief(fd);
+  };
+  if(_ub)_ub.onclick=()=>_uf.click();
+  if(_uf)_uf.onchange=e=>{
+    const f=e.target.files&&e.target.files[0];if(!f)return;
+    const fd=new FormData();fd.append('file',f);submitBrief(fd);e.target.value='';
+  };
 }
 
 /* ---------- uploads (imagery + product images) - downscaled + persisted ---------- */

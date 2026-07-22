@@ -1676,5 +1676,22 @@
   "brands.studio.toast.exported": "Exportado <code>studio-state.json</code>",
   "brands.studio.toast.resetDone": "Restablecido a valores predeterminados — sin marca ni filas",
   "brands.studio.toast.restored": "Se restauró tu trabajo anterior en Brand Studio",
-  "brands.studio.toast.recoveredRenders": "Se recuperaron {count} diapositiva{plural} guardada(s) del almacenamiento"
+  "brands.studio.toast.recoveredRenders": "Se recuperaron {count} diapositiva{plural} guardada(s) del almacenamiento",
+  "brands.studio.strategy.title": "Estrategia",
+  "brands.studio.strategy.valueProp": "Propuesta de valor",
+  "brands.studio.strategy.audience": "Audiencia",
+  "brands.studio.strategy.price": "Posicionamiento",
+  "brands.studio.strategy.industryAsk": "Tu sector — confírmalo:",
+  "brands.studio.strategy.industryIs": "Sector:",
+  "brands.studio.strategy.industryPick": "Elige un sector…",
+  "brands.studio.strategy.industrySaved": "Sector guardado",
+  "brands.studio.brief.title": "Brief de marca",
+  "brands.studio.brief.uploadPdf": "+ PDF",
+  "brands.studio.brief.hint": "Pega tus guías de marca — tu propio brief prevalece sobre lo que detectamos.",
+  "brands.studio.brief.placeholder": "Pega guías de marca, tono de voz, buyer personas...",
+  "brands.studio.brief.analyze": "Analizar brief",
+  "brands.studio.brief.analyzing": "Analizando…",
+  "brands.studio.brief.done": "Brief aplicado ✓",
+  "brands.studio.brief.failed": "Error",
+  "brands.studio.brief.tooShort": "Pega al menos unos párrafos de contenido real del brief"
 }
