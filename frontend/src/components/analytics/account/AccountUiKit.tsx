@@ -23,6 +23,27 @@ export function renderInlineBold(text: string, keyPrefix: string): React.ReactNo
     });
 }
 
+/** Lightbulb — the AI Learnings mark, shared by the nav tab and hypothesis cards. */
+export function LightbulbIcon({ size = 14, color = 'currentColor' }: { size?: number; color?: string }) {
+    return (
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke={color}
+            strokeWidth={2.1}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden
+        >
+            <path d="M9 18h6" />
+            <path d="M10 21.5h4" />
+            <path d="M15.1 14c.18-.98.65-1.74 1.4-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1.22.5 2.54 1.5 3.5.75.76 1.22 1.52 1.4 2.5" />
+        </svg>
+    );
+}
+
 /** Uppercase section header with an optional right-aligned action slot. */
 export function Section({
     title,

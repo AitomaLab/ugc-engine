@@ -6,7 +6,7 @@ import StructuredStrategyReport from '../StructuredStrategyReport';
 import StrategyReportMarkdown from '../StrategyReportMarkdown';
 import { timeAgo } from '../analytics-types';
 import { parseLearnings } from './parseAccountReport';
-import { Section, EmptyNote, renderInlineBold } from './AccountUiKit';
+import { Section, EmptyNote, LightbulbIcon, renderInlineBold } from './AccountUiKit';
 
 interface Props {
     guidelines: string | null;
@@ -41,7 +41,7 @@ function RuleCard({ text, kind, index }: { text: string; kind: 'confirmed' | 'hy
                         <polyline points="20 6 9 17 4 12" />
                     </svg>
                 ) : (
-                    <span style={{ fontSize: 12 }}>🧪</span>
+                    <LightbulbIcon size={13} color="#a35a00" />
                 )}
             </span>
             <span style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--text-2)', minWidth: 0 }}>

@@ -9,6 +9,7 @@ import AccountScopeView, {
     type AnalyticsViewKey,
 } from '@/components/analytics/account/AccountScopeView';
 import LearningsView from '@/components/analytics/account/LearningsView';
+import { LightbulbIcon } from '@/components/analytics/account/AccountUiKit';
 import AddAccountModal from '@/components/analytics/AddAccountModal';
 import DashboardView from '@/components/analytics/dashboard/DashboardView';
 import DashboardPeriodToggle from '@/components/analytics/dashboard/DashboardPeriodToggle';
@@ -601,12 +602,3 @@ function AiSparkIcon() {
     );
 }
 
-function LightbulbIcon() {
-    return (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round">
-            <path d="M9 18h6" />
-            <path d="M10 21.5h4" />
-            <path d="M15.1 14c.18-.98.65-1.74 1.4-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1.22.5 2.54 1.5 3.5.75.76 1.22 1.52 1.4 2.5" />
-        </svg>
-    );
-}
