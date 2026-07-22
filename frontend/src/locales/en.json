@@ -1712,5 +1712,11 @@
   "brands.studio.personas.note": "AI-built from real audience language — sources in Analytics → Market intelligence.",
   "analytics.market.hooks": "Suggested hooks",
   "analytics.market.hooksSub": "Picked by the system from your audience's real language — proven or discarded by your own engagement data over time.",
-  "analytics.market.echoes": "echoes"
+  "analytics.market.echoes": "echoes",
+  "analytics.market.competitors": "Competitors",
+  "analytics.market.addHandle": "@handle",
+  "analytics.market.add": "Add",
+  "analytics.market.benchYou": "Your median engagement:",
+  "analytics.market.benchThem": "competitors:",
+  "analytics.market.benchPosts": "posts"
 }

@@ -51,6 +51,37 @@ interface HookSuggestion {
     based_on: number;
 }
 
+interface Competitor {
+    id: string;
+    platform: string;
+    handle: string;
+}
+
+interface CompetitorPost {
+    handle: string | null;
+    platform: string | null;
+    caption: string | null;
+    views: number | null;
+    likes: number | null;
+    comments: number | null;
+    total_engagement: number | null;
+    posted_at: string | null;
+    source_url: string | null;
+    scraped_at: string | null;
+}
+
+interface CompetitorResearchResponse {
+    competitors: Competitor[];
+    posts: CompetitorPost[];
+    benchmark: {
+        your_median_engagement: number;
+        your_posts: number;
+        competitor_median_engagement: number;
+        competitor_posts: number;
+    } | null;
+    max_competitors: number;
+}
+
 const CARD: React.CSSProperties = {
     background: 'var(--surface-2, rgba(148,163,184,0.06))',
     border: '1px solid var(--line, rgba(148,163,184,0.15))',
@@ -62,8 +93,11 @@ export default function MarketIntelligenceView({ refreshKey = 0 }: { refreshKey?
     const { t } = useTranslation();
     const [data, setData] = useState<AudienceResearchResponse | null>(null);
     const [hooks, setHooks] = useState<HookSuggestion[]>([]);
+    const [comp, setComp] = useState<CompetitorResearchResponse | null>(null);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
+    const [newHandle, setNewHandle] = useState('');
+    const [newPlatform, setNewPlatform] = useState('instagram');
 
     const load = useCallback(async () => {
         try {
@@ -77,6 +111,11 @@ export default function MarketIntelligenceView({ refreshKey = 0 }: { refreshKey?
                 { skipProjectScope: true },
             );
             setHooks(hres.suggestions ?? []);
+            const cres = await analyticsFetch<CompetitorResearchResponse>(
+                '/api/analytics/research/competitors',
+                { skipProjectScope: true },
+            );
+            setComp(cres);
         } catch {
             /* leave prior state */
         } finally {
@@ -95,6 +134,10 @@ export default function MarketIntelligenceView({ refreshKey = 0 }: { refreshKey?
                 method: 'POST',
                 skipProjectScope: true,
             });
+            await analyticsFetch('/api/analytics/research/competitors/refresh', {
+                method: 'POST',
+                skipProjectScope: true,
+            }).catch(() => undefined);
             // research runs in the background; poll a few times for arrival
             for (let i = 0; i < 6; i++) {
                 await new Promise((r) => setTimeout(r, 20_000));
@@ -103,6 +146,31 @@ export default function MarketIntelligenceView({ refreshKey = 0 }: { refreshKey?
         } finally {
             setRefreshing(false);
         }
+    }, [load]);
+
+    const addCompetitor = useCallback(async () => {
+        const handle = newHandle.trim().replace(/^@/, '');
+        if (!handle) return;
+        try {
+            await analyticsFetch('/api/analytics/research/competitors', {
+                method: 'POST',
+                skipProjectScope: true,
+                body: JSON.stringify({ platform: newPlatform, handle }),
+                headers: { 'Content-Type': 'application/json' },
+            });
+            setNewHandle('');
+            await load();
+        } catch {
+            /* limit reached or invalid — surface stays as-is */
+        }
+    }, [newHandle, newPlatform, load]);
+
+    const removeCompetitor = useCallback(async (id: string) => {
+        await analyticsFetch(`/api/analytics/research/competitors/${id}`, {
+            method: 'DELETE',
+            skipProjectScope: true,
+        }).catch(() => undefined);
+        await load();
     }, [load]);
 
     if (loading) {
@@ -220,6 +288,66 @@ export default function MarketIntelligenceView({ refreshKey = 0 }: { refreshKey?
                     <ObservationList title={t('analytics.market.phrases')} items={data!.phrases} t={t} />
                 </>
             )}
+
+            {/* competitors — manager always reachable, data when scraped */}
+            <section>
+                <h3 style={{ fontSize: 13, fontWeight: 600, margin: '0 0 10px' }}>{t('analytics.market.competitors')}</h3>
+
+                {comp?.benchmark && (
+                    <div style={{ ...CARD, marginBottom: 10, fontSize: 12, color: 'var(--text-2)' }}>
+                        {t('analytics.market.benchYou')} <strong>{comp.benchmark.your_median_engagement.toLocaleString()}</strong>{' '}
+                        ({comp.benchmark.your_posts} {t('analytics.market.benchPosts')}) ·{' '}
+                        {t('analytics.market.benchThem')} <strong>{comp.benchmark.competitor_median_engagement.toLocaleString()}</strong>{' '}
+                        ({comp.benchmark.competitor_posts} {t('analytics.market.benchPosts')})
+                    </div>
+                )}
+
+                <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                    {(comp?.competitors ?? []).map((c) => (
+                        <span key={c.id} style={{ fontSize: 11, padding: '4px 10px', borderRadius: 999, background: 'var(--surface-2, rgba(148,163,184,0.08))', border: '1px solid var(--line, rgba(148,163,184,0.2))', color: 'var(--text-2)' }}>
+                            {c.platform === 'tiktok' ? 'TT' : c.platform === 'instagram' ? 'IG' : c.platform.slice(0, 2).toUpperCase()} @{c.handle}
+                            <button onClick={() => void removeCompetitor(c.id)} style={{ marginLeft: 6, border: 'none', background: 'none', color: 'var(--text-3)', cursor: 'pointer', fontSize: 11 }}>✕</button>
+                        </span>
+                    ))}
+                    {(comp?.competitors?.length ?? 0) < (comp?.max_competitors ?? 5) && (
+                        <span style={{ display: 'inline-flex', gap: 6 }}>
+                            <select value={newPlatform} onChange={(e) => setNewPlatform(e.target.value)}
+                                style={{ fontSize: 11, background: 'var(--surface-2, rgba(148,163,184,0.08))', color: 'var(--text-2)', border: '1px solid var(--line, rgba(148,163,184,0.2))', borderRadius: 8, padding: '4px 6px' }}>
+                                <option value="instagram">Instagram</option>
+                                <option value="tiktok">TikTok</option>
+                            </select>
+                            <input
+                                value={newHandle}
+                                onChange={(e) => setNewHandle(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') void addCompetitor(); }}
+                                placeholder={t('analytics.market.addHandle')}
+                                style={{ fontSize: 11, width: 140, background: 'var(--surface-2, rgba(148,163,184,0.08))', color: 'var(--text-1, #e2e8f0)', border: '1px solid var(--line, rgba(148,163,184,0.2))', borderRadius: 8, padding: '4px 8px' }}
+                            />
+                            <button onClick={() => void addCompetitor()} style={{ fontSize: 11, border: '1px solid var(--line, rgba(148,163,184,0.25))', background: 'var(--surface-2, rgba(148,163,184,0.08))', color: 'var(--text-2)', borderRadius: 8, padding: '4px 10px', cursor: 'pointer' }}>
+                                {t('analytics.market.add')}
+                            </button>
+                        </span>
+                    )}
+                </div>
+
+                {(comp?.posts?.length ?? 0) > 0 && (
+                    <div style={{ ...CARD, padding: 8 }}>
+                        {comp!.posts.slice(0, 20).map((p, i) => (
+                            <div key={i} style={{ display: 'flex', alignItems: 'baseline', gap: 10, padding: '7px 8px', borderBottom: '1px solid var(--line, rgba(148,163,184,0.08))', fontSize: 12 }}>
+                                <span style={{ color: 'var(--text-3)', whiteSpace: 'nowrap', fontSize: 11 }}>@{p.handle}</span>
+                                <span style={{ flex: 1, color: 'var(--text-1, #e2e8f0)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.caption || '—'}</span>
+                                <span style={{ fontSize: 10, color: 'var(--text-3)', whiteSpace: 'nowrap' }}>
+                                    {p.platform === 'tiktok' && p.views ? `${p.views.toLocaleString()} views · ` : ''}
+                                    {(p.total_engagement ?? 0).toLocaleString()} eng
+                                </span>
+                                {p.source_url && (
+                                    <a href={p.source_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: 'var(--blue, #3b82f6)', textDecoration: 'none' }}>↗</a>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </section>
         </div>
     );
 }

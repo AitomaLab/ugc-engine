@@ -20,6 +20,7 @@ from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from ugc_backend.auth import get_current_user
 
@@ -1777,6 +1778,83 @@ async def api_get_audience_research(user: dict = Depends(get_current_user)):
         "coverage": audience_doc.get("coverage") or {},
         "updated_at": audience_doc.get("updated_at"),
     }
+
+
+class CompetitorAddRequest(BaseModel):
+    platform: str
+    handle: str
+
+
+@router.get("/research/competitors")
+async def api_list_competitor_research(user: dict = Depends(get_current_user)):
+    """Competitor list + their recent posts (observations with provenance)
+    + the computed you-vs-competitors benchmark. All numbers are scraped or
+    computed in code; nothing is model-produced."""
+    from ugc_backend.research import competitors as comp
+    from ugc_backend.research import records as research_records
+
+    user_id = user["id"]
+    rows = research_records.list_records(
+        user_id, kind="observation", insight_type="competitor_post", limit=80
+    )
+    posts = []
+    seen: set[str] = set()
+    for r in rows:
+        if (r.get("source_url") or "") in seen:
+            continue
+        seen.add(r.get("source_url") or "")
+        p = r.get("payload") or {}
+        posts.append(
+            {
+                "handle": p.get("handle"),
+                "platform": p.get("platform"),
+                "caption": p.get("caption"),
+                "views": p.get("views"),
+                "likes": p.get("likes"),
+                "comments": p.get("comments"),
+                "total_engagement": p.get("total_engagement"),
+                "posted_at": p.get("posted_at"),
+                "source_url": r.get("source_url"),
+                "scraped_at": r.get("scraped_at"),
+            }
+        )
+    return {
+        "competitors": comp.list_competitors(user_id),
+        "posts": posts,
+        "benchmark": comp.benchmark_vs_you(user_id),
+        "max_competitors": comp.MAX_COMPETITORS,
+    }
+
+
+@router.post("/research/competitors", status_code=201)
+async def api_add_competitor(
+    body: CompetitorAddRequest, user: dict = Depends(get_current_user)
+):
+    from ugc_backend.research import competitors as comp
+
+    try:
+        row = comp.add_competitor(user["id"], body.platform.strip().lower(), body.handle)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"competitor": row}
+
+
+@router.delete("/research/competitors/{competitor_id}")
+async def api_remove_competitor(
+    competitor_id: str, user: dict = Depends(get_current_user)
+):
+    from ugc_backend.research import competitors as comp
+
+    comp.remove_competitor(user["id"], competitor_id)
+    return {"ok": True}
+
+
+@router.post("/research/competitors/refresh", status_code=202)
+async def api_refresh_competitor_research(user: dict = Depends(get_current_user)):
+    from ugc_backend.research import competitors as comp
+
+    started = comp.enqueue_competitor_research(user["id"])
+    return {"status": "started" if started else "already_running"}
 
 
 @router.get("/research/hooks")

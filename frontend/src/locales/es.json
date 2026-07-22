@@ -1712,5 +1712,11 @@
   "brands.studio.personas.note": "Creadas por IA con lenguaje real de tu audiencia — fuentes en Analíticas → Inteligencia de mercado.",
   "analytics.market.hooks": "Hooks sugeridos",
   "analytics.market.hooksSub": "Elegidos por el sistema a partir del lenguaje real de tu audiencia — se confirman o descartan con tus propios datos de engagement.",
-  "analytics.market.echoes": "usa"
+  "analytics.market.echoes": "usa",
+  "analytics.market.competitors": "Competencia",
+  "analytics.market.addHandle": "@usuario",
+  "analytics.market.add": "Añadir",
+  "analytics.market.benchYou": "Tu engagement mediano:",
+  "analytics.market.benchThem": "competencia:",
+  "analytics.market.benchPosts": "posts"
 }
