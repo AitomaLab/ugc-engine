@@ -200,6 +200,13 @@ def _refresh_brief_safe(user_id: str, brand: dict) -> None:
         print(f"[brands] brief refresh failed (non-fatal): {e}")
 
 
+@router.get("/audience")
+async def get_audience(user: dict = Depends(get_current_user)):
+    """Persona viewer data (Slice 2) — read-only mirror of the audience
+    research written by the core backend."""
+    return {"audience": brand_studio.read_audience(user["id"])}
+
+
 @router.get("/industries")
 async def industries(user: dict = Depends(get_current_user)):
     """Taxonomy menu for the industry-confirmation UI (Slice 1)."""

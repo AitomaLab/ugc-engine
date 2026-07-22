@@ -14,6 +14,7 @@ import AddAccountModal from '@/components/analytics/AddAccountModal';
 import DashboardView from '@/components/analytics/dashboard/DashboardView';
 import DashboardPeriodToggle from '@/components/analytics/dashboard/DashboardPeriodToggle';
 import VideoPerformanceView from '@/components/analytics/dashboard/VideoPerformanceView';
+import MarketIntelligenceView from '@/components/analytics/market/MarketIntelligenceView';
 import PostDetailView from '@/components/analytics/PostDetailModal';
 import StrategyHub from '@/components/analytics/StrategyHub';
 import {
@@ -40,7 +41,7 @@ interface Props {
 
 /** Legacy `?view=accounts` maps to the All-scope overview (comparison lives there). */
 function parseView(raw: string | null): AnalyticsViewKey {
-    if (raw === 'videos' || raw === 'strategy' || raw === 'learnings') return raw;
+    if (raw === 'videos' || raw === 'strategy' || raw === 'learnings' || raw === 'market') return raw;
     return 'overview';
 }
 
@@ -376,7 +377,11 @@ export default function AnalyticsTab({ onRefreshAll, refreshing = false }: Props
             </div>
 
             {/* ── Scoped body ─────────────────────────────────────────── */}
-            {scope === 'all' ? (
+            {view === 'market' ? (
+                /* Market intelligence is user-level (industry + own niche), so it
+                 * renders identically in every scope — hoisted above the branch. */
+                <MarketIntelligenceView refreshKey={metricsEpoch} />
+            ) : scope === 'all' ? (
                 view === 'overview' ? (
                     <DashboardView
                         period={period}
@@ -503,6 +508,7 @@ function ViewTabs({
         ...(showLearnings
             ? [{ id: 'learnings' as const, label: t('analytics.accounts.tabs.learnings'), icon: <LightbulbIcon /> }]
             : []),
+        { id: 'market', label: t('analytics.market.tab'), icon: <GlobeIcon /> },
     ];
 
     return (
@@ -588,6 +594,16 @@ function PlayIcon() {
     return (
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinejoin="round">
             <polygon points="6 4 20 12 6 20 6 4" />
+        </svg>
+    );
+}
+
+function GlobeIcon() {
+    return (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M3 12h18" />
+            <path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18" />
         </svg>
     );
 }

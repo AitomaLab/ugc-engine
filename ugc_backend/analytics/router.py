@@ -1698,6 +1698,72 @@ def api_export_csv(
     )
 
 
+# ── Brand research: audience layer (Slice 2) ────────────────────────────────
+
+@router.post("/research/audience/refresh", status_code=202)
+async def api_refresh_audience_research(user: dict = Depends(get_current_user)):
+    """Kick a background audience-research pass (Reddit subs + PAA -> records
+    -> personas -> brief). Costs a few cents of scraper credit per run."""
+    from ugc_backend.research.audience import enqueue_audience_research
+
+    enqueue_audience_research(user["id"])
+    return {"status": "started"}
+
+
+@router.get("/research/audience")
+async def api_get_audience_research(user: dict = Depends(get_current_user)):
+    """Audience research for the Market Intelligence tab + persona viewer.
+
+    Observations ship with their provenance (source_url + scraped_at) —
+    records without it cannot exist by schema, so 'no provenance, no
+    display' holds. Personas are interpretations and are labelled as such
+    with their supporting-observation count."""
+    from ugc_db.db_manager import get_supabase
+
+    from ugc_backend.research import records as research_records
+
+    user_id = user["id"]
+    sb_rows = get_supabase().table("brand_profiles").select(
+        "audience"
+    ).eq("user_id", user_id).limit(1).execute().data or []
+    audience_doc = (sb_rows[0].get("audience") if sb_rows else None) or {}
+
+    obs = research_records.list_records(user_id, kind="observation", limit=120)
+    personas = research_records.list_records(user_id, kind="interpretation", insight_type="persona")
+
+    def _obs_out(r: dict) -> dict:
+        return {
+            "id": r["id"],
+            "type": r["insight_type"],
+            "text": (r.get("payload") or {}).get("text") or r.get("subject"),
+            "language": r.get("language"),
+            "source": r.get("source"),
+            "source_url": r.get("source_url"),
+            "scraped_at": r.get("scraped_at"),
+            "extra": {
+                k: (r.get("payload") or {}).get(k)
+                for k in ("upvotes", "community", "query")
+                if (r.get("payload") or {}).get(k) is not None
+            },
+        }
+
+    return {
+        "personas": [
+            {
+                **(r.get("payload") or {}),
+                "language": r.get("language"),
+                "based_on": len(r.get("refs") or []),
+                "ai_generated": True,
+            }
+            for r in personas
+        ],
+        "questions": [_obs_out(r) for r in obs if r["insight_type"] == "audience_question"][:40],
+        "phrases": [_obs_out(r) for r in obs if r["insight_type"] == "audience_phrase"][:40],
+        "coverage": audience_doc.get("coverage") or {},
+        "updated_at": audience_doc.get("updated_at"),
+    }
+
+
 # ── Internal cron trigger (nightly self-improvement sweep) ──────────────────
 #
 # Called by the Modal cron (modal_jobs/nightly_reflection.py), NOT by users —

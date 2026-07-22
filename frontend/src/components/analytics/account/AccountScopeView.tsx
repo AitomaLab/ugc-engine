@@ -22,7 +22,7 @@ import AccountStrategyTab from './AccountStrategyTab';
 import AccountVideosGrid from './AccountVideosGrid';
 import LearningsView from './LearningsView';
 
-export type AnalyticsViewKey = 'overview' | 'videos' | 'strategy' | 'learnings';
+export type AnalyticsViewKey = 'overview' | 'videos' | 'strategy' | 'learnings' | 'market';
 
 /**
  * Per-account background refresh — kicks a scrape on scope-in, exposes the

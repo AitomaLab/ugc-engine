@@ -474,6 +474,13 @@ button{font-family:'Inter',sans-serif;cursor:pointer;}
           <div id="bStrategy"></div>
         </div>
 
+        <!-- Personas (Slice 2): AI-built from real audience language -->
+        <div class="bsec" id="personasSec" style="display:none">
+          <span class="kick" data-i18n="brands.studio.personas.title">Personas</span>
+          <div id="bPersonas"></div>
+          <p class="hint" style="margin:6px 0 0" data-i18n="brands.studio.personas.note">AI-built from real audience language — sources in Analytics → Market intelligence.</p>
+        </div>
+
         <!-- Brand brief (Slice 1): paste or PDF; manual outranks scraped -->
         <div class="bsec" id="briefSec">
           <div class="khead"><span class="kick" data-i18n="brands.studio.brief.title">Brand brief</span><button class="up" id="upBriefBtn" data-i18n="brands.studio.brief.uploadPdf">+ PDF</button></div>
@@ -929,6 +936,21 @@ async function submitBrief(fd){
     const fd=new FormData();fd.append('file',f);submitBrief(fd);e.target.value='';
   };
 }
+async function loadPersonas(){
+  try{
+    const r=await fetch('/api/audience');if(!r.ok)return;
+    const d=await r.json();const ps=((d.audience||{}).personas)||[];
+    if(!ps.length)return;
+    const sec=$('#personasSec');if(!sec)return;
+    $('#bPersonas').innerHTML=ps.map(p=>
+      `<div style="margin:0 0 10px"><div style="font-weight:600;font-size:12px">${esc(p.archetype||'')}</div>`+
+      (p.pains||[]).slice(0,3).map(x=>`<div class="hint" style="margin:2px 0">• ${esc(x)}</div>`).join('')+
+      `<div class="vtags">${(p.vocabulary||[]).slice(0,3).map(v=>`<span class="vtag">${esc(v)}</span>`).join('')}</div></div>`
+    ).join('');
+    sec.style.display='';
+  }catch(e){}
+}
+loadPersonas();
 
 /* ---------- uploads (imagery + product images) - downscaled + persisted ---------- */
 function downscale(file,max,cb){

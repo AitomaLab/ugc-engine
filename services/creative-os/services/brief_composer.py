@@ -204,11 +204,23 @@ def refresh_brand_brief(user_id: str, brand: dict | None = None) -> dict:
     """Recompose and store the brief; skips the write when the input
     fingerprint is unchanged. Returns {written, reason}."""
     sb = _sb()
+    rows = (
+        sb.table("brand_profiles")
+        .select("brand_state,audience")
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+    ).data or []
+    row = rows[0] if rows else {}
     if brand is None:
-        rows = (
-            sb.table("brand_profiles").select("brand_state").eq("user_id", user_id).limit(1).execute()
-        ).data or []
-        brand = (rows[0].get("brand_state") if rows else None) or {}
+        brand = row.get("brand_state") or {}
+    audience_doc = row.get("audience") if isinstance(row.get("audience"), dict) else None
+    audience = None
+    if audience_doc:
+        audience = {
+            "top_pains": audience_doc.get("top_pains") or [],
+            "vocabulary": audience_doc.get("vocabulary") or [],
+        }
 
     def _read_memory(path: str) -> str | None:
         rows = (
@@ -222,12 +234,12 @@ def refresh_brand_brief(user_id: str, brand: dict | None = None) -> dict:
         return rows[0].get("content") if rows else None
 
     guidelines = _read_memory("/memories/creative_guidelines.md")
-    new_fp = compute_fingerprint(brand, guidelines, None)
+    new_fp = compute_fingerprint(brand, guidelines, audience)
     current = _read_memory(BRIEF_PATH)
     if current is not None and parse_fingerprint(current) == new_fp:
         return {"written": False, "reason": "fingerprint unchanged"}
 
-    brief = compose_brand_brief(brand, guidelines_md=guidelines)
+    brief = compose_brand_brief(brand, guidelines_md=guidelines, audience=audience)
     if brief is None:
         return {"written": False, "reason": "nothing to write"}
     assert len(brief.encode("utf-8")) <= BRIEF_BUDGET_BYTES + 64, "brief over budget"

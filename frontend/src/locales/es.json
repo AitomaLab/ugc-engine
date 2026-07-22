@@ -1693,5 +1693,21 @@
   "brands.studio.brief.analyzing": "Analizando…",
   "brands.studio.brief.done": "Brief aplicado ✓",
   "brands.studio.brief.failed": "Error",
-  "brands.studio.brief.tooShort": "Pega al menos unos párrafos de contenido real del brief"
+  "brands.studio.brief.tooShort": "Pega al menos unos párrafos de contenido real del brief",
+  "analytics.market.tab": "Inteligencia de mercado",
+  "analytics.market.loading": "Cargando inteligencia de mercado…",
+  "analytics.market.asOf": "A fecha de",
+  "analytics.market.neverRun": "Aún sin investigación — lanza tu primer análisis de audiencia.",
+  "analytics.market.refresh": "Actualizar investigación",
+  "analytics.market.refreshing": "Investigando… (tarda unos minutos)",
+  "analytics.market.lowCoverage": "Cobertura de fuentes escasa para:",
+  "analytics.market.emptyTitle": "Conoce las palabras exactas de tu audiencia",
+  "analytics.market.emptyBody": "Analizamos comunidades reales y preguntas de búsqueda de tu sector, y construimos personas con el lenguaje que tu audiencia usa de verdad. Pulsa Actualizar investigación para el primer análisis.",
+  "analytics.market.personas": "Personas de audiencia",
+  "analytics.market.questions": "Preguntas que hace tu audiencia",
+  "analytics.market.phrases": "Cómo habla tu audiencia",
+  "analytics.market.aiGenerated": "Generado por IA",
+  "analytics.market.basedOn": "basado en fuentes:",
+  "brands.studio.personas.title": "Personas",
+  "brands.studio.personas.note": "Creadas por IA con lenguaje real de tu audiencia — fuentes en Analíticas → Inteligencia de mercado."
 }

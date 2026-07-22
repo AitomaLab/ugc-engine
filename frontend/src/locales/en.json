@@ -1693,5 +1693,21 @@
   "brands.studio.brief.analyzing": "Analyzing…",
   "brands.studio.brief.done": "Brief applied ✓",
   "brands.studio.brief.failed": "Failed",
-  "brands.studio.brief.tooShort": "Paste at least a few paragraphs of real brief content"
+  "brands.studio.brief.tooShort": "Paste at least a few paragraphs of real brief content",
+  "analytics.market.tab": "Market intelligence",
+  "analytics.market.loading": "Loading market intelligence…",
+  "analytics.market.asOf": "As of",
+  "analytics.market.neverRun": "No research yet — run your first audience scan.",
+  "analytics.market.refresh": "Refresh research",
+  "analytics.market.refreshing": "Researching… (takes a few minutes)",
+  "analytics.market.lowCoverage": "Thin source coverage for:",
+  "analytics.market.emptyTitle": "Know your audience's exact words",
+  "analytics.market.emptyBody": "We scan real communities and search questions for your industry, then build personas from the language your audience actually uses. Hit Refresh research to run the first scan.",
+  "analytics.market.personas": "Audience personas",
+  "analytics.market.questions": "Questions your audience asks",
+  "analytics.market.phrases": "How your audience talks",
+  "analytics.market.aiGenerated": "AI-generated",
+  "analytics.market.basedOn": "based on sources:",
+  "brands.studio.personas.title": "Personas",
+  "brands.studio.personas.note": "AI-built from real audience language — sources in Analytics → Market intelligence."
 }

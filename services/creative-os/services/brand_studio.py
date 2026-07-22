@@ -163,6 +163,25 @@ def read_studio_session(user_id: str) -> dict | None:
     return _read_profile_column(user_id, "studio_session", _session_file(user_id))
 
 
+def read_audience(user_id: str) -> dict | None:
+    """Server-written audience research (personas etc.) — separate column
+    from brand_state so client saves can never wipe it."""
+    try:
+        rows = (
+            _profiles_sb()
+            .table("brand_profiles")
+            .select("audience")
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        ).data or []
+        val = rows[0].get("audience") if rows else None
+        return val if isinstance(val, dict) else None
+    except Exception as exc:
+        print(f"[brand_studio] audience read failed: {exc}")
+        return None
+
+
 def write_studio_session(user_id: str, session: dict) -> None:
     _write_profile_column(user_id, "studio_session", session)
 

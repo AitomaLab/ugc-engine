@@ -29,6 +29,7 @@ const BRAND_API_PATHS = new Set([
   '/api/credits',
   '/api/brief',
   '/api/industries',
+  '/api/audience',
 ]);
 
 const localeDicts: Record<SupportedLang, Record<string, string>> = {
