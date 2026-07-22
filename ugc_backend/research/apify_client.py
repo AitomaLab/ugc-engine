@@ -80,8 +80,13 @@ def run_actor(
         "actor_id": actor_id,
     }
     if status in ("READY", "RUNNING"):
-        # left running server-side; caller decides whether to abort it
-        raise ApifyError(f"actor {actor_id} run {run_id} still {status} after {timeout_s}s")
+        # Abort server-side — a walked-away run keeps consuming credit
+        # (observed live: an abandoned reddit run reached $0.14 before abort).
+        try:
+            _req(f"{_BASE}/actor-runs/{run_id}/abort?token={tok}", {})
+        except ApifyError:
+            pass
+        raise ApifyError(f"actor {actor_id} run {run_id} timed out after {timeout_s}s (aborted)")
     if status != "SUCCEEDED":
         raise ApifyError(f"actor {actor_id} run {run_id} ended {status}")
     if usage > max_cost_usd:

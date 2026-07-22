@@ -28,7 +28,9 @@ logger = logging.getLogger("research.audience")
 _REDDIT_ACTOR = "trudax~reddit-scraper-lite"
 _GOOGLE_ACTOR = "apify~google-search-scraper"
 _MAX_SUBS = 3
-_POSTS_PER_SUB = 20
+# Tuned down from 20 after the first live run: reddit-lite on listing pages
+# produced 0 items in 420s at 60 requested; smaller asks finish.
+_POSTS_PER_SUB = 10
 _COVERAGE_FLOOR = 8          # usable observations per language, else low-confidence
 _PERSONA_COUNT = 2
 
@@ -72,7 +74,7 @@ def _collect_reddit(industry: str | None, lang: str, dataset_note: list) -> list
                 "maxPostCount": _POSTS_PER_SUB * len(subs),
                 "skipComments": True,
             },
-            timeout_s=420,
+            timeout_s=600,
             max_items=_POSTS_PER_SUB * len(subs) + 10,
             max_cost_usd=1.0,
         )
