@@ -1709,5 +1709,8 @@
   "analytics.market.aiGenerated": "AI-generated",
   "analytics.market.basedOn": "based on sources:",
   "brands.studio.personas.title": "Personas",
-  "brands.studio.personas.note": "AI-built from real audience language — sources in Analytics → Market intelligence."
+  "brands.studio.personas.note": "AI-built from real audience language — sources in Analytics → Market intelligence.",
+  "analytics.market.hooks": "Suggested hooks",
+  "analytics.market.hooksSub": "Picked by the system from your audience's real language — proven or discarded by your own engagement data over time.",
+  "analytics.market.echoes": "echoes"
 }

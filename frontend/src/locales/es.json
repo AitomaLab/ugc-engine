@@ -1709,5 +1709,8 @@
   "analytics.market.aiGenerated": "Generado por IA",
   "analytics.market.basedOn": "basado en fuentes:",
   "brands.studio.personas.title": "Personas",
-  "brands.studio.personas.note": "Creadas por IA con lenguaje real de tu audiencia — fuentes en Analíticas → Inteligencia de mercado."
+  "brands.studio.personas.note": "Creadas por IA con lenguaje real de tu audiencia — fuentes en Analíticas → Inteligencia de mercado.",
+  "analytics.market.hooks": "Hooks sugeridos",
+  "analytics.market.hooksSub": "Elegidos por el sistema a partir del lenguaje real de tu audiencia — se confirman o descartan con tus propios datos de engagement.",
+  "analytics.market.echoes": "usa"
 }

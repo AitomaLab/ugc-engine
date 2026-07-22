@@ -58,6 +58,25 @@ def run_breakdown_in_background(
                 updates.update({"status": "failed", "completed_at": _iso_now()})
             else:
                 updates.update({"status": "completed", "completed_at": _iso_now()})
+                # Enrichment: classify the hook's opening style so the
+                # reflection loop can group engagement by hook type
+                # (Slice 2.5 loop closure). Never blocks the breakdown.
+                try:
+                    hook = updates.get("hook")
+                    hook_text = " ".join(
+                        filter(None, [
+                            (hook or {}).get("on_screen_text"),
+                            ((hook or {}).get("visual") or "")[:120],
+                        ])
+                    ) if isinstance(hook, dict) else ""
+                    if hook_text:
+                        from ugc_backend.research.hooks import classify_hook_type
+
+                        ht = classify_hook_type(hook_text)
+                        if ht:
+                            updates["hook_type"] = ht
+                except Exception:
+                    pass
             analytics_db.update_breakdown(breakdown_id, updates)
         except Exception as e:
             # Same sanitizer as the vision service uses for in-pipeline

@@ -309,6 +309,16 @@ def run_audience_research(user_id: str) -> dict:
     except Exception as exc:  # brief refresh must never sink the research result
         logger.warning("[audience] brief refresh failed: %s", exc)
 
+    # Hook suggestions chain off fresh audience data + fresh brief — the
+    # system picks candidates, production engagement judges them later.
+    try:
+        from ugc_backend.research.hooks import generate_hook_suggestions
+
+        hooks_out = generate_hook_suggestions(user_id)
+        logger.info("[audience] hook suggestions: %s", hooks_out)
+    except Exception as exc:
+        logger.warning("[audience] hook suggestions failed (non-fatal): %s", exc)
+
     total_cost = sum(float(n.get("usage_usd") or 0) for n in dataset_note)
     return {
         "personas": len(personas_out),
@@ -318,12 +328,29 @@ def run_audience_research(user_id: str) -> dict:
     }
 
 
-def enqueue_audience_research(user_id: str) -> None:
+_inflight: set[str] = set()
+_inflight_lock = None
+
+
+def enqueue_audience_research(user_id: str) -> bool:
+    """Start a background pass unless one is already running for this user.
+    Two concurrent passes race through delete-then-insert and duplicate every
+    record (observed live) — the lock makes refresh idempotent."""
     import threading
+
+    global _inflight_lock
+    if _inflight_lock is None:
+        _inflight_lock = threading.Lock()
+    with _inflight_lock:
+        if user_id in _inflight:
+            logger.info("[audience] research already running for %s — skipped", user_id)
+            return False
+        _inflight.add(user_id)
 
     threading.Thread(
         target=lambda: _safe_run(user_id), name=f"audience-research-{user_id[:8]}", daemon=True
     ).start()
+    return True
 
 
 def _safe_run(user_id: str) -> None:
@@ -332,3 +359,6 @@ def _safe_run(user_id: str) -> None:
         logger.info("[audience] research complete for %s: %s", user_id, out)
     except Exception:
         logger.exception("[audience] research failed for %s", user_id)
+    finally:
+        with _inflight_lock:
+            _inflight.discard(user_id)

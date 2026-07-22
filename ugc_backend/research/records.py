@@ -17,7 +17,13 @@ import re
 import unicodedata
 from datetime import datetime, timezone
 
-MIN_SUPPORT = 3  # observations required to back one interpretation
+# Support floors per claim shape: a PATTERN claim (persona, "X works here")
+# needs multiple observations behind it; a DIRECT-ECHO justification ("this
+# hook quotes audience question Q") is fully supported by the single
+# observation it quotes. Callers pass the right floor; default is the strict
+# one.
+MIN_SUPPORT = 3
+MIN_SUPPORT_DIRECT = 1
 
 _DIGITS_RE = re.compile(r"\d[\d.,%]*")
 
@@ -91,10 +97,11 @@ def insert_interpretation(
     language: str | None = None,
     industry: str | None = None,
     source: str = "model",
+    min_support: int = MIN_SUPPORT,
 ) -> str | None:
     """Insert a model claim. Refused (returns None) when under-supported or
     when its free text contains numbers absent from the supporting sources."""
-    if len(refs) < MIN_SUPPORT:
+    if len(refs) < max(1, min_support):
         return None
     free_text = " ".join(
         str(v) for v in payload.values() if isinstance(v, str)

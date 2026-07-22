@@ -45,3 +45,16 @@ length differences.
 8. A hook for a "day in the life" style video featuring the product.
 9. A hook for a video targeting the health-conscious segment of the audience.
 10. A hook for a video that leans on social proof.
+
+---
+
+## SUPERSEDED (2026-07-22, user decision)
+
+The human blind A/B was retired before judging: the user directed that the
+SYSTEM selects hooks (deterministic scoring against brand + audience
+intelligence — see hooks.py) and that PRODUCTION ENGAGEMENT is the judge,
+via the existing per-user reflection loop (this is gate G2's pooled
+comparator, already pre-registered). The generated pairs and sealed mapping
+were never scored. Hook-type classification of published posts feeds the
+loop so confirmed hook patterns land in creative_guidelines.md and flow
+back into the brief.

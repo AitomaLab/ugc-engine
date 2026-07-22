@@ -40,6 +40,17 @@ interface AudienceResearchResponse {
     updated_at: string | null;
 }
 
+interface HookSuggestion {
+    hook: string;
+    hook_type: string;
+    score: number;
+    audience_echo: number;
+    brand_terms: string[];
+    echoes: string[];
+    status: string;
+    based_on: number;
+}
+
 const CARD: React.CSSProperties = {
     background: 'var(--surface-2, rgba(148,163,184,0.06))',
     border: '1px solid var(--line, rgba(148,163,184,0.15))',
@@ -50,6 +61,7 @@ const CARD: React.CSSProperties = {
 export default function MarketIntelligenceView({ refreshKey = 0 }: { refreshKey?: number }) {
     const { t } = useTranslation();
     const [data, setData] = useState<AudienceResearchResponse | null>(null);
+    const [hooks, setHooks] = useState<HookSuggestion[]>([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
 
@@ -60,6 +72,11 @@ export default function MarketIntelligenceView({ refreshKey = 0 }: { refreshKey?
                 { skipProjectScope: true },
             );
             setData(res);
+            const hres = await analyticsFetch<{ suggestions: HookSuggestion[] }>(
+                '/api/analytics/research/hooks',
+                { skipProjectScope: true },
+            );
+            setHooks(hres.suggestions ?? []);
         } catch {
             /* leave prior state */
         } finally {
@@ -134,6 +151,34 @@ export default function MarketIntelligenceView({ refreshKey = 0 }: { refreshKey?
                 </div>
             ) : (
                 <>
+                    {/* suggested hooks — system-scored, production-judged */}
+                    {hooks.length > 0 && (
+                        <section>
+                            <h3 style={{ fontSize: 13, fontWeight: 600, margin: '0 0 4px' }}>{t('analytics.market.hooks')}</h3>
+                            <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 10 }}>{t('analytics.market.hooksSub')}</div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                {hooks.map((h, i) => (
+                                    <div key={i} style={CARD}>
+                                        <div style={{ fontSize: 13, marginBottom: 8, color: 'var(--text-1, #e2e8f0)' }}>“{h.hook}”</div>
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                                            <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 999, background: 'rgba(139,92,246,0.15)', color: 'var(--text-2)' }}>
+                                                {h.hook_type}
+                                            </span>
+                                            {h.echoes.slice(0, 2).map((e, j) => (
+                                                <span key={j} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 999, background: 'rgba(59,130,246,0.12)', color: 'var(--text-3)' }}>
+                                                    {t('analytics.market.echoes')} “{e}”
+                                                </span>
+                                            ))}
+                                            <span style={{ fontSize: 10, color: 'var(--text-3)', marginLeft: 'auto' }}>
+                                                {t('analytics.market.aiGenerated')} · {t('analytics.market.basedOn')} {h.based_on}
+                                            </span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </section>
+                    )}
+
                     {/* personas — interpretations, visibly labelled */}
                     {data!.personas.length > 0 && (
                         <section>

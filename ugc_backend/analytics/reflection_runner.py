@@ -316,6 +316,7 @@ def build_posts_payload(
                     {
                         "summary": bd.get("summary"),
                         "hook": bd.get("hook"),
+                        "hook_type": bd.get("hook_type"),
                         "takeaways": bd.get("takeaways"),
                     }
                     if bd

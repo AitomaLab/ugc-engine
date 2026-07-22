@@ -19,7 +19,7 @@ from ugc_db.db_manager import get_supabase
 logger = logging.getLogger(__name__)
 
 _LOCALE_BREAKDOWN_COLUMNS = frozenset({"output_locale", "locale_variants"})
-_OPTIONAL_BREAKDOWN_COLUMNS = _LOCALE_BREAKDOWN_COLUMNS | frozenset({"updated_at"})
+_OPTIONAL_BREAKDOWN_COLUMNS = _LOCALE_BREAKDOWN_COLUMNS | frozenset({"updated_at", "hook_type"})
 
 BREAKDOWN_STALE_SEC = 480  # 8 minutes — orphaned daemon threads / hung Gemini calls
 
@@ -2201,16 +2201,30 @@ def list_breakdowns_for_posts(user_id: str, posts: list[dict]) -> dict[str, dict
     post_ids = [str(p["id"]) for p in posts if p.get("id")]
     video_job_ids = [str(p["video_job_id"]) for p in posts if p.get("video_job_id")]
     sb = get_supabase()
-    columns = "analytics_post_id,video_job_id,status,summary,hook,takeaways"
+    columns = "analytics_post_id,video_job_id,status,summary,hook,takeaways,hook_type"
+
+    def _select(col_str: str, apply_filter):
+        # hook_type is optional (migration 073) — fall back without it so the
+        # reflection loop keeps working before the migration is applied.
+        try:
+            return apply_filter(
+                sb.table("analytics_video_breakdowns").select(col_str)
+            ).execute()
+        except Exception as exc:
+            if "hook_type" in col_str and _is_missing_optional_column_error(exc):
+                return apply_filter(
+                    sb.table("analytics_video_breakdowns").select(
+                        col_str.replace(",hook_type", "")
+                    )
+                ).execute()
+            raise
+
     out: dict[str, dict] = {}
 
     if post_ids:
-        res = (
-            sb.table("analytics_video_breakdowns")
-            .select(columns)
-            .eq("user_id", user_id)
-            .in_("analytics_post_id", post_ids)
-            .execute()
+        res = _select(
+            columns,
+            lambda q: q.eq("user_id", user_id).in_("analytics_post_id", post_ids),
         )
         for row in res.data or []:
             pid = row.get("analytics_post_id")
@@ -2218,12 +2232,9 @@ def list_breakdowns_for_posts(user_id: str, posts: list[dict]) -> dict[str, dict
                 out[str(pid)] = row
 
     if video_job_ids:
-        res = (
-            sb.table("analytics_video_breakdowns")
-            .select(columns)
-            .eq("user_id", user_id)
-            .in_("video_job_id", video_job_ids)
-            .execute()
+        res = _select(
+            columns,
+            lambda q: q.eq("user_id", user_id).in_("video_job_id", video_job_ids),
         )
         job_rows = {
             str(row["video_job_id"]): row

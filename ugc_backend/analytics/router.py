@@ -1728,8 +1728,23 @@ async def api_get_audience_research(user: dict = Depends(get_current_user)):
     ).eq("user_id", user_id).limit(1).execute().data or []
     audience_doc = (sb_rows[0].get("audience") if sb_rows else None) or {}
 
-    obs = research_records.list_records(user_id, kind="observation", limit=120)
-    personas = research_records.list_records(user_id, kind="interpretation", insight_type="persona")
+    def _dedupe(rows: list[dict]) -> list[dict]:
+        # newest-first input; drop older twins (multi-worker refreshes can
+        # still race across processes — read-time dedupe is the backstop)
+        seen: set[tuple] = set()
+        out = []
+        for r in rows:
+            key = (r.get("insight_type"), r.get("subject"), r.get("source_url") or "")
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(r)
+        return out
+
+    obs = _dedupe(research_records.list_records(user_id, kind="observation", limit=120))
+    personas = _dedupe(
+        research_records.list_records(user_id, kind="interpretation", insight_type="persona")
+    )
 
     def _obs_out(r: dict) -> dict:
         return {
@@ -1762,6 +1777,41 @@ async def api_get_audience_research(user: dict = Depends(get_current_user)):
         "coverage": audience_doc.get("coverage") or {},
         "updated_at": audience_doc.get("updated_at"),
     }
+
+
+@router.get("/research/hooks")
+async def api_get_hook_suggestions(user: dict = Depends(get_current_user)):
+    """System-scored hook suggestions. Each carries its transparent score
+    breakdown (computed in code, never by the model) and the verbatim
+    audience observations it echoes."""
+    from ugc_backend.research import records as research_records
+
+    rows = research_records.list_records(
+        user["id"], kind="interpretation", insight_type="hook_suggestion"
+    )
+    seen: set[str] = set()
+    out = []
+    for r in rows:
+        if r["subject"] in seen:
+            continue
+        seen.add(r["subject"])
+        p = r.get("payload") or {}
+        out.append(
+            {
+                "hook": p.get("hook"),
+                "hook_type": p.get("hook_type"),
+                "score": p.get("score"),
+                "audience_echo": p.get("audience_echo"),
+                "brand_terms": p.get("brand_terms") or [],
+                "echoes": p.get("echoes") or [],
+                "status": p.get("status") or "suggested",
+                "based_on": len(r.get("refs") or []),
+                "ai_generated": True,
+                "created_at": r.get("created_at"),
+            }
+        )
+    out.sort(key=lambda s: -(s.get("score") or 0))
+    return {"suggestions": out}
 
 
 # ── Internal cron trigger (nightly self-improvement sweep) ──────────────────
