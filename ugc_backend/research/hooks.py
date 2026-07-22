@@ -49,8 +49,11 @@ _GEN_SYSTEM = (
 )
 
 _CLASSIFY_SYSTEM = (
-    "Classify each hook's opening style. Output ONLY a JSON array of strings, one per "
-    "hook, each exactly one of: question | claim | pattern-interrupt | demo | stat | pov."
+    "Classify the opening style of each short-video hook. Inputs may be the hook's "
+    "spoken/on-screen text OR a description of its opening visuals — a purely visual "
+    "opening still has a style (typically demo, pattern-interrupt, or pov). "
+    "Output ONLY a JSON array of strings, exactly one per input, never empty, each "
+    "exactly one of: question | claim | pattern-interrupt | demo | stat | pov."
 )
 
 
